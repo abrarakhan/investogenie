@@ -83,7 +83,7 @@ export default function ScreenerTable({ rows }: { rows: ScreenRow[] }) {
             <tr>
               <th className="px-4 py-3">Ticker</th>
               <th className="px-4 py-3">Mkt</th>
-              <th className="px-4 py-3 text-right">Close</th>
+              <th className="px-4 py-3 text-right">Last</th>
               <th className="px-4 py-3 text-right">BB width</th>
               <th className="px-4 py-3">Flags</th>
               <th className="px-4 py-3 text-right">Score</th>
@@ -105,7 +105,14 @@ export default function ScreenerTable({ rows }: { rows: ScreenRow[] }) {
                   <span className="ml-2 text-[10px] uppercase text-white/30">{r.assetClass}</span>
                 </td>
                 <td className="px-4 py-3 text-white/50">{r.country === "US" ? "🇺🇸" : "🇮🇳"} {r.exchange}</td>
-                <td className="px-4 py-3 text-right tabular-nums">{r.close.toFixed(2)}</td>
+                <td className="px-4 py-3 text-right tabular-nums">
+                  {(r.lastQuote ?? r.close).toFixed(2)}
+                  {r.quoteChangePct !== null && (
+                    <span className={`ml-1 text-[10px] ${r.quoteChangePct >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                      {r.quoteChangePct >= 0 ? "+" : ""}{r.quoteChangePct.toFixed(2)}%
+                    </span>
+                  )}
+                </td>
                 <td className="px-4 py-3 text-right tabular-nums text-white/60">{r.bandwidthPct.toFixed(1)}%</td>
                 <td className="px-4 py-3">
                   <div className="flex gap-1">

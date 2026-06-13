@@ -4,9 +4,11 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { classifySwingSetup } from "@/lib/analytics/swingClassifier";
+import { getQuotesByAssetIds } from "@/lib/quotes";
 import type { OHLCV } from "@/lib/types";
 
 export interface ScreenRow {
+  assetId: string;
   ticker: string;
   country: string;
   exchange: string;
@@ -14,6 +16,8 @@ export interface ScreenRow {
   verdict: string;
   score: number;
   close: number;
+  lastQuote: number | null;
+  quoteChangePct: number | null;
   bandwidthPct: number;
   isSqueeze: boolean;
   isBreakout: boolean;
@@ -23,6 +27,7 @@ export interface ScreenRow {
 }
 
 interface AssetMeta {
+  id: string;
   ticker: string;
   country: string;
   exchange: string;
@@ -43,7 +48,7 @@ async function fetchAllOhlcv(supabase: SupabaseClient) {
     const { data, error } = await supabase
       .from("daily_ohlcv")
       .select(
-        "asset_id,date,open,high,low,close,volume,open_interest, asset:assets!inner(ticker,country,exchange,asset_class)",
+        "asset_id,date,open,high,low,close,volume,open_interest, asset:assets!inner(id,ticker,country,exchange,asset_class)",
       )
       .order("asset_id", { ascending: true })
       .order("date", { ascending: true })
@@ -82,6 +87,7 @@ export async function runScreener(supabase: SupabaseClient): Promise<ScreenRow[]
     try {
       const s = classifySwingSetup(bars);
       out.push({
+        assetId: meta.id,
         ticker: meta.ticker,
         country: meta.country,
         exchange: meta.exchange,
@@ -89,6 +95,8 @@ export async function runScreener(supabase: SupabaseClient): Promise<ScreenRow[]
         verdict: s.verdict,
         score: s.score,
         close: s.close,
+        lastQuote: null,
+        quoteChangePct: null,
         bandwidthPct: s.bollinger.bandwidth * 100,
         isSqueeze: s.isSqueeze,
         isBreakout: s.isBreakout,
@@ -99,6 +107,13 @@ export async function runScreener(supabase: SupabaseClient): Promise<ScreenRow[]
     } catch {
       // not enough bars for this instrument — skip
     }
+  }
+
+  // Attach the live latest price for each scanned instrument.
+  const quotes = await getQuotesByAssetIds(supabase, out.map((r) => r.assetId));
+  for (const r of out) {
+    const q = quotes.get(r.assetId);
+    if (q) { r.lastQuote = q.price; r.quoteChangePct = q.changePct; }
   }
 
   // Active setups first (by score), then the rest alphabetically.

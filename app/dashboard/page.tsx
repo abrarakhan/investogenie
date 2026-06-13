@@ -4,12 +4,14 @@ import { createClient } from "@/utils/supabase/server";
 import { MacroBenchmarks } from "@/components/landing/TickerTape";
 import DashboardHeader from "@/components/dashboard/DashboardHeader";
 import EngineSection from "@/components/dashboard/EngineSection";
+import AssetPicker from "@/components/dashboard/AssetPicker";
 import {
   getFundOverlap,
   getMacroMatrix,
   getSwingSignals,
 } from "@/lib/engines-runtime";
-import { formatMoney, lastPriceFor } from "@/lib/markets";
+import { getQuotesByAssetIds } from "@/lib/quotes";
+import { formatMoney } from "@/lib/markets";
 import {
   addToWatchlist,
   ensureScaffold,
@@ -43,28 +45,22 @@ export default async function DashboardPage() {
 
   await ensureScaffold();
 
-  const [holdingsRes, watchRes, assetsRes, swing, overlap, macro] =
-    await Promise.all([
-      supabase
-        .from("holdings")
-        .select(
-          "id, quantity, avg_cost, asset:assets(id,ticker,name,asset_class,currency)",
-        )
-        .order("updated_at", { ascending: false }),
-      supabase
-        .from("watchlist_items")
-        .select("id, asset:assets(id,ticker,name,asset_class,currency)")
-        .order("created_at", { ascending: false }),
-      supabase
-        .from("assets")
-        .select("id,ticker,name,asset_class,currency")
-        .order("ticker"),
-      getSwingSignals(supabase),
-      getFundOverlap(supabase),
-      getMacroMatrix(supabase),
-    ]);
+  const [holdingsRes, watchRes, swing, overlap, macro] = await Promise.all([
+    supabase
+      .from("holdings")
+      .select(
+        "id, quantity, avg_cost, asset:assets(id,ticker,name,asset_class,currency)",
+      )
+      .order("updated_at", { ascending: false }),
+    supabase
+      .from("watchlist_items")
+      .select("id, asset:assets(id,ticker,name,asset_class,currency)")
+      .order("created_at", { ascending: false }),
+    getSwingSignals(supabase),
+    getFundOverlap(supabase),
+    getMacroMatrix(supabase),
+  ]);
 
-  const assets = (assetsRes.data ?? []) as AssetLite[];
   const holdings = (holdingsRes.data ?? []).map((h) => ({
     id: h.id as string,
     quantity: Number(h.quantity),
@@ -76,17 +72,25 @@ export default async function DashboardPage() {
     asset: one<AssetLite>(w.asset as AssetLite | AssetLite[] | null),
   }));
 
+  // Real latest prices for everything on screen, from latest_quotes.
+  const quoteIds = [
+    ...holdings.map((h) => h.asset?.id),
+    ...watch.map((w) => w.asset?.id),
+  ].filter((x): x is string => Boolean(x));
+  const quotes = await getQuotesByAssetIds(supabase, quoteIds);
+
   // Per-currency portfolio totals (no cross-currency summing).
   const totals: Record<string, { invested: number; market: number }> = {};
   const valued = holdings.map((h) => {
     const ccy = h.asset?.currency ?? "USD";
-    const last = (h.asset && lastPriceFor(h.asset.ticker)) ?? h.avgCost;
+    const quote = h.asset ? quotes.get(h.asset.id) : undefined;
+    const last = quote?.price ?? h.avgCost;
     const invested = h.quantity * h.avgCost;
     const market = h.quantity * last;
     totals[ccy] ??= { invested: 0, market: 0 };
     totals[ccy].invested += invested;
     totals[ccy].market += market;
-    return { ...h, last, invested, market, pnl: market - invested, ccy };
+    return { ...h, last, changePct: quote?.changePct ?? null, invested, market, pnl: market - invested, ccy };
   });
 
   return (
@@ -173,6 +177,14 @@ export default async function DashboardPage() {
                         </td>
                         <td className="py-2.5 text-right tabular-nums">
                           {formatMoney(h.last, h.ccy)}
+                          {h.changePct !== null && (
+                            <span
+                              className={`ml-1 text-[10px] ${h.changePct >= 0 ? "text-emerald-400" : "text-rose-400"}`}
+                            >
+                              {h.changePct >= 0 ? "+" : ""}
+                              {h.changePct.toFixed(2)}%
+                            </span>
+                          )}
                         </td>
                         <td className="py-2.5 text-right tabular-nums">
                           {formatMoney(h.market, h.ccy)}
@@ -194,17 +206,9 @@ export default async function DashboardPage() {
               action={recordTrade}
               className="grid grid-cols-2 gap-3 rounded-2xl border border-white/10 bg-black/30 p-4 sm:grid-cols-5"
             >
-              <select
-                name="assetId"
-                required
-                className="col-span-2 rounded-lg border border-white/10 bg-black/50 px-3 py-2 text-sm"
-              >
-                {assets.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.ticker} · {a.asset_class}
-                  </option>
-                ))}
-              </select>
+              <div className="col-span-2">
+                <AssetPicker name="assetId" placeholder="Search any ticker…" />
+              </div>
               <select
                 name="side"
                 className="rounded-lg border border-white/10 bg-black/50 px-3 py-2 text-sm"
@@ -246,41 +250,53 @@ export default async function DashboardPage() {
               {watch.length === 0 && (
                 <li className="text-sm text-white/50">Nothing watched yet.</li>
               )}
-              {watch.map((w) => (
-                <li
-                  key={w.id}
-                  className="flex items-center justify-between rounded-xl border border-white/5 bg-black/20 px-3 py-2"
-                >
-                  <span>
-                    <span className="font-semibold">{w.asset?.ticker}</span>
-                    <span className="ml-2 text-xs text-white/40">
-                      {w.asset?.name}
+              {watch.map((w) => {
+                const quote = w.asset ? quotes.get(w.asset.id) : undefined;
+                return (
+                  <li
+                    key={w.id}
+                    className="flex items-center justify-between gap-2 rounded-xl border border-white/5 bg-black/20 px-3 py-2"
+                  >
+                    <span className="min-w-0">
+                      <span className="font-semibold">{w.asset?.ticker}</span>
+                      <span className="ml-2 block truncate text-xs text-white/40">
+                        {w.asset?.name}
+                      </span>
                     </span>
-                  </span>
-                  <form action={removeWatchlistItem}>
-                    <input type="hidden" name="itemId" value={w.id} />
-                    <button
-                      type="submit"
-                      className="text-xs text-white/40 hover:text-rose-400"
-                    >
-                      Remove
-                    </button>
-                  </form>
-                </li>
-              ))}
+                    <span className="flex shrink-0 items-center gap-3">
+                      {quote && (
+                        <span className="text-right tabular-nums">
+                          <span className="text-sm">
+                            {formatMoney(quote.price, quote.currency ?? w.asset?.currency ?? "USD")}
+                          </span>
+                          {quote.changePct !== null && (
+                            <span
+                              className={`block text-[10px] ${quote.changePct >= 0 ? "text-emerald-400" : "text-rose-400"}`}
+                            >
+                              {quote.changePct >= 0 ? "+" : ""}
+                              {quote.changePct.toFixed(2)}%
+                            </span>
+                          )}
+                        </span>
+                      )}
+                      <form action={removeWatchlistItem}>
+                        <input type="hidden" name="itemId" value={w.id} />
+                        <button
+                          type="submit"
+                          className="text-xs text-white/40 hover:text-rose-400"
+                        >
+                          ✕
+                        </button>
+                      </form>
+                    </span>
+                  </li>
+                );
+              })}
             </ul>
             <form action={addToWatchlist} className="flex gap-2">
-              <select
-                name="assetId"
-                required
-                className="flex-1 rounded-lg border border-white/10 bg-black/50 px-3 py-2 text-sm"
-              >
-                {assets.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.ticker} · {a.name}
-                  </option>
-                ))}
-              </select>
+              <div className="flex-1">
+                <AssetPicker name="assetId" placeholder="Add ticker to watchlist…" />
+              </div>
               <button
                 type="submit"
                 className="rounded-lg border border-white/15 px-4 py-2 text-sm hover:bg-white/10"
