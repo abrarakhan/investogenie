@@ -35,7 +35,8 @@ export default function LandingPage() {
           <nav className="hidden gap-8 text-sm text-white/60 md:flex">
             <a href="#engines" className="hover:text-white">Engines</a>
             <a href="#markets" className="hover:text-white">Markets</a>
-            <a href="#terminal" className="hover:text-white">Terminal</a>
+            <a href="/screener" className="hover:text-white">Screener</a>
+            <a href="/dashboard" className="hover:text-white">Terminal</a>
           </nav>
         </header>
 
