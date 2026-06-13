@@ -16,18 +16,23 @@ export async function getQuotesByAssetIds(
   const unique = [...new Set(ids)].filter(Boolean);
   if (unique.length === 0) return map;
 
-  const { data } = await supabase
-    .from("latest_quotes")
-    .select("asset_id,price,change_pct,currency,as_of")
-    .in("asset_id", unique);
-
-  for (const q of (data ?? []) as Record<string, unknown>[]) {
-    map.set(q.asset_id as string, {
-      price: Number(q.price),
-      changePct: q.change_pct === null ? null : Number(q.change_pct),
-      currency: (q.currency as string) ?? null,
-      asOf: (q.as_of as string) ?? null,
-    });
+  // Chunk the id list so the `in(...)` filter never blows past URL length limits
+  // when the screener passes a couple thousand asset ids.
+  const CHUNK = 300;
+  for (let i = 0; i < unique.length; i += CHUNK) {
+    const slice = unique.slice(i, i + CHUNK);
+    const { data } = await supabase
+      .from("latest_quotes")
+      .select("asset_id,price,change_pct,currency,as_of")
+      .in("asset_id", slice);
+    for (const q of (data ?? []) as Record<string, unknown>[]) {
+      map.set(q.asset_id as string, {
+        price: Number(q.price),
+        changePct: q.change_pct === null ? null : Number(q.change_pct),
+        currency: (q.currency as string) ?? null,
+        asOf: (q.as_of as string) ?? null,
+      });
+    }
   }
   return map;
 }

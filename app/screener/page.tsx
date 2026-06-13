@@ -31,14 +31,14 @@ export default async function ScreenerPage() {
         <div className="mb-8">
           <h1 className="text-3xl font-bold">Swing Screener</h1>
           <p className="mt-2 max-w-2xl text-white/50">
-            The derivative-aided swing classifier run across the liquid universe —
-            Nifty 50 (live NSE EOD) and the S&amp;P 100 subset. Breakouts and
-            volatility squeezes are flagged; an OI build-up upgrades a breakout to
-            a validated long.
+            The derivative-aided swing classifier, precomputed nightly across the
+            full NSE universe (live bhavcopy EOD) plus the S&amp;P 100 subset.
+            Breakouts and volatility squeezes are flagged; an OI build-up upgrades
+            a breakout to a validated long.
           </p>
           <p className="mt-2 text-xs text-amber-300/70">
-            Note: US bars are an anchored demo feed (free US EOD providers block
-            scripted access here); Indian bars are live NSE bhavcopy data.
+            Note: Indian bars are live NSE bhavcopy data; US bars are an anchored
+            demo feed (free US EOD providers block scripted access here).
           </p>
         </div>
 

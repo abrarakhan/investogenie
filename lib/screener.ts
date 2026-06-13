@@ -1,11 +1,9 @@
-// Server-side screener: pulls every instrument that has price history, runs the
-// swing classifier per name, and returns a ranked, filterable result set.
-// Fetches OHLCV in pages to get past PostgREST's 1,000-row default cap.
+// Screener data: reads the precomputed swing_signals table (written by the scan
+// job in lib/ingest/signals.ts) and attaches the live latest price. Reading
+// precomputed rows keeps the page fast even across the full universe.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { classifySwingSetup } from "@/lib/analytics/swingClassifier";
 import { getQuotesByAssetIds } from "@/lib/quotes";
-import type { OHLCV } from "@/lib/types";
 
 export interface ScreenRow {
   assetId: string;
@@ -26,88 +24,44 @@ export interface ScreenRow {
   asOf: string;
 }
 
-interface AssetMeta {
-  id: string;
-  ticker: string;
-  country: string;
-  exchange: string;
-  asset_class: string;
-}
-
-function one<T>(v: T | T[] | null): T | null {
-  return Array.isArray(v) ? (v[0] ?? null) : (v ?? null);
-}
-
-async function fetchAllOhlcv(supabase: SupabaseClient) {
+export async function runScreener(supabase: SupabaseClient): Promise<ScreenRow[]> {
+  // Page through swing_signals (one row per instrument), highest score first.
   const PAGE = 1000;
   let from = 0;
-  const rows: Record<string, unknown>[] = [];
-  // Order by asset_id then date so each instrument's bars stay contiguous and
-  // chronological across page boundaries.
+  const raw: Record<string, unknown>[] = [];
   for (;;) {
     const { data, error } = await supabase
-      .from("daily_ohlcv")
+      .from("swing_signals")
       .select(
-        "asset_id,date,open,high,low,close,volume,open_interest, asset:assets!inner(id,ticker,country,exchange,asset_class)",
+        "asset_id,ticker,country,exchange,asset_class,verdict,score,last_close,bandwidth_pct,is_squeeze,is_breakout,is_long_buildup,reason,as_of",
       )
-      .order("asset_id", { ascending: true })
-      .order("date", { ascending: true })
+      .order("score", { ascending: false })
+      .order("ticker", { ascending: true })
       .range(from, from + PAGE - 1);
     if (error || !data || data.length === 0) break;
-    rows.push(...(data as Record<string, unknown>[]));
+    raw.push(...(data as Record<string, unknown>[]));
     if (data.length < PAGE) break;
     from += PAGE;
   }
-  return rows;
-}
 
-export async function runScreener(supabase: SupabaseClient): Promise<ScreenRow[]> {
-  const rows = await fetchAllOhlcv(supabase);
-
-  // Group bars by ticker, capturing each instrument's metadata once.
-  const byTicker = new Map<string, { meta: AssetMeta; bars: OHLCV[] }>();
-  for (const r of rows) {
-    const meta = one<AssetMeta>(r.asset as AssetMeta | AssetMeta[] | null);
-    if (!meta) continue;
-    const key = `${meta.exchange}:${meta.ticker}`;
-    if (!byTicker.has(key)) byTicker.set(key, { meta, bars: [] });
-    byTicker.get(key)!.bars.push({
-      date: r.date as string,
-      open: Number(r.open),
-      high: Number(r.high),
-      low: Number(r.low),
-      close: Number(r.close),
-      volume: Number(r.volume),
-      openInterest: r.open_interest === null ? null : Number(r.open_interest),
-    });
-  }
-
-  const out: ScreenRow[] = [];
-  for (const { meta, bars } of byTicker.values()) {
-    try {
-      const s = classifySwingSetup(bars);
-      out.push({
-        assetId: meta.id,
-        ticker: meta.ticker,
-        country: meta.country,
-        exchange: meta.exchange,
-        assetClass: meta.asset_class,
-        verdict: s.verdict,
-        score: s.score,
-        close: s.close,
-        lastQuote: null,
-        quoteChangePct: null,
-        bandwidthPct: s.bollinger.bandwidth * 100,
-        isSqueeze: s.isSqueeze,
-        isBreakout: s.isBreakout,
-        isLongBuildup: s.isLongBuildup,
-        reason: s.reasons[0],
-        asOf: s.asOf,
-      });
-    } catch {
-      // not enough bars for this instrument — skip
-    }
-  }
+  const out: ScreenRow[] = raw.map((r) => ({
+    assetId: r.asset_id as string,
+    ticker: r.ticker as string,
+    country: r.country as string,
+    exchange: r.exchange as string,
+    assetClass: r.asset_class as string,
+    verdict: r.verdict as string,
+    score: Number(r.score),
+    close: Number(r.last_close),
+    lastQuote: null,
+    quoteChangePct: null,
+    bandwidthPct: Number(r.bandwidth_pct),
+    isSqueeze: Boolean(r.is_squeeze),
+    isBreakout: Boolean(r.is_breakout),
+    isLongBuildup: Boolean(r.is_long_buildup),
+    reason: (r.reason as string) ?? "",
+    asOf: (r.as_of as string) ?? "",
+  }));
 
   // Attach the live latest price for each scanned instrument.
   const quotes = await getQuotesByAssetIds(supabase, out.map((r) => r.assetId));
@@ -116,7 +70,7 @@ export async function runScreener(supabase: SupabaseClient): Promise<ScreenRow[]
     if (q) { r.lastQuote = q.price; r.quoteChangePct = q.changePct; }
   }
 
-  // Active setups first (by score), then the rest alphabetically.
+  // Active setups first (by score), then the rest.
   out.sort((a, b) => {
     const aa = a.verdict === "NO_SETUP" ? 0 : 1;
     const bb = b.verdict === "NO_SETUP" ? 0 : 1;
