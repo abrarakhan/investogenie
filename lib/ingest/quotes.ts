@@ -1,0 +1,153 @@
+// Core latest-price ingestion, shared by the cron API route and any manual
+// runner. Fetches the whole US + India universe and upserts into latest_quotes.
+//   • US  — NASDAQ screener API (lastsale across NASDAQ/NYSE/AMEX)
+//   • NSE — sec_bhavdata_full bhavcopy (latest session close)
+//   • BSE — BhavCopy_BSE_CM UDiFF bhavcopy (latest session close)
+import { Client } from "pg";
+
+const UA =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36";
+const MON: Record<string, number> = { Jan:0,Feb:1,Mar:2,Apr:3,May:4,Jun:5,Jul:6,Aug:7,Sep:8,Oct:9,Nov:10,Dec:11 };
+
+export interface RefreshSummary {
+  matched: number;
+  bySource: Record<string, number>;
+  durationMs: number;
+}
+
+interface RawQuote { price: number; changePct: number | null }
+
+function parseCsvLine(line: string): string[] {
+  const out: string[] = [];
+  let cur = "", q = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (q) { if (c === '"' && line[i + 1] === '"') { cur += '"'; i++; } else if (c === '"') q = false; else cur += c; }
+    else if (c === '"') q = true; else if (c === ",") { out.push(cur); cur = ""; } else cur += c;
+  }
+  out.push(cur);
+  return out.map((s) => s.trim());
+}
+const num = (s: unknown): number | null => {
+  const n = parseFloat(String(s ?? "").replace(/[$,%\s]/g, ""));
+  return Number.isFinite(n) ? n : null;
+};
+const ddmmyyyy = (d: Date) => `${String(d.getUTCDate()).padStart(2,"0")}${String(d.getUTCMonth()+1).padStart(2,"0")}${d.getUTCFullYear()}`;
+const yyyymmdd = (d: Date) => `${d.getUTCFullYear()}${String(d.getUTCMonth()+1).padStart(2,"0")}${String(d.getUTCDate()).padStart(2,"0")}`;
+
+async function fetchUS(): Promise<Map<string, RawQuote>> {
+  const quotes = new Map<string, RawQuote>();
+  for (const exchange of ["NASDAQ", "NYSE", "AMEX"]) {
+    const url = `https://api.nasdaq.com/api/screener/stocks?tableonly=true&limit=10000&offset=0&exchange=${exchange}`;
+    const res = await fetch(url, { headers: { "User-Agent": UA, Accept: "application/json", Referer: "https://www.nasdaq.com/" } });
+    if (!res.ok) continue;
+    const json = await res.json();
+    const rows = json?.data?.table?.rows ?? json?.data?.rows ?? [];
+    for (const r of rows) {
+      const t = (r.symbol || "").toUpperCase().trim();
+      const price = num(r.lastsale);
+      if (!t || price === null || price === 0) continue;
+      quotes.set(t, { price, changePct: num(r.pctchange) });
+    }
+  }
+  return quotes;
+}
+
+async function fetchBhavSeries(
+  startISO: string,
+  build: (text: string) => { quotes: Map<string, RawQuote>; asOf: string | null } | null,
+  url: (d: Date) => string,
+): Promise<{ quotes: Map<string, RawQuote>; asOf: string | null }> {
+  const start = new Date(`${startISO}T00:00:00Z`);
+  for (let i = 0; i < 8; i++) {
+    const d = new Date(start); d.setUTCDate(d.getUTCDate() - i);
+    if (d.getUTCDay() === 0 || d.getUTCDay() === 6) continue;
+    const res = await fetch(url(d), { headers: { "User-Agent": UA, Referer: "https://www.nseindia.com/" } }).catch(() => null);
+    if (!res || !res.ok) continue;
+    const built = build(await res.text());
+    if (built && built.quotes.size) return built;
+  }
+  return { quotes: new Map(), asOf: null };
+}
+
+function buildNSE(text: string) {
+  if (!text.includes("SERIES")) return null;
+  const lines = text.split(/\r?\n/).filter(Boolean);
+  const h = parseCsvLine(lines[0]); const col = (n: string) => h.indexOf(n);
+  const iSym = col("SYMBOL"), iSer = col("SERIES"), iDate = col("DATE1"), iClose = col("CLOSE_PRICE"), iPrev = col("PREV_CLOSE");
+  const quotes = new Map<string, RawQuote>(); let asOf: string | null = null;
+  for (let k = 1; k < lines.length; k++) {
+    const p = parseCsvLine(lines[k]);
+    if (p[iSer] !== "EQ") continue;
+    const price = num(p[iClose]); if (price === null) continue;
+    const prev = num(p[iPrev]);
+    const [dd, mon, yyyy] = p[iDate].split("-");
+    asOf = `${yyyy}-${String(MON[mon]+1).padStart(2,"0")}-${dd.padStart(2,"0")}`;
+    quotes.set(p[iSym].toUpperCase(), { price, changePct: prev ? ((price - prev) / prev) * 100 : null });
+  }
+  return { quotes, asOf };
+}
+
+function buildBSE(text: string) {
+  if (!text.includes("TckrSymb")) return null;
+  const lines = text.split(/\r?\n/).filter(Boolean);
+  const h = parseCsvLine(lines[0]); const col = (n: string) => h.indexOf(n);
+  const iSym = col("TckrSymb"), iTp = col("FinInstrmTp"), iClose = col("ClsPric"), iPrev = col("PrvsClsgPric"), iDate = col("TradDt");
+  const quotes = new Map<string, RawQuote>(); let asOf: string | null = null;
+  for (let k = 1; k < lines.length; k++) {
+    const p = parseCsvLine(lines[k]);
+    if (p[iTp] !== "STK") continue;
+    const price = num(p[iClose]); if (price === null || price === 0) continue;
+    const prev = num(p[iPrev]);
+    asOf = p[iDate];
+    quotes.set(p[iSym].toUpperCase(), { price, changePct: prev ? ((price - prev) / prev) * 100 : null });
+  }
+  return { quotes, asOf };
+}
+
+export async function refreshQuotes(databaseUrl: string, startISO = "2025-06-13"): Promise<RefreshSummary> {
+  const t0 = Date.now();
+  const [usQuotes, nse, bse] = await Promise.all([
+    fetchUS(),
+    fetchBhavSeries(startISO, buildNSE, (d) => `https://archives.nseindia.com/products/content/sec_bhavdata_full_${ddmmyyyy(d)}.csv`),
+    fetchBhavSeries(startISO, buildBSE, (d) => `https://www.bseindia.com/download/BhavCopy/Equity/BhavCopy_BSE_CM_0_0_0_${yyyymmdd(d)}_F_0000.CSV`),
+  ]);
+
+  const client = new Client({ connectionString: databaseUrl, ssl: { rejectUnauthorized: false } });
+  await client.connect();
+  try {
+    const toMap = (rows: { ticker: string; id: string }[]) =>
+      new Map<string, string>(rows.map((r) => [r.ticker, r.id]));
+    const usMap = toMap((await client.query("select id,ticker from public.assets where country='US'")).rows);
+    const nseMap = toMap((await client.query("select id,ticker from public.assets where exchange='NSE'")).rows);
+    const bseMap = toMap((await client.query("select id,ticker from public.assets where exchange='BSE'")).rows);
+
+    const rows: { assetId: string; price: number; changePct: number | null; currency: string; asOf: string | null; source: string }[] = [];
+    for (const [t, q] of usQuotes) { const id = usMap.get(t); if (id) rows.push({ assetId: id, price: q.price, changePct: q.changePct, currency: "USD", asOf: null, source: "NASDAQ" }); }
+    for (const [t, q] of nse.quotes) { const id = nseMap.get(t); if (id) rows.push({ assetId: id, price: q.price, changePct: q.changePct, currency: "INR", asOf: nse.asOf, source: "NSE_BHAVCOPY" }); }
+    for (const [t, q] of bse.quotes) { const id = bseMap.get(t); if (id) rows.push({ assetId: id, price: q.price, changePct: q.changePct, currency: "INR", asOf: bse.asOf, source: "BSE_BHAVCOPY" }); }
+
+    const cols = 6;
+    for (let i = 0; i < rows.length; i += 1000) {
+      const batch = rows.slice(i, i + 1000);
+      const vals: string[] = [], params: unknown[] = [];
+      batch.forEach((r, j) => { const b = j * cols;
+        vals.push(`($${b+1},$${b+2},$${b+3},$${b+4},$${b+5},$${b+6})`);
+        params.push(r.assetId, r.price, r.changePct, r.currency, r.asOf, r.source); });
+      await client.query(
+        `insert into public.latest_quotes (asset_id, price, change_pct, currency, as_of, source)
+         values ${vals.join(",")}
+         on conflict (asset_id) do update set price=excluded.price, change_pct=excluded.change_pct,
+           currency=excluded.currency, as_of=excluded.as_of, source=excluded.source, updated_at=now()`,
+        params);
+    }
+
+    return {
+      matched: rows.length,
+      bySource: { NASDAQ: usQuotes.size, NSE_BHAVCOPY: nse.quotes.size, BSE_BHAVCOPY: bse.quotes.size },
+      durationMs: Date.now() - t0,
+    };
+  } finally {
+    await client.end();
+  }
+}
