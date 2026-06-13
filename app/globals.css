@@ -24,3 +24,54 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* =========================================================================
+   InvestoGenie terminal theme
+   The Sovereign Pivot Switch overwrites these custom properties at runtime;
+   the defaults below guarantee a correct first paint before hydration.
+   ========================================================================= */
+:root {
+  --ig-primary: #3b82f6;
+  --ig-accent: #22d3ee;
+  --ig-glow: rgba(59, 130, 246, 0.45);
+}
+
+/* Seamless infinite ticker marquee. The track is duplicated in markup, so a
+   -50% translate produces a perfect loop. */
+@keyframes ig-marquee-scroll {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+.ig-marquee {
+  animation: ig-marquee-scroll 38s linear infinite;
+}
+.ig-marquee:hover {
+  animation-play-state: paused;
+}
+
+/* ---- Mobile DevTools rigor -------------------------------------------------
+   Prevent absolute WebGL/canvas layers and wide grids from triggering layout
+   shift or horizontal scroll on touch devices, and keep canvas gestures from
+   hijacking page scroll. */
+html,
+body {
+  max-width: 100%;
+  overflow-x: hidden;
+}
+canvas {
+  touch-action: pan-y; /* let the page scroll vertically over the canvas */
+  display: block;
+}
+
+@media (max-width: 640px) {
+  .ig-marquee {
+    animation-duration: 24s; /* faster loop reads better on narrow viewports */
+  }
+}
+
+/* Respect reduced-motion preferences for the marquee. */
+@media (prefers-reduced-motion: reduce) {
+  .ig-marquee {
+    animation: none;
+  }
+}
