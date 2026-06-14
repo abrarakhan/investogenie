@@ -7,6 +7,9 @@ const VERDICT_STYLE: Record<string, string> = {
   LONG_BREAKOUT: "bg-emerald-500/15 text-emerald-300 border-emerald-500/30",
   COILED_SPRING: "bg-cyan-500/15 text-cyan-300 border-cyan-500/30",
   BREAKOUT_UNCONFIRMED: "bg-amber-500/15 text-amber-300 border-amber-500/30",
+  SHORT_BREAKDOWN: "bg-rose-500/15 text-rose-300 border-rose-500/30",
+  SHORT_COILED_SPRING: "bg-fuchsia-500/15 text-fuchsia-300 border-fuchsia-500/30",
+  BREAKDOWN_UNCONFIRMED: "bg-orange-500/15 text-orange-300 border-orange-500/30",
   NO_SETUP: "bg-white/5 text-white/40 border-white/10",
 };
 
@@ -89,20 +92,21 @@ export default function ScreenerTable({
           <thead className="bg-white/[0.03] text-left text-xs uppercase tracking-wider text-white/40">
             <tr>
               <th className="px-4 py-3">Ticker</th>
-              <th className="px-4 py-3">Mkt</th>
+              <th className="px-4 py-3">Dir</th>
               <th className="px-4 py-3 text-right">Current</th>
               <th className="px-4 py-3 text-right">Entry</th>
               <th className="px-4 py-3 text-right">Target</th>
               <th className="px-4 py-3 text-right">Stop</th>
               <th className="px-4 py-3 text-right">Trail</th>
               <th className="px-4 py-3 text-right">R:R</th>
+              <th className="px-4 py-3 text-right">~Days</th>
               <th className="px-4 py-3 text-right">Verdict</th>
             </tr>
           </thead>
           <tbody>
             {filtered.length === 0 && (
               <tr>
-                <td colSpan={9} className="px-4 py-8 text-center text-white/40">
+                <td colSpan={10} className="px-4 py-8 text-center text-white/40">
                   No matches.
                 </td>
               </tr>
@@ -116,7 +120,11 @@ export default function ScreenerTable({
                     <span className="font-semibold">{r.ticker}</span>
                     <span className="ml-2 text-[10px] uppercase text-white/30">{r.assetClass}</span>
                   </td>
-                  <td className="px-4 py-3 text-white/50">{r.country === "US" ? "🇺🇸" : "🇮🇳"} {r.exchange}</td>
+                  <td className="px-4 py-3">
+                    <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${r.direction === "SHORT" ? "bg-rose-500/20 text-rose-300" : "bg-emerald-500/20 text-emerald-300"}`}>
+                      {r.direction === "SHORT" ? "SHORT" : "LONG"}
+                    </span>
+                  </td>
                   <td className="px-4 py-3 text-right tabular-nums">
                     {current.toFixed(2)}
                     {r.quoteChangePct !== null && (
@@ -131,6 +139,9 @@ export default function ScreenerTable({
                   <td className="px-4 py-3 text-right tabular-nums text-amber-300/80">{fmt(r.trailingStop)}</td>
                   <td className="px-4 py-3 text-right tabular-nums text-white/60">
                     {r.riskReward ? `${r.riskReward.toFixed(1)}×` : "—"}
+                  </td>
+                  <td className="px-4 py-3 text-right tabular-nums text-white/60">
+                    {r.expectedDays ? `${r.expectedDays}d` : "—"}
                   </td>
                   <td className="px-4 py-3 text-right">
                     <span className={`rounded-full border px-2.5 py-0.5 text-[11px] font-medium ${VERDICT_STYLE[r.verdict]}`}>

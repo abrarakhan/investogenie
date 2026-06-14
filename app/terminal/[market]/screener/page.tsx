@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import { notFound } from "next/navigation";
 import { createClient } from "@/utils/supabase/server";
 import { runScreener } from "@/lib/screener";
+import { getUserSwingSettings } from "@/lib/settings";
 import ScreenerTable from "@/components/screener/ScreenerTable";
 import ApplyMarketTheme from "@/components/terminal/ApplyMarketTheme";
 import { MARKETS, MARKET_COUNTRY, normalizeMarket } from "@/lib/markets";
@@ -21,7 +22,8 @@ export default async function TerminalScreener({
   const cfg = MARKETS[marketId];
 
   const supabase = createClient(await cookies());
-  const rows = await runScreener(supabase, country);
+  const settings = await getUserSwingSettings(supabase);
+  const rows = await runScreener(supabase, country, settings);
 
   const isUS = marketId === "US";
 

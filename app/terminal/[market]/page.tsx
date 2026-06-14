@@ -6,6 +6,7 @@ import ApplyMarketTheme from "@/components/terminal/ApplyMarketTheme";
 import EngineSection from "@/components/dashboard/EngineSection";
 import AssetPicker from "@/components/dashboard/AssetPicker";
 import { getFundOverlap, getMacroMatrix, getTopSwingSetups } from "@/lib/engines-runtime";
+import { getUserSwingSettings } from "@/lib/settings";
 import { getQuotesByAssetIds } from "@/lib/quotes";
 import { MARKETS, MARKET_COUNTRY, normalizeMarket, formatMoney, formatPct } from "@/lib/markets";
 import { addToWatchlist, ensureScaffold, recordTrade, removeWatchlistItem } from "@/app/dashboard/actions";
@@ -42,6 +43,7 @@ export default async function TerminalPage({
   } = await supabase.auth.getUser();
   if (!user) redirect("/login");
   await ensureScaffold();
+  const settings = await getUserSwingSettings(supabase);
 
   const [holdingsRes, watchRes, swing, macro] = await Promise.all([
     supabase
@@ -52,7 +54,7 @@ export default async function TerminalPage({
       .from("watchlist_items")
       .select("id, asset:assets(id,ticker,name,asset_class,currency,country)")
       .order("created_at", { ascending: false }),
-    getTopSwingSetups(supabase, country, 6),
+    getTopSwingSetups(supabase, country, settings, 6),
     getMacroMatrix(supabase, marketId),
   ]);
   const overlap = marketId === "IN" ? await getFundOverlap(supabase) : null;

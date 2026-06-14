@@ -6,6 +6,9 @@ const VERDICT_STYLE: Record<string, string> = {
   LONG_BREAKOUT: "bg-emerald-500/15 text-emerald-300 border-emerald-500/30",
   COILED_SPRING: "bg-cyan-500/15 text-cyan-300 border-cyan-500/30",
   BREAKOUT_UNCONFIRMED: "bg-amber-500/15 text-amber-300 border-amber-500/30",
+  SHORT_BREAKDOWN: "bg-rose-500/15 text-rose-300 border-rose-500/30",
+  SHORT_COILED_SPRING: "bg-fuchsia-500/15 text-fuchsia-300 border-fuchsia-500/30",
+  BREAKDOWN_UNCONFIRMED: "bg-orange-500/15 text-orange-300 border-orange-500/30",
   NO_SETUP: "bg-white/5 text-white/40 border-white/10",
 };
 
@@ -66,7 +69,12 @@ export default function EngineSection({
                   className="rounded-2xl border border-white/5 bg-black/20 p-4"
                 >
                   <div className="flex items-center justify-between">
-                    <span className="font-semibold">{s.ticker}</span>
+                    <span className="font-semibold">
+                      {s.ticker}
+                      <span className={`ml-2 rounded px-1.5 py-0.5 text-[9px] font-bold ${s.direction === "SHORT" ? "bg-rose-500/20 text-rose-300" : "bg-emerald-500/20 text-emerald-300"}`}>
+                        {s.direction}
+                      </span>
+                    </span>
                     <span
                       className={`rounded-full border px-2.5 py-0.5 text-[11px] font-medium ${VERDICT_STYLE[s.verdict]}`}
                     >
@@ -80,17 +88,13 @@ export default function EngineSection({
                     />
                   </div>
                   <p className="mt-2 text-xs text-white/50">{s.reason}</p>
-                  {s.entry !== null && (
-                    <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] tabular-nums">
-                      <span className="text-white/70">Entry <b>{s.entry.toFixed(2)}</b></span>
-                      {s.target !== null && (
-                        <span className="text-emerald-400">Target <b>{s.target.toFixed(2)}</b></span>
-                      )}
-                      {s.stopLoss !== null && (
-                        <span className="text-rose-400">Stop <b>{s.stopLoss.toFixed(2)}</b></span>
-                      )}
-                    </div>
-                  )}
+                  <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] tabular-nums">
+                    <span className="text-white/70">Entry <b>{s.entry.toFixed(2)}</b></span>
+                    <span className="text-emerald-400">Target <b>{s.target.toFixed(2)}</b></span>
+                    <span className="text-rose-400">Stop <b>{s.stopLoss.toFixed(2)}</b></span>
+                    <span className="text-amber-300/80">Trail <b>{s.trailingStop.toFixed(2)}</b></span>
+                    <span className="text-white/50">~{s.expectedDays}d</span>
+                  </div>
                 </li>
               ))}
             </ul>

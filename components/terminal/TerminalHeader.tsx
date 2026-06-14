@@ -28,6 +28,12 @@ export default function TerminalHeader({
           >
             Screener
           </Link>
+          <Link
+            href="/settings"
+            className="hidden rounded-full border border-white/15 px-4 py-2 text-sm text-white/70 transition-colors hover:bg-white/10 hover:text-white sm:block"
+          >
+            Settings
+          </Link>
           <TerminalSwitch market={market} />
           <div className="hidden text-right sm:block">
             <div className="text-xs text-white/40">Signed in</div>

@@ -49,39 +49,112 @@ export type SwingVerdict =
   | "LONG_BREAKOUT" // breakout + long build-up
   | "COILED_SPRING" // squeeze + long build-up (pre-breakout accumulation)
   | "BREAKOUT_UNCONFIRMED" // breakout but OI does not confirm
+  | "SHORT_BREAKDOWN" // breakdown + short build-up
+  | "SHORT_COILED_SPRING" // squeeze + short build-up
+  | "BREAKDOWN_UNCONFIRMED" // breakdown but OI does not confirm
   | "NO_SETUP";
+
+export type TradeDirection = "LONG" | "SHORT";
+
+/** Direction-agnostic raw inputs from which per-user levels are derived. */
+export interface SwingSetup {
+  currentPrice: number;
+  atr: number;
+  longTrigger: number; // max(Donchian high, upper band)
+  shortTrigger: number; // min(Donchian low, lower band)
+  hh22: number; // 22-bar highest high (long chandelier base)
+  ll22: number; // 22-bar lowest low (short chandelier base)
+  dailyVelocity: number; // avg |close-to-close| over the base window
+}
+
+/** User-tunable risk parameters (defaults applied when unset). */
+export interface RiskConfig {
+  stopAtrMult: number;
+  targetRR: number;
+  trailAtrMult: number;
+}
+
+export const DEFAULT_RISK: RiskConfig = {
+  stopAtrMult: 1.5,
+  targetRR: 2,
+  trailAtrMult: 3,
+};
 
 export interface SwingSignal {
   verdict: SwingVerdict;
-  /** Composite 0..1 conviction score. */
+  bias: TradeDirection | "NONE";
+  /** Composite 0..1 conviction score for the dominant side. */
   score: number;
   asOf: string;
   close: number;
   bollinger: { upper: number; lower: number; middle: number; bandwidth: number };
   isSqueeze: boolean;
   isBreakout: boolean;
+  isBreakdown: boolean;
   donchianHigh: number;
+  donchianLow: number;
   priceChangePct: number; // over short window
   oiChangePct: number; // over short window
   isLongBuildup: boolean;
+  isShortBuildup: boolean;
   volumeExpansion: number; // current vs base-window average
   reasons: string[];
-  levels: TradeLevels;
+  setup: SwingSetup;
 }
 
-/** Actionable swing-trade levels for the latest bar (long bias). */
+/** Actionable trade levels for a direction, derived from a setup + risk config. */
 export interface TradeLevels {
+  direction: TradeDirection;
   currentPrice: number;
-  /** Breakout trigger — the price at which to enter. */
-  entry: number;
-  /** Profit target — the price at which to exit (2:1 reward:risk). */
-  target: number;
-  /** Initial protective stop (ATR-based). */
+  entry: number; // breakout/breakdown trigger
+  target: number; // profit target
   stopLoss: number;
-  /** Chandelier trailing stop (highestHigh - 3·ATR); ratchet up as price rises. */
-  trailingStop: number;
+  trailingStop: number; // chandelier trailing stop
   atr: number;
   riskRewardRatio: number;
+  expectedDays: number; // estimated bars-to-target at recent velocity
+}
+
+function estimateDays(distance: number, velocity: number): number {
+  if (velocity <= 0) return 0;
+  return Math.min(60, Math.max(1, Math.round(distance / velocity)));
+}
+
+/**
+ * Derive concrete trade levels for a direction from a setup + risk parameters.
+ * Pure & cheap — called at read time so per-user risk settings apply instantly
+ * without re-running the (global) detection scan.
+ */
+export function deriveLevels(
+  setup: SwingSetup,
+  direction: TradeDirection,
+  risk: RiskConfig = DEFAULT_RISK,
+): TradeLevels {
+  const { atr, currentPrice, dailyVelocity } = setup;
+  if (direction === "SHORT") {
+    const entry = round2(setup.shortTrigger);
+    const stopLoss = round2(entry + risk.stopAtrMult * atr);
+    const r = stopLoss - entry;
+    const target = round2(Math.max(0, entry - risk.targetRR * r));
+    const trailingStop = round2(setup.ll22 + risk.trailAtrMult * atr);
+    const rr = r > 0 ? round2((entry - target) / r) : 0;
+    return {
+      direction, currentPrice: round2(currentPrice), entry, target, stopLoss,
+      trailingStop, atr: round2(atr), riskRewardRatio: rr,
+      expectedDays: estimateDays(Math.abs(entry - target), dailyVelocity),
+    };
+  }
+  const entry = round2(setup.longTrigger);
+  const stopLoss = round2(Math.max(0, entry - risk.stopAtrMult * atr));
+  const r = entry - stopLoss;
+  const target = round2(entry + risk.targetRR * r);
+  const trailingStop = round2(Math.max(0, setup.hh22 - risk.trailAtrMult * atr));
+  const rr = r > 0 ? round2((target - entry) / r) : 0;
+  return {
+    direction, currentPrice: round2(currentPrice), entry, target, stopLoss,
+    trailingStop, atr: round2(atr), riskRewardRatio: rr,
+    expectedDays: estimateDays(Math.abs(target - entry), dailyVelocity),
+  };
 }
 
 // ---- numerical helpers ------------------------------------------------------
@@ -141,31 +214,6 @@ function averageTrueRange(bars: OHLCV[], period: number): number {
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
 /**
- * Compute actionable long-side trade levels for the latest bar:
- *   entry  = breakout trigger (Donchian high / upper band)
- *   stop   = entry − 1.5·ATR
- *   target = entry + 2·risk  (2:1 reward:risk)
- *   trail  = chandelier exit (22-bar high − 3·ATR)
- */
-function computeTradeLevels(
-  bars: OHLCV[],
-  donchianHigh: number,
-  upper: number,
-): TradeLevels {
-  const last = bars[bars.length - 1];
-  const atr = averageTrueRange(bars, 14);
-  const currentPrice = last.close;
-  const entry = round2(Math.max(donchianHigh, upper));
-  const stopLoss = round2(Math.max(0, entry - 1.5 * atr));
-  const risk = entry - stopLoss;
-  const target = round2(entry + 2 * risk);
-  const highestHigh = Math.max(...bars.slice(-22).map((b) => b.high));
-  const trailingStop = round2(Math.max(0, highestHigh - 3 * atr));
-  const riskRewardRatio = risk > 0 ? round2((target - entry) / risk) : 0;
-  return { currentPrice: round2(currentPrice), entry, target, stopLoss, trailingStop, atr: round2(atr), riskRewardRatio };
-}
-
-/**
  * Classify the most recent bar of an instrument as a swing setup.
  *
  * @param bars   Chronologically ascending OHLCV bars (oldest first). For
@@ -191,6 +239,7 @@ export function classifySwingSetup(
 
   const closes = bars.map((b) => b.close);
   const highs = bars.map((b) => b.high);
+  const lows = bars.map((b) => b.low);
   const volumes = bars.map((b) => b.volume);
   const last = bars[bars.length - 1];
 
@@ -207,89 +256,109 @@ export function classifySwingSetup(
   const bwHistory = bwSeries.slice(0, -1); // exclude current value from its own ranking
   const isSqueeze = percentRank(bwHistory, bandwidth) <= config.squeezePercentile;
 
-  // --- Donchian breakout: close clears the prior-N highest high ---
+  // --- Donchian channel: prior-N highest high / lowest low ---
   const priorHighs = highs.slice(-config.donchianPeriod - 1, -1);
+  const priorLows = lows.slice(-config.donchianPeriod - 1, -1);
   const donchianHigh = Math.max(...priorHighs);
+  const donchianLow = Math.min(...priorLows);
   const isBreakout = last.close > donchianHigh || last.close > upper;
+  const isBreakdown = last.close < donchianLow || last.close < lower;
 
-  // --- Short-window momentum + OI build-up ---
+  // --- Short-window momentum + OI build-up (both directions) ---
   const shortAgo = bars[bars.length - 1 - config.shortWindow];
   const priceChangePct = pctChange(shortAgo.close, last.close);
-
   const hasOi =
     typeof last.openInterest === "number" &&
     typeof shortAgo.openInterest === "number";
   const oiChangePct = hasOi
     ? pctChange(shortAgo.openInterest as number, last.openInterest as number)
     : 0;
-
-  // Long Build-up = rising price AND rising OI beyond threshold (textbook
-  // F&O interpretation: fresh longs being added, not short covering).
+  // Long build-up = price up + OI up; short build-up = price down + OI up.
   const isLongBuildup =
     hasOi && priceChangePct > 0 && oiChangePct >= config.minOiBuildupPct;
+  const isShortBuildup =
+    hasOi && priceChangePct < 0 && oiChangePct >= config.minOiBuildupPct;
 
   // --- Volume expansion vs base window ---
   const baseVol = mean(volumes.slice(-config.baseWindow - 1, -1));
   const volumeExpansion = baseVol === 0 ? 0 : last.volume / baseVol;
   const volumeConfirms = volumeExpansion >= config.minVolumeExpansion;
 
-  // --- Scoring + verdict ---
-  const reasons: string[] = [];
-  let score = 0;
+  const squeezeReason = `Bollinger bandwidth ${(bandwidth * 100).toFixed(2)}% sits in the lowest ${(config.squeezePercentile * 100).toFixed(0)}% of its history (volatility compression)`;
+  const volReason = `Volume ${volumeExpansion.toFixed(2)}× the ${config.baseWindow}-bar average`;
 
-  if (isBreakout) {
-    score += 0.35;
-    reasons.push(
-      `Price ${last.close.toFixed(2)} cleared Donchian high ${donchianHigh.toFixed(2)} / upper band ${upper.toFixed(2)}`,
-    );
-  }
-  if (isSqueeze) {
-    score += 0.25;
-    reasons.push(
-      `Bollinger bandwidth ${(bandwidth * 100).toFixed(2)}% sits in the lowest ${(config.squeezePercentile * 100).toFixed(0)}% of its history (volatility compression)`,
-    );
-  }
-  if (isLongBuildup) {
-    score += 0.3;
-    reasons.push(
-      `Long build-up: price +${(priceChangePct * 100).toFixed(1)}% with OI +${(oiChangePct * 100).toFixed(1)}% over ${config.shortWindow} bars`,
-    );
-  } else if (hasOi && priceChangePct > 0 && oiChangePct < 0) {
-    reasons.push(
-      `Caution: price up but OI ${(oiChangePct * 100).toFixed(1)}% — looks like short covering, not fresh longs`,
-    );
-  }
-  if (volumeConfirms) {
-    score += 0.1;
-    reasons.push(
-      `Volume ${volumeExpansion.toFixed(2)}× the ${config.baseWindow}-bar average`,
-    );
-  }
-  score = Math.min(1, score);
+  // --- Long-side score + verdict ---
+  let longScore = 0;
+  const longReasons: string[] = [];
+  if (isBreakout) { longScore += 0.35; longReasons.push(`Price ${last.close.toFixed(2)} cleared Donchian high ${donchianHigh.toFixed(2)} / upper band ${upper.toFixed(2)}`); }
+  if (isSqueeze) { longScore += 0.25; longReasons.push(squeezeReason); }
+  if (isLongBuildup) { longScore += 0.3; longReasons.push(`Long build-up: price +${(priceChangePct * 100).toFixed(1)}% with OI +${(oiChangePct * 100).toFixed(1)}% over ${config.shortWindow} bars`); }
+  if (volumeConfirms && (isBreakout || isSqueeze)) { longScore += 0.1; longReasons.push(volReason); }
+  let longVerdict: SwingVerdict = "NO_SETUP";
+  if (isBreakout && isLongBuildup) longVerdict = "LONG_BREAKOUT";
+  else if (isSqueeze && isLongBuildup) longVerdict = "COILED_SPRING";
+  else if (isBreakout) longVerdict = "BREAKOUT_UNCONFIRMED";
 
+  // --- Short-side score + verdict ---
+  let shortScore = 0;
+  const shortReasons: string[] = [];
+  if (isBreakdown) { shortScore += 0.35; shortReasons.push(`Price ${last.close.toFixed(2)} broke Donchian low ${donchianLow.toFixed(2)} / lower band ${lower.toFixed(2)}`); }
+  if (isSqueeze) { shortScore += 0.25; shortReasons.push(squeezeReason); }
+  if (isShortBuildup) { shortScore += 0.3; shortReasons.push(`Short build-up: price ${(priceChangePct * 100).toFixed(1)}% with OI +${(oiChangePct * 100).toFixed(1)}% over ${config.shortWindow} bars`); }
+  if (volumeConfirms && (isBreakdown || isSqueeze)) { shortScore += 0.1; shortReasons.push(volReason); }
+  let shortVerdict: SwingVerdict = "NO_SETUP";
+  if (isBreakdown && isShortBuildup) shortVerdict = "SHORT_BREAKDOWN";
+  else if (isSqueeze && isShortBuildup) shortVerdict = "SHORT_COILED_SPRING";
+  else if (isBreakdown) shortVerdict = "BREAKDOWN_UNCONFIRMED";
+
+  // --- Choose dominant side ---
+  let bias: TradeDirection | "NONE";
   let verdict: SwingVerdict;
-  if (isBreakout && isLongBuildup) verdict = "LONG_BREAKOUT";
-  else if (isSqueeze && isLongBuildup) verdict = "COILED_SPRING";
-  else if (isBreakout && !isLongBuildup) verdict = "BREAKOUT_UNCONFIRMED";
-  else verdict = "NO_SETUP";
+  let score: number;
+  let reasons: string[];
+  if (longVerdict === "NO_SETUP" && shortVerdict === "NO_SETUP") {
+    bias = "NONE"; verdict = "NO_SETUP"; score = Math.max(longScore, shortScore);
+    reasons = ["No structural trigger on the latest bar."];
+  } else if (shortVerdict !== "NO_SETUP" && shortScore > longScore) {
+    bias = "SHORT"; verdict = shortVerdict; score = Math.min(1, shortScore); reasons = shortReasons;
+  } else {
+    bias = "LONG"; verdict = longVerdict; score = Math.min(1, longScore); reasons = longReasons;
+  }
 
-  if (reasons.length === 0) reasons.push("No structural trigger on the latest bar.");
+  // --- Raw setup for per-user level derivation ---
+  const recentCloses = closes.slice(-config.baseWindow - 1);
+  let velSum = 0;
+  for (let i = 1; i < recentCloses.length; i++) velSum += Math.abs(recentCloses[i] - recentCloses[i - 1]);
+  const dailyVelocity = recentCloses.length > 1 ? velSum / (recentCloses.length - 1) : 0;
+  const setup: SwingSetup = {
+    currentPrice: last.close,
+    atr: averageTrueRange(bars, 14),
+    longTrigger: Math.max(donchianHigh, upper),
+    shortTrigger: Math.min(donchianLow, lower),
+    hh22: Math.max(...highs.slice(-22)),
+    ll22: Math.min(...lows.slice(-22)),
+    dailyVelocity,
+  };
 
   return {
     verdict,
+    bias,
     score,
     asOf: last.date,
     close: last.close,
     bollinger: { upper, lower, middle, bandwidth },
     isSqueeze,
     isBreakout,
+    isBreakdown,
     donchianHigh,
+    donchianLow,
     priceChangePct,
     oiChangePct,
     isLongBuildup,
+    isShortBuildup,
     volumeExpansion,
     reasons,
-    levels: computeTradeLevels(bars, donchianHigh, upper),
+    setup,
   };
 }
 

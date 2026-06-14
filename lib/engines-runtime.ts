@@ -13,41 +13,60 @@ import {
   type SeriesInput,
 } from "@/lib/analytics/macroCorrelator";
 import type { MarketId, FundStockWeight, UserFundHolding } from "@/lib/types";
+import { deriveLevels, type SwingSetup, type TradeDirection } from "@/lib/analytics/swingClassifier";
+import { DEFAULT_SETTINGS, type SwingSettings } from "@/lib/settings";
 
 type DB = SupabaseClient;
 
 export interface TopSetup {
   ticker: string;
   verdict: string;
+  direction: TradeDirection;
   score: number;
   reason: string;
-  entry: number | null;
-  target: number | null;
-  stopLoss: number | null;
+  entry: number;
+  target: number;
+  stopLoss: number;
+  trailingStop: number;
+  expectedDays: number;
 }
 
-/** Top active swing setups for a market, read from the precomputed table. */
+/** Top active swing setups for a market, with per-user levels applied. */
 export async function getTopSwingSetups(
   supabase: DB,
   country: string,
+  settings: SwingSettings = DEFAULT_SETTINGS,
   limit = 6,
 ): Promise<TopSetup[]> {
   const { data } = await supabase
     .from("swing_signals")
-    .select("ticker,verdict,score,reason,entry_price,target_price,stop_loss")
+    .select("ticker,verdict,score,reason,bias,current_price,atr,long_trigger,short_trigger,hh22,ll22,daily_velocity")
     .eq("country", country)
     .neq("verdict", "NO_SETUP")
     .order("score", { ascending: false })
-    .limit(limit);
-  return ((data ?? []) as Record<string, unknown>[]).map((r) => ({
-    ticker: r.ticker as string,
-    verdict: r.verdict as string,
-    score: Number(r.score),
-    reason: (r.reason as string) ?? "",
-    entry: r.entry_price === null ? null : Number(r.entry_price),
-    target: r.target_price === null ? null : Number(r.target_price),
-    stopLoss: r.stop_loss === null ? null : Number(r.stop_loss),
-  }));
+    .limit(limit * 2); // over-fetch so short filtering still fills the panel
+  const num = (v: unknown) => (v === null || v === undefined ? 0 : Number(v));
+  return ((data ?? []) as Record<string, unknown>[])
+    .filter((r) => settings.includeShort || (r.bias as string) !== "SHORT")
+    .slice(0, limit)
+    .map((r) => {
+      const direction: TradeDirection = (r.bias as string) === "SHORT" ? "SHORT" : "LONG";
+      const setup: SwingSetup = {
+        currentPrice: num(r.current_price), atr: num(r.atr),
+        longTrigger: num(r.long_trigger), shortTrigger: num(r.short_trigger),
+        hh22: num(r.hh22), ll22: num(r.ll22), dailyVelocity: num(r.daily_velocity),
+      };
+      const lv = deriveLevels(setup, direction, settings);
+      return {
+        ticker: r.ticker as string,
+        verdict: r.verdict as string,
+        direction,
+        score: num(r.score),
+        reason: (r.reason as string) ?? "",
+        entry: lv.entry, target: lv.target, stopLoss: lv.stopLoss,
+        trailingStop: lv.trailingStop, expectedDays: lv.expectedDays,
+      };
+    });
 }
 
 /** Look-through fund overlap. Indian mutual-fund data, so India-only. */
