@@ -61,15 +61,17 @@ export async function computeSignals(databaseUrl: string): Promise<ScanSummary> 
           meta.asset_id, meta.ticker, meta.country, meta.exchange, meta.asset_class,
           s.verdict, s.score, s.close, s.bollinger.bandwidth * 100,
           s.isSqueeze, s.isBreakout, s.isLongBuildup, s.reasons[0], s.asOf,
+          s.levels.currentPrice, s.levels.entry, s.levels.target, s.levels.stopLoss,
+          s.levels.trailingStop, s.levels.atr, s.levels.riskRewardRatio,
         ]);
       } catch {
         // too few bars — skip
       }
     }
 
-    const cols = 14;
-    for (let i = 0; i < out.length; i += 500) {
-      const batch = out.slice(i, i + 500);
+    const cols = 21;
+    for (let i = 0; i < out.length; i += 400) {
+      const batch = out.slice(i, i + 400);
       const vals: string[] = [];
       const params: unknown[] = [];
       batch.forEach((r, j) => {
@@ -80,13 +82,17 @@ export async function computeSignals(databaseUrl: string): Promise<ScanSummary> 
       await client.query(
         `insert into public.swing_signals
            (asset_id,ticker,country,exchange,asset_class,verdict,score,last_close,
-            bandwidth_pct,is_squeeze,is_breakout,is_long_buildup,reason,as_of)
+            bandwidth_pct,is_squeeze,is_breakout,is_long_buildup,reason,as_of,
+            current_price,entry_price,target_price,stop_loss,trailing_stop,atr,risk_reward)
          values ${vals.join(",")}
          on conflict (asset_id) do update set
            verdict=excluded.verdict, score=excluded.score, last_close=excluded.last_close,
            bandwidth_pct=excluded.bandwidth_pct, is_squeeze=excluded.is_squeeze,
            is_breakout=excluded.is_breakout, is_long_buildup=excluded.is_long_buildup,
-           reason=excluded.reason, as_of=excluded.as_of, computed_at=now()`,
+           reason=excluded.reason, as_of=excluded.as_of, current_price=excluded.current_price,
+           entry_price=excluded.entry_price, target_price=excluded.target_price,
+           stop_loss=excluded.stop_loss, trailing_stop=excluded.trailing_stop,
+           atr=excluded.atr, risk_reward=excluded.risk_reward, computed_at=now()`,
         params,
       );
     }

@@ -66,6 +66,22 @@ export interface SwingSignal {
   isLongBuildup: boolean;
   volumeExpansion: number; // current vs base-window average
   reasons: string[];
+  levels: TradeLevels;
+}
+
+/** Actionable swing-trade levels for the latest bar (long bias). */
+export interface TradeLevels {
+  currentPrice: number;
+  /** Breakout trigger — the price at which to enter. */
+  entry: number;
+  /** Profit target — the price at which to exit (2:1 reward:risk). */
+  target: number;
+  /** Initial protective stop (ATR-based). */
+  stopLoss: number;
+  /** Chandelier trailing stop (highestHigh - 3·ATR); ratchet up as price rises. */
+  trailingStop: number;
+  atr: number;
+  riskRewardRatio: number;
 }
 
 // ---- numerical helpers ------------------------------------------------------
@@ -106,6 +122,47 @@ function bandwidthSeries(closes: number[], period: number, k: number): number[] 
     out.push(m === 0 ? 0 : (upper - lower) / m);
   }
   return out;
+}
+
+/** Average True Range over `period` bars (Wilder-style simple average of TR). */
+function averageTrueRange(bars: OHLCV[], period: number): number {
+  if (bars.length < 2) return 0;
+  const trs: number[] = [];
+  for (let i = 1; i < bars.length; i++) {
+    const h = bars[i].high;
+    const l = bars[i].low;
+    const pc = bars[i - 1].close;
+    trs.push(Math.max(h - l, Math.abs(h - pc), Math.abs(l - pc)));
+  }
+  const slice = trs.slice(-period);
+  return slice.length ? slice.reduce((a, b) => a + b, 0) / slice.length : 0;
+}
+
+const round2 = (n: number) => Math.round(n * 100) / 100;
+
+/**
+ * Compute actionable long-side trade levels for the latest bar:
+ *   entry  = breakout trigger (Donchian high / upper band)
+ *   stop   = entry − 1.5·ATR
+ *   target = entry + 2·risk  (2:1 reward:risk)
+ *   trail  = chandelier exit (22-bar high − 3·ATR)
+ */
+function computeTradeLevels(
+  bars: OHLCV[],
+  donchianHigh: number,
+  upper: number,
+): TradeLevels {
+  const last = bars[bars.length - 1];
+  const atr = averageTrueRange(bars, 14);
+  const currentPrice = last.close;
+  const entry = round2(Math.max(donchianHigh, upper));
+  const stopLoss = round2(Math.max(0, entry - 1.5 * atr));
+  const risk = entry - stopLoss;
+  const target = round2(entry + 2 * risk);
+  const highestHigh = Math.max(...bars.slice(-22).map((b) => b.high));
+  const trailingStop = round2(Math.max(0, highestHigh - 3 * atr));
+  const riskRewardRatio = risk > 0 ? round2((target - entry) / risk) : 0;
+  return { currentPrice: round2(currentPrice), entry, target, stopLoss, trailingStop, atr: round2(atr), riskRewardRatio };
 }
 
 /**
@@ -232,6 +289,7 @@ export function classifySwingSetup(
     isLongBuildup,
     volumeExpansion,
     reasons,
+    levels: computeTradeLevels(bars, donchianHigh, upper),
   };
 }
 

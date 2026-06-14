@@ -90,52 +90,56 @@ export default function ScreenerTable({
             <tr>
               <th className="px-4 py-3">Ticker</th>
               <th className="px-4 py-3">Mkt</th>
-              <th className="px-4 py-3 text-right">Last</th>
-              <th className="px-4 py-3 text-right">BB width</th>
-              <th className="px-4 py-3">Flags</th>
-              <th className="px-4 py-3 text-right">Score</th>
+              <th className="px-4 py-3 text-right">Current</th>
+              <th className="px-4 py-3 text-right">Entry</th>
+              <th className="px-4 py-3 text-right">Target</th>
+              <th className="px-4 py-3 text-right">Stop</th>
+              <th className="px-4 py-3 text-right">Trail</th>
+              <th className="px-4 py-3 text-right">R:R</th>
               <th className="px-4 py-3 text-right">Verdict</th>
             </tr>
           </thead>
           <tbody>
             {filtered.length === 0 && (
               <tr>
-                <td colSpan={7} className="px-4 py-8 text-center text-white/40">
+                <td colSpan={9} className="px-4 py-8 text-center text-white/40">
                   No matches.
                 </td>
               </tr>
             )}
-            {filtered.map((r) => (
-              <tr key={`${r.exchange}:${r.ticker}`} className="border-t border-white/5">
-                <td className="px-4 py-3">
-                  <span className="font-semibold">{r.ticker}</span>
-                  <span className="ml-2 text-[10px] uppercase text-white/30">{r.assetClass}</span>
-                </td>
-                <td className="px-4 py-3 text-white/50">{r.country === "US" ? "🇺🇸" : "🇮🇳"} {r.exchange}</td>
-                <td className="px-4 py-3 text-right tabular-nums">
-                  {(r.lastQuote ?? r.close).toFixed(2)}
-                  {r.quoteChangePct !== null && (
-                    <span className={`ml-1 text-[10px] ${r.quoteChangePct >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
-                      {r.quoteChangePct >= 0 ? "+" : ""}{r.quoteChangePct.toFixed(2)}%
+            {filtered.map((r) => {
+              const current = r.lastQuote ?? r.close;
+              const fmt = (n: number | null) => (n === null ? "—" : n.toFixed(2));
+              return (
+                <tr key={`${r.exchange}:${r.ticker}`} className="border-t border-white/5">
+                  <td className="px-4 py-3">
+                    <span className="font-semibold">{r.ticker}</span>
+                    <span className="ml-2 text-[10px] uppercase text-white/30">{r.assetClass}</span>
+                  </td>
+                  <td className="px-4 py-3 text-white/50">{r.country === "US" ? "🇺🇸" : "🇮🇳"} {r.exchange}</td>
+                  <td className="px-4 py-3 text-right tabular-nums">
+                    {current.toFixed(2)}
+                    {r.quoteChangePct !== null && (
+                      <span className={`ml-1 text-[10px] ${r.quoteChangePct >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                        {r.quoteChangePct >= 0 ? "+" : ""}{r.quoteChangePct.toFixed(2)}%
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 text-right tabular-nums text-white/80">{fmt(r.entry)}</td>
+                  <td className="px-4 py-3 text-right tabular-nums text-emerald-400">{fmt(r.target)}</td>
+                  <td className="px-4 py-3 text-right tabular-nums text-rose-400">{fmt(r.stopLoss)}</td>
+                  <td className="px-4 py-3 text-right tabular-nums text-amber-300/80">{fmt(r.trailingStop)}</td>
+                  <td className="px-4 py-3 text-right tabular-nums text-white/60">
+                    {r.riskReward ? `${r.riskReward.toFixed(1)}×` : "—"}
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    <span className={`rounded-full border px-2.5 py-0.5 text-[11px] font-medium ${VERDICT_STYLE[r.verdict]}`}>
+                      {r.verdict.replaceAll("_", " ")}
                     </span>
-                  )}
-                </td>
-                <td className="px-4 py-3 text-right tabular-nums text-white/60">{r.bandwidthPct.toFixed(1)}%</td>
-                <td className="px-4 py-3">
-                  <div className="flex gap-1">
-                    {r.isSqueeze && <span className="rounded bg-cyan-500/15 px-1.5 py-0.5 text-[10px] text-cyan-300">SQUEEZE</span>}
-                    {r.isBreakout && <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-[10px] text-emerald-300">BREAKOUT</span>}
-                    {r.isLongBuildup && <span className="rounded bg-violet-500/15 px-1.5 py-0.5 text-[10px] text-violet-300">OI BUILD-UP</span>}
-                  </div>
-                </td>
-                <td className="px-4 py-3 text-right tabular-nums">{(r.score * 100).toFixed(0)}</td>
-                <td className="px-4 py-3 text-right">
-                  <span className={`rounded-full border px-2.5 py-0.5 text-[11px] font-medium ${VERDICT_STYLE[r.verdict]}`}>
-                    {r.verdict.replaceAll("_", " ")}
-                  </span>
-                </td>
-              </tr>
-            ))}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>

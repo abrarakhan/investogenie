@@ -22,6 +22,11 @@ export interface ScreenRow {
   isLongBuildup: boolean;
   reason: string;
   asOf: string;
+  entry: number | null;
+  target: number | null;
+  stopLoss: number | null;
+  trailingStop: number | null;
+  riskReward: number | null;
 }
 
 export async function runScreener(
@@ -36,7 +41,7 @@ export async function runScreener(
     let query = supabase
       .from("swing_signals")
       .select(
-        "asset_id,ticker,country,exchange,asset_class,verdict,score,last_close,bandwidth_pct,is_squeeze,is_breakout,is_long_buildup,reason,as_of",
+        "asset_id,ticker,country,exchange,asset_class,verdict,score,last_close,bandwidth_pct,is_squeeze,is_breakout,is_long_buildup,reason,as_of,entry_price,target_price,stop_loss,trailing_stop,risk_reward",
       );
     if (country) query = query.eq("country", country);
     const { data, error } = await query
@@ -66,6 +71,11 @@ export async function runScreener(
     isLongBuildup: Boolean(r.is_long_buildup),
     reason: (r.reason as string) ?? "",
     asOf: (r.as_of as string) ?? "",
+    entry: r.entry_price === null ? null : Number(r.entry_price),
+    target: r.target_price === null ? null : Number(r.target_price),
+    stopLoss: r.stop_loss === null ? null : Number(r.stop_loss),
+    trailingStop: r.trailing_stop === null ? null : Number(r.trailing_stop),
+    riskReward: r.risk_reward === null ? null : Number(r.risk_reward),
   }));
 
   // Attach the live latest price for each scanned instrument.

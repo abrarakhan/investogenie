@@ -21,6 +21,9 @@ export interface TopSetup {
   verdict: string;
   score: number;
   reason: string;
+  entry: number | null;
+  target: number | null;
+  stopLoss: number | null;
 }
 
 /** Top active swing setups for a market, read from the precomputed table. */
@@ -31,7 +34,7 @@ export async function getTopSwingSetups(
 ): Promise<TopSetup[]> {
   const { data } = await supabase
     .from("swing_signals")
-    .select("ticker,verdict,score,reason")
+    .select("ticker,verdict,score,reason,entry_price,target_price,stop_loss")
     .eq("country", country)
     .neq("verdict", "NO_SETUP")
     .order("score", { ascending: false })
@@ -41,6 +44,9 @@ export async function getTopSwingSetups(
     verdict: r.verdict as string,
     score: Number(r.score),
     reason: (r.reason as string) ?? "",
+    entry: r.entry_price === null ? null : Number(r.entry_price),
+    target: r.target_price === null ? null : Number(r.target_price),
+    stopLoss: r.stop_loss === null ? null : Number(r.stop_loss),
   }));
 }
 

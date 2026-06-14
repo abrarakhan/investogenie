@@ -80,6 +80,17 @@ export default function EngineSection({
                     />
                   </div>
                   <p className="mt-2 text-xs text-white/50">{s.reason}</p>
+                  {s.entry !== null && (
+                    <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] tabular-nums">
+                      <span className="text-white/70">Entry <b>{s.entry.toFixed(2)}</b></span>
+                      {s.target !== null && (
+                        <span className="text-emerald-400">Target <b>{s.target.toFixed(2)}</b></span>
+                      )}
+                      {s.stopLoss !== null && (
+                        <span className="text-rose-400">Stop <b>{s.stopLoss.toFixed(2)}</b></span>
+                      )}
+                    </div>
+                  )}
                 </li>
               ))}
             </ul>
