@@ -1,13 +1,8 @@
-// Server-side glue: pull market data out of Supabase and run the three
-// analytical engines on it. Imported by the dashboard (a Server Component), so
-// it executes on the server with the user's RLS-scoped client. Market/reference
-// tables are public-read, so these queries succeed for any authenticated user.
+// Server-side glue: pull market data out of Supabase and run the analytical
+// engines, scoped to a single market (US or India). Executes on the server with
+// the user's RLS-scoped client; market/reference tables are public-read.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import {
-  scanSwingUniverse,
-  type SwingSignal,
-} from "@/lib/analytics/swingClassifier";
 import {
   analyzeFundOverlap,
   type OverlapReport,
@@ -17,72 +12,61 @@ import {
   type MacroMatrix,
   type SeriesInput,
 } from "@/lib/analytics/macroCorrelator";
-import type { OHLCV, FundStockWeight, UserFundHolding } from "@/lib/types";
+import type { MarketId, FundStockWeight, UserFundHolding } from "@/lib/types";
 
-// The loose (untyped) client returns `any` rows; keep a thin alias for clarity.
 type DB = SupabaseClient;
 
-interface AssetRow {
-  id: string;
+export interface TopSetup {
   ticker: string;
-  asset_class: string;
+  verdict: string;
+  score: number;
+  reason: string;
 }
 
-async function loadOhlcvByTicker(supabase: DB): Promise<Map<string, OHLCV[]>> {
-  const { data: assets } = await supabase
-    .from("assets")
-    .select("id,ticker,asset_class");
-  const idToTicker = new Map<string, string>(
-    ((assets ?? []) as AssetRow[]).map((a) => [a.id, a.ticker]),
-  );
-
-  const { data: bars } = await supabase
-    .from("daily_ohlcv")
-    .select("asset_id,date,open,high,low,close,volume,open_interest")
-    .order("date", { ascending: true });
-
-  const byTicker = new Map<string, OHLCV[]>();
-  for (const b of (bars ?? []) as Record<string, unknown>[]) {
-    const ticker = idToTicker.get(b.asset_id as string);
-    if (!ticker) continue;
-    if (!byTicker.has(ticker)) byTicker.set(ticker, []);
-    byTicker.get(ticker)!.push({
-      date: b.date as string,
-      open: Number(b.open),
-      high: Number(b.high),
-      low: Number(b.low),
-      close: Number(b.close),
-      volume: Number(b.volume),
-      openInterest: b.open_interest === null ? null : Number(b.open_interest),
-    });
-  }
-  return byTicker;
-}
-
-export async function getSwingSignals(
+/** Top active swing setups for a market, read from the precomputed table. */
+export async function getTopSwingSetups(
   supabase: DB,
-): Promise<{ ticker: string; signal: SwingSignal }[]> {
-  const byTicker = await loadOhlcvByTicker(supabase);
-  const universe = [...byTicker.entries()].map(([ticker, bars]) => ({ ticker, bars }));
-  try {
-    return scanSwingUniverse(universe);
-  } catch {
-    return [];
-  }
+  country: string,
+  limit = 6,
+): Promise<TopSetup[]> {
+  const { data } = await supabase
+    .from("swing_signals")
+    .select("ticker,verdict,score,reason")
+    .eq("country", country)
+    .neq("verdict", "NO_SETUP")
+    .order("score", { ascending: false })
+    .limit(limit);
+  return ((data ?? []) as Record<string, unknown>[]).map((r) => ({
+    ticker: r.ticker as string,
+    verdict: r.verdict as string,
+    score: Number(r.score),
+    reason: (r.reason as string) ?? "",
+  }));
 }
 
+/** Look-through fund overlap. Indian mutual-fund data, so India-only. */
 export async function getFundOverlap(supabase: DB): Promise<OverlapReport | null> {
-  const { data: assets } = await supabase
-    .from("assets")
-    .select("id,ticker,asset_class");
-  const idToTicker = new Map<string, string>(
-    ((assets ?? []) as AssetRow[]).map((a) => [a.id, a.ticker]),
-  );
-
   const { data: mfh } = await supabase
     .from("mutual_fund_holdings")
     .select("fund_asset_id,stock_asset_id,weight_percentage");
   if (!mfh || mfh.length === 0) return null;
+
+  // Resolve only the ids we need (avoids the 1k-row cap over the 17k catalog).
+  const ids = [
+    ...new Set(
+      (mfh as Record<string, unknown>[]).flatMap((r) => [
+        r.fund_asset_id as string,
+        r.stock_asset_id as string,
+      ]),
+    ),
+  ];
+  const { data: assets } = await supabase
+    .from("assets")
+    .select("id,ticker")
+    .in("id", ids);
+  const idToTicker = new Map<string, string>(
+    ((assets ?? []) as { id: string; ticker: string }[]).map((a) => [a.id, a.ticker]),
+  );
 
   const lookThrough: FundStockWeight[] = (mfh as Record<string, unknown>[])
     .map((r) => ({
@@ -102,7 +86,6 @@ export async function getFundOverlap(supabase: DB): Promise<OverlapReport | null
   }));
   const metaByTicker = new Map(metaList.map((m) => [m.ticker, m]));
 
-  // Sample investor portfolio: holds every fund we have look-through for.
   const fundTickers = [...new Set(lookThrough.map((l) => l.fundTicker))];
   const sampleNav: Record<string, number> = { IGBLUE: 95.2, IGFLEXI: 210.4 };
   const portfolio: UserFundHolding[] = fundTickers.map((t, i) => ({
@@ -115,7 +98,34 @@ export async function getFundOverlap(supabase: DB): Promise<OverlapReport | null
   return analyzeFundOverlap(portfolio, lookThrough, metaList);
 }
 
-export async function getMacroMatrix(supabase: DB): Promise<MacroMatrix | null> {
+/** OHLCV close series for one ticker (used as a sector proxy). */
+async function tickerCloseSeries(
+  supabase: DB,
+  ticker: string,
+): Promise<{ date: string; value: number }[]> {
+  const { data: asset } = await supabase
+    .from("assets")
+    .select("id")
+    .eq("ticker", ticker)
+    .limit(1)
+    .maybeSingle();
+  if (!asset) return [];
+  const { data: bars } = await supabase
+    .from("daily_ohlcv")
+    .select("date,close")
+    .eq("asset_id", (asset as { id: string }).id)
+    .order("date", { ascending: true });
+  return ((bars ?? []) as Record<string, unknown>[]).map((b) => ({
+    date: b.date as string,
+    value: Number(b.close),
+  }));
+}
+
+/** Macro lead/lag matrix scoped to the market's representative sector. */
+export async function getMacroMatrix(
+  supabase: DB,
+  market: MarketId,
+): Promise<MacroMatrix | null> {
   const { data: macro } = await supabase
     .from("macro_indicators")
     .select("indicator_type,date,value")
@@ -129,15 +139,10 @@ export async function getMacroMatrix(supabase: DB): Promise<MacroMatrix | null> 
     indicatorMap.get(key)!.points.push({ date: m.date as string, value: Number(m.value) });
   }
 
-  // Use real equity price paths as the "sector" series.
-  const byTicker = await loadOhlcvByTicker(supabase);
-  const sectors: SeriesInput[] = [];
-  const sectorMap: Record<string, string> = { NVDA: "US_TECH", RELIANCE: "IN_LARGECAP" };
-  for (const [ticker, label] of Object.entries(sectorMap)) {
-    const bars = byTicker.get(ticker);
-    if (bars) sectors.push({ key: label, points: bars.map((b) => ({ date: b.date, value: b.close })) });
-  }
-  if (sectors.length === 0) return null;
+  const sectorTicker = market === "US" ? "NVDA" : "RELIANCE";
+  const sectorLabel = market === "US" ? "US_TECH" : "IN_LARGECAP";
+  const points = await tickerCloseSeries(supabase, sectorTicker);
+  if (points.length === 0) return null;
 
-  return buildMacroMatrix([...indicatorMap.values()], sectors);
+  return buildMacroMatrix([...indicatorMap.values()], [{ key: sectorLabel, points }]);
 }

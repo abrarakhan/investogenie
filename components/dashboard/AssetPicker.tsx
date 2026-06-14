@@ -22,9 +22,11 @@ interface Result {
 export default function AssetPicker({
   name,
   placeholder = "Search ticker…",
+  country,
 }: {
   name: string;
   placeholder?: string;
+  country?: "US" | "IN";
 }) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<Result[]>([]);
@@ -39,14 +41,15 @@ export default function AssetPicker({
     if (q.length < 1) { setResults([]); return; }
     const t = setTimeout(async () => {
       try {
-        const res = await fetch(`/api/assets/search?q=${encodeURIComponent(q)}`);
+        const cc = country ? `&country=${country}` : "";
+        const res = await fetch(`/api/assets/search?q=${encodeURIComponent(q)}${cc}`);
         const json = await res.json();
         setResults(json.results ?? []);
         setOpen(true);
       } catch { /* ignore */ }
     }, 180);
     return () => clearTimeout(t);
-  }, [query, selected]);
+  }, [query, selected, country]);
 
   // Close on outside click.
   useEffect(() => {

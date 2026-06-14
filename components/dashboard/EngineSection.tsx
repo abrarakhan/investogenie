@@ -1,4 +1,4 @@
-import type { SwingSignal } from "@/lib/analytics/swingClassifier";
+import type { TopSetup } from "@/lib/engines-runtime";
 import type { OverlapReport } from "@/lib/analytics/fundOverlap";
 import type { MacroMatrix } from "@/lib/analytics/macroCorrelator";
 
@@ -43,7 +43,7 @@ export default function EngineSection({
   overlap,
   macro,
 }: {
-  swing: { ticker: string; signal: SwingSignal }[];
+  swing: TopSetup[];
   overlap: OverlapReport | null;
   macro: MacroMatrix | null;
 }) {
@@ -60,26 +60,26 @@ export default function EngineSection({
             <p className="text-sm text-white/50">No active setups on the latest bar.</p>
           ) : (
             <ul className="space-y-3">
-              {swing.map(({ ticker, signal }) => (
+              {swing.map((s) => (
                 <li
-                  key={ticker}
+                  key={s.ticker}
                   className="rounded-2xl border border-white/5 bg-black/20 p-4"
                 >
                   <div className="flex items-center justify-between">
-                    <span className="font-semibold">{ticker}</span>
+                    <span className="font-semibold">{s.ticker}</span>
                     <span
-                      className={`rounded-full border px-2.5 py-0.5 text-[11px] font-medium ${VERDICT_STYLE[signal.verdict]}`}
+                      className={`rounded-full border px-2.5 py-0.5 text-[11px] font-medium ${VERDICT_STYLE[s.verdict]}`}
                     >
-                      {signal.verdict.replaceAll("_", " ")}
+                      {s.verdict.replaceAll("_", " ")}
                     </span>
                   </div>
                   <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-white/10">
                     <div
                       className="h-full rounded-full bg-gradient-to-r from-[var(--ig-primary)] to-[var(--ig-accent)]"
-                      style={{ width: `${Math.round(signal.score * 100)}%` }}
+                      style={{ width: `${Math.round(s.score * 100)}%` }}
                     />
                   </div>
-                  <p className="mt-2 text-xs text-white/50">{signal.reasons[0]}</p>
+                  <p className="mt-2 text-xs text-white/50">{s.reason}</p>
                 </li>
               ))}
             </ul>

@@ -35,8 +35,8 @@ export default function LandingPage() {
           <nav className="hidden gap-8 text-sm text-white/60 md:flex">
             <a href="#engines" className="hover:text-white">Engines</a>
             <a href="#markets" className="hover:text-white">Markets</a>
-            <a href="/screener" className="hover:text-white">Screener</a>
-            <a href="/dashboard" className="hover:text-white">Terminal</a>
+            <a href={`/terminal/${market.id.toLowerCase()}/screener`} className="hover:text-white">Screener</a>
+            <a href={`/terminal/${market.id.toLowerCase()}`} className="hover:text-white">Terminal</a>
           </nav>
         </header>
 
@@ -105,10 +105,10 @@ export default function LandingPage() {
           Supabase backend already provisioned for this build.
         </p>
         <a
-          href="/dashboard"
+          href={`/terminal/${market.id.toLowerCase()}`}
           className="mt-10 inline-block rounded-full bg-gradient-to-r from-[var(--ig-primary)] to-[var(--ig-accent)] px-8 py-3 font-semibold text-black transition-transform hover:scale-105"
         >
-          Enter the Terminal
+          Enter the {market.label}
         </a>
       </section>
 

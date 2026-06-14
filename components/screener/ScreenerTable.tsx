@@ -13,7 +13,13 @@ const VERDICT_STYLE: Record<string, string> = {
 type MarketFilter = "ALL" | "US" | "IN";
 type SetupFilter = "SETUPS" | "ALL";
 
-export default function ScreenerTable({ rows }: { rows: ScreenRow[] }) {
+export default function ScreenerTable({
+  rows,
+  scoped = false,
+}: {
+  rows: ScreenRow[];
+  scoped?: boolean;
+}) {
   const [q, setQ] = useState("");
   const [market, setMarket] = useState<MarketFilter>("ALL");
   const [setup, setSetup] = useState<SetupFilter>("SETUPS");
@@ -48,17 +54,18 @@ export default function ScreenerTable({ rows }: { rows: ScreenRow[] }) {
           className="w-full rounded-xl border border-white/10 bg-black/40 px-4 py-2.5 text-sm outline-none placeholder:text-white/30 focus:border-[var(--ig-primary)] sm:max-w-xs"
         />
         <div className="flex gap-2">
-          {(["ALL", "US", "IN"] as MarketFilter[]).map((m) => (
-            <button
-              key={m}
-              onClick={() => setMarket(m)}
-              className={`rounded-lg border px-3 py-2 text-xs font-semibold ${
-                market === m ? "border-white/30 bg-white/10 text-white" : "border-white/10 text-white/50"
-              }`}
-            >
-              {m === "US" ? "🇺🇸 US" : m === "IN" ? "🇮🇳 India" : "All"}
-            </button>
-          ))}
+          {!scoped &&
+            (["ALL", "US", "IN"] as MarketFilter[]).map((m) => (
+              <button
+                key={m}
+                onClick={() => setMarket(m)}
+                className={`rounded-lg border px-3 py-2 text-xs font-semibold ${
+                  market === m ? "border-white/30 bg-white/10 text-white" : "border-white/10 text-white/50"
+                }`}
+              >
+                {m === "US" ? "🇺🇸 US" : m === "IN" ? "🇮🇳 India" : "All"}
+              </button>
+            ))}
           <button
             onClick={() => setSetup(setup === "SETUPS" ? "ALL" : "SETUPS")}
             className={`rounded-lg border px-3 py-2 text-xs font-semibold ${

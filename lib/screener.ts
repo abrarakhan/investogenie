@@ -24,17 +24,22 @@ export interface ScreenRow {
   asOf: string;
 }
 
-export async function runScreener(supabase: SupabaseClient): Promise<ScreenRow[]> {
+export async function runScreener(
+  supabase: SupabaseClient,
+  country?: string,
+): Promise<ScreenRow[]> {
   // Page through swing_signals (one row per instrument), highest score first.
   const PAGE = 1000;
   let from = 0;
   const raw: Record<string, unknown>[] = [];
   for (;;) {
-    const { data, error } = await supabase
+    let query = supabase
       .from("swing_signals")
       .select(
         "asset_id,ticker,country,exchange,asset_class,verdict,score,last_close,bandwidth_pct,is_squeeze,is_breakout,is_long_buildup,reason,as_of",
-      )
+      );
+    if (country) query = query.eq("country", country);
+    const { data, error } = await query
       .order("score", { ascending: false })
       .order("ticker", { ascending: true })
       .range(from, from + PAGE - 1);

@@ -58,6 +58,19 @@ export const MARKETS: Record<MarketId, MarketConfig> = {
 
 export const DEFAULT_MARKET: MarketId = "US";
 
+/** The opposite market — used by the terminal switcher. */
+export const OTHER_MARKET: Record<MarketId, MarketId> = { US: "IN", IN: "US" };
+
+/** Validate/normalize a route param ("us"/"in") into a MarketId, or null. */
+export function normalizeMarket(param: string | undefined): MarketId | null {
+  if (!param) return null;
+  const p = param.toUpperCase();
+  return p === "US" || p === "IN" ? (p as MarketId) : null;
+}
+
+/** ISO country code backing each market (matches assets.country). */
+export const MARKET_COUNTRY: Record<MarketId, string> = { US: "US", IN: "IN" };
+
 /** Locale + currency aware formatter used across the ticker feeds. */
 export function formatPrice(value: number, market: MarketId): string {
   const cfg = MARKETS[market];
