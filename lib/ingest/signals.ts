@@ -3,6 +3,7 @@
 // Reusable by both the API route and a tsx script.
 import { Client } from "pg";
 import { classifySwingSetup, deriveLevels } from "@/lib/analytics/swingClassifier";
+import { evaluateLegendary } from "@/lib/analytics/legendaryStrategies";
 import type { OHLCV } from "@/lib/types";
 
 export interface ScanSummary {
@@ -60,6 +61,8 @@ export async function computeSignals(databaseUrl: string): Promise<ScanSummary> 
         // Store default-risk levels for convenience + raw fields for per-user derivation.
         const dir = s.bias === "SHORT" ? "SHORT" : "LONG";
         const lv = deriveLevels(s.setup, dir);
+        // Legendary-strategy overlay (never throws; short series -> no tags).
+        const legendary = evaluateLegendary(bars);
         out.push([
           meta.asset_id, meta.ticker, meta.country, meta.exchange, meta.asset_class,
           s.verdict, s.score, s.close, s.bollinger.bandwidth * 100,
@@ -68,15 +71,16 @@ export async function computeSignals(databaseUrl: string): Promise<ScanSummary> 
           lv.trailingStop, s.setup.atr, lv.riskRewardRatio,
           s.bias, s.setup.longTrigger, s.setup.shortTrigger,
           s.setup.hh22, s.setup.ll22, s.setup.dailyVelocity,
+          legendary.tags, JSON.stringify(legendary.scores),
         ]);
       } catch {
         // too few bars — skip
       }
     }
 
-    const cols = 27;
+    const cols = 29;
     for (let i = 0; i < out.length; i += 300) {
-      const batch = out.slice(i, i + 400);
+      const batch = out.slice(i, i + 300);
       const vals: string[] = [];
       const params: unknown[] = [];
       batch.forEach((r, j) => {
@@ -89,7 +93,8 @@ export async function computeSignals(databaseUrl: string): Promise<ScanSummary> 
            (asset_id,ticker,country,exchange,asset_class,verdict,score,last_close,
             bandwidth_pct,is_squeeze,is_breakout,is_long_buildup,reason,as_of,
             current_price,entry_price,target_price,stop_loss,trailing_stop,atr,risk_reward,
-            bias,long_trigger,short_trigger,hh22,ll22,daily_velocity)
+            bias,long_trigger,short_trigger,hh22,ll22,daily_velocity,
+            strategy_tags,strategy_scores)
          values ${vals.join(",")}
          on conflict (asset_id) do update set
            verdict=excluded.verdict, score=excluded.score, last_close=excluded.last_close,
@@ -101,6 +106,7 @@ export async function computeSignals(databaseUrl: string): Promise<ScanSummary> 
            atr=excluded.atr, risk_reward=excluded.risk_reward, bias=excluded.bias,
            long_trigger=excluded.long_trigger, short_trigger=excluded.short_trigger,
            hh22=excluded.hh22, ll22=excluded.ll22, daily_velocity=excluded.daily_velocity,
+           strategy_tags=excluded.strategy_tags, strategy_scores=excluded.strategy_scores,
            computed_at=now()`,
         params,
       );

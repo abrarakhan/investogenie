@@ -54,7 +54,8 @@ export default async function TerminalScreener({
             The derivative-aided swing classifier, precomputed nightly across the{" "}
             {isUS ? "S&P 100 subset" : "full NSE universe (live bhavcopy EOD)"}.
             Breakouts and volatility squeezes are flagged; an OI build-up upgrades
-            a breakout to a validated long.
+            a breakout to a validated long. Use the strategy ribbon to filter by a
+            legendary system — Qullamaggie, Minervini, Darvas, PTJ, or Simons.
           </p>
           {isUS && (
             <p className="mt-2 text-xs text-amber-300/70">

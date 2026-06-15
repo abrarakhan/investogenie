@@ -1,7 +1,8 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import type { ScreenRow } from "@/lib/screener";
+import type { ScreenRow, StrategyLevel } from "@/lib/screener";
+import { STRATEGY_META, type StrategyKey } from "@/lib/analytics/legendaryStrategies";
 
 const VERDICT_STYLE: Record<string, string> = {
   LONG_BREAKOUT: "bg-emerald-500/15 text-emerald-300 border-emerald-500/30",
@@ -15,6 +16,49 @@ const VERDICT_STYLE: Record<string, string> = {
 
 type MarketFilter = "ALL" | "US" | "IN";
 type SetupFilter = "SETUPS" | "ALL";
+type StrategyFilter = "ALL" | StrategyKey;
+
+const STRATEGY_LABEL: Record<StrategyKey, string> = Object.fromEntries(
+  STRATEGY_META.map((m) => [m.key, m.label]),
+) as Record<StrategyKey, string>;
+
+const fmt2 = (n: number | null) => (n === null ? "—" : n.toFixed(2));
+
+interface EffectiveLevels {
+  current: number;
+  dir: ScreenRow["direction"];
+  entry: number | null;
+  target: number | null;
+  stopLoss: number | null;
+  trailingStop: number | null;
+  riskReward: number | null;
+  expectedDays: number | null;
+}
+
+/** Resolve the levels to display for a row: the selected strategy's custom
+ *  levels when a strategy filter is active and the row carries that signature,
+ *  otherwise the default swing levels. Shared by the table and card views. */
+function effectiveLevels(r: ScreenRow, activeStrategy: StrategyKey | null): EffectiveLevels {
+  const sl: StrategyLevel | undefined = activeStrategy ? r.strategyLevels[activeStrategy] : undefined;
+  return {
+    current: r.lastQuote ?? r.close,
+    dir: sl ? sl.direction : r.direction,
+    entry: sl ? sl.entry : r.entry,
+    target: sl ? sl.target : r.target,
+    stopLoss: sl ? sl.stopLoss : r.stopLoss,
+    trailingStop: sl ? sl.trailingStop : r.trailingStop,
+    riskReward: sl ? sl.riskReward : r.riskReward,
+    expectedDays: sl ? sl.expectedDays : r.expectedDays,
+  };
+}
+
+function DirBadge({ dir }: { dir: ScreenRow["direction"] }) {
+  return (
+    <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${dir === "SHORT" ? "bg-rose-500/20 text-rose-300" : "bg-emerald-500/20 text-emerald-300"}`}>
+      {dir === "SHORT" ? "SHORT" : "LONG"}
+    </span>
+  );
+}
 
 export default function ScreenerTable({
   rows,
@@ -26,16 +70,29 @@ export default function ScreenerTable({
   const [q, setQ] = useState("");
   const [market, setMarket] = useState<MarketFilter>("ALL");
   const [setup, setSetup] = useState<SetupFilter>("SETUPS");
+  const [strategy, setStrategy] = useState<StrategyFilter>("ALL");
 
   const filtered = useMemo(() => {
     const needle = q.trim().toUpperCase();
     return rows.filter((r) => {
       if (market !== "ALL" && r.country !== market) return false;
-      if (setup === "SETUPS" && r.verdict === "NO_SETUP") return false;
+      if (strategy !== "ALL" && !r.strategyTags.includes(strategy)) return false;
+      // A strategy filter implies "setups" — skip the NO_SETUP gate so a tagged
+      // row still shows even if the default classifier flagged nothing.
+      if (strategy === "ALL" && setup === "SETUPS" && r.verdict === "NO_SETUP") return false;
       if (needle && !r.ticker.includes(needle)) return false;
       return true;
     });
-  }, [rows, q, market, setup]);
+  }, [rows, q, market, setup, strategy]);
+
+  // When a specific strategy is selected, surface its custom levels (entry line
+  // mapped through the user's risk params) instead of the default swing levels.
+  const activeStrategy: StrategyKey | null = strategy === "ALL" ? null : strategy;
+  const strategyCounts = useMemo(() => {
+    const c = new Map<StrategyKey, number>();
+    for (const r of rows) for (const t of r.strategyTags) c.set(t, (c.get(t) ?? 0) + 1);
+    return c;
+  }, [rows]);
 
   const counts = useMemo(() => {
     const c = { total: rows.length, setups: 0, long: 0 };
@@ -80,6 +137,48 @@ export default function ScreenerTable({
         </div>
       </div>
 
+      {/* Legendary-strategy ribbon */}
+      <div className="mb-5 -mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
+        <button
+          onClick={() => setStrategy("ALL")}
+          className={`shrink-0 rounded-full border px-4 py-2 text-xs font-semibold transition-colors ${
+            strategy === "ALL"
+              ? "border-[var(--ig-primary)]/50 bg-[var(--ig-primary)]/15 text-white"
+              : "border-white/10 text-white/50 hover:text-white"
+          }`}
+        >
+          All systems
+        </button>
+        {STRATEGY_META.map((m) => {
+          const active = strategy === m.key;
+          const n = strategyCounts.get(m.key) ?? 0;
+          return (
+            <button
+              key={m.key}
+              onClick={() => setStrategy(active ? "ALL" : m.key)}
+              title={`${m.trader} — ${m.blurb}`}
+              className={`group shrink-0 rounded-full border px-4 py-2 text-xs font-semibold transition-colors ${
+                active
+                  ? "border-[var(--ig-accent)]/50 bg-[var(--ig-accent)]/15 text-[var(--ig-accent)]"
+                  : "border-white/10 text-white/50 hover:text-white"
+              }`}
+            >
+              {m.label}
+              <span className={`ml-2 rounded-full px-1.5 py-0.5 text-[10px] tabular-nums ${active ? "bg-[var(--ig-accent)]/20" : "bg-white/10 text-white/40"}`}>
+                {n}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      {activeStrategy && (
+        <p className="mb-4 text-xs text-white/50">
+          {STRATEGY_META.find((m) => m.key === activeStrategy)?.blurb} Entry/target/stop
+          below are derived from this system&apos;s entry line through your risk settings.
+        </p>
+      )}
+
       <div className="mb-4 flex gap-6 text-xs text-white/50">
         <span>{counts.total} scanned</span>
         <span>{counts.setups} active setups</span>
@@ -87,72 +186,163 @@ export default function ScreenerTable({
         <span className="ml-auto">{filtered.length} shown</span>
       </div>
 
-      <div className="overflow-x-auto rounded-2xl border border-white/10">
-        <table className="w-full text-sm">
-          <thead className="bg-white/[0.03] text-left text-xs uppercase tracking-wider text-white/40">
-            <tr>
-              <th className="px-4 py-3">Ticker</th>
-              <th className="px-4 py-3">Dir</th>
-              <th className="px-4 py-3 text-right">Current</th>
-              <th className="px-4 py-3 text-right">Entry</th>
-              <th className="px-4 py-3 text-right">Target</th>
-              <th className="px-4 py-3 text-right">Stop</th>
-              <th className="px-4 py-3 text-right">Trail</th>
-              <th className="px-4 py-3 text-right">R:R</th>
-              <th className="px-4 py-3 text-right">~Days</th>
-              <th className="px-4 py-3 text-right">Verdict</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filtered.length === 0 && (
+      {filtered.length === 0 && (
+        <div className="rounded-2xl border border-white/10 px-4 py-10 text-center text-white/40">
+          No matches.
+        </div>
+      )}
+
+      {/* Desktop / tablet: full multi-column technical table (md and up). */}
+      {filtered.length > 0 && (
+        <div className="hidden overflow-x-auto rounded-2xl border border-white/10 md:block">
+          <table className="w-full text-sm">
+            <thead className="bg-white/[0.03] text-left text-xs uppercase tracking-wider text-white/40">
               <tr>
-                <td colSpan={10} className="px-4 py-8 text-center text-white/40">
-                  No matches.
-                </td>
+                <th className="px-4 py-3">Ticker</th>
+                <th className="px-4 py-3">Dir</th>
+                <th className="px-4 py-3 text-right">Current</th>
+                <th className="px-4 py-3 text-right">Entry</th>
+                <th className="px-4 py-3 text-right">Target</th>
+                <th className="px-4 py-3 text-right">Stop</th>
+                <th className="px-4 py-3 text-right">Trail</th>
+                <th className="px-4 py-3 text-right">R:R</th>
+                <th className="px-4 py-3 text-right">~Days</th>
+                <th className="px-4 py-3 text-right">Verdict</th>
               </tr>
-            )}
-            {filtered.map((r) => {
-              const current = r.lastQuote ?? r.close;
-              const fmt = (n: number | null) => (n === null ? "—" : n.toFixed(2));
-              return (
-                <tr key={`${r.exchange}:${r.ticker}`} className="border-t border-white/5">
-                  <td className="px-4 py-3">
-                    <span className="font-semibold">{r.ticker}</span>
-                    <span className="ml-2 text-[10px] uppercase text-white/30">{r.assetClass}</span>
-                  </td>
-                  <td className="px-4 py-3">
-                    <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${r.direction === "SHORT" ? "bg-rose-500/20 text-rose-300" : "bg-emerald-500/20 text-emerald-300"}`}>
-                      {r.direction === "SHORT" ? "SHORT" : "LONG"}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 text-right tabular-nums">
-                    {current.toFixed(2)}
+            </thead>
+            <tbody>
+              {filtered.map((r) => {
+                const lv = effectiveLevels(r, activeStrategy);
+                return (
+                  <tr key={`${r.exchange}:${r.ticker}`} className="border-t border-white/5">
+                    <td className="px-4 py-3">
+                      <span className="font-semibold">{r.ticker}</span>
+                      <span className="ml-2 text-[10px] uppercase text-white/30">{r.assetClass}</span>
+                      {!activeStrategy && r.strategyTags.length > 0 && (
+                        <span className="mt-1 flex flex-wrap gap-1">
+                          {r.strategyTags.map((t) => (
+                            <span
+                              key={t}
+                              title={STRATEGY_LABEL[t]}
+                              className="rounded bg-white/10 px-1.5 py-0.5 text-[9px] font-medium text-white/60"
+                            >
+                              {STRATEGY_LABEL[t]}
+                            </span>
+                          ))}
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3"><DirBadge dir={lv.dir} /></td>
+                    <td className="px-4 py-3 text-right tabular-nums">
+                      {lv.current.toFixed(2)}
+                      {r.quoteChangePct !== null && (
+                        <span className={`ml-1 text-[10px] ${r.quoteChangePct >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                          {r.quoteChangePct >= 0 ? "+" : ""}{r.quoteChangePct.toFixed(2)}%
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-right tabular-nums text-white/80">{fmt2(lv.entry)}</td>
+                    <td className="px-4 py-3 text-right tabular-nums text-emerald-400">{fmt2(lv.target)}</td>
+                    <td className="px-4 py-3 text-right tabular-nums text-rose-400">{fmt2(lv.stopLoss)}</td>
+                    <td className="px-4 py-3 text-right tabular-nums text-amber-300/80">{fmt2(lv.trailingStop)}</td>
+                    <td className="px-4 py-3 text-right tabular-nums text-white/60">
+                      {lv.riskReward ? `${lv.riskReward.toFixed(1)}×` : "—"}
+                    </td>
+                    <td className="px-4 py-3 text-right tabular-nums text-white/60">
+                      {lv.expectedDays ? `${lv.expectedDays}d` : "—"}
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      {activeStrategy ? (
+                        <span className="rounded-full border border-[var(--ig-accent)]/40 bg-[var(--ig-accent)]/10 px-2.5 py-0.5 text-[11px] font-medium text-[var(--ig-accent)]">
+                          {STRATEGY_LABEL[activeStrategy]}
+                        </span>
+                      ) : (
+                        <span className={`rounded-full border px-2.5 py-0.5 text-[11px] font-medium ${VERDICT_STYLE[r.verdict]}`}>
+                          {r.verdict.replaceAll("_", " ")}
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Mobile: stacked card list (below md) — no lateral scrolling. */}
+      <div className="space-y-3 md:hidden">
+        {filtered.map((r) => {
+          const lv = effectiveLevels(r, activeStrategy);
+          return (
+            <div
+              key={`${r.exchange}:${r.ticker}`}
+              className="rounded-2xl border border-white/10 bg-white/[0.02] p-4"
+            >
+              {/* Header: ticker + direction + verdict/strategy */}
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-base font-semibold">{r.ticker}</span>
+                    <span className="text-[10px] uppercase text-white/30">{r.assetClass}</span>
+                    <DirBadge dir={lv.dir} />
+                  </div>
+                  <div className="mt-1 tabular-nums">
+                    <span className="text-lg font-bold">{lv.current.toFixed(2)}</span>
                     {r.quoteChangePct !== null && (
-                      <span className={`ml-1 text-[10px] ${r.quoteChangePct >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                      <span className={`ml-2 text-xs ${r.quoteChangePct >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
                         {r.quoteChangePct >= 0 ? "+" : ""}{r.quoteChangePct.toFixed(2)}%
                       </span>
                     )}
-                  </td>
-                  <td className="px-4 py-3 text-right tabular-nums text-white/80">{fmt(r.entry)}</td>
-                  <td className="px-4 py-3 text-right tabular-nums text-emerald-400">{fmt(r.target)}</td>
-                  <td className="px-4 py-3 text-right tabular-nums text-rose-400">{fmt(r.stopLoss)}</td>
-                  <td className="px-4 py-3 text-right tabular-nums text-amber-300/80">{fmt(r.trailingStop)}</td>
-                  <td className="px-4 py-3 text-right tabular-nums text-white/60">
-                    {r.riskReward ? `${r.riskReward.toFixed(1)}×` : "—"}
-                  </td>
-                  <td className="px-4 py-3 text-right tabular-nums text-white/60">
-                    {r.expectedDays ? `${r.expectedDays}d` : "—"}
-                  </td>
-                  <td className="px-4 py-3 text-right">
-                    <span className={`rounded-full border px-2.5 py-0.5 text-[11px] font-medium ${VERDICT_STYLE[r.verdict]}`}>
-                      {r.verdict.replaceAll("_", " ")}
+                  </div>
+                </div>
+                {activeStrategy ? (
+                  <span className="shrink-0 rounded-full border border-[var(--ig-accent)]/40 bg-[var(--ig-accent)]/10 px-2.5 py-1 text-[11px] font-medium text-[var(--ig-accent)]">
+                    {STRATEGY_LABEL[activeStrategy]}
+                  </span>
+                ) : (
+                  <span className={`shrink-0 rounded-full border px-2.5 py-1 text-[11px] font-medium ${VERDICT_STYLE[r.verdict]}`}>
+                    {r.verdict.replaceAll("_", " ")}
+                  </span>
+                )}
+              </div>
+
+              {/* Strategy badges (when not already filtered by one) */}
+              {!activeStrategy && r.strategyTags.length > 0 && (
+                <div className="mt-3 flex flex-wrap gap-1.5">
+                  {r.strategyTags.map((t) => (
+                    <span key={t} className="rounded bg-white/10 px-2 py-0.5 text-[10px] font-medium text-white/60">
+                      {STRATEGY_LABEL[t]}
                     </span>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+                  ))}
+                </div>
+              )}
+
+              {/* Levels grid — generous touch targets */}
+              <div className="mt-3 grid grid-cols-3 gap-2 text-center tabular-nums">
+                <div className="rounded-lg bg-black/30 py-2">
+                  <div className="text-[10px] uppercase tracking-wide text-white/40">Entry</div>
+                  <div className="text-sm text-white/90">{fmt2(lv.entry)}</div>
+                </div>
+                <div className="rounded-lg bg-black/30 py-2">
+                  <div className="text-[10px] uppercase tracking-wide text-white/40">Target</div>
+                  <div className="text-sm text-emerald-400">{fmt2(lv.target)}</div>
+                </div>
+                <div className="rounded-lg bg-black/30 py-2">
+                  <div className="text-[10px] uppercase tracking-wide text-white/40">Stop</div>
+                  <div className="text-sm text-rose-400">{fmt2(lv.stopLoss)}</div>
+                </div>
+              </div>
+
+              {/* Secondary metrics */}
+              <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] tabular-nums text-white/50">
+                <span>Trail <b className="text-amber-300/80">{fmt2(lv.trailingStop)}</b></span>
+                <span>R:R <b className="text-white/70">{lv.riskReward ? `${lv.riskReward.toFixed(1)}×` : "—"}</b></span>
+                <span>~{lv.expectedDays ? `${lv.expectedDays}d` : "—"}</span>
+              </div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
