@@ -16,7 +16,7 @@
 // the key is missing the caller gets a clear error rather than fabricated data.
 // =============================================================================
 
-import { Client } from "pg";
+import { Pool } from "pg";
 
 export type Provider = "tiingo";
 
@@ -180,8 +180,13 @@ export async function backfillUsHistory(
   const endISO = isoDay(end);
   const startISO = opts.startISO ?? defaultStartISO(sessions, end);
 
-  const client = new Client({ connectionString: databaseUrl, ssl: { rejectUnauthorized: false } });
-  await client.connect();
+  // Pool (not a single Client): the concurrency pool issues overlapping upserts,
+  // which a lone Client cannot run in parallel. `max` matches the fetch fan-out.
+  const client = new Pool({
+    connectionString: databaseUrl,
+    ssl: { rejectUnauthorized: false },
+    max: Math.max(2, concurrency),
+  });
   try {
     // Resolve ticker -> asset_id for the US equity universe.
     const params: unknown[] = [];

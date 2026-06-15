@@ -325,12 +325,17 @@ export function detectMinervini(bars: OHLCV[]): StrategyResult {
   const template = [c1, c2, c3, c4, c5, c6, c7, c8];
   const passed = template.filter(Boolean).length;
 
-  // VCP: ≥2 contractions, each narrower than the previous.
-  const depths = contractionDepths(bars, 90);
-  let narrowing = depths.length >= 2;
-  for (let i = 1; i < depths.length && narrowing; i++) {
-    if (depths[i] >= depths[i - 1]) narrowing = false;
+  // VCP: the *most recent* pullbacks tighten into the pivot. We look at the last
+  // few contractions (not every swing in the base) and require them to step down
+  // in depth, ending in a tight final contraction — Minervini's "footprint".
+  const allDepths = contractionDepths(bars, 120);
+  const recent = allDepths.slice(-4);
+  let narrowing = recent.length >= 2;
+  for (let i = 1; i < recent.length && narrowing; i++) {
+    if (recent[i] >= recent[i - 1]) narrowing = false; // each tighter than the last
   }
+  // Final contraction should be genuinely shallow (≤ ~15%).
+  if (narrowing && recent[recent.length - 1] > 0.15) narrowing = false;
 
   const templateOk = passed === 8;
   const matched = templateOk && narrowing;
@@ -347,8 +352,8 @@ export function detectMinervini(bars: OHLCV[]): StrategyResult {
     direction: "LONG",
     entryTrigger: matched ? round2(pivot) : null,
     note: matched
-      ? `Trend Template 8/8 with ${depths.length} narrowing contractions (VCP). Pivot entry ${round2(pivot)}.`
-      : `Trend Template ${passed}/8${depths.length >= 2 ? `, ${depths.length} contractions` : ""} — not a full VCP.`,
+      ? `Trend Template 8/8 with ${recent.length} narrowing contractions (VCP). Pivot entry ${round2(pivot)}.`
+      : `Trend Template ${passed}/8${recent.length >= 2 ? `, ${recent.length} contractions` : ""} — not a full VCP.`,
   };
 }
 

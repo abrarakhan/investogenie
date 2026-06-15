@@ -243,7 +243,7 @@ Populated nightly by `computeSignals()` alongside the swing scan.
 - `ScreenerTable` renders a horizontal **strategy ribbon** ("All systems" + one chip per system with a live match count). Selecting a strategy filters rows to that tag and swaps the displayed levels to that system's entry line.
 
 ### Data-coverage note
-On the 60-session NSE history, `DARVAS`, `SIMONS`, and `QULLAMAGGIE` fire; `MINERVINI` and `PTJ` correctly stay silent until ~200+ bars exist. Running the real US backfill (`scripts/backfill-us-history.mjs`, requires `FINANCIAL_API_KEY`) seeds ≥250 sessions and activates Minervini/PTJ on the US universe.
+On the 60-session NSE history, `DARVAS`, `SIMONS`, and `QULLAMAGGIE` fire. The real US backfill (`scripts/backfill-us-history.mjs`, `FINANCIAL_API_KEY`) has seeded ~280–340 sessions for ~45 liquid mega-caps, which activates **`PTJ` (28 names), `DARVAS` (28), `SIMONS` (7)** on the US set. **`MINERVINI` currently returns 0** — by design it requires the full 8-point Trend Template *and* a tightening VCP; the current mega-cap set tops out at 6–7/8 (verified via diagnostic). It will fire as names set up and as US coverage widens beyond 45 tickers (Tiingo free tier caps ~50 unique symbols/hour).
 
 ---
 
