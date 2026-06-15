@@ -34,6 +34,43 @@ export interface OHLCV {
   openInterest?: number | null;
 }
 
+export type ReportType = "QUARTERLY" | "ANNUAL" | "TTM";
+
+/** One corporate fundamentals report period (monetary fields in Rs. Crore). */
+export interface AssetFinancialReport {
+  assetId: string;
+  periodEndDate: string; // ISO yyyy-mm-dd
+  reportType: ReportType;
+  fiscalPeriod?: string | null;
+  currency: string;
+  revenue: number | null;
+  netProfit: number | null;
+  operatingProfit: number | null;
+  ebit: number | null;
+  capitalEmployed: number | null;
+  eps: number | null;
+  cmp: number | null;
+  peRatio: number | null;
+  marketCap: number | null; // Rs. Cr
+  roce: number | null; // %
+  profitVarianceYoY: number | null; // %
+  salesVarianceYoY: number | null; // %
+  source?: string | null;
+}
+
+/** Compact latest-quarter snapshot the screener joins onto each row. */
+export interface FinancialSnapshot {
+  periodEndDate: string;
+  fiscalPeriod: string | null;
+  peRatio: number | null;
+  marketCap: number | null;
+  roce: number | null;
+  profitVarianceYoY: number | null;
+  salesVarianceYoY: number | null;
+  revenue: number | null;
+  netProfit: number | null;
+}
+
 export interface MacroPoint {
   indicatorType: string;
   date: string;

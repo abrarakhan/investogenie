@@ -5,6 +5,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getQuotesByAssetIds } from "@/lib/quotes";
+import { getFundamentalsByAssetIds } from "@/lib/fundamentals";
 import { deriveLevels, type SwingSetup, type TradeDirection } from "@/lib/analytics/swingClassifier";
 import type { StrategyKey, StrategyScore } from "@/lib/analytics/legendaryStrategies";
 import { DEFAULT_SETTINGS, type SwingSettings } from "@/lib/settings";
@@ -50,6 +51,13 @@ export interface ScreenRow {
   strategyTags: StrategyKey[];
   /** Per-strategy levels keyed by strategy key (entry mapped through deriveLevels). */
   strategyLevels: Record<string, StrategyLevel>;
+  // Latest-quarter corporate fundamentals (null when no report on file).
+  peRatio: number | null;
+  marketCap: number | null; // Rs. Cr
+  roce: number | null; // %
+  profitVarYoY: number | null; // %
+  salesVarYoY: number | null; // %
+  fundamentalsAsOf: string | null;
 }
 
 export async function runScreener(
@@ -144,14 +152,33 @@ export async function runScreener(
         expectedDays: lv.expectedDays,
         strategyTags: tags,
         strategyLevels,
+        peRatio: null,
+        marketCap: null,
+        roce: null,
+        profitVarYoY: null,
+        salesVarYoY: null,
+        fundamentalsAsOf: null,
       };
     });
 
-  // Attach the live latest price for each scanned instrument.
-  const quotes = await getQuotesByAssetIds(supabase, out.map((r) => r.assetId));
+  // Attach the live latest price + latest corporate fundamentals per instrument.
+  const assetIds = out.map((r) => r.assetId);
+  const [quotes, fundamentals] = await Promise.all([
+    getQuotesByAssetIds(supabase, assetIds),
+    getFundamentalsByAssetIds(supabase, assetIds),
+  ]);
   for (const r of out) {
     const q = quotes.get(r.assetId);
     if (q) { r.lastQuote = q.price; r.quoteChangePct = q.changePct; }
+    const f = fundamentals.get(r.assetId);
+    if (f) {
+      r.peRatio = f.peRatio;
+      r.marketCap = f.marketCap;
+      r.roce = f.roce;
+      r.profitVarYoY = f.profitVarianceYoY;
+      r.salesVarYoY = f.salesVarianceYoY;
+      r.fundamentalsAsOf = f.periodEndDate || null;
+    }
   }
 
   out.sort((a, b) => {

@@ -90,6 +90,8 @@ investogenie/
 | `mutual_fund_holdings` | Fund → stock weight, quarter |
 | `derivative_meta` | Expiry, lot size, settlement kind |
 | `cron_logs` | Per-run cron audit trail — job, status, detail jsonb, error, duration (RLS-on, no policy → service-only) |
+| `asset_financial_reports` | 15-yr corporate fundamentals — revenue, net_profit, ebit, capital_employed, eps, P/E, market_cap, ROCE, YoY profit/sales variance. PK `(asset_id, period_end_date, report_type)`, index `(asset_id, period_end_date desc)` |
+| `latest_financials` *(view)* | `distinct on (asset_id)` latest quarterly snapshot; `security_invoker` so base-table RLS applies. Joined by the screener |
 
 ### User data (RLS: `user_id = auth.uid()`)
 
@@ -242,6 +244,27 @@ Populated nightly by `computeSignals()` alongside the swing scan.
 
 ### Data-coverage note
 On the 60-session NSE history, `DARVAS`, `SIMONS`, and `QULLAMAGGIE` fire; `MINERVINI` and `PTJ` correctly stay silent until ~200+ bars exist. Running the real US backfill (`scripts/backfill-us-history.mjs`, requires `FINANCIAL_API_KEY`) seeds ≥250 sessions and activates Minervini/PTJ on the US universe.
+
+---
+
+## Corporate Fundamentals (15-year)
+
+**Migration:** `0010_financial_reports.sql` · **Ingestion:** `lib/ingest/fundamentals.ts` (+ `scripts/ingest-fundamentals.mjs`) · **Read:** `lib/fundamentals.ts`
+
+Tracks CMP (live, from `latest_quotes`), P/E, market cap, ROCE, and YoY quarterly profit/sales variance across the Indian universe, with up to 15 years of quarterly history per company.
+
+### Ingestion pipeline
+- Accepts a multi-year structural JSON array (FMP-style): `[{ ticker, currencyScale?, currency?, source?, reports: [...] }]`.
+- **Currency normalisation** to Rs. Crore via `currencyScale` (`ABSOLUTE` | `LAKH` | `MILLION` | `BILLION` | `CRORE`).
+- **Derived metrics, computed gracefully** (null on missing inputs): ROCE = EBIT / Capital Employed; P/E = price / EPS; YoY variance vs the prior-year same-quarter report (±45-day match tolerance).
+- **15-year window** filter on `period_end_date`.
+- **Upsert** `ON CONFLICT (asset_id, period_end_date, report_type) DO UPDATE` — revisions overwrite in place; historic quarters stay pristine. Verified idempotent (re-ingest keeps row count steady).
+- A company's fundamentals attach to **all** listings of its ticker (NSE + BSE).
+
+### Screener integration
+- `runScreener` joins `latest_financials` (`getFundamentalsByAssetIds`, chunked) onto each row → `ScreenRow.{peRatio, marketCap, roce, profitVarYoY, salesVarYoY}`.
+- `ScreenerTable` adds P/E · Mkt Cap · ROCE · Profit Δ · Sales Δ columns (desktop) and a fundamentals block (mobile cards), with graceful `—` for rows lacking a report.
+- A **Fundamentals filter bar** (ROCE ≥, P/E ≤) composes with the technical/strategy filters — e.g. *ROCE ≥ 20% AND an active breakout* = set ROCE ≥ 20 with "Setups only".
 
 ---
 

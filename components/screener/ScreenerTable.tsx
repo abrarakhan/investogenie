@@ -23,6 +23,17 @@ const STRATEGY_LABEL: Record<StrategyKey, string> = Object.fromEntries(
 ) as Record<StrategyKey, string>;
 
 const fmt2 = (n: number | null) => (n === null ? "—" : n.toFixed(2));
+const fmtRatio = (n: number | null) => (n === null ? "—" : n.toFixed(1));
+const fmtPct = (n: number | null) => (n === null ? "—" : `${n >= 0 ? "+" : ""}${n.toFixed(1)}%`);
+/** Compact Rs. Crore — rolls up to Lakh-Cr / k-Cr for large caps. */
+const fmtCr = (n: number | null): string => {
+  if (n === null) return "—";
+  if (n >= 100_000) return `${(n / 100_000).toFixed(2)}L Cr`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k Cr`;
+  return `${Math.round(n)} Cr`;
+};
+const varColor = (n: number | null) =>
+  n === null ? "text-white/30" : n >= 0 ? "text-emerald-400" : "text-rose-400";
 
 interface EffectiveLevels {
   current: number;
@@ -71,9 +82,14 @@ export default function ScreenerTable({
   const [market, setMarket] = useState<MarketFilter>("ALL");
   const [setup, setSetup] = useState<SetupFilter>("SETUPS");
   const [strategy, setStrategy] = useState<StrategyFilter>("ALL");
+  // Fundamental ratio filters (blank = no constraint).
+  const [minRoce, setMinRoce] = useState("");
+  const [maxPe, setMaxPe] = useState("");
 
   const filtered = useMemo(() => {
     const needle = q.trim().toUpperCase();
+    const roceMin = minRoce.trim() === "" ? null : Number(minRoce);
+    const peMax = maxPe.trim() === "" ? null : Number(maxPe);
     return rows.filter((r) => {
       if (market !== "ALL" && r.country !== market) return false;
       if (strategy !== "ALL" && !r.strategyTags.includes(strategy)) return false;
@@ -81,9 +97,14 @@ export default function ScreenerTable({
       // row still shows even if the default classifier flagged nothing.
       if (strategy === "ALL" && setup === "SETUPS" && r.verdict === "NO_SETUP") return false;
       if (needle && !r.ticker.includes(needle)) return false;
+      // Fundamental filters: a missing metric cannot satisfy a numeric bound.
+      if (roceMin !== null && Number.isFinite(roceMin) && (r.roce === null || r.roce < roceMin)) return false;
+      if (peMax !== null && Number.isFinite(peMax) && (r.peRatio === null || r.peRatio > peMax)) return false;
       return true;
     });
-  }, [rows, q, market, setup, strategy]);
+  }, [rows, q, market, setup, strategy, minRoce, maxPe]);
+
+  const hasFundamentals = useMemo(() => rows.some((r) => r.roce !== null || r.peRatio !== null), [rows]);
 
   // When a specific strategy is selected, surface its custom levels (entry line
   // mapped through the user's risk params) instead of the default swing levels.
@@ -179,6 +200,47 @@ export default function ScreenerTable({
         </p>
       )}
 
+      {/* Fundamental ratio filters — combine with the technical signal above. */}
+      <div className="mb-4 flex flex-wrap items-center gap-3 rounded-xl border border-white/10 bg-white/[0.02] px-4 py-3">
+        <span className="text-[11px] uppercase tracking-wider text-white/40">Fundamentals</span>
+        <label className="flex items-center gap-2 text-xs text-white/60">
+          ROCE ≥
+          <input
+            type="number"
+            inputMode="decimal"
+            value={minRoce}
+            onChange={(e) => setMinRoce(e.target.value)}
+            placeholder="20"
+            className="w-20 rounded-lg border border-white/10 bg-black/40 px-2 py-1.5 text-sm tabular-nums outline-none focus:border-[var(--ig-primary)]"
+          />
+          %
+        </label>
+        <label className="flex items-center gap-2 text-xs text-white/60">
+          P/E ≤
+          <input
+            type="number"
+            inputMode="decimal"
+            value={maxPe}
+            onChange={(e) => setMaxPe(e.target.value)}
+            placeholder="any"
+            className="w-20 rounded-lg border border-white/10 bg-black/40 px-2 py-1.5 text-sm tabular-nums outline-none focus:border-[var(--ig-primary)]"
+          />
+        </label>
+        {(minRoce || maxPe) && (
+          <button
+            onClick={() => { setMinRoce(""); setMaxPe(""); }}
+            className="rounded-lg border border-white/10 px-2.5 py-1.5 text-xs text-white/50 hover:text-white"
+          >
+            Clear
+          </button>
+        )}
+        {!hasFundamentals && (
+          <span className="text-[11px] text-amber-300/60">
+            No fundamentals loaded yet — run the fundamentals ingestion to populate ROCE / P/E.
+          </span>
+        )}
+      </div>
+
       <div className="mb-4 flex gap-6 text-xs text-white/50">
         <span>{counts.total} scanned</span>
         <span>{counts.setups} active setups</span>
@@ -207,6 +269,11 @@ export default function ScreenerTable({
                 <th className="px-4 py-3 text-right">Trail</th>
                 <th className="px-4 py-3 text-right">R:R</th>
                 <th className="px-4 py-3 text-right">~Days</th>
+                <th className="px-4 py-3 text-right">P/E</th>
+                <th className="px-4 py-3 text-right">Mkt Cap</th>
+                <th className="px-4 py-3 text-right">ROCE</th>
+                <th className="px-4 py-3 text-right">Profit Δ</th>
+                <th className="px-4 py-3 text-right">Sales Δ</th>
                 <th className="px-4 py-3 text-right">Verdict</th>
               </tr>
             </thead>
@@ -251,6 +318,13 @@ export default function ScreenerTable({
                     <td className="px-4 py-3 text-right tabular-nums text-white/60">
                       {lv.expectedDays ? `${lv.expectedDays}d` : "—"}
                     </td>
+                    <td className="px-4 py-3 text-right tabular-nums text-white/70">{fmtRatio(r.peRatio)}</td>
+                    <td className="px-4 py-3 text-right tabular-nums text-white/70">{fmtCr(r.marketCap)}</td>
+                    <td className={`px-4 py-3 text-right tabular-nums ${r.roce === null ? "text-white/30" : r.roce >= 20 ? "text-emerald-400" : "text-white/70"}`}>
+                      {r.roce === null ? "—" : `${r.roce.toFixed(1)}%`}
+                    </td>
+                    <td className={`px-4 py-3 text-right tabular-nums ${varColor(r.profitVarYoY)}`}>{fmtPct(r.profitVarYoY)}</td>
+                    <td className={`px-4 py-3 text-right tabular-nums ${varColor(r.salesVarYoY)}`}>{fmtPct(r.salesVarYoY)}</td>
                     <td className="px-4 py-3 text-right">
                       {activeStrategy ? (
                         <span className="rounded-full border border-[var(--ig-accent)]/40 bg-[var(--ig-accent)]/10 px-2.5 py-0.5 text-[11px] font-medium text-[var(--ig-accent)]">
@@ -339,6 +413,16 @@ export default function ScreenerTable({
                 <span>Trail <b className="text-amber-300/80">{fmt2(lv.trailingStop)}</b></span>
                 <span>R:R <b className="text-white/70">{lv.riskReward ? `${lv.riskReward.toFixed(1)}×` : "—"}</b></span>
                 <span>~{lv.expectedDays ? `${lv.expectedDays}d` : "—"}</span>
+              </div>
+
+              {/* Fundamentals — graceful "—" for rows without a report on file. */}
+              <div className="mt-3 grid grid-cols-3 gap-x-4 gap-y-1 border-t border-white/5 pt-3 text-[11px] tabular-nums text-white/50">
+                <span>P/E <b className="text-white/70">{fmtRatio(r.peRatio)}</b></span>
+                <span>ROCE <b className={r.roce !== null && r.roce >= 20 ? "text-emerald-400" : "text-white/70"}>{r.roce === null ? "—" : `${r.roce.toFixed(1)}%`}</b></span>
+                <span>Mkt <b className="text-white/70">{fmtCr(r.marketCap)}</b></span>
+                <span>Profit Δ <b className={varColor(r.profitVarYoY)}>{fmtPct(r.profitVarYoY)}</b></span>
+                <span>Sales Δ <b className={varColor(r.salesVarYoY)}>{fmtPct(r.salesVarYoY)}</b></span>
+                {r.fundamentalsAsOf && <span className="text-white/30">{r.fundamentalsAsOf}</span>}
               </div>
             </div>
           );
