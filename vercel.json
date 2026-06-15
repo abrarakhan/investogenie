@@ -1,6 +1,10 @@
 {
   "crons": [
     {
+      "path": "/api/cron/backfill-us-expand",
+      "schedule": "0 * * * *"
+    },
+    {
       "path": "/api/cron/backfill-us",
       "schedule": "0 22 * * 1-5"
     },

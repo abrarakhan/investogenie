@@ -4,7 +4,7 @@
 // the reason a job reports failure.
 import { Client } from "pg";
 
-export type CronJob = "refresh-quotes" | "scan" | "backfill-us";
+export type CronJob = "refresh-quotes" | "scan" | "backfill-us" | "backfill-us-expand";
 export type CronStatus = "ok" | "error";
 
 export interface CronLogEntry {

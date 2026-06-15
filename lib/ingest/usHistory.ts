@@ -33,13 +33,27 @@ export interface UsHistoryOptions {
   concurrency?: number;
   /** Provider id (default "tiingo"). */
   provider?: Provider;
+  /**
+   * Resumable coverage mode: select only US tickers that don't yet have at least
+   * `minBars` rows in daily_ohlcv, deterministically ordered and capped at
+   * `batch`. This is the incremental protocol used to walk the full universe a
+   * rate-limit-sized slice at a time without ever re-pulling covered names.
+   */
+  onlyMissing?: boolean;
+  /** "Covered" threshold for onlyMissing (default 200 — enough for 200-day MAs). */
+  minBars?: number;
+  /** Max tickers to pull this run (default = all selected). Keep ≤ provider hourly cap. */
+  batch?: number;
 }
 
 export interface UsHistorySummary {
   provider: Provider;
+  mode: "explicit" | "missing" | "all";
   tickersRequested: number;
   tickersFetched: number;
   barsUpserted: number;
+  /** US tickers still lacking sufficient history after this run (coverage backlog). */
+  remainingMissing: number;
   failures: { ticker: string; error: string }[];
   durationMs: number;
 }
@@ -187,15 +201,44 @@ export async function backfillUsHistory(
     ssl: { rejectUnauthorized: false },
     max: Math.max(2, concurrency),
   });
+  const minBars = opts.minBars ?? 200;
+  const mode: "explicit" | "missing" | "all" =
+    opts.tickers && opts.tickers.length ? "explicit" : opts.onlyMissing ? "missing" : "all";
+
   try {
     // Resolve ticker -> asset_id for the US equity universe.
-    const params: unknown[] = [];
-    let sql = "select id, ticker from public.assets where country='US' and asset_class='STOCK'";
-    if (opts.tickers && opts.tickers.length) {
-      sql += " and ticker = any($1)";
-      params.push(opts.tickers.map((t) => t.toUpperCase()));
+    let assetRows: { id: string; ticker: string }[];
+    if (mode === "explicit") {
+      assetRows = (
+        await client.query<{ id: string; ticker: string }>(
+          "select id, ticker from public.assets where country='US' and asset_class='STOCK' and ticker = any($1)",
+          [opts.tickers!.map((t) => t.toUpperCase())],
+        )
+      ).rows;
+    } else if (mode === "missing") {
+      // Resumable: only US stocks not yet covered (< minBars rows), ordered
+      // deterministically, capped at `batch` so a single run stays within the
+      // provider's hourly unique-symbol limit.
+      const limit = opts.batch ?? 45;
+      assetRows = (
+        await client.query<{ id: string; ticker: string }>(
+          `select a.id, a.ticker
+             from public.assets a
+             left join (select asset_id, count(*) n from public.daily_ohlcv group by asset_id) o
+               on o.asset_id = a.id
+            where a.country='US' and a.asset_class='STOCK' and coalesce(o.n, 0) < $1
+            order by a.ticker
+            limit $2`,
+          [minBars, limit],
+        )
+      ).rows;
+    } else {
+      assetRows = (
+        await client.query<{ id: string; ticker: string }>(
+          "select id, ticker from public.assets where country='US' and asset_class='STOCK'",
+        )
+      ).rows;
     }
-    const { rows: assetRows } = await client.query<{ id: string; ticker: string }>(sql, params);
     const idByTicker = new Map(assetRows.map((r) => [r.ticker.toUpperCase(), r.id]));
     const tickers = [...idByTicker.keys()];
 
@@ -239,11 +282,22 @@ export async function backfillUsHistory(
       }
     });
 
+    // How many US stocks still lack sufficient history (coverage backlog).
+    const { rows: backlog } = await client.query<{ n: string }>(
+      `select count(*) n from public.assets a
+         left join (select asset_id, count(*) c from public.daily_ohlcv group by asset_id) o
+           on o.asset_id = a.id
+        where a.country='US' and a.asset_class='STOCK' and coalesce(o.c, 0) < $1`,
+      [minBars],
+    );
+
     return {
       provider,
+      mode,
       tickersRequested: tickers.length,
       tickersFetched,
       barsUpserted,
+      remainingMissing: Number(backlog[0]?.n ?? 0),
       failures,
       durationMs: Date.now() - t0,
     };

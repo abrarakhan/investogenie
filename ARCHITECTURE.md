@@ -243,7 +243,7 @@ Populated nightly by `computeSignals()` alongside the swing scan.
 - `ScreenerTable` renders a horizontal **strategy ribbon** ("All systems" + one chip per system with a live match count). Selecting a strategy filters rows to that tag and swaps the displayed levels to that system's entry line.
 
 ### Data-coverage note
-On the 60-session NSE history, `DARVAS`, `SIMONS`, and `QULLAMAGGIE` fire. The real US backfill (`scripts/backfill-us-history.mjs`, `FINANCIAL_API_KEY`) has seeded ~280–340 sessions for ~45 liquid mega-caps, which activates **`PTJ` (28 names), `DARVAS` (28), `SIMONS` (7)** on the US set. **`MINERVINI` currently returns 0** — by design it requires the full 8-point Trend Template *and* a tightening VCP; the current mega-cap set tops out at 6–7/8 (verified via diagnostic). It will fire as names set up and as US coverage widens beyond 45 tickers (Tiingo free tier caps ~50 unique symbols/hour).
+On the 60-session NSE history, `DARVAS`, `SIMONS`, and `QULLAMAGGIE` fire. The real US backfill (`scripts/backfill-us-history.mjs`, `FINANCIAL_API_KEY`) has seeded ~280–340 sessions for ~45 liquid mega-caps, which activates **`PTJ` (28 names), `DARVAS` (28), `SIMONS` (7)** on the US set. **`MINERVINI` currently returns 0** — by design it requires the full 8-point Trend Template *and* a tightening VCP; the current mega-cap set tops out at 6–7/8 (verified via diagnostic). It will fire as names set up and as the `backfill-us-expand` walk widens US coverage (see the incremental protocol below).
 
 ---
 
@@ -274,9 +274,19 @@ Tracks CMP (live, from `latest_quotes`), P/E, market cap, ROCE, and YoY quarterl
 
 | Job | UTC time | What it does |
 |-----|----------|-------------|
-| `backfill-us` | 22:00 weekdays | Tops up US `daily_ohlcv` (trailing ~15 sessions) from the real provider |
+| `backfill-us-expand` | hourly | **Incremental coverage walk** — pulls full history for the next batch of un-covered US stocks (resumable, rate-limited) |
+| `backfill-us` | 22:00 weekdays | Tops up already-covered US `daily_ohlcv` (trailing ~15 sessions) |
 | `refresh-quotes` | 22:30 weekdays | Fetches latest prices for all 17,660 assets |
 | `scan` | 23:00 weekdays | Runs swing classifier + legendary strategies across all OHLCV, upserts swing_signals |
+
+### Incremental US coverage protocol (Tiingo free tier)
+
+`backfill-us-expand` walks the **entire** US universe (10,416 stocks) a slice at a time without ever re-pulling a covered name:
+- **Resumable** — each run selects only tickers with `< minBars` (200) rows in `daily_ohlcv` (`backfillUsHistory({ onlyMissing: true })`), ordered deterministically, capped at `HOURLY_BATCH = 45`.
+- **Rate-limit compliant** — 45 < Tiingo's ~50 unique-symbols/hour; a monthly guard (`MONTHLY_UNIQUE_CAP = 480`, summed from `cron_logs`) stops the job once the ~500 unique-symbols/**month** free-tier ceiling is approached, then it idles until the next calendar month.
+- **Fault-tolerant** — delisted-ticker 404s are isolated and logged (not a run failure); only a fully-empty batch flags `error`.
+
+**Free-tier reality:** at ~480 new uniques/month, full coverage of 10,416 stocks takes ~21 months, and daily maintenance of a large covered set itself consumes the monthly unique budget. For full/fast coverage, upgrade the Tiingo plan (raises `HOURLY_BATCH`/`MONTHLY_UNIQUE_CAP`) or scope to a liquid subset (e.g. Russell 1000).
 
 Every cron run (success or failure) is recorded to `public.cron_logs` via a best-effort logger (`lib/ingest/cronLog.ts`), and all three routes are strictly gated by `CRON_SECRET` (`checkCronAuth` — an *unset* secret is treated as misconfiguration → 500, never "open").
 
