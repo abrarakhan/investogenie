@@ -69,8 +69,33 @@ export async function getTopSwingSetups(
     });
 }
 
-/** Look-through fund overlap. Indian mutual-fund data, so India-only. */
+interface FundHoldingRow {
+  quantity: number | string;
+  avg_cost: number | string | null;
+  asset: { ticker: string; asset_class: string } | { ticker: string; asset_class: string }[] | null;
+}
+
+/** Look-through fund overlap for the signed-in user's actual mutual-fund
+ *  positions. Returns null when the user holds no funds (empty state) so the
+ *  terminal never shows rebalancing advice for funds they don't own. */
 export async function getFundOverlap(supabase: DB): Promise<OverlapReport | null> {
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return null;
+
+  // The user's real fund positions (RLS-scoped to this user).
+  const { data: holdings } = await supabase
+    .from("holdings")
+    .select("quantity, avg_cost, asset:assets(ticker, asset_class)");
+  const heldFunds = ((holdings ?? []) as FundHoldingRow[])
+    .map((h) => {
+      const a = Array.isArray(h.asset) ? h.asset[0] : h.asset;
+      return { ticker: a?.ticker ?? "", assetClass: a?.asset_class ?? "", units: Number(h.quantity), nav: Number(h.avg_cost ?? 0) };
+    })
+    .filter((h) => h.assetClass === "MUTUAL_FUND" && h.ticker && h.units > 0);
+  if (heldFunds.length === 0) return null;
+
   const { data: mfh } = await supabase
     .from("mutual_fund_holdings")
     .select("fund_asset_id,stock_asset_id,weight_percentage");
@@ -111,13 +136,13 @@ export async function getFundOverlap(supabase: DB): Promise<OverlapReport | null
   }));
   const metaByTicker = new Map(metaList.map((m) => [m.ticker, m]));
 
-  const fundTickers = [...new Set(lookThrough.map((l) => l.fundTicker))];
-  const sampleNav: Record<string, number> = { IGBLUE: 95.2, IGFLEXI: 210.4 };
-  const portfolio: UserFundHolding[] = fundTickers.map((t, i) => ({
-    fundTicker: t,
-    units: 1000 - i * 400,
-    navValue: sampleNav[t] ?? 100,
-    planType: metaByTicker.get(t)?.planType,
+  // Build the portfolio from the user's ACTUAL fund holdings (units = quantity,
+  // navValue = cost basis), not a fabricated sample.
+  const portfolio: UserFundHolding[] = heldFunds.map((h) => ({
+    fundTicker: h.ticker,
+    units: h.units,
+    navValue: h.nav > 0 ? h.nav : 100,
+    planType: metaByTicker.get(h.ticker)?.planType,
   }));
 
   return analyzeFundOverlap(portfolio, lookThrough, metaList);

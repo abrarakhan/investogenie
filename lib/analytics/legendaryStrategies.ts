@@ -170,11 +170,6 @@ function atrSeries(bars: OHLCV[], period: number): number[] {
   return out;
 }
 
-const atrLast = (bars: OHLCV[], period: number): number => {
-  const s = atrSeries(bars, period);
-  return s.length ? s[s.length - 1] : NaN;
-};
-
 const allFinite = (...xs: number[]): boolean => xs.every(Number.isFinite);
 
 function noResult(key: StrategyKey, note: string): StrategyResult {

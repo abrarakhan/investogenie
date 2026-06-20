@@ -64,11 +64,17 @@ const COUNT = 700;
 function Constellation({ color }: { color: string }) {
   const points = useRef<THREE.Points>(null);
   const base = useMemo(() => {
+    // Deterministic pseudo-random scatter (pure — keeps render side-effect-free
+    // for react-hooks/purity, and stable across renders unlike Math.random()).
+    const rand = (n: number) => {
+      const x = Math.sin(n * 127.1 + 311.7) * 43758.5453;
+      return x - Math.floor(x);
+    };
     const arr = new Float32Array(COUNT * 3);
     for (let i = 0; i < COUNT; i++) {
-      arr[i * 3] = (Math.random() - 0.5) * 18;
-      arr[i * 3 + 1] = (Math.random() - 0.5) * 10 + 2;
-      arr[i * 3 + 2] = (Math.random() - 0.5) * 10;
+      arr[i * 3] = (rand(i * 3 + 1) - 0.5) * 18;
+      arr[i * 3 + 1] = (rand(i * 3 + 2) - 0.5) * 10 + 2;
+      arr[i * 3 + 2] = (rand(i * 3 + 3) - 0.5) * 10;
     }
     return arr;
   }, []);

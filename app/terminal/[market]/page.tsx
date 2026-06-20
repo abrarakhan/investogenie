@@ -82,17 +82,15 @@ export default async function TerminalPage({
   const quotes = await getQuotesByAssetIds(supabase, quoteIds);
 
   const ccy = cfg.currency;
-  let invested = 0;
-  let marketVal = 0;
   const valued = holdings.map((h) => {
     const quote = h.asset ? quotes.get(h.asset.id) : undefined;
     const last = quote?.price ?? h.avgCost;
     const inv = h.quantity * h.avgCost;
     const mv = h.quantity * last;
-    invested += inv;
-    marketVal += mv;
-    return { ...h, last, changePct: quote?.changePct ?? null, market: mv, pnl: mv - inv };
+    return { ...h, last, changePct: quote?.changePct ?? null, invested: inv, market: mv, pnl: mv - inv };
   });
+  const invested = valued.reduce((s, v) => s + v.invested, 0);
+  const marketVal = valued.reduce((s, v) => s + v.market, 0);
   const pnl = marketVal - invested;
 
   return (

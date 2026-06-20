@@ -82,10 +82,13 @@ export async function removeWatchlistItem(formData: FormData): Promise<void> {
  */
 export async function recordTrade(formData: FormData): Promise<void> {
   const assetId = String(formData.get("assetId") ?? "");
-  const side = String(formData.get("side") ?? "buy") as "buy" | "sell";
+  const side = String(formData.get("side") ?? "buy");
   const quantity = Number(formData.get("quantity"));
   const price = Number(formData.get("price"));
-  if (!assetId || !Number.isFinite(quantity) || quantity <= 0 || !Number.isFinite(price))
+  // Reject forged form payloads outright — never fall through to a holdings
+  // mutation on an unknown side or a bad price.
+  if (side !== "buy" && side !== "sell") return;
+  if (!assetId || !Number.isFinite(quantity) || quantity <= 0 || !Number.isFinite(price) || price < 0)
     return;
 
   const scaffold = await ensureScaffold();
@@ -93,7 +96,9 @@ export async function recordTrade(formData: FormData): Promise<void> {
   const supabase = await client();
   const { userId, portfolioId } = scaffold;
 
-  await supabase.from("transactions").insert({
+  // Append to the ledger first; if that write is rejected (e.g. a DB check
+  // constraint), abort BEFORE touching holdings so the two never disagree.
+  const { error: txError } = await supabase.from("transactions").insert({
     user_id: userId,
     portfolio_id: portfolioId,
     asset_id: assetId,
@@ -101,6 +106,7 @@ export async function recordTrade(formData: FormData): Promise<void> {
     quantity,
     price,
   });
+  if (txError) return;
 
   const { data: existing } = await supabase
     .from("holdings")

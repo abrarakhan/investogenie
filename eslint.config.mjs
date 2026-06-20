@@ -12,6 +12,12 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Local/Python/analysis junk — never lint these (a venv walk OOMs ESLint).
+    ".venv/**",
+    "**/__pycache__/**",
+    "**/*.pyc",
+    "data/**",
+    ".pycache_tmp/**",
   ]),
 ]);
 

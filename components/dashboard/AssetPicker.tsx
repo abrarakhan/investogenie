@@ -34,12 +34,13 @@ export default function AssetPicker({
   const [open, setOpen] = useState(false);
   const boxRef = useRef<HTMLDivElement>(null);
 
-  // Debounced search.
+  // Debounced search. All state updates run inside the debounce callback (never
+  // synchronously in the effect body) per react-hooks/set-state-in-effect.
   useEffect(() => {
     if (selected && query === selected.ticker) return;
     const q = query.trim();
-    if (q.length < 1) { setResults([]); return; }
     const t = setTimeout(async () => {
+      if (q.length < 1) { setResults([]); return; }
       try {
         const cc = country ? `&country=${country}` : "";
         const res = await fetch(`/api/assets/search?q=${encodeURIComponent(q)}${cc}`);
