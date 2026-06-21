@@ -20,7 +20,7 @@ const MONTHLY_UNIQUE_CAP = 480;
 
 /** Sum of unique tickers this expansion job has pulled in the current month. */
 async function uniquesThisMonth(databaseUrl: string): Promise<number> {
-  const client = new Client({ connectionString: databaseUrl, ssl: { rejectUnauthorized: false } });
+  const client = new Client({ connectionString: databaseUrl, ssl: /127\.0\.0\.1|localhost/.test(databaseUrl) ? false : { rejectUnauthorized: false } });
   await client.connect();
   try {
     const { rows } = await client.query<{ used: string }>(

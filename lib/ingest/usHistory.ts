@@ -198,7 +198,7 @@ export async function backfillUsHistory(
   // which a lone Client cannot run in parallel. `max` matches the fetch fan-out.
   const client = new Pool({
     connectionString: databaseUrl,
-    ssl: { rejectUnauthorized: false },
+    ssl: /127\.0\.0\.1|localhost/.test(databaseUrl) ? false : { rejectUnauthorized: false },
     max: Math.max(2, concurrency),
   });
   const minBars = opts.minBars ?? 200;

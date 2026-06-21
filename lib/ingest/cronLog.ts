@@ -18,7 +18,7 @@ export interface CronLogEntry {
 export async function logCronRun(databaseUrl: string, entry: CronLogEntry): Promise<void> {
   let client: Client | null = null;
   try {
-    client = new Client({ connectionString: databaseUrl, ssl: { rejectUnauthorized: false } });
+    client = new Client({ connectionString: databaseUrl, ssl: /127\.0\.0\.1|localhost/.test(databaseUrl) ? false : { rejectUnauthorized: false } });
     await client.connect();
     await client.query(
       `insert into public.cron_logs (job, status, detail, error, duration_ms)

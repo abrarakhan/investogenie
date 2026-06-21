@@ -21,11 +21,16 @@ export default async function TerminalScreener({
   const country = MARKET_COUNTRY[marketId];
   const cfg = MARKETS[marketId];
 
+  const isUS = marketId === "US";
   const supabase = createClient(await cookies());
   const settings = await getUserSwingSettings(supabase);
-  const rows = await runScreener(supabase, country, settings);
-
-  const isUS = marketId === "US";
+  // India: NSE only, capped to the 20 highest-conviction swing candidates.
+  const rows = await runScreener(
+    supabase,
+    country,
+    settings,
+    isUS ? {} : { exchange: "NSE", limit: 20 },
+  );
 
   return (
     <div className="min-h-screen bg-[#05070d] text-white">
@@ -49,13 +54,24 @@ export default async function TerminalScreener({
 
       <main className="mx-auto max-w-7xl px-6 py-10">
         <div className="mb-8">
-          <h1 className="text-3xl font-bold">{cfg.flag} {cfg.label} Swing Screener</h1>
+          <h1 className="text-3xl font-bold">
+            {cfg.flag} {cfg.label} Swing Screener{!isUS && " — Top 20"}
+          </h1>
           <p className="mt-2 max-w-2xl text-white/50">
-            The derivative-aided swing classifier, precomputed nightly across the{" "}
-            {isUS ? "S&P 100 subset" : "full NSE universe (live bhavcopy EOD)"}.
-            Breakouts and volatility squeezes are flagged; an OI build-up upgrades
-            a breakout to a validated long. Use the strategy ribbon to filter by a
-            legendary system — Qullamaggie, Minervini, Darvas, PTJ, or Simons.
+            {isUS ? (
+              <>
+                The derivative-aided swing classifier, precomputed nightly across
+                the S&P 100 subset. Breakouts and volatility squeezes are flagged;
+                an OI build-up upgrades a breakout to a validated long.
+              </>
+            ) : (
+              <>
+                The 20 highest-conviction swing candidates from the NSE universe,
+                ranked by the derivative-aided classifier on 10 years of EOD data.
+                Use the strategy ribbon to filter by a legendary system —
+                Qullamaggie, Minervini, Darvas, PTJ, or Simons.
+              </>
+            )}
           </p>
           {isUS && (
             <p className="mt-2 text-xs text-amber-300/70">

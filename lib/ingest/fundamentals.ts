@@ -228,7 +228,7 @@ export async function ingestFundamentals(
   const country = opts.country ?? "IN";
   const cutoff = fifteenYearsAgoISO();
 
-  const client = new Client({ connectionString: databaseUrl, ssl: { rejectUnauthorized: false } });
+  const client = new Client({ connectionString: databaseUrl, ssl: /127\.0\.0\.1|localhost/.test(databaseUrl) ? false : { rejectUnauthorized: false } });
   await client.connect();
   try {
     const { rows: assetRows } = await client.query<{ id: string; ticker: string }>(

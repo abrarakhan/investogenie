@@ -15,7 +15,7 @@ export async function getFundamentalsByAssetIds(
   const unique = [...new Set(ids)].filter(Boolean);
   if (unique.length === 0) return map;
 
-  const CHUNK = 300;
+  const CHUNK = 100; // keep the in(...) URI under the local Kong gateway limit
   for (let i = 0; i < unique.length; i += CHUNK) {
     const slice = unique.slice(i, i + CHUNK);
     const { data } = await supabase

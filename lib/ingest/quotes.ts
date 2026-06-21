@@ -113,7 +113,7 @@ export async function refreshQuotes(databaseUrl: string, startISO = "2025-06-13"
     fetchBhavSeries(startISO, buildBSE, (d) => `https://www.bseindia.com/download/BhavCopy/Equity/BhavCopy_BSE_CM_0_0_0_${yyyymmdd(d)}_F_0000.CSV`),
   ]);
 
-  const client = new Client({ connectionString: databaseUrl, ssl: { rejectUnauthorized: false } });
+  const client = new Client({ connectionString: databaseUrl, ssl: /127\.0\.0\.1|localhost/.test(databaseUrl) ? false : { rejectUnauthorized: false } });
   await client.connect();
   try {
     const toMap = (rows: { ticker: string; id: string }[]) =>

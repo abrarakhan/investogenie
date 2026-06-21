@@ -64,25 +64,39 @@ export async function runScreener(
   supabase: SupabaseClient,
   country?: string,
   settings: SwingSettings = DEFAULT_SETTINGS,
+  opts: { exchange?: string; limit?: number } = {},
 ): Promise<ScreenRow[]> {
-  const PAGE = 1000;
-  let from = 0;
+  const SELECT =
+    "asset_id,ticker,country,exchange,asset_class,verdict,score,last_close,bandwidth_pct,is_squeeze,is_breakout,is_long_buildup,reason,as_of,bias,current_price,atr,long_trigger,short_trigger,hh22,ll22,daily_velocity,strategy_tags,strategy_scores";
   const raw: Record<string, unknown>[] = [];
-  for (;;) {
-    let query = supabase
-      .from("swing_signals")
-      .select(
-        "asset_id,ticker,country,exchange,asset_class,verdict,score,last_close,bandwidth_pct,is_squeeze,is_breakout,is_long_buildup,reason,as_of,bias,current_price,atr,long_trigger,short_trigger,hh22,ll22,daily_velocity,strategy_tags,strategy_scores",
-      );
+
+  if (opts.limit) {
+    // Top-N actionable candidates only — a single bounded query. Over-fetch a
+    // little so the per-user short filter below can't shrink us under the cap.
+    let query = supabase.from("swing_signals").select(SELECT).neq("verdict", "NO_SETUP");
     if (country) query = query.eq("country", country);
-    const { data, error } = await query
+    if (opts.exchange) query = query.eq("exchange", opts.exchange);
+    const { data } = await query
       .order("score", { ascending: false })
       .order("ticker", { ascending: true })
-      .range(from, from + PAGE - 1);
-    if (error || !data || data.length === 0) break;
-    raw.push(...(data as Record<string, unknown>[]));
-    if (data.length < PAGE) break;
-    from += PAGE;
+      .limit(opts.limit * 2);
+    raw.push(...((data ?? []) as Record<string, unknown>[]));
+  } else {
+    const PAGE = 1000;
+    let from = 0;
+    for (;;) {
+      let query = supabase.from("swing_signals").select(SELECT);
+      if (country) query = query.eq("country", country);
+      if (opts.exchange) query = query.eq("exchange", opts.exchange);
+      const { data, error } = await query
+        .order("score", { ascending: false })
+        .order("ticker", { ascending: true })
+        .range(from, from + PAGE - 1);
+      if (error || !data || data.length === 0) break;
+      raw.push(...(data as Record<string, unknown>[]));
+      if (data.length < PAGE) break;
+      from += PAGE;
+    }
   }
 
   const num = (v: unknown) => (v === null || v === undefined ? 0 : Number(v));
@@ -161,13 +175,24 @@ export async function runScreener(
       };
     });
 
+  // Rank setups-first by score, then keep only the top-N (when capped) before
+  // the per-row quote/fundamental fetches.
+  out.sort((a, b) => {
+    const aa = a.verdict === "NO_SETUP" ? 0 : 1;
+    const bb = b.verdict === "NO_SETUP" ? 0 : 1;
+    if (aa !== bb) return bb - aa;
+    if (b.score !== a.score) return b.score - a.score;
+    return a.ticker.localeCompare(b.ticker);
+  });
+  const rows = opts.limit ? out.slice(0, opts.limit) : out;
+
   // Attach the live latest price + latest corporate fundamentals per instrument.
-  const assetIds = out.map((r) => r.assetId);
+  const assetIds = rows.map((r) => r.assetId);
   const [quotes, fundamentals] = await Promise.all([
     getQuotesByAssetIds(supabase, assetIds),
     getFundamentalsByAssetIds(supabase, assetIds),
   ]);
-  for (const r of out) {
+  for (const r of rows) {
     const q = quotes.get(r.assetId);
     if (q) { r.lastQuote = q.price; r.quoteChangePct = q.changePct; }
     const f = fundamentals.get(r.assetId);
@@ -180,13 +205,5 @@ export async function runScreener(
       r.fundamentalsAsOf = f.periodEndDate || null;
     }
   }
-
-  out.sort((a, b) => {
-    const aa = a.verdict === "NO_SETUP" ? 0 : 1;
-    const bb = b.verdict === "NO_SETUP" ? 0 : 1;
-    if (aa !== bb) return bb - aa;
-    if (b.score !== a.score) return b.score - a.score;
-    return a.ticker.localeCompare(b.ticker);
-  });
-  return out;
+  return rows;
 }

@@ -17,7 +17,7 @@ if (!file) {
 const sql = readFileSync(file, "utf8");
 const client = new pg.Client({
   connectionString: url,
-  ssl: { rejectUnauthorized: false },
+  ssl: /127\.0\.0\.1|localhost/.test(url) ? false : { rejectUnauthorized: false },
 });
 
 try {

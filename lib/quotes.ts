@@ -17,8 +17,9 @@ export async function getQuotesByAssetIds(
   if (unique.length === 0) return map;
 
   // Chunk the id list so the `in(...)` filter never blows past URL length limits
-  // when the screener passes a couple thousand asset ids.
-  const CHUNK = 300;
+  // when the screener passes a couple thousand asset ids. 100 keeps the request
+  // URI well under the local Supabase Kong gateway's limit (300 → HTTP 414).
+  const CHUNK = 100;
   for (let i = 0; i < unique.length; i += CHUNK) {
     const slice = unique.slice(i, i + CHUNK);
     const { data } = await supabase

@@ -19,6 +19,8 @@ export async function GET(request: NextRequest) {
     )
     .like("ticker", `${q}%`);
   if (country === "US" || country === "IN") query = query.eq("country", country);
+  // India is NSE-only (drop BSE duplicate listings); US spans its own exchanges.
+  if (country === "IN") query = query.eq("exchange", "NSE");
   const { data, error } = await query
     .order("ticker", { ascending: true })
     .limit(20);
