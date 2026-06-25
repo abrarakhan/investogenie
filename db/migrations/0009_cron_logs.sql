@@ -13,10 +13,3 @@ create table if not exists public.cron_logs (
 
 create index if not exists cron_logs_job_created_idx
   on public.cron_logs (job, created_at desc);
-
--- Service-only: written via the direct Postgres connection (DATABASE_URL) which
--- bypasses RLS. Enabling RLS with no policy keeps it invisible to the anon/auth
--- REST roles so client sessions can never read operational logs.
-alter table public.cron_logs enable row level security;
-
-notify pgrst, 'reload schema';

@@ -23,11 +23,3 @@ create table if not exists public.swing_signals (
 create index if not exists swing_signals_verdict_idx on public.swing_signals (verdict);
 create index if not exists swing_signals_score_idx on public.swing_signals (score desc);
 create index if not exists swing_signals_country_idx on public.swing_signals (country);
-
-alter table public.swing_signals enable row level security;
-
-drop policy if exists "public read swing_signals" on public.swing_signals;
-create policy "public read swing_signals"
-  on public.swing_signals for select
-  to anon, authenticated
-  using (true);

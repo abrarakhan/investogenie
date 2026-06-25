@@ -102,7 +102,7 @@ export default function LandingPage() {
         </h2>
         <p className="mx-auto mt-6 max-w-xl text-white/60">
           Authentication, portfolios, and live ingestion plug directly into the
-          Supabase backend already provisioned for this build.
+          local Postgres backend provisioned for this build.
         </p>
         <a
           href={`/terminal/${market.id.toLowerCase()}`}

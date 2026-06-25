@@ -43,9 +43,8 @@ create index if not exists asset_financial_reports_asset_period_idx
   on public.asset_financial_reports (asset_id, period_end_date desc);
 
 -- Latest snapshot per asset (most recent quarterly grain) for the screener join.
--- security_invoker so the base table's public-read RLS policy governs access.
 create or replace view public.latest_financials
-  with (security_invoker = on) as
+  as
   select distinct on (asset_id)
     asset_id, period_end_date, report_type, fiscal_period, currency,
     revenue, net_profit, eps, cmp, pe_ratio, market_cap, roce,
@@ -53,13 +52,3 @@ create or replace view public.latest_financials
   from public.asset_financial_reports
   where report_type = 'QUARTERLY'
   order by asset_id, period_end_date desc;
-
--- Reference data: public read, service-role writes during ingestion.
-alter table public.asset_financial_reports enable row level security;
-drop policy if exists "public read asset_financial_reports" on public.asset_financial_reports;
-create policy "public read asset_financial_reports"
-  on public.asset_financial_reports for select to anon, authenticated using (true);
-
-grant select on public.latest_financials to anon, authenticated;
-
-notify pgrst, 'reload schema';

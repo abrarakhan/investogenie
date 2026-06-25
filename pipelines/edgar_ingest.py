@@ -9,7 +9,7 @@ Fetches and parses:
   • Corporate filing facts from the SEC EDGAR open data API (company_tickers +
     companyconcept) -> used to enrich asset names / fundamentals.
 
-Idempotent upserts into the Supabase schema. Run with the service-role DSN:
+Idempotent upserts into the local Postgres schema. Run with the database DSN:
 
     DATABASE_URL=postgresql://... python pipelines/edgar_ingest.py
 

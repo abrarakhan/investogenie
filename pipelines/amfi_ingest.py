@@ -6,9 +6,8 @@ Fetches and parses:
     mutual_fund_meta + daily_ohlcv (NAV stored as the daily close in INR).
   • NSE equity Bhavcopy (end-of-day OHLCV) -> assets + daily_ohlcv.
 
-Writes are idempotent upserts into the Supabase Postgres schema defined in
-supabase/migrations/. Run with the service-role connection string so the writes
-bypass RLS:
+Writes are idempotent upserts into the local Postgres schema defined in
+db/migrations/.
 
     DATABASE_URL=postgresql://... python pipelines/amfi_ingest.py
 

@@ -20,7 +20,7 @@ const COLS = 7;
 const num = (s) => { const n = parseFloat(s); return Number.isFinite(n) ? n : null; };
 const int = (s) => { const n = parseInt(s, 10); return Number.isFinite(n) ? n : 0; };
 
-// Local Postgres (supabase start) has no TLS; hosted Supabase requires it.
+// Local Postgres has no TLS; hosted Postgres usually requires it.
 const isLocal = /127\.0\.0\.1|localhost/.test(databaseUrl);
 const client = new pg.Client({ connectionString: databaseUrl, ssl: isLocal ? false : { rejectUnauthorized: false } });
 await client.connect();

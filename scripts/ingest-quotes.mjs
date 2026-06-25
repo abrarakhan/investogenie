@@ -126,7 +126,7 @@ async function main() {
   const client = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
   await client.connect();
 
-  // Build ticker -> asset_id maps directly via pg (no PostgREST row cap).
+  // Build ticker -> asset_id maps directly via pg.
   const usMap = new Map((await client.query("select id,ticker from public.assets where country='US'")).rows.map((r) => [r.ticker, r.id]));
   const nseMap = new Map((await client.query("select id,ticker from public.assets where exchange='NSE'")).rows.map((r) => [r.ticker, r.id]));
   const bseMap = new Map((await client.query("select id,ticker from public.assets where exchange='BSE'")).rows.map((r) => [r.ticker, r.id]));

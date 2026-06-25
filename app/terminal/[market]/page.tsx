@@ -1,6 +1,6 @@
-import { cookies } from "next/headers";
 import { redirect, notFound } from "next/navigation";
-import { createClient } from "@/utils/supabase/server";
+import { getSessionUser } from "@/lib/auth";
+import { query } from "@/lib/db";
 import TerminalHeader from "@/components/terminal/TerminalHeader";
 import ApplyMarketTheme from "@/components/terminal/ApplyMarketTheme";
 import EngineSection from "@/components/dashboard/EngineSection";
@@ -22,8 +22,13 @@ interface AssetLite {
   country: string;
 }
 
-function one<T>(v: T | T[] | null): T | null {
-  return Array.isArray(v) ? (v[0] ?? null) : (v ?? null);
+interface HoldingRow extends AssetLite {
+  hid: string;
+  quantity: string | number;
+  avg_cost: string | number | null;
+}
+interface WatchRow extends AssetLite {
+  wid: string;
 }
 
 export default async function TerminalPage({
@@ -37,49 +42,47 @@ export default async function TerminalPage({
   const country = MARKET_COUNTRY[marketId];
   const cfg = MARKETS[marketId];
 
-  const supabase = createClient(await cookies());
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const user = await getSessionUser();
   if (!user) redirect("/login");
   await ensureScaffold();
-  const settings = await getUserSwingSettings(supabase);
+  const settings = await getUserSwingSettings();
 
-  const [holdingsRes, watchRes, swing, macro] = await Promise.all([
-    supabase
-      .from("holdings")
-      .select("id, quantity, avg_cost, asset:assets(id,ticker,name,asset_class,currency,country)")
-      .order("updated_at", { ascending: false }),
-    supabase
-      .from("watchlist_items")
-      .select("id, asset:assets(id,ticker,name,asset_class,currency,country)")
-      .order("created_at", { ascending: false }),
-    getTopSwingSetups(supabase, country, settings, 6),
-    getMacroMatrix(supabase, marketId),
+  const [holdingRows, watchRows, swing, macro] = await Promise.all([
+    query<HoldingRow>(
+      `select h.id as hid, h.quantity, h.avg_cost,
+              a.id, a.ticker, a.name, a.asset_class, a.currency, a.country
+         from public.holdings h join public.assets a on a.id = h.asset_id
+        where h.user_id = $1 order by h.updated_at desc`,
+      [user.id],
+    ),
+    query<WatchRow>(
+      `select w.id as wid, a.id, a.ticker, a.name, a.asset_class, a.currency, a.country
+         from public.watchlist_items w join public.assets a on a.id = w.asset_id
+        where w.user_id = $1 order by w.created_at desc`,
+      [user.id],
+    ),
+    getTopSwingSetups(country, settings, 6),
+    getMacroMatrix(marketId),
   ]);
-  const overlap = marketId === "IN" ? await getFundOverlap(supabase) : null;
+  const overlap = marketId === "IN" ? await getFundOverlap() : null;
 
+  const asset = (r: AssetLite): AssetLite => ({
+    id: r.id, ticker: r.ticker, name: r.name, asset_class: r.asset_class,
+    currency: r.currency, country: r.country,
+  });
   // Scope holdings + watchlist to THIS market only.
-  const holdings = (holdingsRes.data ?? [])
-    .map((h) => ({
-      id: h.id as string,
-      quantity: Number(h.quantity),
-      avgCost: Number(h.avg_cost ?? 0),
-      asset: one<AssetLite>(h.asset as AssetLite | AssetLite[] | null),
-    }))
-    .filter((h) => h.asset?.country === country);
-  const watch = (watchRes.data ?? [])
-    .map((w) => ({
-      id: w.id as string,
-      asset: one<AssetLite>(w.asset as AssetLite | AssetLite[] | null),
-    }))
-    .filter((w) => w.asset?.country === country);
+  const holdings = holdingRows
+    .map((h) => ({ id: h.hid, quantity: Number(h.quantity), avgCost: Number(h.avg_cost ?? 0), asset: asset(h) }))
+    .filter((h) => h.asset.country === country);
+  const watch = watchRows
+    .map((w) => ({ id: w.wid, asset: asset(w) }))
+    .filter((w) => w.asset.country === country);
 
   const quoteIds = [
     ...holdings.map((h) => h.asset?.id),
     ...watch.map((w) => w.asset?.id),
   ].filter((x): x is string => Boolean(x));
-  const quotes = await getQuotesByAssetIds(supabase, quoteIds);
+  const quotes = await getQuotesByAssetIds(quoteIds);
 
   const ccy = cfg.currency;
   const valued = holdings.map((h) => {

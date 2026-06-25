@@ -1,42 +1,49 @@
-// Read-side helper: fetch the latest quarterly fundamentals snapshot for a set
-// of asset ids → Map<assetId, FinancialSnapshot>. Reads the latest_financials
-// view (one row per asset) and chunks the id filter like getQuotesByAssetIds.
-import type { SupabaseClient } from "@supabase/supabase-js";
+// Latest-quarter fundamentals snapshot by asset id → Map, via direct SQL.
+import { query } from "@/lib/db";
 import type { FinancialSnapshot } from "@/lib/types";
 
-const numOrNull = (v: unknown): number | null =>
+interface Row {
+  asset_id: string;
+  period_end_date: string | null;
+  fiscal_period: string | null;
+  pe_ratio: string | number | null;
+  market_cap: string | number | null;
+  roce: string | number | null;
+  profit_variance_yoy: string | number | null;
+  sales_variance_yoy: string | number | null;
+  revenue: string | number | null;
+  net_profit: string | number | null;
+}
+
+const n = (v: string | number | null): number | null =>
   v === null || v === undefined ? null : Number(v);
 
 export async function getFundamentalsByAssetIds(
-  supabase: SupabaseClient,
   ids: string[],
 ): Promise<Map<string, FinancialSnapshot>> {
   const map = new Map<string, FinancialSnapshot>();
   const unique = [...new Set(ids)].filter(Boolean);
   if (unique.length === 0) return map;
 
-  const CHUNK = 100; // keep the in(...) URI under the local Kong gateway limit
-  for (let i = 0; i < unique.length; i += CHUNK) {
-    const slice = unique.slice(i, i + CHUNK);
-    const { data } = await supabase
-      .from("latest_financials")
-      .select(
-        "asset_id,period_end_date,fiscal_period,pe_ratio,market_cap,roce,profit_variance_yoy,sales_variance_yoy,revenue,net_profit",
-      )
-      .in("asset_id", slice);
-    for (const r of (data ?? []) as Record<string, unknown>[]) {
-      map.set(r.asset_id as string, {
-        periodEndDate: (r.period_end_date as string) ?? "",
-        fiscalPeriod: (r.fiscal_period as string) ?? null,
-        peRatio: numOrNull(r.pe_ratio),
-        marketCap: numOrNull(r.market_cap),
-        roce: numOrNull(r.roce),
-        profitVarianceYoY: numOrNull(r.profit_variance_yoy),
-        salesVarianceYoY: numOrNull(r.sales_variance_yoy),
-        revenue: numOrNull(r.revenue),
-        netProfit: numOrNull(r.net_profit),
-      });
-    }
+  const rows = await query<Row>(
+    `select asset_id, period_end_date, fiscal_period, pe_ratio, market_cap, roce,
+            profit_variance_yoy, sales_variance_yoy, revenue, net_profit
+       from public.latest_financials
+      where asset_id = any($1)`,
+    [unique],
+  );
+  for (const r of rows) {
+    map.set(r.asset_id, {
+      periodEndDate: (r.period_end_date as string) ?? "",
+      fiscalPeriod: r.fiscal_period ?? null,
+      peRatio: n(r.pe_ratio),
+      marketCap: n(r.market_cap),
+      roce: n(r.roce),
+      profitVarianceYoY: n(r.profit_variance_yoy),
+      salesVarianceYoY: n(r.sales_variance_yoy),
+      revenue: n(r.revenue),
+      netProfit: n(r.net_profit),
+    });
   }
   return map;
 }

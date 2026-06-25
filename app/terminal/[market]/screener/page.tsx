@@ -1,7 +1,5 @@
 import Link from "next/link";
-import { cookies } from "next/headers";
 import { notFound } from "next/navigation";
-import { createClient } from "@/utils/supabase/server";
 import { runScreener } from "@/lib/screener";
 import { getUserSwingSettings } from "@/lib/settings";
 import ScreenerTable from "@/components/screener/ScreenerTable";
@@ -22,11 +20,9 @@ export default async function TerminalScreener({
   const cfg = MARKETS[marketId];
 
   const isUS = marketId === "US";
-  const supabase = createClient(await cookies());
-  const settings = await getUserSwingSettings(supabase);
+  const settings = await getUserSwingSettings();
   // India: NSE only, capped to the 20 highest-conviction swing candidates.
   const rows = await runScreener(
-    supabase,
     country,
     settings,
     isUS ? {} : { exchange: "NSE", limit: 20 },

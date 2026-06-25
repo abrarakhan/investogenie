@@ -1,9 +1,9 @@
 // Screener data: reads the precomputed swing_signals table (written by the scan
 // job in lib/ingest/signals.ts), derives per-user trade levels from the stored
-// raw fields, and attaches the live latest price. Reading precomputed rows keeps
-// the page fast even across the full universe.
+// raw fields, and attaches the live latest price + latest fundamentals. Direct
+// SQL against the local Postgres.
 
-import type { SupabaseClient } from "@supabase/supabase-js";
+import { query } from "@/lib/db";
 import { getQuotesByAssetIds } from "@/lib/quotes";
 import { getFundamentalsByAssetIds } from "@/lib/fundamentals";
 import { deriveLevels, type SwingSetup, type TradeDirection } from "@/lib/analytics/swingClassifier";
@@ -47,58 +47,34 @@ export interface ScreenRow {
   trailingStop: number | null;
   riskReward: number | null;
   expectedDays: number | null;
-  /** Legendary systems this instrument matched on the latest scan. */
   strategyTags: StrategyKey[];
-  /** Per-strategy levels keyed by strategy key (entry mapped through deriveLevels). */
   strategyLevels: Record<string, StrategyLevel>;
-  // Latest-quarter corporate fundamentals (null when no report on file).
   peRatio: number | null;
-  marketCap: number | null; // Rs. Cr
-  roce: number | null; // %
-  profitVarYoY: number | null; // %
-  salesVarYoY: number | null; // %
+  marketCap: number | null;
+  roce: number | null;
+  profitVarYoY: number | null;
+  salesVarYoY: number | null;
   fundamentalsAsOf: string | null;
 }
 
+const SELECT =
+  "asset_id,ticker,country,exchange,asset_class,verdict,score,last_close,bandwidth_pct,is_squeeze,is_breakout,is_long_buildup,reason,as_of,bias,current_price,atr,long_trigger,short_trigger,hh22,ll22,daily_velocity,strategy_tags,strategy_scores";
+
 export async function runScreener(
-  supabase: SupabaseClient,
   country?: string,
   settings: SwingSettings = DEFAULT_SETTINGS,
   opts: { exchange?: string; limit?: number } = {},
 ): Promise<ScreenRow[]> {
-  const SELECT =
-    "asset_id,ticker,country,exchange,asset_class,verdict,score,last_close,bandwidth_pct,is_squeeze,is_breakout,is_long_buildup,reason,as_of,bias,current_price,atr,long_trigger,short_trigger,hh22,ll22,daily_velocity,strategy_tags,strategy_scores";
-  const raw: Record<string, unknown>[] = [];
+  const conds: string[] = [];
+  const params: unknown[] = [];
+  if (country) { params.push(country); conds.push(`country = $${params.length}`); }
+  if (opts.exchange) { params.push(opts.exchange); conds.push(`exchange = $${params.length}`); }
+  if (opts.limit) conds.push(`verdict <> 'NO_SETUP'`);
+  const where = conds.length ? `where ${conds.join(" and ")}` : "";
+  let sql = `select ${SELECT} from public.swing_signals ${where} order by score desc, ticker asc`;
+  if (opts.limit) { params.push(opts.limit * 2); sql += ` limit $${params.length}`; }
 
-  if (opts.limit) {
-    // Top-N actionable candidates only — a single bounded query. Over-fetch a
-    // little so the per-user short filter below can't shrink us under the cap.
-    let query = supabase.from("swing_signals").select(SELECT).neq("verdict", "NO_SETUP");
-    if (country) query = query.eq("country", country);
-    if (opts.exchange) query = query.eq("exchange", opts.exchange);
-    const { data } = await query
-      .order("score", { ascending: false })
-      .order("ticker", { ascending: true })
-      .limit(opts.limit * 2);
-    raw.push(...((data ?? []) as Record<string, unknown>[]));
-  } else {
-    const PAGE = 1000;
-    let from = 0;
-    for (;;) {
-      let query = supabase.from("swing_signals").select(SELECT);
-      if (country) query = query.eq("country", country);
-      if (opts.exchange) query = query.eq("exchange", opts.exchange);
-      const { data, error } = await query
-        .order("score", { ascending: false })
-        .order("ticker", { ascending: true })
-        .range(from, from + PAGE - 1);
-      if (error || !data || data.length === 0) break;
-      raw.push(...(data as Record<string, unknown>[]));
-      if (data.length < PAGE) break;
-      from += PAGE;
-    }
-  }
-
+  const raw = await query<Record<string, unknown>>(sql, params);
   const num = (v: unknown) => (v === null || v === undefined ? 0 : Number(v));
 
   const out: ScreenRow[] = raw
@@ -116,7 +92,6 @@ export async function runScreener(
       };
       const lv = deriveLevels(setup, direction, settings);
 
-      // Map each matched strategy's custom entry through the user's risk params.
       const tags = Array.isArray(r.strategy_tags) ? (r.strategy_tags as StrategyKey[]) : [];
       const rawScores = (r.strategy_scores ?? {}) as Record<string, StrategyScore>;
       const strategyLevels: Record<string, StrategyLevel> = {};
@@ -124,9 +99,7 @@ export async function runScreener(
         const dir: TradeDirection = sc.dir === "SHORT" ? "SHORT" : "LONG";
         const trigger = sc.entry ?? (dir === "SHORT" ? setup.shortTrigger : setup.longTrigger);
         const stratSetup: SwingSetup =
-          dir === "SHORT"
-            ? { ...setup, shortTrigger: trigger }
-            : { ...setup, longTrigger: trigger };
+          dir === "SHORT" ? { ...setup, shortTrigger: trigger } : { ...setup, longTrigger: trigger };
         const slv = deriveLevels(stratSetup, dir, settings);
         strategyLevels[key] = {
           direction: dir,
@@ -175,8 +148,6 @@ export async function runScreener(
       };
     });
 
-  // Rank setups-first by score, then keep only the top-N (when capped) before
-  // the per-row quote/fundamental fetches.
   out.sort((a, b) => {
     const aa = a.verdict === "NO_SETUP" ? 0 : 1;
     const bb = b.verdict === "NO_SETUP" ? 0 : 1;
@@ -186,11 +157,10 @@ export async function runScreener(
   });
   const rows = opts.limit ? out.slice(0, opts.limit) : out;
 
-  // Attach the live latest price + latest corporate fundamentals per instrument.
   const assetIds = rows.map((r) => r.assetId);
   const [quotes, fundamentals] = await Promise.all([
-    getQuotesByAssetIds(supabase, assetIds),
-    getFundamentalsByAssetIds(supabase, assetIds),
+    getQuotesByAssetIds(assetIds),
+    getFundamentalsByAssetIds(assetIds),
   ]);
   for (const r of rows) {
     const q = quotes.get(r.assetId);

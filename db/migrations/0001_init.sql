@@ -1,9 +1,16 @@
 -- InvestoGenie initial schema
 -- Full stocks portal: reference stocks + per-user watchlists, portfolios,
--- holdings, and transactions. Row Level Security keys all user data to auth.uid().
+-- holdings, and transactions using local application-managed users.
 
 -- Required for gen_random_uuid()
 create extension if not exists pgcrypto;
+
+create table if not exists public.users (
+  id            uuid primary key default gen_random_uuid(),
+  email         text not null unique,
+  password_hash text not null,
+  created_at    timestamptz not null default now()
+);
 
 -- =========================================================================
 -- Reference data: shared catalog of tradable stocks (not user-owned)
@@ -23,7 +30,7 @@ create table if not exists public.stocks (
 -- =========================================================================
 create table if not exists public.portfolios (
   id          uuid primary key default gen_random_uuid(),
-  user_id     uuid not null references auth.users (id) on delete cascade,
+  user_id     uuid not null references public.users (id) on delete cascade,
   name        text not null default 'My Portfolio',
   created_at  timestamptz not null default now()
 );
@@ -34,7 +41,7 @@ create index if not exists portfolios_user_id_idx on public.portfolios (user_id)
 -- =========================================================================
 create table if not exists public.holdings (
   id            uuid primary key default gen_random_uuid(),
-  user_id       uuid not null references auth.users (id) on delete cascade,
+  user_id       uuid not null references public.users (id) on delete cascade,
   portfolio_id  uuid not null references public.portfolios (id) on delete cascade,
   stock_id      uuid not null references public.stocks (id) on delete restrict,
   quantity      numeric(20, 6) not null default 0,
@@ -50,7 +57,7 @@ create index if not exists holdings_portfolio_id_idx on public.holdings (portfol
 -- =========================================================================
 create table if not exists public.transactions (
   id            uuid primary key default gen_random_uuid(),
-  user_id       uuid not null references auth.users (id) on delete cascade,
+  user_id       uuid not null references public.users (id) on delete cascade,
   portfolio_id  uuid not null references public.portfolios (id) on delete cascade,
   stock_id      uuid not null references public.stocks (id) on delete restrict,
   side          text not null check (side in ('buy', 'sell')),
@@ -67,7 +74,7 @@ create index if not exists transactions_portfolio_id_idx on public.transactions 
 -- =========================================================================
 create table if not exists public.watchlists (
   id          uuid primary key default gen_random_uuid(),
-  user_id     uuid not null references auth.users (id) on delete cascade,
+  user_id     uuid not null references public.users (id) on delete cascade,
   name        text not null default 'My Watchlist',
   created_at  timestamptz not null default now()
 );
@@ -75,62 +82,13 @@ create index if not exists watchlists_user_id_idx on public.watchlists (user_id)
 
 create table if not exists public.watchlist_items (
   id            uuid primary key default gen_random_uuid(),
-  user_id       uuid not null references auth.users (id) on delete cascade,
+  user_id       uuid not null references public.users (id) on delete cascade,
   watchlist_id  uuid not null references public.watchlists (id) on delete cascade,
   stock_id      uuid not null references public.stocks (id) on delete cascade,
   created_at    timestamptz not null default now(),
   unique (watchlist_id, stock_id)
 );
 create index if not exists watchlist_items_user_id_idx on public.watchlist_items (user_id);
-
--- =========================================================================
--- Row Level Security
--- =========================================================================
-alter table public.stocks          enable row level security;
-alter table public.portfolios      enable row level security;
-alter table public.holdings        enable row level security;
-alter table public.transactions    enable row level security;
-alter table public.watchlists      enable row level security;
-alter table public.watchlist_items enable row level security;
-
--- Stocks: any authenticated user may read the shared catalog.
--- (Writes to the catalog are reserved for the service role, which bypasses RLS.)
-drop policy if exists "stocks are readable by authenticated users" on public.stocks;
-create policy "stocks are readable by authenticated users"
-  on public.stocks for select
-  to authenticated
-  using (true);
-
--- Helper macro pattern: each user-owned table gets full CRUD scoped to auth.uid().
-drop policy if exists "own portfolios" on public.portfolios;
-create policy "own portfolios" on public.portfolios
-  for all to authenticated
-  using (auth.uid() = user_id)
-  with check (auth.uid() = user_id);
-
-drop policy if exists "own holdings" on public.holdings;
-create policy "own holdings" on public.holdings
-  for all to authenticated
-  using (auth.uid() = user_id)
-  with check (auth.uid() = user_id);
-
-drop policy if exists "own transactions" on public.transactions;
-create policy "own transactions" on public.transactions
-  for all to authenticated
-  using (auth.uid() = user_id)
-  with check (auth.uid() = user_id);
-
-drop policy if exists "own watchlists" on public.watchlists;
-create policy "own watchlists" on public.watchlists
-  for all to authenticated
-  using (auth.uid() = user_id)
-  with check (auth.uid() = user_id);
-
-drop policy if exists "own watchlist_items" on public.watchlist_items;
-create policy "own watchlist_items" on public.watchlist_items
-  for all to authenticated
-  using (auth.uid() = user_id)
-  with check (auth.uid() = user_id);
 
 -- =========================================================================
 -- Seed a few well-known stocks into the shared catalog

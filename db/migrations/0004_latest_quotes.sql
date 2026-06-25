@@ -13,11 +13,3 @@ create table if not exists public.latest_quotes (
 );
 
 create index if not exists latest_quotes_as_of_idx on public.latest_quotes (as_of desc);
-
-alter table public.latest_quotes enable row level security;
-
-drop policy if exists "public read latest_quotes" on public.latest_quotes;
-create policy "public read latest_quotes"
-  on public.latest_quotes for select
-  to anon, authenticated
-  using (true);

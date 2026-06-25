@@ -13,7 +13,3 @@ alter table public.swing_signals
 -- across the full universe.
 create index if not exists swing_signals_strategy_tags_idx
   on public.swing_signals using gin (strategy_tags);
-
--- PostgREST keeps an in-memory schema cache; new columns are invisible to the
--- REST API until it reloads.
-notify pgrst, 'reload schema';

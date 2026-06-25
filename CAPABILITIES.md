@@ -17,7 +17,7 @@ A cinematic, mobile-friendly **multi-asset trading terminal for the US and India
 |------|--------------|--------|
 | Dual-market terminals | Separate **US** (`/terminal/us`) and **India** (`/terminal/in`) workspaces, each themed and currency-correct | ✅ Working |
 | Landing experience | WebGL hero (Three.js), GSAP kinetic typography, US/India pivot switch, live ticker tape | ✅ Working |
-| Auth | Supabase email/password; protected terminals & settings redirect to `/login` | ✅ Working |
+| Auth | Local email/password backed by Postgres; protected terminals & settings redirect to `/login` | ✅ Working |
 | Portfolio | Per-market holdings, live P&L, trade ticket (buy/sell), watchlist with live quotes | ✅ Working |
 | Swing screener | Per-market screener over the full universe with classifier verdicts + trade levels | ✅ Working |
 | Legendary strategies | 5 systems (Qullamaggie, Minervini, Darvas, PTJ, Simons) with filter ribbon | ✅ Working |
@@ -91,9 +91,9 @@ Real end-of-day data, refreshed on a schedule (Vercel cron), with every run audi
 
 ## 9. Design & platform
 
-- **Stack:** Next.js 16 (App Router, React 19), Supabase (auth/RLS/Postgres), Tailwind, Three.js + GSAP, `pg` for ingestion.
+- **Stack:** Next.js 16 (App Router, React 19), local PostgreSQL via `pg`, signed HTTP-only sessions, Tailwind, Three.js + GSAP.
 - **Mobile:** responsive layouts throughout; the dense screener table becomes a stacked, touch-friendly card list on phones.
-- **Security:** row-level security on all user data; service-only reference tables; cron routes gated by a strict secret.
+- **Security:** signed HTTP-only session cookies, application-scoped user queries, cron routes gated by a strict secret.
 
 ---
 
@@ -103,7 +103,7 @@ Real end-of-day data, refreshed on a schedule (Vercel cron), with every run audi
 - **Fundamentals are sample data today.** The ingestion pipeline, schema, and screener wiring are real and FMP-shaped, but the currently-loaded India figures are a generated sample (tagged `source: "sample-fmp"`). Point it at a real FMP/screener export to go live.
 - **Minervini/PTJ need long history.** PTJ is active on the US set; Minervini is strict (full 8/8 template + VCP) and currently flags 0 until more names set up and coverage deepens.
 - **Index benchmark cards** (Nifty/Sensex/Nasdaq/USD-INR summary tiles) still show static placeholder values; wiring them to a live source (e.g. Frankfurter for FX, an India broker feed for indices) is the next step.
-- **Production env vars** must be set in Vercel for the scheduled crons to run there (`DATABASE_URL` with the rotated password, `CRON_SECRET`, `FINANCIAL_API_KEY`, Supabase keys).
+- **Production env vars** must be set in Vercel for the scheduled crons to run there (`DATABASE_URL`, `SESSION_SECRET`, `CRON_SECRET`, `FINANCIAL_API_KEY`).
 - Some screener rows can show an entry level far from the current price when the live quote and the last precomputed scan are on different freshness cycles — re-running the nightly `scan` realigns them.
 
 ---

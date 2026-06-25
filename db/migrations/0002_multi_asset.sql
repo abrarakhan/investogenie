@@ -2,9 +2,8 @@
 -- Reference + time-series market data spanning US and Indian markets across
 -- Stocks, Bonds, Mutual Funds, Currencies, and Derivatives.
 --
--- These tables are public *reference/market* data: readable by anon and
--- authenticated roles, writable only by the service role (RLS has no write
--- policy, and the service role bypasses RLS during ingestion).
+-- These tables are public reference/market data. The Next.js app and ingestion
+-- jobs access them through direct Postgres connections.
 
 create extension if not exists pgcrypto;
 
@@ -131,32 +130,6 @@ create table if not exists public.derivative_meta (
 );
 create index if not exists derivative_meta_underlying_idx on public.derivative_meta (underlying_asset_id);
 create index if not exists derivative_meta_expiry_idx     on public.derivative_meta (expiry_date);
-
--- ---------------------------------------------------------------------------
--- Row Level Security: public read of market data, writes via service role only
--- ---------------------------------------------------------------------------
-alter table public.assets               enable row level security;
-alter table public.daily_ohlcv          enable row level security;
-alter table public.macro_indicators     enable row level security;
-alter table public.mutual_fund_meta     enable row level security;
-alter table public.mutual_fund_holdings enable row level security;
-alter table public.derivative_meta      enable row level security;
-
-do $$
-declare t text;
-begin
-  foreach t in array array[
-    'assets','daily_ohlcv','macro_indicators',
-    'mutual_fund_meta','mutual_fund_holdings','derivative_meta'
-  ]
-  loop
-    execute format('drop policy if exists "public read %1$s" on public.%1$I', t);
-    execute format(
-      'create policy "public read %1$s" on public.%1$I for select to anon, authenticated using (true)',
-      t
-    );
-  end loop;
-end $$;
 
 -- ---------------------------------------------------------------------------
 -- Seed: representative US + India instruments and macro points so the landing

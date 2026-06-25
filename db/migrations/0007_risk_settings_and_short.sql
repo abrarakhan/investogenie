@@ -13,18 +13,10 @@ alter table public.swing_signals
 -- Per-user risk parameters. Defaults match DEFAULT_RISK in the classifier, so a
 -- user with no row gets the standard 1.5×ATR stop / 2:1 R:R / 3×ATR trail.
 create table if not exists public.user_swing_settings (
-  user_id        uuid primary key references auth.users (id) on delete cascade,
+  user_id        uuid primary key references public.users (id) on delete cascade,
   stop_atr_mult  numeric(6, 3) not null default 1.5,
   target_rr      numeric(6, 3) not null default 2.0,
   trail_atr_mult numeric(6, 3) not null default 3.0,
   include_short  boolean not null default true,
   updated_at     timestamptz not null default now()
 );
-
-alter table public.user_swing_settings enable row level security;
-
-drop policy if exists "own swing settings" on public.user_swing_settings;
-create policy "own swing settings" on public.user_swing_settings
-  for all to authenticated
-  using (auth.uid() = user_id)
-  with check (auth.uid() = user_id);

@@ -3,7 +3,7 @@ import type { MarketConfig, MarketId } from "./types";
 // Curated market configuration powering the Sovereign Pivot Switch. Each market
 // carries its own accent theme, macro benchmarks, and ticker feed so toggling
 // re-renders every feed from context with zero network round-trips. The tickers
-// mirror the rows seeded in supabase/migrations/0002_multi_asset.sql.
+// mirror the rows seeded in db/migrations/0002_multi_asset.sql.
 
 export const MARKETS: Record<MarketId, MarketConfig> = {
   US: {

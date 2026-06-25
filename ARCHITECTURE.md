@@ -9,11 +9,11 @@
 | Layer | Technology |
 |-------|-----------|
 | Framework | Next.js 16.2.9 (App Router, React 19) |
-| Auth + DB | Supabase (auth, RLS, PostgREST, Postgres) |
+| Auth + DB | Local PostgreSQL via `pg`, signed HTTP-only sessions |
 | Styling | Tailwind CSS + CSS custom properties for market theming |
 | 3D Hero | React Three Fiber (@react-three/fiber 9), Three.js |
 | Animations | GSAP 3 + ScrollTrigger |
-| Direct SQL | `pg` (node-postgres) — used only in ingestion scripts / cron routes |
+| Database access | `pg` (node-postgres) — app reads/writes, auth, ingestion scripts, cron routes |
 | Deployment | Vercel (with two scheduled crons) |
 
 ---
@@ -27,7 +27,7 @@ investogenie/
 │   ├── login/
 │   │   ├── page.tsx                    # Sign-in / sign-up form
 │   │   └── actions.ts                  # login(), signup(), signout()
-│   ├── auth/confirm/route.ts           # Email OTP verification
+│   ├── auth/confirm/route.ts           # Legacy confirmation redirect shim
 │   ├── dashboard/page.tsx              # Redirects → /terminal/us
 │   ├── screener/page.tsx               # Redirects → /terminal/us/screener
 │   ├── terminal/[market]/
@@ -55,6 +55,8 @@ investogenie/
 ├── lib/
 │   ├── types.ts                        # Domain types
 │   ├── markets.ts                      # MARKETS config, formatMoney(), normalizeMarket()
+│   ├── db.ts                           # Shared PostgreSQL pool/query helper
+│   ├── auth.ts                         # Local users + signed session cookies
 │   ├── settings.ts                     # getUserSwingSettings() — per-user risk resolver
 │   ├── quotes.ts                       # getQuotesByAssetIds() — chunked batch fetch
 │   ├── screener.ts                     # runScreener() — reads precomputed signals + derives levels
@@ -67,9 +69,8 @@ investogenie/
 │       ├── quotes.ts                   # refreshQuotes() — full universe price refresh
 │       └── signals.ts                  # computeSignals() — OHLCV → swing_signals upsert
 ├── scripts/                            # One-shot ingestion scripts (run with node --env-file)
-├── supabase/migrations/                # SQL migrations 0001–0007
-├── proxy.ts                            # Next.js 16 session refresh (replaces middleware.ts)
-├── utils/supabase/                     # Supabase client helpers (server, client, middleware)
+├── db/migrations/                      # SQL migrations
+├── proxy.ts                            # Optional request pass-through placeholder
 └── vercel.json                         # Cron schedule config
 ```
 
@@ -89,11 +90,11 @@ investogenie/
 | `mutual_fund_meta` | Fund name, AMC, plan type, ISIN |
 | `mutual_fund_holdings` | Fund → stock weight, quarter |
 | `derivative_meta` | Expiry, lot size, settlement kind |
-| `cron_logs` | Per-run cron audit trail — job, status, detail jsonb, error, duration (RLS-on, no policy → service-only) |
+| `cron_logs` | Per-run cron audit trail — job, status, detail jsonb, error, duration |
 | `asset_financial_reports` | 15-yr corporate fundamentals — revenue, net_profit, ebit, capital_employed, eps, P/E, market_cap, ROCE, YoY profit/sales variance. PK `(asset_id, period_end_date, report_type)`, index `(asset_id, period_end_date desc)` |
-| `latest_financials` *(view)* | `distinct on (asset_id)` latest quarterly snapshot; `security_invoker` so base-table RLS applies. Joined by the screener |
+| `latest_financials` *(view)* | `distinct on (asset_id)` latest quarterly snapshot. Joined by the screener |
 
-### User data (RLS: `user_id = auth.uid()`)
+### User data (application-scoped by `user_id`)
 
 | Table | Purpose |
 |-------|---------|
@@ -319,9 +320,9 @@ Two market themes applied via CSS custom properties on `<html>`:
 
 ## Auth Flow
 
-1. Supabase email/password auth (`/login`)
-2. `proxy.ts` (Next.js 16 session-refresh proxy, formerly `middleware.ts`) refreshes the session cookie on every request
-3. Protected routes (`/terminal/*`, `/settings`) call `supabase.auth.getUser()` and redirect to `/login` if no session
+1. `/login` handles local email/password signup and sign-in against `public.users`
+2. Successful auth writes a signed, HTTP-only `ig_session` cookie
+3. Protected routes (`/terminal/*`, `/settings`) call `getSessionUser()` and redirect to `/login` if no session
 4. `ensureScaffold()` creates default portfolio + watchlist rows on first login
 
 ---
@@ -330,14 +331,13 @@ Two market themes applied via CSS custom properties on `<html>`:
 
 | # | Item | Priority |
 |---|------|---------|
-| 1 | **Rotate DB password** — `Shamshad~0148` was pasted in chat; must be changed in Supabase → Project Settings → Database → Reset, then update `.env.local` + Vercel env var | Critical |
+| 1 | **Rotate DB password** — the old shared database password must be changed anywhere it was reused, then update `.env.local` + deployment env vars | Critical |
 | 2 | ✅ **Real US OHLCV** — Tiingo integration shipped (`lib/ingest/usHistory.ts`, `scripts/backfill-us-history.mjs`). **Action:** set `FINANCIAL_API_KEY` and run the one-off seed to activate Minervini/PTJ | Done (needs key) |
-| 3 | **Vercel env vars** — set `DATABASE_URL` (pooler), `CRON_SECRET`, `FINANCIAL_API_KEY`, Supabase URL/key in Vercel so crons run in production. Cron hardening + `cron_logs` shipped | In progress |
+| 3 | **Vercel env vars** — set `DATABASE_URL`, `SESSION_SECRET`, `CRON_SECRET`, `FINANCIAL_API_KEY` in Vercel so crons and auth run in production. Cron hardening + `cron_logs` shipped | In progress |
 | 4 | ✅ **Mobile screener layout** — card-list view below `md:` shipped; table is `hidden md:block`, cards `md:hidden` | Done |
 | 5 | **Watchlist price alerts** — email / push notification when a watched ticker crosses entry level | Medium |
 | 6 | **Portfolio performance chart** — historical portfolio value vs. benchmark curve | Medium |
 | 7 | **Options chain view** — surface derivative_meta expiry + OI for hedging context | Low |
-| 8 | **MCP Supabase auth** — authenticate the Supabase MCP server for direct DB introspection from Claude | Low |
 
 ---
 
@@ -345,9 +345,8 @@ Two market themes applied via CSS custom properties on `<html>`:
 
 ```env
 # .env.local (gitignored)
-NEXT_PUBLIC_SUPABASE_URL=https://<project>.supabase.co
-NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=eyJ...
-DATABASE_URL=postgresql://postgres:<password>@<host>:5432/postgres
+DATABASE_URL=postgresql://localhost:5432/investogenie
+SESSION_SECRET=<random-secret>
 CRON_SECRET=<random-secret>
 FINANCIAL_API_KEY=<tiingo-token>   # real US EOD history (Minervini/PTJ)
 ```

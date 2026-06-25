@@ -1,8 +1,9 @@
-// Server-side glue: pull market data out of Supabase and run the analytical
-// engines, scoped to a single market (US or India). Executes on the server with
-// the user's RLS-scoped client; market/reference tables are public-read.
+// Server-side glue: pull market data out of Postgres and run the analytical
+// engines, scoped to a single market (US or India). Direct SQL; user-owned
+// queries are scoped by the session user id (no RLS in plain Postgres).
 
-import type { SupabaseClient } from "@supabase/supabase-js";
+import { query } from "@/lib/db";
+import { getSessionUser } from "@/lib/auth";
 import {
   analyzeFundOverlap,
   type OverlapReport,
@@ -15,8 +16,6 @@ import {
 import type { MarketId, FundStockWeight, UserFundHolding } from "@/lib/types";
 import { deriveLevels, type SwingSetup, type TradeDirection } from "@/lib/analytics/swingClassifier";
 import { DEFAULT_SETTINGS, type SwingSettings } from "@/lib/settings";
-
-type DB = SupabaseClient;
 
 export interface TopSetup {
   ticker: string;
@@ -31,22 +30,24 @@ export interface TopSetup {
   expectedDays: number;
 }
 
+const num = (v: unknown) => (v === null || v === undefined ? 0 : Number(v));
+
 /** Top active swing setups for a market, with per-user levels applied. */
 export async function getTopSwingSetups(
-  supabase: DB,
   country: string,
   settings: SwingSettings = DEFAULT_SETTINGS,
   limit = 6,
 ): Promise<TopSetup[]> {
-  const { data } = await supabase
-    .from("swing_signals")
-    .select("ticker,verdict,score,reason,bias,current_price,atr,long_trigger,short_trigger,hh22,ll22,daily_velocity")
-    .eq("country", country)
-    .neq("verdict", "NO_SETUP")
-    .order("score", { ascending: false })
-    .limit(limit * 2); // over-fetch so short filtering still fills the panel
-  const num = (v: unknown) => (v === null || v === undefined ? 0 : Number(v));
-  return ((data ?? []) as Record<string, unknown>[])
+  const rows = await query<Record<string, unknown>>(
+    `select ticker, verdict, score, reason, bias, current_price, atr,
+            long_trigger, short_trigger, hh22, ll22, daily_velocity
+       from public.swing_signals
+      where country = $1 and verdict <> 'NO_SETUP'
+      order by score desc
+      limit $2`,
+    [country, limit * 2],
+  );
+  return rows
     .filter((r) => settings.includeShort || (r.bias as string) !== "SHORT")
     .slice(0, limit)
     .map((r) => {
@@ -69,75 +70,54 @@ export async function getTopSwingSetups(
     });
 }
 
-interface FundHoldingRow {
-  quantity: number | string;
-  avg_cost: number | string | null;
-  asset: { ticker: string; asset_class: string } | { ticker: string; asset_class: string }[] | null;
-}
-
-/** Look-through fund overlap for the signed-in user's actual mutual-fund
- *  positions. Returns null when the user holds no funds (empty state) so the
- *  terminal never shows rebalancing advice for funds they don't own. */
-export async function getFundOverlap(supabase: DB): Promise<OverlapReport | null> {
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+/** Look-through fund overlap for the signed-in user's actual fund positions. */
+export async function getFundOverlap(): Promise<OverlapReport | null> {
+  const user = await getSessionUser();
   if (!user) return null;
 
-  // The user's real fund positions (RLS-scoped to this user).
-  const { data: holdings } = await supabase
-    .from("holdings")
-    .select("quantity, avg_cost, asset:assets(ticker, asset_class)");
-  const heldFunds = ((holdings ?? []) as FundHoldingRow[])
-    .map((h) => {
-      const a = Array.isArray(h.asset) ? h.asset[0] : h.asset;
-      return { ticker: a?.ticker ?? "", assetClass: a?.asset_class ?? "", units: Number(h.quantity), nav: Number(h.avg_cost ?? 0) };
-    })
+  const heldFunds = (
+    await query<{ ticker: string; asset_class: string; quantity: string | number; avg_cost: string | number | null }>(
+      `select a.ticker, a.asset_class, h.quantity, h.avg_cost
+         from public.holdings h
+         join public.assets a on a.id = h.asset_id
+        where h.user_id = $1`,
+      [user.id],
+    )
+  )
+    .map((h) => ({ ticker: h.ticker, assetClass: h.asset_class, units: Number(h.quantity), nav: Number(h.avg_cost ?? 0) }))
     .filter((h) => h.assetClass === "MUTUAL_FUND" && h.ticker && h.units > 0);
   if (heldFunds.length === 0) return null;
 
-  const { data: mfh } = await supabase
-    .from("mutual_fund_holdings")
-    .select("fund_asset_id,stock_asset_id,weight_percentage");
-  if (!mfh || mfh.length === 0) return null;
-
-  // Resolve only the ids we need (avoids the 1k-row cap over the 17k catalog).
-  const ids = [
-    ...new Set(
-      (mfh as Record<string, unknown>[]).flatMap((r) => [
-        r.fund_asset_id as string,
-        r.stock_asset_id as string,
-      ]),
-    ),
-  ];
-  const { data: assets } = await supabase
-    .from("assets")
-    .select("id,ticker")
-    .in("id", ids);
-  const idToTicker = new Map<string, string>(
-    ((assets ?? []) as { id: string; ticker: string }[]).map((a) => [a.id, a.ticker]),
+  const mfh = await query<{ fund_asset_id: string; stock_asset_id: string; weight_percentage: string | number }>(
+    "select fund_asset_id, stock_asset_id, weight_percentage from public.mutual_fund_holdings",
   );
+  if (mfh.length === 0) return null;
 
-  const lookThrough: FundStockWeight[] = (mfh as Record<string, unknown>[])
+  const ids = [...new Set(mfh.flatMap((r) => [r.fund_asset_id, r.stock_asset_id]))];
+  const assets = await query<{ id: string; ticker: string }>(
+    "select id, ticker from public.assets where id = any($1)",
+    [ids],
+  );
+  const idToTicker = new Map(assets.map((a) => [a.id, a.ticker]));
+
+  const lookThrough: FundStockWeight[] = mfh
     .map((r) => ({
-      fundTicker: idToTicker.get(r.fund_asset_id as string) ?? "",
-      stockTicker: idToTicker.get(r.stock_asset_id as string) ?? "",
+      fundTicker: idToTicker.get(r.fund_asset_id) ?? "",
+      stockTicker: idToTicker.get(r.stock_asset_id) ?? "",
       weightPercentage: Number(r.weight_percentage),
     }))
     .filter((r) => r.fundTicker && r.stockTicker);
 
-  const { data: meta } = await supabase
-    .from("mutual_fund_meta")
-    .select("asset_id,expense_ratio,plan_type");
-  const metaList = ((meta ?? []) as Record<string, unknown>[]).map((m) => ({
-    ticker: idToTicker.get(m.asset_id as string) ?? "",
+  const meta = await query<{ asset_id: string; expense_ratio: string | number | null; plan_type: string | null }>(
+    "select asset_id, expense_ratio, plan_type from public.mutual_fund_meta",
+  );
+  const metaList = meta.map((m) => ({
+    ticker: idToTicker.get(m.asset_id) ?? "",
     expenseRatio: m.expense_ratio === null ? undefined : Number(m.expense_ratio),
     planType: (m.plan_type as "DIRECT" | "REGULAR") ?? undefined,
   }));
   const metaByTicker = new Map(metaList.map((m) => [m.ticker, m]));
 
-  // Build the portfolio from the user's ACTUAL fund holdings (units = quantity,
-  // navValue = cost basis), not a fabricated sample.
   const portfolio: UserFundHolding[] = heldFunds.map((h) => ({
     fundTicker: h.ticker,
     units: h.units,
@@ -149,49 +129,34 @@ export async function getFundOverlap(supabase: DB): Promise<OverlapReport | null
 }
 
 /** OHLCV close series for one ticker (used as a sector proxy). */
-async function tickerCloseSeries(
-  supabase: DB,
-  ticker: string,
-): Promise<{ date: string; value: number }[]> {
-  const { data: asset } = await supabase
-    .from("assets")
-    .select("id")
-    .eq("ticker", ticker)
-    .limit(1)
-    .maybeSingle();
-  if (!asset) return [];
-  const { data: bars } = await supabase
-    .from("daily_ohlcv")
-    .select("date,close")
-    .eq("asset_id", (asset as { id: string }).id)
-    .order("date", { ascending: true });
-  return ((bars ?? []) as Record<string, unknown>[]).map((b) => ({
-    date: b.date as string,
-    value: Number(b.close),
-  }));
+async function tickerCloseSeries(ticker: string): Promise<{ date: string; value: number }[]> {
+  const rows = await query<{ date: string; close: string | number }>(
+    `select o.date, o.close
+       from public.daily_ohlcv o
+       join public.assets a on a.id = o.asset_id
+      where a.ticker = $1
+      order by o.date asc`,
+    [ticker],
+  );
+  return rows.map((b) => ({ date: String(b.date).slice(0, 10), value: Number(b.close) }));
 }
 
 /** Macro lead/lag matrix scoped to the market's representative sector. */
-export async function getMacroMatrix(
-  supabase: DB,
-  market: MarketId,
-): Promise<MacroMatrix | null> {
-  const { data: macro } = await supabase
-    .from("macro_indicators")
-    .select("indicator_type,date,value")
-    .order("date", { ascending: true });
-  if (!macro || macro.length === 0) return null;
+export async function getMacroMatrix(market: MarketId): Promise<MacroMatrix | null> {
+  const macro = await query<{ indicator_type: string; date: string; value: string | number }>(
+    "select indicator_type, date, value from public.macro_indicators order by date asc",
+  );
+  if (macro.length === 0) return null;
 
   const indicatorMap = new Map<string, SeriesInput>();
-  for (const m of macro as Record<string, unknown>[]) {
-    const key = m.indicator_type as string;
-    if (!indicatorMap.has(key)) indicatorMap.set(key, { key, points: [] });
-    indicatorMap.get(key)!.points.push({ date: m.date as string, value: Number(m.value) });
+  for (const m of macro) {
+    if (!indicatorMap.has(m.indicator_type)) indicatorMap.set(m.indicator_type, { key: m.indicator_type, points: [] });
+    indicatorMap.get(m.indicator_type)!.points.push({ date: String(m.date).slice(0, 10), value: Number(m.value) });
   }
 
   const sectorTicker = market === "US" ? "NVDA" : "RELIANCE";
   const sectorLabel = market === "US" ? "US_TECH" : "IN_LARGECAP";
-  const points = await tickerCloseSeries(supabase, sectorTicker);
+  const points = await tickerCloseSeries(sectorTicker);
   if (points.length === 0) return null;
 
   return buildMacroMatrix([...indicatorMap.values()], [{ key: sectorLabel, points }]);

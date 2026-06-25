@@ -1,16 +1,11 @@
 import Link from "next/link";
-import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { createClient } from "@/utils/supabase/server";
+import { getSessionUser } from "@/lib/auth";
 import LoginForm from "./LoginForm";
 
 // If already authenticated, skip straight to the terminal.
 export default async function LoginPage() {
-  const supabase = createClient(await cookies());
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (user) redirect("/dashboard");
+  if (await getSessionUser()) redirect("/dashboard");
 
   return (
     <main className="relative flex min-h-screen flex-col items-center justify-center bg-[#05070d] px-6 text-white">

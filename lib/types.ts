@@ -1,5 +1,5 @@
-// Shared domain types for InvestoGenie. These mirror the Supabase schema in
-// supabase/migrations and are reused by the analytical engines and UI so the
+// Shared domain types for InvestoGenie. These mirror the Postgres schema in
+// db/migrations and are reused by the analytical engines and UI so the
 // data contract is identical from database -> engine -> screen.
 
 export type AssetClass =

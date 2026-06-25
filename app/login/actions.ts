@@ -2,8 +2,13 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { cookies } from "next/headers";
-import { createClient } from "@/utils/supabase/server";
+import {
+  createSession,
+  destroySession,
+  findUserByEmail,
+  createUser,
+  verifyPassword,
+} from "@/lib/auth";
 
 export interface AuthState {
   error?: string;
@@ -16,49 +21,35 @@ function readCredentials(formData: FormData) {
   return { email, password };
 }
 
-export async function login(
-  _prev: AuthState,
-  formData: FormData,
-): Promise<AuthState> {
+export async function login(_prev: AuthState, formData: FormData): Promise<AuthState> {
   const { email, password } = readCredentials(formData);
   if (!email || !password) return { error: "Email and password are required." };
 
-  const supabase = createClient(await cookies());
-  const { error } = await supabase.auth.signInWithPassword({ email, password });
-  if (error) return { error: error.message };
-
+  const user = await findUserByEmail(email);
+  if (!user || !(await verifyPassword(password, user.password_hash))) {
+    return { error: "Invalid email or password." };
+  }
+  await createSession({ id: user.id, email: user.email });
   revalidatePath("/", "layout");
   redirect("/dashboard");
 }
 
-export async function signup(
-  _prev: AuthState,
-  formData: FormData,
-): Promise<AuthState> {
+export async function signup(_prev: AuthState, formData: FormData): Promise<AuthState> {
   const { email, password } = readCredentials(formData);
   if (!email || !password) return { error: "Email and password are required." };
-  if (password.length < 6)
-    return { error: "Password must be at least 6 characters." };
+  if (password.length < 6) return { error: "Password must be at least 6 characters." };
 
-  const supabase = createClient(await cookies());
-  const { data, error } = await supabase.auth.signUp({ email, password });
-  if (error) return { error: error.message };
-
-  // If the project has email confirmation enabled, there is no active session
-  // yet — prompt the user to confirm. Otherwise we can go straight in.
-  if (data.session) {
-    revalidatePath("/", "layout");
-    redirect("/dashboard");
+  if (await findUserByEmail(email)) {
+    return { error: "An account with that email already exists." };
   }
-  return {
-    message:
-      "Account created. Check your inbox to confirm your email, then sign in.",
-  };
+  const user = await createUser(email, password);
+  await createSession(user);
+  revalidatePath("/", "layout");
+  redirect("/dashboard");
 }
 
 export async function signout(): Promise<void> {
-  const supabase = createClient(await cookies());
-  await supabase.auth.signOut();
+  await destroySession();
   revalidatePath("/", "layout");
   redirect("/login");
 }

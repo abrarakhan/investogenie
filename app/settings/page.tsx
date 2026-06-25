@@ -1,7 +1,6 @@
 import Link from "next/link";
-import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { createClient } from "@/utils/supabase/server";
+import { getSessionUser } from "@/lib/auth";
 import { getUserSwingSettings } from "@/lib/settings";
 import { saveSwingSettings, resetSwingSettings } from "./actions";
 
@@ -30,12 +29,8 @@ function Field({
 }
 
 export default async function SettingsPage() {
-  const supabase = createClient(await cookies());
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
-  const s = await getUserSwingSettings(supabase);
+  if (!(await getSessionUser())) redirect("/login");
+  const s = await getUserSwingSettings();
 
   return (
     <div className="min-h-screen bg-[#05070d] text-white">
