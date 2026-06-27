@@ -3,10 +3,14 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "node scripts/run-with-nse-sync.mjs dev",
+    "dev:next": "next dev",
     "build": "next build",
-    "start": "next start",
-    "lint": "eslint"
+    "start": "node scripts/run-with-nse-sync.mjs start",
+    "start:next": "next start",
+    "lint": "eslint",
+    "sync:nse-history": ".venv/bin/python pipelines/nse_yfinance_sync.py",
+    "sync:fundamentals": ".venv/bin/python pipelines/stock_fundamentals_sync.py"
   },
   "dependencies": {
     "@react-three/drei": "^10.7.7",

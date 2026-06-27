@@ -8,7 +8,7 @@ create table if not exists public.latest_quotes (
   change_pct  numeric(12, 4),
   currency    text,
   as_of       date,
-  source      text,            -- 'NASDAQ', 'NSE_BHAVCOPY', 'BSE_BHAVCOPY'
+  source      text,            -- 'NASDAQ', 'NSE_INDEX', 'DIRECT_QUOTE', 'NSE_BHAVCOPY', 'BSE_BHAVCOPY', 'GOOGLE_FINANCE'
   updated_at  timestamptz not null default now()
 );
 

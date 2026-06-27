@@ -76,6 +76,33 @@ export async function runScreener(
 
   const raw = await query<Record<string, unknown>>(sql, params);
   const num = (v: unknown) => (v === null || v === undefined ? 0 : Number(v));
+  const setupByAsset = new Map<string, SwingSetup>();
+  const scoresByAsset = new Map<string, Record<string, StrategyScore>>();
+
+  const deriveStrategyLevels = (
+    setup: SwingSetup,
+    rawScores: Record<string, StrategyScore>,
+  ): Record<string, StrategyLevel> => {
+    const levels: Record<string, StrategyLevel> = {};
+    for (const [key, sc] of Object.entries(rawScores)) {
+      const dir: TradeDirection = sc.dir === "SHORT" ? "SHORT" : "LONG";
+      const trigger = sc.entry ?? (dir === "SHORT" ? setup.shortTrigger : setup.longTrigger);
+      const stratSetup: SwingSetup =
+        dir === "SHORT" ? { ...setup, shortTrigger: trigger } : { ...setup, longTrigger: trigger };
+      const slv = deriveLevels(stratSetup, dir, settings);
+      levels[key] = {
+        direction: dir,
+        entry: slv.entry,
+        target: slv.target,
+        stopLoss: slv.stopLoss,
+        trailingStop: slv.trailingStop,
+        riskReward: slv.riskRewardRatio,
+        expectedDays: slv.expectedDays,
+        score: Number(sc.score) || 0,
+      };
+    }
+    return levels;
+  };
 
   const out: ScreenRow[] = raw
     .filter((r) => settings.includeShort || (r.bias as string) !== "SHORT")
@@ -94,27 +121,12 @@ export async function runScreener(
 
       const tags = Array.isArray(r.strategy_tags) ? (r.strategy_tags as StrategyKey[]) : [];
       const rawScores = (r.strategy_scores ?? {}) as Record<string, StrategyScore>;
-      const strategyLevels: Record<string, StrategyLevel> = {};
-      for (const [key, sc] of Object.entries(rawScores)) {
-        const dir: TradeDirection = sc.dir === "SHORT" ? "SHORT" : "LONG";
-        const trigger = sc.entry ?? (dir === "SHORT" ? setup.shortTrigger : setup.longTrigger);
-        const stratSetup: SwingSetup =
-          dir === "SHORT" ? { ...setup, shortTrigger: trigger } : { ...setup, longTrigger: trigger };
-        const slv = deriveLevels(stratSetup, dir, settings);
-        strategyLevels[key] = {
-          direction: dir,
-          entry: slv.entry,
-          target: slv.target,
-          stopLoss: slv.stopLoss,
-          trailingStop: slv.trailingStop,
-          riskReward: slv.riskRewardRatio,
-          expectedDays: slv.expectedDays,
-          score: Number(sc.score) || 0,
-        };
-      }
+      const assetId = r.asset_id as string;
+      setupByAsset.set(assetId, setup);
+      scoresByAsset.set(assetId, rawScores);
 
       return {
-        assetId: r.asset_id as string,
+        assetId,
         ticker: r.ticker as string,
         country: r.country as string,
         exchange: r.exchange as string,
@@ -138,7 +150,7 @@ export async function runScreener(
         riskReward: lv.riskRewardRatio,
         expectedDays: lv.expectedDays,
         strategyTags: tags,
-        strategyLevels,
+        strategyLevels: deriveStrategyLevels(setup, rawScores),
         peRatio: null,
         marketCap: null,
         roce: null,
@@ -164,7 +176,33 @@ export async function runScreener(
   ]);
   for (const r of rows) {
     const q = quotes.get(r.assetId);
-    if (q) { r.lastQuote = q.price; r.quoteChangePct = q.changePct; }
+    if (q) {
+      r.lastQuote = q.price;
+      r.quoteChangePct = q.changePct;
+      const setup = setupByAsset.get(r.assetId);
+      if (setup) {
+        const liveSetup = { ...setup, currentPrice: q.price };
+        const lv = deriveLevels(liveSetup, r.direction, settings);
+        r.entry = lv.entry;
+        r.target = lv.target;
+        r.stopLoss = lv.stopLoss;
+        r.trailingStop = lv.trailingStop;
+        r.riskReward = lv.riskRewardRatio;
+        r.expectedDays = lv.expectedDays;
+        r.strategyLevels = deriveStrategyLevels(
+          liveSetup,
+          scoresByAsset.get(r.assetId) ?? {},
+        );
+      }
+    } else {
+      r.entry = null;
+      r.target = null;
+      r.stopLoss = null;
+      r.trailingStop = null;
+      r.riskReward = null;
+      r.expectedDays = null;
+      r.strategyLevels = {};
+    }
     const f = fundamentals.get(r.assetId);
     if (f) {
       r.peRatio = f.peRatio;

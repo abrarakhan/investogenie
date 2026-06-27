@@ -23,10 +23,16 @@ export default function TerminalHeader({
 
         <div className="flex items-center gap-4">
           <Link
+            href={`/markets/${market.toLowerCase()}`}
+            className="hidden rounded-full border border-white/15 px-4 py-2 text-sm text-white/70 transition-colors hover:bg-white/10 hover:text-white sm:block"
+          >
+            Overview
+          </Link>
+          <Link
             href={`/terminal/${market.toLowerCase()}/screener`}
             className="hidden rounded-full border border-white/15 px-4 py-2 text-sm text-white/70 transition-colors hover:bg-white/10 hover:text-white sm:block"
           >
-            Screener
+            Swing Candidates
           </Link>
           <Link
             href="/settings"

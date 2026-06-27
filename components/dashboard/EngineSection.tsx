@@ -19,6 +19,8 @@ const MACRO_STYLE: Record<string, string> = {
   WEAK: "text-white/40",
 };
 
+const formatVerdict = (verdict: string) => verdict.replace(/^LONG_/, "BUY_").replaceAll("_", " ");
+
 function Panel({
   title,
   tag,
@@ -58,9 +60,9 @@ export default function EngineSection({
 
       <div className="grid gap-8 lg:grid-cols-2">
         {/* ---- Swing setups ---- */}
-        <Panel title="Swing Signals" tag="Derivatives · OI-validated">
+        <Panel title="Buy Candidates" tag="Derivatives · OI-validated">
           {swing.length === 0 ? (
-            <p className="text-sm text-white/50">No active setups on the latest bar.</p>
+            <p className="text-sm text-white/50">No buy candidates on the latest bar.</p>
           ) : (
             <ul className="space-y-3">
               {swing.map((s) => (
@@ -72,13 +74,13 @@ export default function EngineSection({
                     <span className="font-semibold">
                       {s.ticker}
                       <span className={`ml-2 rounded px-1.5 py-0.5 text-[9px] font-bold ${s.direction === "SHORT" ? "bg-rose-500/20 text-rose-300" : "bg-emerald-500/20 text-emerald-300"}`}>
-                        {s.direction}
+                        {s.direction === "SHORT" ? "SHORT" : "BUY"}
                       </span>
                     </span>
                     <span
                       className={`rounded-full border px-2.5 py-0.5 text-[11px] font-medium ${VERDICT_STYLE[s.verdict]}`}
                     >
-                      {s.verdict.replaceAll("_", " ")}
+                      {formatVerdict(s.verdict)}
                     </span>
                   </div>
                   <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-white/10">
@@ -89,6 +91,7 @@ export default function EngineSection({
                   </div>
                   <p className="mt-2 text-xs text-white/50">{s.reason}</p>
                   <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] tabular-nums">
+                    <span className="text-white/70">Current <b>{s.currentPrice.toFixed(2)}</b></span>
                     <span className="text-white/70">Entry <b>{s.entry.toFixed(2)}</b></span>
                     <span className="text-emerald-400">Target <b>{s.target.toFixed(2)}</b></span>
                     <span className="text-rose-400">Stop <b>{s.stopLoss.toFixed(2)}</b></span>

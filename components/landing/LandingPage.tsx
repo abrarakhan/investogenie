@@ -6,6 +6,7 @@ import MarketPivotSwitch from "./MarketPivotSwitch";
 import ScrollFeatures from "./ScrollFeatures";
 import TickerTape, { MacroBenchmarks } from "./TickerTape";
 import { useMarket } from "@/context/MarketProvider";
+import type { LiveMarketQuotes } from "@/lib/types";
 
 // WebGL is client-only; skip prerender. `ssr: false` is valid here because this
 // is a Client Component (Next 16 requirement).
@@ -14,7 +15,7 @@ const HeroCanvas = dynamic(() => import("./HeroCanvas"), {
   loading: () => <div className="absolute inset-0 bg-[#05070d]" />,
 });
 
-export default function LandingPage() {
+export default function LandingPage({ quotes }: { quotes: LiveMarketQuotes }) {
   const { market } = useMarket();
 
   return (
@@ -34,8 +35,8 @@ export default function LandingPage() {
           </span>
           <nav className="hidden gap-8 text-sm text-white/60 md:flex">
             <a href="#engines" className="hover:text-white">Engines</a>
-            <a href="#markets" className="hover:text-white">Markets</a>
-            <a href={`/terminal/${market.id.toLowerCase()}/screener`} className="hover:text-white">Screener</a>
+            <a href={`/markets/${market.id.toLowerCase()}`} className="hover:text-white">Market Overview</a>
+            <a href={`/terminal/${market.id.toLowerCase()}/screener`} className="hover:text-white">Swing Candidates</a>
             <a href={`/terminal/${market.id.toLowerCase()}`} className="hover:text-white">Terminal</a>
           </nav>
         </header>
@@ -71,7 +72,7 @@ export default function LandingPage() {
 
         {/* Ticker pinned to the hero base */}
         <div className="relative z-10 w-full">
-          <TickerTape />
+          <TickerTape quotes={quotes} />
         </div>
       </section>
 
@@ -81,7 +82,7 @@ export default function LandingPage() {
           <h2 className="text-2xl font-bold sm:text-3xl">Macro benchmarks</h2>
           <span className="text-sm text-white/50">{market.label}</span>
         </div>
-        <MacroBenchmarks />
+        <MacroBenchmarks quotes={quotes} />
       </section>
 
       {/* ---------- ENGINES ---------- */}
@@ -105,10 +106,10 @@ export default function LandingPage() {
           local Postgres backend provisioned for this build.
         </p>
         <a
-          href={`/terminal/${market.id.toLowerCase()}`}
+          href={`/markets/${market.id.toLowerCase()}`}
           className="mt-10 inline-block rounded-full bg-gradient-to-r from-[var(--ig-primary)] to-[var(--ig-accent)] px-8 py-3 font-semibold text-black transition-transform hover:scale-105"
         >
-          Enter the {market.label}
+          Open {market.label} Overview
         </a>
       </section>
 

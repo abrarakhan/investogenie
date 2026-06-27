@@ -101,9 +101,20 @@ export interface TickerQuote {
   ticker: string;
   name: string;
   last: number;
-  changePct: number;
+  changePct: number | null;
   currency: CurrencyCode;
 }
+
+export interface MarketInstrument {
+  ticker: string;
+  name: string;
+  currency: CurrencyCode;
+}
+
+export type LiveMarketQuotes = Record<
+  MarketId,
+  { tickers: TickerQuote[]; benchmarks: TickerQuote[] }
+>;
 
 export interface MarketTheme {
   /** Tailwind-independent raw values pushed into CSS custom properties. */
@@ -119,6 +130,6 @@ export interface MarketConfig {
   currency: CurrencyCode;
   locale: string;
   theme: MarketTheme;
-  benchmarks: TickerQuote[];
-  tickers: TickerQuote[];
+  benchmarks: MarketInstrument[];
+  tickers: MarketInstrument[];
 }

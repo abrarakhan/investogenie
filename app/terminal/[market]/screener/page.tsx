@@ -21,10 +21,11 @@ export default async function TerminalScreener({
 
   const isUS = marketId === "US";
   const settings = await getUserSwingSettings();
-  // India: NSE only, capped to the 20 highest-conviction swing candidates.
+  const buyOnlySettings = { ...settings, includeShort: false };
+  // India: NSE only, capped to the 20 highest-conviction buy candidates.
   const rows = await runScreener(
     country,
-    settings,
+    buyOnlySettings,
     isUS ? {} : { exchange: "NSE", limit: 20 },
   );
 
@@ -36,13 +37,13 @@ export default async function TerminalScreener({
           <Link href="/" className="text-xl font-black tracking-tight">
             Investo<span className="text-[var(--ig-accent)]">Genie</span>
             <span className="ml-2 align-middle text-[10px] uppercase tracking-widest text-white/40">
-              {cfg.label} Screener
+              {cfg.label} Swing Candidates
             </span>
           </Link>
           <nav className="flex gap-5 text-sm text-white/60">
             <Link href={`/terminal/${marketId.toLowerCase()}`} className="hover:text-white">Terminal</Link>
             <Link href={`/terminal/${isUS ? "in" : "us"}/screener`} className="hover:text-white">
-              {isUS ? "🇮🇳 India" : "🇺🇸 US"} screener
+              {isUS ? "🇮🇳 India" : "🇺🇸 US"} candidates
             </Link>
           </nav>
         </div>
@@ -51,18 +52,18 @@ export default async function TerminalScreener({
       <main className="mx-auto max-w-7xl px-6 py-10">
         <div className="mb-8">
           <h1 className="text-3xl font-bold">
-            {cfg.flag} {cfg.label} Swing Screener{!isUS && " — Top 20"}
+            {cfg.flag} {cfg.label} Swing Candidates{!isUS && " — Top 20"}
           </h1>
           <p className="mt-2 max-w-2xl text-white/50">
             {isUS ? (
               <>
-                The derivative-aided swing classifier, precomputed nightly across
-                the S&P 100 subset. Breakouts and volatility squeezes are flagged;
-                an OI build-up upgrades a breakout to a validated long.
+                Buy-side swing candidates, precomputed nightly across the S&P 100
+                subset. Breakouts and volatility squeezes are flagged; an OI
+                build-up upgrades a breakout to a confirmed buy candidate.
               </>
             ) : (
               <>
-                The 20 highest-conviction swing candidates from the NSE universe,
+                The 20 highest-conviction buy candidates from the NSE universe,
                 ranked by the derivative-aided classifier on 10 years of EOD data.
                 Use the strategy ribbon to filter by a legendary system —
                 Qullamaggie, Minervini, Darvas, PTJ, or Simons.

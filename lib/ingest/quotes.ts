@@ -8,6 +8,7 @@ import { Client } from "pg";
 const UA =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36";
 const MON: Record<string, number> = { Jan:0,Feb:1,Mar:2,Apr:3,May:4,Jun:5,Jul:6,Aug:7,Sep:8,Oct:9,Nov:10,Dec:11 };
+const NSE_EQUITY_SERIES = new Set(["EQ", "BE", "BZ", "SM", "ST", "SZ"]);
 
 export interface RefreshSummary {
   matched: number;
@@ -53,6 +54,60 @@ async function fetchUS(): Promise<Map<string, RawQuote>> {
   return quotes;
 }
 
+async function fetchNSEIndices(): Promise<Map<string, RawQuote>> {
+  const quotes = new Map<string, RawQuote>();
+  const res = await fetch("https://www.nseindia.com/api/allIndices", {
+    headers: {
+      "User-Agent": UA,
+      Accept: "application/json",
+      Referer: "https://www.nseindia.com/",
+    },
+  }).catch(() => null);
+  if (!res || !res.ok) return quotes;
+
+  const json = await res.json().catch(() => null);
+  const rows = Array.isArray(json?.data) ? json.data : [];
+  const aliases: Record<string, string> = {
+    "NIFTY 50": "NIFTY",
+  };
+
+  for (const r of rows) {
+    const indexName = String(r.index ?? r.indexSymbol ?? "").toUpperCase().trim();
+    const ticker = aliases[indexName];
+    const price = num(r.last);
+    if (!ticker || price === null || price === 0) continue;
+    quotes.set(ticker, { price, changePct: num(r.percentChange) });
+  }
+  return quotes;
+}
+
+async function fetchDirectBenchmarks(): Promise<Map<string, RawQuote>> {
+  const quotes = new Map<string, RawQuote>();
+
+  const [sensexRes, fxRes] = await Promise.all([
+    fetch("https://priceapi.moneycontrol.com/pricefeed/notapplicable/inidicesindia/in%3BSEN", {
+      headers: { "User-Agent": UA, Accept: "application/json" },
+    }).catch(() => null),
+    fetch("https://open.er-api.com/v6/latest/USD", {
+      headers: { "User-Agent": UA, Accept: "application/json" },
+    }).catch(() => null),
+  ]);
+
+  if (sensexRes?.ok) {
+    const json = await sensexRes.json().catch(() => null);
+    const price = num(json?.data?.pricecurrent);
+    if (price !== null) quotes.set("SENSEX", { price, changePct: num(json?.data?.pricepercentchange) });
+  }
+
+  if (fxRes?.ok) {
+    const json = await fxRes.json().catch(() => null);
+    const price = num(json?.rates?.INR);
+    if (price !== null) quotes.set("USDINR", { price, changePct: null });
+  }
+
+  return quotes;
+}
+
 async function fetchBhavSeries(
   startISO: string,
   build: (text: string) => { quotes: Map<string, RawQuote>; asOf: string | null } | null,
@@ -74,12 +129,13 @@ function buildNSE(text: string) {
   if (!text.includes("SERIES")) return null;
   const lines = text.split(/\r?\n/).filter(Boolean);
   const h = parseCsvLine(lines[0]); const col = (n: string) => h.indexOf(n);
-  const iSym = col("SYMBOL"), iSer = col("SERIES"), iDate = col("DATE1"), iClose = col("CLOSE_PRICE"), iPrev = col("PREV_CLOSE");
+  const iSym = col("SYMBOL"), iSer = col("SERIES"), iDate = col("DATE1");
+  const iLast = col("LAST_PRICE"), iClose = col("CLOSE_PRICE"), iPrev = col("PREV_CLOSE");
   const quotes = new Map<string, RawQuote>(); let asOf: string | null = null;
   for (let k = 1; k < lines.length; k++) {
     const p = parseCsvLine(lines[k]);
-    if (p[iSer] !== "EQ") continue;
-    const price = num(p[iClose]); if (price === null) continue;
+    if (!NSE_EQUITY_SERIES.has(p[iSer])) continue;
+    const price = num(p[iLast]) ?? num(p[iClose]); if (price === null || price === 0) continue;
     const prev = num(p[iPrev]);
     const [dd, mon, yyyy] = p[iDate].split("-");
     asOf = `${yyyy}-${String(MON[mon]+1).padStart(2,"0")}-${dd.padStart(2,"0")}`;
@@ -92,12 +148,13 @@ function buildBSE(text: string) {
   if (!text.includes("TckrSymb")) return null;
   const lines = text.split(/\r?\n/).filter(Boolean);
   const h = parseCsvLine(lines[0]); const col = (n: string) => h.indexOf(n);
-  const iSym = col("TckrSymb"), iTp = col("FinInstrmTp"), iClose = col("ClsPric"), iPrev = col("PrvsClsgPric"), iDate = col("TradDt");
+  const iSym = col("TckrSymb"), iTp = col("FinInstrmTp"), iDate = col("TradDt");
+  const iLast = col("LastPric"), iClose = col("ClsPric"), iPrev = col("PrvsClsgPric");
   const quotes = new Map<string, RawQuote>(); let asOf: string | null = null;
   for (let k = 1; k < lines.length; k++) {
     const p = parseCsvLine(lines[k]);
     if (p[iTp] !== "STK") continue;
-    const price = num(p[iClose]); if (price === null || price === 0) continue;
+    const price = num(p[iLast]) ?? num(p[iClose]); if (price === null || price === 0) continue;
     const prev = num(p[iPrev]);
     asOf = p[iDate];
     quotes.set(p[iSym].toUpperCase(), { price, changePct: prev ? ((price - prev) / prev) * 100 : null });
@@ -105,10 +162,12 @@ function buildBSE(text: string) {
   return { quotes, asOf };
 }
 
-export async function refreshQuotes(databaseUrl: string, startISO = "2025-06-13"): Promise<RefreshSummary> {
+export async function refreshQuotes(databaseUrl: string, startISO = new Date().toISOString().slice(0, 10)): Promise<RefreshSummary> {
   const t0 = Date.now();
-  const [usQuotes, nse, bse] = await Promise.all([
+  const [usQuotes, nseIndices, directBenchmarks, nse, bse] = await Promise.all([
     fetchUS(),
+    fetchNSEIndices(),
+    fetchDirectBenchmarks(),
     fetchBhavSeries(startISO, buildNSE, (d) => `https://archives.nseindia.com/products/content/sec_bhavdata_full_${ddmmyyyy(d)}.csv`),
     fetchBhavSeries(startISO, buildBSE, (d) => `https://www.bseindia.com/download/BhavCopy/Equity/BhavCopy_BSE_CM_0_0_0_${yyyymmdd(d)}_F_0000.CSV`),
   ]);
@@ -121,9 +180,12 @@ export async function refreshQuotes(databaseUrl: string, startISO = "2025-06-13"
     const usMap = toMap((await client.query("select id,ticker from public.assets where country='US'")).rows);
     const nseMap = toMap((await client.query("select id,ticker from public.assets where exchange='NSE'")).rows);
     const bseMap = toMap((await client.query("select id,ticker from public.assets where exchange='BSE'")).rows);
+    const directMap = toMap((await client.query("select id,ticker from public.assets where ticker = any($1)", [["SENSEX", "USDINR"]])).rows);
 
     const rows: { assetId: string; price: number; changePct: number | null; currency: string; asOf: string | null; source: string }[] = [];
     for (const [t, q] of usQuotes) { const id = usMap.get(t); if (id) rows.push({ assetId: id, price: q.price, changePct: q.changePct, currency: "USD", asOf: null, source: "NASDAQ" }); }
+    for (const [t, q] of nseIndices) { const id = nseMap.get(t); if (id) rows.push({ assetId: id, price: q.price, changePct: q.changePct, currency: "INR", asOf: startISO, source: "NSE_INDEX" }); }
+    for (const [t, q] of directBenchmarks) { const id = directMap.get(t); if (id) rows.push({ assetId: id, price: q.price, changePct: q.changePct, currency: "INR", asOf: startISO, source: "DIRECT_QUOTE" }); }
     for (const [t, q] of nse.quotes) { const id = nseMap.get(t); if (id) rows.push({ assetId: id, price: q.price, changePct: q.changePct, currency: "INR", asOf: nse.asOf, source: "NSE_BHAVCOPY" }); }
     for (const [t, q] of bse.quotes) { const id = bseMap.get(t); if (id) rows.push({ assetId: id, price: q.price, changePct: q.changePct, currency: "INR", asOf: bse.asOf, source: "BSE_BHAVCOPY" }); }
 
@@ -144,7 +206,7 @@ export async function refreshQuotes(databaseUrl: string, startISO = "2025-06-13"
 
     return {
       matched: rows.length,
-      bySource: { NASDAQ: usQuotes.size, NSE_BHAVCOPY: nse.quotes.size, BSE_BHAVCOPY: bse.quotes.size },
+      bySource: { NASDAQ: usQuotes.size, NSE_INDEX: nseIndices.size, DIRECT_QUOTE: directBenchmarks.size, NSE_BHAVCOPY: nse.quotes.size, BSE_BHAVCOPY: bse.quotes.size },
       durationMs: Date.now() - t0,
     };
   } finally {

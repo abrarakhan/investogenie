@@ -4,7 +4,7 @@ import type { FinancialSnapshot } from "@/lib/types";
 
 interface Row {
   asset_id: string;
-  period_end_date: string | null;
+  period_end_date: string | Date | null;
   fiscal_period: string | null;
   pe_ratio: string | number | null;
   market_cap: string | number | null;
@@ -17,6 +17,11 @@ interface Row {
 
 const n = (v: string | number | null): number | null =>
   v === null || v === undefined ? null : Number(v);
+
+const isoDate = (value: string | Date | null): string => {
+  if (!value) return "";
+  return value instanceof Date ? value.toISOString().slice(0, 10) : value;
+};
 
 export async function getFundamentalsByAssetIds(
   ids: string[],
@@ -34,7 +39,7 @@ export async function getFundamentalsByAssetIds(
   );
   for (const r of rows) {
     map.set(r.asset_id, {
-      periodEndDate: (r.period_end_date as string) ?? "",
+      periodEndDate: isoDate(r.period_end_date),
       fiscalPeriod: r.fiscal_period ?? null,
       peRatio: n(r.pe_ratio),
       marketCap: n(r.market_cap),

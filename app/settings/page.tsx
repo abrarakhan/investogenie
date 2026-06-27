@@ -63,7 +63,7 @@ export default async function SettingsPage() {
             <input type="checkbox" name="include_short" defaultChecked={s.includeShort} className="h-4 w-4" />
             <span>
               <span className="block text-sm font-medium">Include short / sell-side setups</span>
-              <span className="block text-xs text-white/40">Show breakdown (down-trend) setups alongside long breakouts.</span>
+              <span className="block text-xs text-white/40">Show breakdown setups alongside buy breakouts in advanced engine views.</span>
             </span>
           </label>
 

@@ -132,11 +132,11 @@ export function deriveLevels(
 ): TradeLevels {
   const { atr, currentPrice, dailyVelocity } = setup;
   if (direction === "SHORT") {
-    const entry = round2(setup.shortTrigger);
+    const entry = round2(Math.min(setup.shortTrigger, currentPrice));
     const stopLoss = round2(entry + risk.stopAtrMult * atr);
     const r = stopLoss - entry;
     const target = round2(Math.max(0, entry - risk.targetRR * r));
-    const trailingStop = round2(setup.ll22 + risk.trailAtrMult * atr);
+    const trailingStop = round2(Math.min(setup.ll22, currentPrice) + risk.trailAtrMult * atr);
     const rr = r > 0 ? round2((entry - target) / r) : 0;
     return {
       direction, currentPrice: round2(currentPrice), entry, target, stopLoss,
@@ -144,11 +144,13 @@ export function deriveLevels(
       expectedDays: estimateDays(Math.abs(entry - target), dailyVelocity),
     };
   }
-  const entry = round2(setup.longTrigger);
+  // Once a breakout trigger has traded, the old trigger is no longer an
+  // actionable fill. Rebase the plan on the latest available market price.
+  const entry = round2(Math.max(setup.longTrigger, currentPrice));
   const stopLoss = round2(Math.max(0, entry - risk.stopAtrMult * atr));
   const r = entry - stopLoss;
   const target = round2(entry + risk.targetRR * r);
-  const trailingStop = round2(Math.max(0, setup.hh22 - risk.trailAtrMult * atr));
+  const trailingStop = round2(Math.max(0, Math.max(setup.hh22, currentPrice) - risk.trailAtrMult * atr));
   const rr = r > 0 ? round2((target - entry) / r) : 0;
   return {
     direction, currentPrice: round2(currentPrice), entry, target, stopLoss,

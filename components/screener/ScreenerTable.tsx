@@ -25,6 +25,7 @@ const STRATEGY_LABEL: Record<StrategyKey, string> = Object.fromEntries(
 const fmt2 = (n: number | null) => (n === null ? "—" : n.toFixed(2));
 const fmtRatio = (n: number | null) => (n === null ? "—" : n.toFixed(1));
 const fmtPct = (n: number | null) => (n === null ? "—" : `${n >= 0 ? "+" : ""}${n.toFixed(1)}%`);
+const formatVerdict = (verdict: string) => verdict.replace(/^LONG_/, "BUY_").replaceAll("_", " ");
 /** Compact Rs. Crore — rolls up to Lakh-Cr / k-Cr for large caps. */
 const fmtCr = (n: number | null): string => {
   if (n === null) return "—";
@@ -36,7 +37,7 @@ const varColor = (n: number | null) =>
   n === null ? "text-white/30" : n >= 0 ? "text-emerald-400" : "text-rose-400";
 
 interface EffectiveLevels {
-  current: number;
+  current: number | null;
   dir: ScreenRow["direction"];
   entry: number | null;
   target: number | null;
@@ -52,7 +53,7 @@ interface EffectiveLevels {
 function effectiveLevels(r: ScreenRow, activeStrategy: StrategyKey | null): EffectiveLevels {
   const sl: StrategyLevel | undefined = activeStrategy ? r.strategyLevels[activeStrategy] : undefined;
   return {
-    current: r.lastQuote ?? r.close,
+    current: r.lastQuote,
     dir: sl ? sl.direction : r.direction,
     entry: sl ? sl.entry : r.entry,
     target: sl ? sl.target : r.target,
@@ -63,10 +64,10 @@ function effectiveLevels(r: ScreenRow, activeStrategy: StrategyKey | null): Effe
   };
 }
 
-function DirBadge({ dir }: { dir: ScreenRow["direction"] }) {
+function ActionBadge({ dir }: { dir: ScreenRow["direction"] }) {
   return (
     <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${dir === "SHORT" ? "bg-rose-500/20 text-rose-300" : "bg-emerald-500/20 text-emerald-300"}`}>
-      {dir === "SHORT" ? "SHORT" : "LONG"}
+      {dir === "SHORT" ? "SHORT" : "BUY"}
     </span>
   );
 }
@@ -93,6 +94,7 @@ export default function ScreenerTable({
     return rows.filter((r) => {
       if (market !== "ALL" && r.country !== market) return false;
       if (strategy !== "ALL" && !r.strategyTags.includes(strategy)) return false;
+      if (strategy !== "ALL" && r.strategyLevels[strategy]?.direction === "SHORT") return false;
       // A strategy filter implies "setups" — skip the NO_SETUP gate so a tagged
       // row still shows even if the default classifier flagged nothing.
       if (strategy === "ALL" && setup === "SETUPS" && r.verdict === "NO_SETUP") return false;
@@ -153,7 +155,7 @@ export default function ScreenerTable({
               setup === "SETUPS" ? "border-[var(--ig-accent)]/40 bg-[var(--ig-accent)]/10 text-[var(--ig-accent)]" : "border-white/10 text-white/50"
             }`}
           >
-            {setup === "SETUPS" ? "Setups only" : "Show all"}
+            {setup === "SETUPS" ? "Buy candidates" : "Show all"}
           </button>
         </div>
       </div>
@@ -243,8 +245,8 @@ export default function ScreenerTable({
 
       <div className="mb-4 flex gap-6 text-xs text-white/50">
         <span>{counts.total} scanned</span>
-        <span>{counts.setups} active setups</span>
-        <span className="text-emerald-400">{counts.long} long breakouts</span>
+        <span>{counts.setups} buy candidates</span>
+        <span className="text-emerald-400">{counts.long} confirmed buy breakouts</span>
         <span className="ml-auto">{filtered.length} shown</span>
       </div>
 
@@ -261,7 +263,7 @@ export default function ScreenerTable({
             <thead className="bg-white/[0.03] text-left text-xs uppercase tracking-wider text-white/40">
               <tr>
                 <th className="px-4 py-3">Ticker</th>
-                <th className="px-4 py-3">Dir</th>
+                <th className="px-4 py-3">Action</th>
                 <th className="px-4 py-3 text-right">Current</th>
                 <th className="px-4 py-3 text-right">Entry</th>
                 <th className="px-4 py-3 text-right">Target</th>
@@ -284,7 +286,7 @@ export default function ScreenerTable({
                   <tr key={`${r.exchange}:${r.ticker}`} className="border-t border-white/5">
                     <td className="px-4 py-3">
                       <span className="font-semibold">{r.ticker}</span>
-                      <span className="ml-2 text-[10px] uppercase text-white/30">{r.assetClass}</span>
+                      <span className="ml-2 text-[10px] uppercase text-white/30">{r.exchange} · {r.assetClass}</span>
                       {!activeStrategy && r.strategyTags.length > 0 && (
                         <span className="mt-1 flex flex-wrap gap-1">
                           {r.strategyTags.map((t) => (
@@ -299,9 +301,9 @@ export default function ScreenerTable({
                         </span>
                       )}
                     </td>
-                    <td className="px-4 py-3"><DirBadge dir={lv.dir} /></td>
+                    <td className="px-4 py-3"><ActionBadge dir={lv.dir} /></td>
                     <td className="px-4 py-3 text-right tabular-nums">
-                      {lv.current.toFixed(2)}
+                      {fmt2(lv.current)}
                       {r.quoteChangePct !== null && (
                         <span className={`ml-1 text-[10px] ${r.quoteChangePct >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
                           {r.quoteChangePct >= 0 ? "+" : ""}{r.quoteChangePct.toFixed(2)}%
@@ -332,7 +334,7 @@ export default function ScreenerTable({
                         </span>
                       ) : (
                         <span className={`rounded-full border px-2.5 py-0.5 text-[11px] font-medium ${VERDICT_STYLE[r.verdict]}`}>
-                          {r.verdict.replaceAll("_", " ")}
+                          {formatVerdict(r.verdict)}
                         </span>
                       )}
                     </td>
@@ -353,16 +355,16 @@ export default function ScreenerTable({
               key={`${r.exchange}:${r.ticker}`}
               className="rounded-2xl border border-white/10 bg-white/[0.02] p-4"
             >
-              {/* Header: ticker + direction + verdict/strategy */}
+              {/* Header: ticker + action + verdict/strategy */}
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
                     <span className="text-base font-semibold">{r.ticker}</span>
-                    <span className="text-[10px] uppercase text-white/30">{r.assetClass}</span>
-                    <DirBadge dir={lv.dir} />
+                    <span className="text-[10px] uppercase text-white/30">{r.exchange} · {r.assetClass}</span>
+                    <ActionBadge dir={lv.dir} />
                   </div>
                   <div className="mt-1 tabular-nums">
-                    <span className="text-lg font-bold">{lv.current.toFixed(2)}</span>
+                    <span className="text-lg font-bold">{fmt2(lv.current)}</span>
                     {r.quoteChangePct !== null && (
                       <span className={`ml-2 text-xs ${r.quoteChangePct >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
                         {r.quoteChangePct >= 0 ? "+" : ""}{r.quoteChangePct.toFixed(2)}%
@@ -376,7 +378,7 @@ export default function ScreenerTable({
                   </span>
                 ) : (
                   <span className={`shrink-0 rounded-full border px-2.5 py-1 text-[11px] font-medium ${VERDICT_STYLE[r.verdict]}`}>
-                    {r.verdict.replaceAll("_", " ")}
+                    {formatVerdict(r.verdict)}
                   </span>
                 )}
               </div>

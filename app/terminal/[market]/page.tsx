@@ -30,6 +30,20 @@ interface HoldingRow extends AssetLite {
 interface WatchRow extends AssetLite {
   wid: string;
 }
+interface BenchmarkQuoteRow {
+  ticker: string;
+  price: string | number;
+  change_pct: string | number | null;
+  currency: string | null;
+  as_of: string | Date | null;
+  source: string | null;
+}
+
+function formatDateLabel(value: string | Date | null): string | null {
+  if (!value) return null;
+  if (value instanceof Date) return value.toISOString().slice(0, 10);
+  return value;
+}
 
 export default async function TerminalPage({
   params,
@@ -46,8 +60,9 @@ export default async function TerminalPage({
   if (!user) redirect("/login");
   await ensureScaffold();
   const settings = await getUserSwingSettings();
+  const buyOnlySettings = { ...settings, includeShort: false };
 
-  const [holdingRows, watchRows, swing, macro] = await Promise.all([
+  const [holdingRows, watchRows, benchmarkQuoteRows, swing, macro] = await Promise.all([
     query<HoldingRow>(
       `select h.id as hid, h.quantity, h.avg_cost,
               a.id, a.ticker, a.name, a.asset_class, a.currency, a.country
@@ -61,7 +76,14 @@ export default async function TerminalPage({
         where w.user_id = $1 order by w.created_at desc`,
       [user.id],
     ),
-    getTopSwingSetups(country, settings, 6),
+    query<BenchmarkQuoteRow>(
+      `select a.ticker, q.price, q.change_pct, q.currency, q.as_of, q.source
+         from public.assets a
+         join public.latest_quotes q on q.asset_id = a.id
+        where a.country = $1 and a.ticker = any($2)`,
+      [country, cfg.benchmarks.map((b) => b.ticker)],
+    ),
+    getTopSwingSetups(country, buyOnlySettings, 6),
     getMacroMatrix(marketId),
   ]);
   const overlap = marketId === "IN" ? await getFundOverlap() : null;
@@ -83,17 +105,32 @@ export default async function TerminalPage({
     ...watch.map((w) => w.asset?.id),
   ].filter((x): x is string => Boolean(x));
   const quotes = await getQuotesByAssetIds(quoteIds);
+  const benchmarkQuotes = new Map(benchmarkQuoteRows.map((q) => [q.ticker, q]));
+  const benchmarks = cfg.benchmarks.map((b) => {
+    const q = benchmarkQuotes.get(b.ticker);
+    return q
+      ? {
+          ...b,
+          last: Number(q.price),
+          changePct: q.change_pct === null ? null : Number(q.change_pct),
+          currency: q.currency ?? b.currency,
+          asOf: formatDateLabel(q.as_of),
+          source: q.source,
+        }
+      : { ...b, last: null, changePct: null, asOf: null, source: null };
+  });
 
   const ccy = cfg.currency;
   const valued = holdings.map((h) => {
     const quote = h.asset ? quotes.get(h.asset.id) : undefined;
-    const last = quote?.price ?? h.avgCost;
+    const last = quote?.price ?? null;
     const inv = h.quantity * h.avgCost;
-    const mv = h.quantity * last;
-    return { ...h, last, changePct: quote?.changePct ?? null, invested: inv, market: mv, pnl: mv - inv };
+    const mv = last === null ? null : h.quantity * last;
+    return { ...h, last, changePct: quote?.changePct ?? null, invested: inv, market: mv, pnl: mv === null ? null : mv - inv };
   });
-  const invested = valued.reduce((s, v) => s + v.invested, 0);
-  const marketVal = valued.reduce((s, v) => s + v.market, 0);
+  const priced = valued.filter((v): v is typeof v & { market: number; pnl: number } => v.market !== null && v.pnl !== null);
+  const invested = priced.reduce((s, v) => s + v.invested, 0);
+  const marketVal = priced.reduce((s, v) => s + v.market, 0);
   const pnl = marketVal - invested;
 
   return (
@@ -111,6 +148,8 @@ export default async function TerminalPage({
             <p className="text-white/50">
               No {ccy} positions yet — record your first {cfg.label} trade below.
             </p>
+          ) : priced.length === 0 ? (
+            <p className="text-white/50">Portfolio value unavailable until current quotes are loaded.</p>
           ) : (
             <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-5 sm:w-80">
               <div className="text-xs uppercase tracking-widest text-white/40">{ccy} book</div>
@@ -128,15 +167,22 @@ export default async function TerminalPage({
             {cfg.label} benchmarks
           </h2>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-            {cfg.benchmarks.map((b) => {
-              const up = b.changePct >= 0;
+            {benchmarks.map((b) => {
+              const up = (b.changePct ?? 0) >= 0;
               return (
                 <div key={b.ticker} className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
                   <div className="text-xs uppercase tracking-widest text-white/50">{b.name}</div>
-                  <div className="mt-1 text-2xl font-bold tabular-nums">{formatMoney(b.last, ccy)}</div>
-                  <div className={`mt-1 text-sm tabular-nums ${up ? "text-emerald-400" : "text-rose-400"}`}>
-                    {up ? "▲" : "▼"} {formatPct(b.changePct)}
+                  <div className="mt-1 text-2xl font-bold tabular-nums">
+                    {b.last === null ? "Unavailable" : formatMoney(b.last, ccy)}
                   </div>
+                  <div className={`mt-1 text-sm tabular-nums ${up ? "text-emerald-400" : "text-rose-400"}`}>
+                    {b.changePct === null ? "No latest change" : `${up ? "▲" : "▼"} ${formatPct(b.changePct)}`}
+                  </div>
+                  {b.asOf && (
+                    <div className="mt-1 text-[10px] uppercase tracking-wider text-white/30">
+                      {b.source} · {b.asOf}
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -172,16 +218,16 @@ export default async function TerminalPage({
                         <td className="py-2.5 text-right tabular-nums">{h.quantity}</td>
                         <td className="py-2.5 text-right tabular-nums">{formatMoney(h.avgCost, ccy)}</td>
                         <td className="py-2.5 text-right tabular-nums">
-                          {formatMoney(h.last, ccy)}
+                          {h.last === null ? "Unavailable" : formatMoney(h.last, ccy)}
                           {h.changePct !== null && (
                             <span className={`ml-1 text-[10px] ${h.changePct >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
                               {h.changePct >= 0 ? "+" : ""}{h.changePct.toFixed(2)}%
                             </span>
                           )}
                         </td>
-                        <td className="py-2.5 text-right tabular-nums">{formatMoney(h.market, ccy)}</td>
-                        <td className={`py-2.5 text-right tabular-nums ${h.pnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
-                          {formatMoney(h.pnl, ccy)}
+                        <td className="py-2.5 text-right tabular-nums">{h.market === null ? "Unavailable" : formatMoney(h.market, ccy)}</td>
+                        <td className={`py-2.5 text-right tabular-nums ${(h.pnl ?? 0) >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                          {h.pnl === null ? "Unavailable" : formatMoney(h.pnl, ccy)}
                         </td>
                       </tr>
                     ))}

@@ -144,6 +144,8 @@ insert into public.assets (ticker, name, asset_class, exchange, country, currenc
   ('TCS',      'Tata Consultancy Services',  'STOCK',    'NSE',    'IN', 'INR'),
   ('INFY',     'Infosys Ltd',                'STOCK',    'NSE',    'IN', 'INR'),
   ('US10Y',    'US 10-Year Treasury Note',   'BOND',     'NYSE',   'US', 'USD'),
+  ('NIFTY',    'Nifty 50 Index',             'DERIVATIVE','NSE',   'IN', 'INR'),
+  ('SENSEX',   'BSE Sensex Index',           'DERIVATIVE','BSE',   'IN', 'INR'),
   ('USDINR',   'US Dollar / Indian Rupee',   'CURRENCY', 'FX',     'IN', 'INR'),
   ('NIFTYFUT', 'Nifty 50 Front-Month Future','DERIVATIVE','NSE',   'IN', 'INR')
 on conflict (exchange, ticker) do nothing;

@@ -23,6 +23,7 @@ export interface TopSetup {
   direction: TradeDirection;
   score: number;
   reason: string;
+  currentPrice: number;
   entry: number;
   target: number;
   stopLoss: number;
@@ -39,11 +40,13 @@ export async function getTopSwingSetups(
   limit = 6,
 ): Promise<TopSetup[]> {
   const rows = await query<Record<string, unknown>>(
-    `select ticker, verdict, score, reason, bias, current_price, atr,
-            long_trigger, short_trigger, hh22, ll22, daily_velocity
-       from public.swing_signals
-      where country = $1 and verdict <> 'NO_SETUP'
-      order by score desc
+    `select s.ticker, s.verdict, s.score, s.reason, s.bias,
+            q.price as current_price, s.atr,
+            s.long_trigger, s.short_trigger, s.hh22, s.ll22, s.daily_velocity
+       from public.swing_signals s
+       join public.latest_quotes q on q.asset_id = s.asset_id
+      where s.country = $1 and s.verdict <> 'NO_SETUP'
+      order by s.score desc
       limit $2`,
     [country, limit * 2],
   );
@@ -64,6 +67,7 @@ export async function getTopSwingSetups(
         direction,
         score: num(r.score),
         reason: (r.reason as string) ?? "",
+        currentPrice: lv.currentPrice,
         entry: lv.entry, target: lv.target, stopLoss: lv.stopLoss,
         trailingStop: lv.trailingStop, expectedDays: lv.expectedDays,
       };
