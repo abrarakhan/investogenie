@@ -5,6 +5,7 @@
 import { cookies } from "next/headers";
 import { SignJWT, jwtVerify } from "jose";
 import bcrypt from "bcryptjs";
+import { cache } from "react";
 import { queryOne } from "@/lib/db";
 
 const COOKIE = "ig_session";
@@ -45,17 +46,20 @@ export async function destroySession(): Promise<void> {
 }
 
 /** Resolve the signed-in user from the session cookie (read-only; safe in RSC). */
-export async function getSessionUser(): Promise<SessionUser | null> {
+export const getSessionUser = cache(async (): Promise<SessionUser | null> => {
   const token = (await cookies()).get(COOKIE)?.value;
   if (!token) return null;
   try {
     const { payload } = await jwtVerify(token, secret);
     if (!payload.sub) return null;
-    return { id: payload.sub, email: (payload.email as string) ?? "" };
+    return queryOne<SessionUser>(
+      "select id, email from public.users where id = $1",
+      [payload.sub],
+    );
   } catch {
     return null;
   }
-}
+});
 
 // ---- user records -----------------------------------------------------------
 interface UserRow {

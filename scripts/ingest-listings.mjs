@@ -112,7 +112,11 @@ async function main() {
   const all = dedupe([...us, ...nse, ...bse]);
   console.log(`deduped total: ${all.length}`);
 
-  const client = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+  const databaseUrl = process.env.DATABASE_URL ?? "postgresql://localhost:5432/investogenie";
+  const client = new pg.Client({
+    connectionString: databaseUrl,
+    ssl: /127\.0\.0\.1|localhost/.test(databaseUrl) ? false : { rejectUnauthorized: false },
+  });
   await client.connect();
   const BATCH = 1000;
   let done = 0;

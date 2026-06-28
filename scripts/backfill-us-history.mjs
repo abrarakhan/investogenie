@@ -84,7 +84,11 @@ async function pool(items, size, fn) {
 
 // Pool, not Client: the concurrency pool issues overlapping upserts that a lone
 // Client cannot run in parallel (pg deprecates/serializes that).
-const client = new pg.Pool({ connectionString: databaseUrl, ssl: { rejectUnauthorized: false }, max: concurrency });
+const client = new pg.Pool({
+  connectionString: databaseUrl,
+  ssl: /127\.0\.0\.1|localhost/.test(databaseUrl) ? false : { rejectUnauthorized: false },
+  max: concurrency,
+});
 try {
   const paramsQ = [];
   let sql = "select id, ticker from public.assets where country='US' and asset_class='STOCK'";
