@@ -277,6 +277,7 @@ Tracks CMP (live, from `latest_quotes`), P/E, market cap, ROCE, and YoY quarterl
 |-----|----------|-------------|
 | `backfill-us-expand` | hourly | **Incremental coverage walk** — pulls full history for the next batch of un-covered US stocks (resumable, rate-limited) |
 | `backfill-us` | 22:00 weekdays | Tops up already-covered US `daily_ohlcv` (trailing ~15 sessions) |
+| `backfill-nse` | 12:30 weekdays | Tops up all NSE stock `daily_ohlcv` from NSE full bhavcopy, starting after the latest stored NSE date |
 | `refresh-quotes` | 22:30 weekdays | Fetches latest prices for all 17,660 assets |
 | `scan` | 23:00 weekdays | Runs swing classifier + legendary strategies across all OHLCV, upserts swing_signals |
 

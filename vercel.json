@@ -9,6 +9,10 @@
       "schedule": "0 22 * * 1-5"
     },
     {
+      "path": "/api/cron/backfill-nse",
+      "schedule": "30 12 * * 1-5"
+    },
+    {
       "path": "/api/cron/refresh-quotes",
       "schedule": "30 22 * * 1-5"
     },

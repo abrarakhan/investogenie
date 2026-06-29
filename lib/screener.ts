@@ -51,6 +51,7 @@ export interface ScreenRow {
   strategyLevels: Record<string, StrategyLevel>;
   peRatio: number | null;
   marketCap: number | null;
+  financialCurrency: string | null;
   roce: number | null;
   profitVarYoY: number | null;
   salesVarYoY: number | null;
@@ -153,6 +154,7 @@ export async function runScreener(
         strategyLevels: deriveStrategyLevels(setup, rawScores),
         peRatio: null,
         marketCap: null,
+        financialCurrency: null,
         roce: null,
         profitVarYoY: null,
         salesVarYoY: null,
@@ -207,6 +209,7 @@ export async function runScreener(
     if (f) {
       r.peRatio = f.peRatio;
       r.marketCap = f.marketCap;
+      r.financialCurrency = f.currency;
       r.roce = f.roce;
       r.profitVarYoY = f.profitVarianceYoY;
       r.salesVarYoY = f.salesVarianceYoY;

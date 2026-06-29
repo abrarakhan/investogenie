@@ -146,6 +146,7 @@ def build_reports(
     income: pd.DataFrame,
     balance: pd.DataFrame,
     report_type: str,
+    monetary_divisor: float = CRORE,
 ) -> list[dict]:
     reports: list[dict] = []
     for column in income.columns:
@@ -191,11 +192,11 @@ def build_reports(
                     if report_type == "QUARTERLY"
                     else f"FY {report_date.year}"
                 ),
-                "revenue": revenue / CRORE if revenue is not None else None,
-                "net_profit": net_profit / CRORE if net_profit is not None else None,
-                "operating_profit": operating_profit / CRORE if operating_profit is not None else None,
-                "ebit": ebit / CRORE if ebit is not None else None,
-                "capital_employed": capital_employed / CRORE if capital_employed is not None else None,
+                "revenue": revenue / monetary_divisor if revenue is not None else None,
+                "net_profit": net_profit / monetary_divisor if net_profit is not None else None,
+                "operating_profit": operating_profit / monetary_divisor if operating_profit is not None else None,
+                "ebit": ebit / monetary_divisor if ebit is not None else None,
+                "capital_employed": capital_employed / monetary_divisor if capital_employed is not None else None,
                 "eps": eps,
                 "roce": roce,
             }
@@ -220,7 +221,11 @@ def build_reports(
     return reports
 
 
-def fetch_company(state: CompanyState, retries: int) -> tuple[list[dict], dict]:
+def fetch_company(
+    state: CompanyState,
+    retries: int,
+    monetary_divisor: float = CRORE,
+) -> tuple[list[dict], dict]:
     last_error: Exception | None = None
     for attempt in range(1, retries + 1):
         try:
@@ -229,8 +234,14 @@ def fetch_company(state: CompanyState, retries: int) -> tuple[list[dict], dict]:
                 ticker.quarterly_income_stmt,
                 ticker.quarterly_balance_sheet,
                 "QUARTERLY",
+                monetary_divisor,
             )
-            annual = build_reports(ticker.income_stmt, ticker.balance_sheet, "ANNUAL")
+            annual = build_reports(
+                ticker.income_stmt,
+                ticker.balance_sheet,
+                "ANNUAL",
+                monetary_divisor,
+            )
             info = ticker.get_info()
             if not quarterly and not annual:
                 raise ValueError("no financial statements returned")
@@ -256,6 +267,9 @@ def upsert_reports(
     state: CompanyState,
     reports: list[dict],
     info: dict,
+    monetary_divisor: float = CRORE,
+    default_currency: str = "INR",
+    source: str = "YAHOO_FINANCE",
 ) -> int:
     quotes = load_quotes(conn, state.asset_ids)
     newest_quarter = max(
@@ -263,10 +277,10 @@ def upsert_reports(
         default=None,
     )
     market_cap = finite(info.get("marketCap"))
-    market_cap_crore = market_cap / CRORE if market_cap is not None else None
+    normalized_market_cap = market_cap / monetary_divisor if market_cap is not None else None
     provider_price = finite(info.get("currentPrice") or info.get("regularMarketPrice"))
     trailing_pe = finite(info.get("trailingPE"))
-    currency = str(info.get("financialCurrency") or info.get("currency") or "INR")
+    currency = str(info.get("financialCurrency") or info.get("currency") or default_currency)
 
     rows: list[tuple] = []
     for asset_id in state.asset_ids:
@@ -288,11 +302,11 @@ def upsert_reports(
                     report["eps"],
                     cmp if latest else None,
                     trailing_pe if latest else None,
-                    market_cap_crore if latest else None,
+                    normalized_market_cap if latest else None,
                     report["roce"],
                     report["profit_variance_yoy"],
                     report["sales_variance_yoy"],
-                    "YAHOO_FINANCE",
+                    source,
                 )
             )
 

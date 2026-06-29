@@ -36,7 +36,7 @@ export interface OHLCV {
 
 export type ReportType = "QUARTERLY" | "ANNUAL" | "TTM";
 
-/** One corporate fundamentals report period (monetary fields in Rs. Crore). */
+/** One corporate fundamentals report period (INR in crore, USD in millions). */
 export interface AssetFinancialReport {
   assetId: string;
   periodEndDate: string; // ISO yyyy-mm-dd
@@ -51,7 +51,7 @@ export interface AssetFinancialReport {
   eps: number | null;
   cmp: number | null;
   peRatio: number | null;
-  marketCap: number | null; // Rs. Cr
+  marketCap: number | null;
   roce: number | null; // %
   profitVarianceYoY: number | null; // %
   salesVarianceYoY: number | null; // %
@@ -62,6 +62,7 @@ export interface AssetFinancialReport {
 export interface FinancialSnapshot {
   periodEndDate: string;
   fiscalPeriod: string | null;
+  currency: string;
   peRatio: number | null;
   marketCap: number | null;
   roce: number | null;

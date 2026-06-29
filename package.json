@@ -10,7 +10,10 @@
     "start:next": "next start",
     "lint": "eslint",
     "sync:nse-history": ".venv/bin/python pipelines/nse_yfinance_sync.py",
-    "sync:fundamentals": ".venv/bin/python pipelines/stock_fundamentals_sync.py"
+    "sync:fundamentals": ".venv/bin/python pipelines/stock_fundamentals_sync.py",
+    "sync:us": ".venv/bin/python pipelines/us_market_sync.py",
+    "sync:us-quotes": ".venv/bin/python pipelines/us_market_sync.py --quotes-only",
+    "sync:us-fundamentals": ".venv/bin/python pipelines/us_market_sync.py --fundamentals-only"
   },
   "dependencies": {
     "@react-three/drei": "^10.7.7",

@@ -33,6 +33,13 @@ const fmtCr = (n: number | null): string => {
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k Cr`;
   return `${Math.round(n)} Cr`;
 };
+const fmtMarketCap = (n: number | null, currency: string | null): string => {
+  if (currency !== "USD") return fmtCr(n);
+  if (n === null) return "—";
+  if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(2)}T`;
+  if (n >= 1_000) return `$${(n / 1_000).toFixed(1)}B`;
+  return `$${Math.round(n)}M`;
+};
 const varColor = (n: number | null) =>
   n === null ? "text-white/30" : n >= 0 ? "text-emerald-400" : "text-rose-400";
 
@@ -321,7 +328,7 @@ export default function ScreenerTable({
                       {lv.expectedDays ? `${lv.expectedDays}d` : "—"}
                     </td>
                     <td className="px-4 py-3 text-right tabular-nums text-white/70">{fmtRatio(r.peRatio)}</td>
-                    <td className="px-4 py-3 text-right tabular-nums text-white/70">{fmtCr(r.marketCap)}</td>
+                    <td className="px-4 py-3 text-right tabular-nums text-white/70">{fmtMarketCap(r.marketCap, r.financialCurrency)}</td>
                     <td className={`px-4 py-3 text-right tabular-nums ${r.roce === null ? "text-white/30" : r.roce >= 20 ? "text-emerald-400" : "text-white/70"}`}>
                       {r.roce === null ? "—" : `${r.roce.toFixed(1)}%`}
                     </td>
@@ -421,7 +428,7 @@ export default function ScreenerTable({
               <div className="mt-3 grid grid-cols-3 gap-x-4 gap-y-1 border-t border-white/5 pt-3 text-[11px] tabular-nums text-white/50">
                 <span>P/E <b className="text-white/70">{fmtRatio(r.peRatio)}</b></span>
                 <span>ROCE <b className={r.roce !== null && r.roce >= 20 ? "text-emerald-400" : "text-white/70"}>{r.roce === null ? "—" : `${r.roce.toFixed(1)}%`}</b></span>
-                <span>Mkt <b className="text-white/70">{fmtCr(r.marketCap)}</b></span>
+                <span>Mkt <b className="text-white/70">{fmtMarketCap(r.marketCap, r.financialCurrency)}</b></span>
                 <span>Profit Δ <b className={varColor(r.profitVarYoY)}>{fmtPct(r.profitVarYoY)}</b></span>
                 <span>Sales Δ <b className={varColor(r.salesVarYoY)}>{fmtPct(r.salesVarYoY)}</b></span>
                 {r.fundamentalsAsOf && <span className="text-white/30">{r.fundamentalsAsOf}</span>}

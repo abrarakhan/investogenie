@@ -24,6 +24,11 @@
 # misc
 .DS_Store
 *.pem
+__pycache__/
+*.py[cod]
+
+# obsolete local Supabase CLI state (the app uses direct PostgreSQL)
+/supabase/
 
 # debug
 npm-debug.log*

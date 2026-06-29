@@ -14,6 +14,7 @@ if (existsSync(envFile)) process.loadEnvFile(envFile);
 
 const nextCli = resolve(root, "node_modules/next/dist/bin/next");
 const pipeline = resolve(root, "pipelines/nse_yfinance_sync.py");
+const usPipeline = resolve(root, "pipelines/us_market_sync.py");
 const pythonCandidates = [
   process.env.PYTHON_BIN,
   resolve(root, ".venv/bin/python"),
@@ -30,12 +31,23 @@ const syncSleep = process.env.NSE_SYNC_SLEEP_SECONDS ?? "1.2";
 const syncDisabled = process.env.NSE_SYNC_DISABLED === "1";
 const fundamentalsSleep = process.env.FUNDAMENTALS_SYNC_SLEEP_SECONDS ?? "1.5";
 const fundamentalsDisabled = process.env.FUNDAMENTALS_SYNC_DISABLED === "1";
+const usQuoteDisabled = process.env.US_QUOTE_SYNC_DISABLED === "1";
+const usQuoteLimit = process.env.US_QUOTE_LIMIT ?? "1500";
+const usQuoteBatchSize = process.env.US_QUOTE_BATCH_SIZE ?? "100";
+const usGoogleFallbackLimit = process.env.US_GOOGLE_FALLBACK_LIMIT ?? "100";
+const marketRefreshIntervalMinutes = Number(process.env.MARKET_REFRESH_INTERVAL_MINUTES ?? 60);
+const usSyncSleep = process.env.US_SYNC_SLEEP_SECONDS ?? "0.4";
+const usFundamentalsLimit = process.env.US_FUNDAMENTALS_LIMIT ?? "250";
+const usFundamentalsStaleDays = process.env.US_FUNDAMENTALS_STALE_DAYS ?? "7";
+const usFundamentalsDisabled = process.env.US_FUNDAMENTALS_SYNC_DISABLED === "1";
 const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
 
 let syncChild = null;
 let fundamentalsChild = null;
+let usFundamentalsChild = null;
 let marketRefreshChild = null;
 let marketRefreshPromise = null;
+let marketRefreshTimer = null;
 let dailyTimer = null;
 let shuttingDown = false;
 
@@ -47,6 +59,28 @@ function runNodeScript(label, script) {
     marketRefreshChild = spawn(
       process.execPath,
       [resolve(root, script)],
+      { cwd: root, env: process.env, stdio: "inherit" },
+    );
+    marketRefreshChild.once("error", rejectRun);
+    marketRefreshChild.once("close", (code, signal) => {
+      marketRefreshChild = null;
+      if (signal) rejectRun(new Error(`${label} stopped by ${signal}`));
+      else if (code !== 0) rejectRun(new Error(`${label} failed with exit code ${code}`));
+      else resolveRun();
+    });
+  });
+}
+
+function runMarketPython(label, args) {
+  return new Promise((resolveRun, rejectRun) => {
+    if (!python) {
+      rejectRun(new Error("no Python executable found"));
+      return;
+    }
+    console.log(`[market-refresh] ${label}`);
+    marketRefreshChild = spawn(
+      python,
+      args,
       { cwd: root, env: process.env, stdio: "inherit" },
     );
     marketRefreshChild.once("error", rejectRun);
@@ -82,6 +116,20 @@ function runMarketRefresh(trigger) {
     console.log(`[market-refresh] starting ${trigger}`);
     await runNodeScript("refreshing security listings", "scripts/ingest-listings.mjs");
     await runNodeScript("refreshing market quotes", "scripts/ingest-quotes.mjs");
+    if (!usQuoteDisabled) {
+      await runMarketPython("refreshing Yahoo/Google US quotes", [
+        usPipeline,
+        "--quotes-only",
+        "--quote-batch-size",
+        usQuoteBatchSize,
+        "--quote-limit",
+        usQuoteLimit,
+        "--google-fallback-limit",
+        usGoogleFallbackLimit,
+        "--sleep",
+        usSyncSleep,
+      ]);
+    }
     await waitForApp();
     if (!process.env.CRON_SECRET) throw new Error("CRON_SECRET is not configured");
     const response = await fetch("http://127.0.0.1:3000/api/cron/scan", {
@@ -98,6 +146,18 @@ function runMarketRefresh(trigger) {
       marketRefreshPromise = null;
     });
   return marketRefreshPromise;
+}
+
+function scheduleRecurringMarketRefresh() {
+  if (!Number.isFinite(marketRefreshIntervalMinutes) || marketRefreshIntervalMinutes <= 0) {
+    console.log("[market-refresh] recurring refresh disabled");
+    return;
+  }
+  console.log(`[market-refresh] recurring refresh every ${marketRefreshIntervalMinutes} minutes`);
+  marketRefreshTimer = setInterval(
+    () => runMarketRefresh("recurring"),
+    marketRefreshIntervalMinutes * 60 * 1000,
+  );
 }
 
 function runSync(trigger) {
@@ -142,6 +202,7 @@ function runSync(trigger) {
 function runFundamentals(trigger) {
   if (fundamentalsDisabled) {
     console.log(`[fundamentals] ${trigger} sync disabled by FUNDAMENTALS_SYNC_DISABLED=1`);
+    runUSFundamentals(trigger);
     return;
   }
   if (!python || fundamentalsChild) {
@@ -168,6 +229,51 @@ function runFundamentals(trigger) {
     if (signal) console.log(`[fundamentals] stopped by ${signal}`);
     else if (code === 0) console.log(`[fundamentals] ${trigger} update completed`);
     else console.error(`[fundamentals] ${trigger} update failed with exit code ${code}`);
+    if (!signal) runUSFundamentals(trigger);
+  });
+}
+
+function runUSFundamentals(trigger) {
+  if (usFundamentalsDisabled) {
+    console.log(`[us-fundamentals] ${trigger} sync disabled by US_FUNDAMENTALS_SYNC_DISABLED=1`);
+    return;
+  }
+  if (!python || usFundamentalsChild) {
+    if (usFundamentalsChild) {
+      console.log(`[us-fundamentals] skipping ${trigger}; sync still running`);
+    }
+    return;
+  }
+
+  const args = [
+    usPipeline,
+    "--fundamentals-only",
+    "--fundamentals-limit",
+    usFundamentalsLimit,
+    "--stale-days",
+    usFundamentalsStaleDays,
+    "--sleep",
+    usSyncSleep,
+  ];
+  if (process.env.US_FUNDAMENTALS_SYMBOLS) {
+    args.push("--symbols", process.env.US_FUNDAMENTALS_SYMBOLS);
+  }
+  if (process.env.US_FUNDAMENTALS_DRY_RUN === "1") args.push("--dry-run");
+
+  console.log(`[us-fundamentals] starting ${trigger} incremental update`);
+  usFundamentalsChild = spawn(
+    python,
+    args,
+    { cwd: root, env: process.env, stdio: "inherit" },
+  );
+  usFundamentalsChild.on("error", (error) => {
+    console.error(`[us-fundamentals] unable to start: ${error.message}`);
+  });
+  usFundamentalsChild.on("close", (code, signal) => {
+    usFundamentalsChild = null;
+    if (signal) console.log(`[us-fundamentals] stopped by ${signal}`);
+    else if (code === 0) console.log(`[us-fundamentals] ${trigger} update completed`);
+    else console.error(`[us-fundamentals] ${trigger} update failed with exit code ${code}`);
   });
 }
 
@@ -208,8 +314,10 @@ function shutdown(signal) {
   if (shuttingDown) return;
   shuttingDown = true;
   if (dailyTimer) clearTimeout(dailyTimer);
+  if (marketRefreshTimer) clearInterval(marketRefreshTimer);
   if (syncChild) syncChild.kill(signal);
   if (fundamentalsChild) fundamentalsChild.kill(signal);
+  if (usFundamentalsChild) usFundamentalsChild.kill(signal);
   if (marketRefreshChild) marketRefreshChild.kill(signal);
   nextChild.kill(signal);
 }
@@ -224,13 +332,16 @@ nextChild.on("error", (error) => {
 });
 nextChild.on("close", (code, signal) => {
   if (dailyTimer) clearTimeout(dailyTimer);
+  if (marketRefreshTimer) clearInterval(marketRefreshTimer);
   if (syncChild) syncChild.kill("SIGTERM");
   if (fundamentalsChild) fundamentalsChild.kill("SIGTERM");
+  if (usFundamentalsChild) usFundamentalsChild.kill("SIGTERM");
   if (marketRefreshChild) marketRefreshChild.kill("SIGTERM");
   process.exitCode = signal ? 1 : (code ?? 1);
 });
 
 scheduleDailySync();
+scheduleRecurringMarketRefresh();
 setTimeout(() => {
   runMarketRefresh("startup");
   if (syncDisabled) runFundamentals("startup");

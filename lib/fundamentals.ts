@@ -6,6 +6,7 @@ interface Row {
   asset_id: string;
   period_end_date: string | Date | null;
   fiscal_period: string | null;
+  currency: string;
   pe_ratio: string | number | null;
   market_cap: string | number | null;
   roce: string | number | null;
@@ -31,7 +32,7 @@ export async function getFundamentalsByAssetIds(
   if (unique.length === 0) return map;
 
   const rows = await query<Row>(
-    `select asset_id, period_end_date, fiscal_period, pe_ratio, market_cap, roce,
+    `select asset_id, period_end_date, fiscal_period, currency, pe_ratio, market_cap, roce,
             profit_variance_yoy, sales_variance_yoy, revenue, net_profit
        from public.latest_financials
       where asset_id = any($1)`,
@@ -41,6 +42,7 @@ export async function getFundamentalsByAssetIds(
     map.set(r.asset_id, {
       periodEndDate: isoDate(r.period_end_date),
       fiscalPeriod: r.fiscal_period ?? null,
+      currency: r.currency,
       peRatio: n(r.pe_ratio),
       marketCap: n(r.market_cap),
       roce: n(r.roce),
