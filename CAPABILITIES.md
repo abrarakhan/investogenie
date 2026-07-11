@@ -1,119 +1,223 @@
-# InvestoGenie — What the App Can Do
+# InvestoGenie - Capabilities
 
-> Review-oriented capabilities overview. State as of **2026-06-15**, commit `f1f080b`.
-> Companion to the technical [ARCHITECTURE.md](ARCHITECTURE.md). Every capability below was exercised against the running app.
+> Review-oriented snapshot of what has been achieved so far.
+> Current codebase: local PostgreSQL, Next.js 16, Yahoo/Google/NSE sync.
 
----
+## In One Line
 
-## In one line
+InvestoGenie is a local-first US and India market terminal with portfolio tracking, live quote refreshes, buy-candidate swing screening, company fundamentals, market dashboards, and recurring data sync jobs.
 
-A cinematic, mobile-friendly **multi-asset trading terminal for the US and Indian markets** — portfolio tracking, a derivatives-aware swing screener, five "legendary trader" strategy systems, 15-year corporate fundamentals, and cross-asset analytics — over real end-of-day data with nightly automated ingestion.
-
----
-
-## Capabilities at a glance
+## Capabilities At A Glance
 
 | Area | What it does | Status |
-|------|--------------|--------|
-| Dual-market terminals | Separate **US** (`/terminal/us`) and **India** (`/terminal/in`) workspaces, each themed and currency-correct | ✅ Working |
-| Landing experience | WebGL hero (Three.js), GSAP kinetic typography, US/India pivot switch, live ticker tape | ✅ Working |
-| Auth | Local email/password backed by Postgres; protected terminals & settings redirect to `/login` | ✅ Working |
-| Portfolio | Per-market holdings, live P&L, trade ticket (buy/sell), watchlist with live quotes | ✅ Working |
-| Swing screener | Per-market screener over the full universe with classifier verdicts + trade levels | ✅ Working |
-| Legendary strategies | 5 systems (Qullamaggie, Minervini, Darvas, PTJ, Simons) with filter ribbon | ✅ Working |
-| Per-user risk | Configurable stop/target/trail; long **and** short setups; expected duration | ✅ Working |
-| Fundamentals | 15-year quarterly metrics (P/E, Market Cap, ROCE, YoY profit/sales Δ) + screener filters | ✅ Pipeline live (sample data) |
-| Analytical engines | Swing signals, mutual-fund overlap (India), cross-asset macro correlator | ✅ Working |
-| Data ingestion | Nightly crons: US (Tiingo), India (NSE/BSE bhavcopy), swing scan, incremental US coverage walk | ✅ Working |
-| Mobile | Responsive throughout; screener collapses to a card list below `md:` | ✅ Working |
+| --- | --- | --- |
+| Local Postgres backend | Users, assets, quotes, OHLCV, signals, reports, portfolio data | Working |
+| Landing experience | WebGL hero, market pivot, ticker tape, animated content | Working |
+| Market overviews | Separate US and India dashboards with quotes, breadth, charts, candidates | Working |
+| Auth | Local email/password with signed HTTP-only session cookie | Working |
+| Portfolio terminal | Holdings, watchlist, trade ledger, benchmark cards | Working |
+| Swing candidates | Buy-candidate screener with entry, target, stop, trail, score, days | Working |
+| Legendary strategies | Qullamaggie, Minervini, Darvas, PTJ, Simons tags and filters | Working |
+| Fundamentals | P/E, market cap, ROCE, YoY profit/sales growth in screener | Working |
+| Recurring sync | Startup, recurring, and daily jobs for quotes, OHLCV, fundamentals, scans | Working |
+| Provider fallback | Yahoo Finance primary, Google Finance fallback for quotes | Working |
 
----
+## Current Local Data Coverage
 
-## 1. Two markets, one terminal
+Measured from the local `investogenie` PostgreSQL database:
 
-US and India are **fully separate terminals**, not a blended view — each with its own theme (US sovereign-blue, India saffron-gold), benchmarks, currency, and locale formatting. Holdings, watchlists, and analytics are all scoped to the active market. A one-tap switch (and the landing-page pivot) moves between them.
+| Dataset | Count |
+| --- | ---: |
+| Assets | 18,070 |
+| Daily OHLCV bars | 4,302,369 |
+| Latest quotes | 17,242 |
+| Swing signals | 2,418 |
+| Financial reports | 83,443 |
+| Cron logs | 91 |
 
-## 2. Portfolio & trading workspace
+Asset universe:
 
-- **Holdings table** — quantity, average cost, live last price + day change, market value, unrealized P&L (per-currency, no incorrect cross-currency summing).
-- **Trade ticket** — typeahead asset picker (scoped to the market, with live prices) + buy/sell entry that records transactions.
-- **Watchlist** — add/remove instruments with live quotes.
-- **Benchmarks** — index summary cards per market.
+| Market | Exchange | Class | Count |
+| --- | --- | --- | ---: |
+| India | NSE | Stock | 2,407 |
+| India | BSE | Stock | 5,088 |
+| India | FX | Currency | 1 |
+| US | NASDAQ | Stock | 4,387 |
+| US | NYSE | Stock | 3,332 |
+| US | OTC | Stock | 2,608 |
+| US | CBOE | Stock | 30 |
+| US | OTHER | Stock | 213 |
 
-## 3. Derivatives-aware swing screener
+Fundamentals coverage:
 
-A nightly classifier scans the whole universe and precomputes setups; the screener reads them and derives trade levels **at read time** using the signed-in user's risk settings. Columns: direction, current price, entry, target, stop, trailing stop, R:R, expected days, and verdict.
+| Market | Assets with reports |
+| --- | ---: |
+| India | 6,917 |
+| US | 1,522 |
 
-**Verdicts:** `LONG_BREAKOUT`, `COILED_SPRING`, `BREAKOUT_UNCONFIRMED`, and the short-side `SHORT_BREAKDOWN`, `SHORT_COILED_SPRING`, `BREAKDOWN_UNCONFIRMED`. A breakout is upgraded to a *validated* long only when a concurrent open-interest build-up confirms it.
+Swing scan coverage:
 
-**Live numbers when tested:** India 1,840 scanned / 224 active setups; US 72 scanned / 14 setups.
+| Market | Scanned | Buy candidates |
+| --- | ---: | ---: |
+| India | 2,387 | 238 |
+| US | 31 | 6 |
 
-## 4. Legendary trader strategy systems
+## User Experience
 
-Five published systems are evaluated on every instrument and surfaced as a **filter ribbon** with live match counts. Selecting one filters the screener to that signature and swaps the displayed entry/target/stop to that system's own entry line (run through your personal risk parameters):
+### Landing Page
 
-| System | Rule |
-|--------|------|
-| **Qullamaggie** | High Tight Flag — volume thrust then a tight 3–15 day compression above the 10/20/50 EMAs |
-| **Minervini** | 8-point Trend Template + a tightening VCP (volatility contraction) |
-| **Darvas** | Box breakout — entry one tick above a confirmed box top |
-| **PTJ** | The 200-day moving-average trend rule |
-| **Simons** | Statistical mean reversion at a ±2.5σ 20-day z-score extreme |
+- Full-screen dark financial terminal style.
+- Three.js/WebGL hero canvas.
+- Animated headline and scroll sections.
+- US/India market pivot.
+- Live ticker tape from the local quote table.
+- Entry points into market overview, terminal, and swing candidates.
 
-## 5. Personal risk profile
+### Market Overview
 
-Each user can configure (with sensible defaults): stop distance (×ATR), reward:risk target, and trailing-stop multiplier, plus a toggle to include short setups. Every level in the screener and dashboard recomputes to that profile instantly — no rescan needed. Each setup also estimates an **expected holding duration** in days.
+The app now has dedicated pages for:
 
-## 6. 15-year corporate fundamentals
+- `/markets/us`
+- `/markets/in`
 
-A fundamentals pipeline ingests multi-year quarterly financials (normalized to Rs. Crore), computes **P/E, Market Cap, ROCE, and YoY profit/sales variance**, and joins the latest quarter onto the screener. Users can filter by **ROCE ≥** and **P/E ≤** *combined with* the technical signal — e.g. "ROCE ≥ 20% **and** an active breakout." Rows without a report on file degrade cleanly to "—".
+Each page presents a compact market terminal dashboard with quote panels, normalized performance charts, breadth, candidate rows, and fundamentals leaders. The visual treatment is denser and more terminal-like than the landing page.
 
-**Verified live (India):** ACC P/E 21.6 / ROCE 12.9%, DABUR ROCE 20.3%, ICICIBANK ₹1.85L Cr market cap.
+### Portfolio Terminals
 
-## 7. Cross-asset analytical engines
+The authenticated terminals are:
 
-- **Swing signals** — top setups for the market with direction, score, and levels.
-- **Fund Overlap X-Ray** (India) — look-through pairwise overlap across mutual-fund holdings, flags congestion and suggests direct-plan switches.
-- **Macro correlator** — rolling 30/90-day correlation and lead/lag between macro series and sector proxies, surfacing accumulation/distribution zones.
+- `/terminal/us`
+- `/terminal/in`
 
-## 8. Automated data ingestion
+Each terminal is market-scoped. Holdings, watchlist, quotes, benchmarks, and currency formatting follow the selected market.
 
-Real end-of-day data, refreshed on a schedule (Vercel cron), with every run audited to a `cron_logs` table and all routes secret-gated:
+Implemented terminal functions:
 
-| Job | Cadence | Purpose |
-|-----|---------|---------|
-| `backfill-us-expand` | hourly | Incremental walk of the full US universe (resumable, rate-limit-aware) |
-| `backfill-us` | weekday | Top-up US daily bars (Tiingo) |
-| `refresh-quotes` | weekday | Latest prices across the whole universe |
-| `scan` | weekday | Swing classifier + strategies → precomputed signals |
+- default user portfolio and watchlist scaffold,
+- holdings table,
+- current quote and day-change display,
+- trade ticket,
+- transaction ledger writes,
+- watchlist add/remove,
+- benchmark cards,
+- analytical engine section.
 
-**Sources:** US — Tiingo (real, split-adjusted EOD) + NASDAQ screener (latest quotes); India — NSE `sec_bhavdata_full` + BSE bhavcopy.
+### Swing Candidates
 
-## 9. Design & platform
+The screener language has been shifted from long/short trading to clearer buy-candidate language.
 
-- **Stack:** Next.js 16 (App Router, React 19), local PostgreSQL via `pg`, signed HTTP-only sessions, Tailwind, Three.js + GSAP.
-- **Mobile:** responsive layouts throughout; the dense screener table becomes a stacked, touch-friendly card list on phones.
-- **Security:** signed HTTP-only session cookies, application-scoped user queries, cron routes gated by a strict secret.
+Routes:
 
----
+- `/terminal/us/screener`
+- `/terminal/in/screener`
 
-## Honest status & limitations (for reviewers)
+The India screener currently shows the top 20 NSE buy candidates. Rows include current price, entry, target, stop loss, trailing stop, score, expected days, strategy tags, and fundamentals.
 
-- **US history coverage is growing, not complete.** Real Tiingo EOD is loaded for ~80 liquid names so far; the hourly `backfill-us-expand` walk widens this within Tiingo's free-tier limits (~480 unique symbols/month, so full coverage of ~10k names is a long tail — a paid tier or curated subset closes it fast).
-- **Fundamentals are sample data today.** The ingestion pipeline, schema, and screener wiring are real and FMP-shaped, but the currently-loaded India figures are a generated sample (tagged `source: "sample-fmp"`). Point it at a real FMP/screener export to go live.
-- **Minervini/PTJ need long history.** PTJ is active on the US set; Minervini is strict (full 8/8 template + VCP) and currently flags 0 until more names set up and coverage deepens.
-- **Index benchmark cards** (Nifty/Sensex/Nasdaq/USD-INR summary tiles) still show static placeholder values; wiring them to a live source (e.g. Frankfurter for FX, an India broker feed for indices) is the next step.
-- **Production env vars** must be set in Vercel for the scheduled crons to run there (`DATABASE_URL`, `SESSION_SECRET`, `CRON_SECRET`, `FINANCIAL_API_KEY`).
-- Some screener rows can show an entry level far from the current price when the live quote and the last precomputed scan are on different freshness cycles — re-running the nightly `scan` realigns them.
+Filters include:
 
----
+- ticker search,
+- setups/buy-candidates toggle,
+- strategy ribbon,
+- ROCE minimum,
+- P/E maximum.
 
-## Try it
+## Analytics
+
+### Swing Classifier
+
+The classifier uses:
+
+- Donchian breakout/breakdown structure,
+- Bollinger bandwidth squeeze,
+- ATR-based trade levels,
+- volume expansion,
+- open-interest buildup where available,
+- read-time risk derivation.
+
+Long entries are rebased to the latest available market price once a trigger has already traded, avoiding stale buy entries below the current quote.
+
+### Legendary Strategy Tags
+
+The screener supports five strategy families:
+
+| Strategy | Core idea |
+| --- | --- |
+| Qullamaggie | High tight flag and compression after thrust |
+| Minervini | Trend Template and volatility contraction pivot |
+| Darvas | Confirmed box breakout |
+| Paul Tudor Jones | 200-day moving-average trend rule |
+| Simons | Statistical mean reversion at z-score extremes |
+
+### Fundamentals
+
+Fundamentals are stored in `asset_financial_reports` and surfaced through a latest-financials view.
+
+Metrics include:
+
+- revenue,
+- net profit,
+- operating profit,
+- EBIT,
+- capital employed,
+- EPS,
+- CMP,
+- P/E,
+- market cap,
+- ROCE,
+- YoY profit variance,
+- YoY sales variance.
+
+India values are stored in Rs. crore. US values are stored in USD millions.
+
+## Data Sync
+
+The normal launcher is:
 
 ```bash
-npm install
-npm run dev        # http://localhost:3000
+npm run dev
 ```
 
-Public to browse: `/` (landing), `/terminal/us/screener`, `/terminal/in/screener`.
-Sign in (`/login`) to reach the terminals, portfolio, and `/settings`.
+That command starts Next.js through `scripts/run-with-nse-sync.mjs` and also starts the local sync loop.
+
+The sync loop does:
+
+- security listings refresh,
+- market quote refresh,
+- US Yahoo Finance quote sync,
+- US Google Finance fallback quote sync,
+- swing signal scan,
+- NSE incremental OHLCV sync,
+- India fundamentals sync,
+- US fundamentals sync,
+- recurring quote refresh while the server stays open,
+- daily NSE sync at the configured IST time.
+
+Manual sync commands:
+
+```bash
+npm run sync:nse-history
+npm run sync:fundamentals
+npm run sync:us
+npm run sync:us-quotes
+npm run sync:us-fundamentals
+```
+
+## Architecture
+
+| Layer | Technology |
+| --- | --- |
+| Framework | Next.js 16 App Router |
+| UI | React 19, Tailwind CSS |
+| Effects | Three.js, React Three Fiber, GSAP |
+| Database | Local PostgreSQL |
+| DB access | `pg` for app code, `psycopg2` for Python pipelines |
+| Auth | Local users table + signed HTTP-only cookies |
+| Data providers | Yahoo Finance, Google Finance, NSE/Yahoo Finance |
+| Scheduler | Node wrapper around Next.js plus Python child jobs |
+
+## Remaining Gaps
+
+- US historical OHLCV scan coverage is still much smaller than US listings, quotes, and fundamentals coverage.
+- A browser-visible sync health/admin page should be added for `cron_logs`, `quote_sync_state`, and `fundamentals_sync_state`.
+- Provider rate limits and unsupported symbols are expected; sync-state tables track attempts and keep recurring jobs rotating through the universe.
+- `ARCHITECTURE.md` should also be refreshed in a later pass; this capabilities document and README are now the most current product summary.
