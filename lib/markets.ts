@@ -17,16 +17,18 @@ export const MARKETS: Record<MarketId, MarketConfig> = {
       glow: "rgba(59,130,246,0.45)",
     },
     benchmarks: [
-      { ticker: "SPX", name: "S&P 500", currency: "USD" },
-      { ticker: "IXIC", name: "Nasdaq", currency: "USD" },
-      { ticker: "US10Y", name: "US 10Y Yield", currency: "USD" },
+      // ETF proxies carry live quotes; the raw SPX/IXIC index symbols do not,
+      // which is why the benchmark cards were reading "Unavailable".
+      { ticker: "SPY", name: "S&P 500 (SPY)", currency: "USD" },
+      { ticker: "QQQ", name: "Nasdaq 100 (QQQ)", currency: "USD" },
+      { ticker: "DIA", name: "Dow 30 (DIA)", currency: "USD" },
     ],
     tickers: [
       { ticker: "AAPL", name: "Apple Inc.", currency: "USD" },
       { ticker: "MSFT", name: "Microsoft", currency: "USD" },
       { ticker: "NVDA", name: "NVIDIA", currency: "USD" },
-      { ticker: "SPY", name: "SPDR S&P 500", currency: "USD" },
-      { ticker: "BRENT", name: "Brent Crude", currency: "USD" },
+      { ticker: "GOOGL", name: "Alphabet", currency: "USD" },
+      { ticker: "AMZN", name: "Amazon", currency: "USD" },
     ],
   },
   IN: {
