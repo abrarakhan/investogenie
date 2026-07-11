@@ -18,9 +18,9 @@ Current local database coverage from the development machine:
 | Dataset | Rows |
 | --- | ---: |
 | Assets | 18,070 |
-| Daily OHLCV bars | 4,302,369 |
+| Daily OHLCV bars | 4,304,693 |
 | Latest quotes | 17,242 |
-| Swing signals | 2,418 |
+| Swing signals | 2,422 |
 | Financial reports | 83,443 |
 | Cron logs | 91 |
 
@@ -128,6 +128,7 @@ Useful manual commands:
 npm run sync:nse-history
 npm run sync:fundamentals
 npm run sync:us
+npm run sync:us-history
 npm run sync:us-quotes
 npm run sync:us-fundamentals
 ```
@@ -193,6 +194,6 @@ The build uses local fonts, so it does not depend on fetching Google Fonts from 
 
 ## Known Gaps
 
-- US quote and fundamentals coverage is much broader than US historical OHLCV scan coverage. Expanding US OHLCV backfill is the main remaining data-depth task.
+- US quote and fundamentals coverage is much broader than US historical OHLCV scan coverage. The new `sync:us-history` Yahoo pipeline expands this coverage in conservative batches.
 - Provider APIs can rate-limit or block scripted traffic; the sync-state tables keep recurring jobs moving past unsupported symbols.
 - A visible admin/data freshness page would make sync health easier to inspect from the browser.

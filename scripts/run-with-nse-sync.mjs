@@ -15,6 +15,7 @@ if (existsSync(envFile)) process.loadEnvFile(envFile);
 const nextCli = resolve(root, "node_modules/next/dist/bin/next");
 const pipeline = resolve(root, "pipelines/nse_yfinance_sync.py");
 const usPipeline = resolve(root, "pipelines/us_market_sync.py");
+const usHistoryPipeline = resolve(root, "pipelines/us_history_sync.py");
 const pythonCandidates = [
   process.env.PYTHON_BIN,
   resolve(root, ".venv/bin/python"),
@@ -40,11 +41,16 @@ const usSyncSleep = process.env.US_SYNC_SLEEP_SECONDS ?? "0.4";
 const usFundamentalsLimit = process.env.US_FUNDAMENTALS_LIMIT ?? "250";
 const usFundamentalsStaleDays = process.env.US_FUNDAMENTALS_STALE_DAYS ?? "7";
 const usFundamentalsDisabled = process.env.US_FUNDAMENTALS_SYNC_DISABLED === "1";
+const usHistoryDisabled = process.env.US_HISTORY_SYNC_DISABLED === "1";
+const usHistoryLimit = process.env.US_HISTORY_LIMIT ?? "50";
+const usHistoryMinBars = process.env.US_HISTORY_MIN_BARS ?? "260";
+const usHistorySleep = process.env.US_HISTORY_SLEEP_SECONDS ?? "0.25";
 const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
 
 let syncChild = null;
 let fundamentalsChild = null;
 let usFundamentalsChild = null;
+let usHistoryChild = null;
 let marketRefreshChild = null;
 let marketRefreshPromise = null;
 let marketRefreshTimer = null;
@@ -130,6 +136,7 @@ function runMarketRefresh(trigger) {
         usSyncSleep,
       ]);
     }
+    await runUSHistory(trigger);
     await waitForApp();
     if (!process.env.CRON_SECRET) throw new Error("CRON_SECRET is not configured");
     const response = await fetch("http://127.0.0.1:3000/api/cron/scan", {
@@ -233,6 +240,55 @@ function runFundamentals(trigger) {
   });
 }
 
+function runUSHistory(trigger) {
+  if (usHistoryDisabled) {
+    console.log(`[us-history] ${trigger} sync disabled by US_HISTORY_SYNC_DISABLED=1`);
+    return Promise.resolve();
+  }
+  if (!python) {
+    console.error("[us-history] no Python executable found");
+    return Promise.resolve();
+  }
+  if (usHistoryChild) {
+    console.log(`[us-history] skipping ${trigger}; sync still running`);
+    return Promise.resolve();
+  }
+
+  const args = [
+    usHistoryPipeline,
+    "--limit",
+    usHistoryLimit,
+    "--min-bars",
+    usHistoryMinBars,
+    "--sleep",
+    usHistorySleep,
+  ];
+  if (process.env.US_HISTORY_SYMBOLS) args.push("--symbols", process.env.US_HISTORY_SYMBOLS);
+  if (process.env.US_HISTORY_DRY_RUN === "1") args.push("--dry-run");
+  if (process.env.US_HISTORY_FORCE_FULL === "1") args.push("--force-full");
+
+  return new Promise((resolveRun) => {
+    console.log(`[us-history] starting ${trigger} OHLCV coverage update`);
+    usHistoryChild = spawn(
+      python,
+      args,
+      { cwd: root, env: process.env, stdio: "inherit" },
+    );
+    usHistoryChild.on("error", (error) => {
+      console.error(`[us-history] unable to start: ${error.message}`);
+      usHistoryChild = null;
+      resolveRun();
+    });
+    usHistoryChild.on("close", (code, signal) => {
+      usHistoryChild = null;
+      if (signal) console.log(`[us-history] stopped by ${signal}`);
+      else if (code === 0) console.log(`[us-history] ${trigger} update completed`);
+      else console.error(`[us-history] ${trigger} update failed with exit code ${code}`);
+      resolveRun();
+    });
+  });
+}
+
 function runUSFundamentals(trigger) {
   if (usFundamentalsDisabled) {
     console.log(`[us-fundamentals] ${trigger} sync disabled by US_FUNDAMENTALS_SYNC_DISABLED=1`);
@@ -318,6 +374,7 @@ function shutdown(signal) {
   if (syncChild) syncChild.kill(signal);
   if (fundamentalsChild) fundamentalsChild.kill(signal);
   if (usFundamentalsChild) usFundamentalsChild.kill(signal);
+  if (usHistoryChild) usHistoryChild.kill(signal);
   if (marketRefreshChild) marketRefreshChild.kill(signal);
   nextChild.kill(signal);
 }
@@ -336,6 +393,7 @@ nextChild.on("close", (code, signal) => {
   if (syncChild) syncChild.kill("SIGTERM");
   if (fundamentalsChild) fundamentalsChild.kill("SIGTERM");
   if (usFundamentalsChild) usFundamentalsChild.kill("SIGTERM");
+  if (usHistoryChild) usHistoryChild.kill("SIGTERM");
   if (marketRefreshChild) marketRefreshChild.kill("SIGTERM");
   process.exitCode = signal ? 1 : (code ?? 1);
 });

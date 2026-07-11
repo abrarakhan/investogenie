@@ -29,9 +29,9 @@ Measured from the local `investogenie` PostgreSQL database:
 | Dataset | Count |
 | --- | ---: |
 | Assets | 18,070 |
-| Daily OHLCV bars | 4,302,369 |
+| Daily OHLCV bars | 4,304,693 |
 | Latest quotes | 17,242 |
-| Swing signals | 2,418 |
+| Swing signals | 2,422 |
 | Financial reports | 83,443 |
 | Cron logs | 91 |
 
@@ -60,7 +60,7 @@ Swing scan coverage:
 | Market | Scanned | Buy candidates |
 | --- | ---: | ---: |
 | India | 2,387 | 238 |
-| US | 31 | 6 |
+| US | 34 | 6 |
 
 ## User Experience
 
@@ -198,6 +198,7 @@ Manual sync commands:
 npm run sync:nse-history
 npm run sync:fundamentals
 npm run sync:us
+npm run sync:us-history
 npm run sync:us-quotes
 npm run sync:us-fundamentals
 ```
@@ -217,7 +218,7 @@ npm run sync:us-fundamentals
 
 ## Remaining Gaps
 
-- US historical OHLCV scan coverage is still much smaller than US listings, quotes, and fundamentals coverage.
+- US historical OHLCV scan coverage is still much smaller than US listings, quotes, and fundamentals coverage, but `sync:us-history` now expands it in recurring Yahoo-backed batches.
 - A browser-visible sync health/admin page should be added for `cron_logs`, `quote_sync_state`, and `fundamentals_sync_state`.
 - Provider rate limits and unsupported symbols are expected; sync-state tables track attempts and keep recurring jobs rotating through the universe.
 - `ARCHITECTURE.md` should also be refreshed in a later pass; this capabilities document and README are now the most current product summary.
