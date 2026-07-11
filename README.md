@@ -188,6 +188,7 @@ Common checks:
 npm run lint
 npx tsc --noEmit
 npm run build
+npm run smoke      # requires the app running on http://127.0.0.1:3000
 ```
 
 The build uses local fonts, so it does not depend on fetching Google Fonts from the sandbox.

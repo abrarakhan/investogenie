@@ -14,7 +14,8 @@
     "sync:us": ".venv/bin/python pipelines/us_market_sync.py",
     "sync:us-quotes": ".venv/bin/python pipelines/us_market_sync.py --quotes-only",
     "sync:us-fundamentals": ".venv/bin/python pipelines/us_market_sync.py --fundamentals-only",
-    "sync:us-history": ".venv/bin/python pipelines/us_history_sync.py"
+    "sync:us-history": ".venv/bin/python pipelines/us_history_sync.py",
+    "smoke": "node scripts/smoke-routes.mjs"
   },
   "dependencies": {
     "@react-three/drei": "^10.7.7",

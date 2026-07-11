@@ -259,6 +259,56 @@ function FundamentalRows({ rows }: { rows: FundamentalLeader[] }) {
   );
 }
 
+function formatStamp(value: string | null): string {
+  if (!value) return "-";
+  return new Intl.DateTimeFormat("en-IN", {
+    day: "2-digit",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(value));
+}
+
+function statusTone(status: string | null): string {
+  if (!status) return "bg-white/10 text-white/40";
+  return status === "ok" ? "bg-[#47d7a1]/15 text-[#47d7a1]" : "bg-[#ff6b76]/15 text-[#ff6b76]";
+}
+
+function FreshnessRows({ data }: { data: MarketOverviewData }) {
+  const rows = [
+    { label: "Quote date", value: data.freshness.latestQuoteAsOf ?? "-", sub: `DB ${formatStamp(data.freshness.latestQuoteUpdatedAt)}` },
+    { label: "OHLCV date", value: data.freshness.latestHistoryDate ?? "-", sub: `${data.coverage.history.toLocaleString()} symbols` },
+    { label: "Financials", value: data.freshness.latestFundamentalsPeriod ?? "-", sub: `DB ${formatStamp(data.freshness.latestFundamentalsUpdatedAt)}` },
+    { label: "Last scan", value: formatStamp(data.freshness.lastScanAt), status: data.freshness.lastScanStatus },
+    { label: "Quote sync", value: formatStamp(data.freshness.lastQuoteSyncAt), status: data.freshness.lastQuoteSyncStatus },
+    { label: "History sync", value: formatStamp(data.freshness.lastHistorySyncAt), status: data.freshness.lastHistorySyncStatus },
+  ];
+  return (
+    <div>
+      <div className="grid grid-cols-3 divide-x divide-[#293039] py-4 text-center">
+        <div><b className="block text-lg tabular-nums">{data.coverage.quoted.toLocaleString()}</b><span className="text-[10px] uppercase text-white/35">Quotes</span></div>
+        <div><b className="block text-lg tabular-nums">{data.coverage.history.toLocaleString()}</b><span className="text-[10px] uppercase text-white/35">History</span></div>
+        <div><b className="block text-lg tabular-nums">{data.coverage.fundamentals.toLocaleString()}</b><span className="text-[10px] uppercase text-white/35">Fund.</span></div>
+      </div>
+      <div className="divide-y divide-[#242a31] border-t border-[#293039]">
+        {rows.map((row) => (
+          <div key={row.label} className="flex items-center justify-between gap-3 px-3 py-2.5 text-xs">
+            <span className="text-white/45">{row.label}</span>
+            <span className="min-w-0 text-right">
+              <span className="block truncate font-mono text-white/80">{row.value}</span>
+              {row.status ? (
+                <span className={`mt-1 inline-block rounded px-1.5 py-0.5 text-[9px] uppercase ${statusTone(row.status)}`}>{row.status}</span>
+              ) : (
+                <span className="block truncate text-[10px] text-white/30">{row.sub}</span>
+              )}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function MarketOverview({ data }: { data: MarketOverviewData }) {
   const meta = META[data.market];
   const other = data.market === "US" ? "in" : "us";
@@ -311,6 +361,7 @@ export default function MarketOverview({ data }: { data: MarketOverviewData }) {
             <Link title="Overview" href={`/markets/${data.market.toLowerCase()}`} className="grid h-10 w-10 place-items-center rounded-md bg-[var(--overview-soft)] font-bold text-[var(--overview-accent)]">OV</Link>
             <Link title="Swing Candidates" href={`/terminal/${data.market.toLowerCase()}/screener`} className="grid h-10 w-10 place-items-center rounded-md hover:bg-white/5 hover:text-white">SW</Link>
             <Link title="Terminal" href={`/terminal/${data.market.toLowerCase()}`} className="grid h-10 w-10 place-items-center rounded-md hover:bg-white/5 hover:text-white">TR</Link>
+            <Link title="Sync Status" href="/admin/sync" className="grid h-10 w-10 place-items-center rounded-md hover:bg-white/5 hover:text-white">SY</Link>
             <Link title="Settings" href="/settings" className="grid h-10 w-10 place-items-center rounded-md hover:bg-white/5 hover:text-white">ST</Link>
           </nav>
         </aside>
@@ -350,12 +401,8 @@ export default function MarketOverview({ data }: { data: MarketOverviewData }) {
                 </div>
               </Panel>
               <Panel title="Fundamental leaders"><FundamentalRows rows={data.fundamentals} /></Panel>
-              <Panel title="Data coverage">
-                <div className="grid grid-cols-3 divide-x divide-[#293039] py-4 text-center">
-                  <div><b className="block text-lg tabular-nums">{data.coverage.quoted.toLocaleString()}</b><span className="text-[10px] uppercase text-white/35">Quotes</span></div>
-                  <div><b className="block text-lg tabular-nums">{data.coverage.history.toLocaleString()}</b><span className="text-[10px] uppercase text-white/35">History</span></div>
-                  <div><b className="block text-lg tabular-nums">{data.coverage.fundamentals.toLocaleString()}</b><span className="text-[10px] uppercase text-white/35">Fund.</span></div>
-                </div>
+              <Panel title="Data freshness">
+                <FreshnessRows data={data} />
               </Panel>
             </div>
           </div>

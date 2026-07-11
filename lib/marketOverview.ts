@@ -35,6 +35,20 @@ export interface FundamentalLeader {
   profitGrowth: number | null;
 }
 
+export interface DataFreshness {
+  latestQuoteAsOf: string | null;
+  latestQuoteUpdatedAt: string | null;
+  latestHistoryDate: string | null;
+  latestFundamentalsPeriod: string | null;
+  latestFundamentalsUpdatedAt: string | null;
+  lastScanAt: string | null;
+  lastScanStatus: string | null;
+  lastQuoteSyncAt: string | null;
+  lastQuoteSyncStatus: string | null;
+  lastHistorySyncAt: string | null;
+  lastHistorySyncStatus: string | null;
+}
+
 export interface MarketOverviewData {
   market: MarketId;
   quotes: OverviewQuote[];
@@ -45,6 +59,7 @@ export interface MarketOverviewData {
   candidates: OverviewCandidate[];
   fundamentals: FundamentalLeader[];
   coverage: { quoted: number; history: number; fundamentals: number };
+  freshness: DataFreshness;
 }
 
 interface QuoteRow {
@@ -54,6 +69,20 @@ interface QuoteRow {
   price: string | number;
   change_pct: string | number | null;
   as_of: string | Date | null;
+}
+
+interface FreshnessRow {
+  latest_quote_as_of: string | Date | null;
+  latest_quote_updated_at: string | Date | null;
+  latest_history_date: string | Date | null;
+  latest_fundamentals_period: string | Date | null;
+  latest_fundamentals_updated_at: string | Date | null;
+  last_scan_at: string | Date | null;
+  last_scan_status: string | null;
+  last_quote_sync_at: string | Date | null;
+  last_quote_sync_status: string | null;
+  last_history_sync_at: string | Date | null;
+  last_history_sync_status: string | null;
 }
 
 const REGION = {
@@ -71,9 +100,21 @@ const REGION = {
   },
 } as const;
 
+const dateOnly = (value: Date): string => {
+  const yyyy = value.getFullYear();
+  const mm = String(value.getMonth() + 1).padStart(2, "0");
+  const dd = String(value.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+};
+
 const isoDate = (value: string | Date | null): string | null => {
   if (!value) return null;
-  return value instanceof Date ? value.toISOString().slice(0, 10) : value;
+  return value instanceof Date ? dateOnly(value) : value;
+};
+
+const isoDateTime = (value: string | Date | null): string | null => {
+  if (!value) return null;
+  return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
 };
 
 const quote = (row: QuoteRow): OverviewQuote => ({
@@ -88,7 +129,7 @@ const quote = (row: QuoteRow): OverviewQuote => ({
 export async function getMarketOverview(market: MarketId): Promise<MarketOverviewData> {
   const cfg = REGION[market];
   const primaryExchange = cfg.exchanges[0];
-  const [instrumentRows, gainers, losers, breadth, historyRows, fundamentals, coverage, candidates] =
+  const [instrumentRows, gainers, losers, breadth, historyRows, fundamentals, coverage, freshness, candidates] =
     await Promise.all([
       query<QuoteRow>(
         `select a.ticker,a.name,a.exchange,q.price,q.change_pct,q.as_of
@@ -159,6 +200,35 @@ export async function getMarketOverview(market: MarketId): Promise<MarketOvervie
          where a.country=$1 and a.exchange=any($2) and a.asset_class='STOCK'`,
         [cfg.country, [...cfg.exchanges]],
       ),
+      queryOne<FreshnessRow>(
+        `with scoped_assets as (
+           select id from public.assets
+            where country=$1 and exchange=any($2) and asset_class='STOCK'
+         ), latest_scan as (
+           select created_at,status from public.cron_logs
+            where job='scan' order by created_at desc limit 1
+         ), latest_quote_sync as (
+           select created_at,status from public.cron_logs
+            where job='refresh-quotes' order by created_at desc limit 1
+         ), latest_history_sync as (
+           select created_at,status from public.cron_logs
+            where job = case when $1='US' then 'backfill-us' else 'backfill-nse' end
+            order by created_at desc limit 1
+         )
+         select
+           (select max(q.as_of) from public.latest_quotes q join scoped_assets a on a.id=q.asset_id) latest_quote_as_of,
+           (select max(q.updated_at) from public.latest_quotes q join scoped_assets a on a.id=q.asset_id) latest_quote_updated_at,
+           (select max(o.date) from public.daily_ohlcv o join scoped_assets a on a.id=o.asset_id) latest_history_date,
+           (select max(f.period_end_date) from public.latest_financials f join scoped_assets a on a.id=f.asset_id) latest_fundamentals_period,
+           (select max(f.updated_at) from public.asset_financial_reports f join scoped_assets a on a.id=f.asset_id) latest_fundamentals_updated_at,
+           (select created_at from latest_scan) last_scan_at,
+           (select status from latest_scan) last_scan_status,
+           (select created_at from latest_quote_sync) last_quote_sync_at,
+           (select status from latest_quote_sync) last_quote_sync_status,
+           (select created_at from latest_history_sync) last_history_sync_at,
+           (select status from latest_history_sync) last_history_sync_status`,
+        [cfg.country, [...cfg.exchanges]],
+      ),
       runScreener(cfg.country, { ...DEFAULT_SETTINGS, includeShort: false }, {
         exchange: primaryExchange,
         limit: 6,
@@ -215,6 +285,19 @@ export async function getMarketOverview(market: MarketId): Promise<MarketOvervie
       quoted: Number(coverage?.quoted ?? 0),
       history: Number(coverage?.history ?? 0),
       fundamentals: Number(coverage?.fundamentals ?? 0),
+    },
+    freshness: {
+      latestQuoteAsOf: isoDate(freshness?.latest_quote_as_of ?? null),
+      latestQuoteUpdatedAt: isoDateTime(freshness?.latest_quote_updated_at ?? null),
+      latestHistoryDate: isoDate(freshness?.latest_history_date ?? null),
+      latestFundamentalsPeriod: isoDate(freshness?.latest_fundamentals_period ?? null),
+      latestFundamentalsUpdatedAt: isoDateTime(freshness?.latest_fundamentals_updated_at ?? null),
+      lastScanAt: isoDateTime(freshness?.last_scan_at ?? null),
+      lastScanStatus: freshness?.last_scan_status ?? null,
+      lastQuoteSyncAt: isoDateTime(freshness?.last_quote_sync_at ?? null),
+      lastQuoteSyncStatus: freshness?.last_quote_sync_status ?? null,
+      lastHistorySyncAt: isoDateTime(freshness?.last_history_sync_at ?? null),
+      lastHistorySyncStatus: freshness?.last_history_sync_status ?? null,
     },
   };
 }
