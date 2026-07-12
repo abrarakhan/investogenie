@@ -16,6 +16,7 @@ const nextCli = resolve(root, "node_modules/next/dist/bin/next");
 const pipeline = resolve(root, "pipelines/nse_yfinance_sync.py");
 const usPipeline = resolve(root, "pipelines/us_market_sync.py");
 const usHistoryPipeline = resolve(root, "pipelines/us_history_sync.py");
+const macroPipeline = resolve(root, "pipelines/macro_sync.py");
 const pythonCandidates = [
   process.env.PYTHON_BIN,
   resolve(root, ".venv/bin/python"),
@@ -45,12 +46,15 @@ const usHistoryDisabled = process.env.US_HISTORY_SYNC_DISABLED === "1";
 const usHistoryLimit = process.env.US_HISTORY_LIMIT ?? "50";
 const usHistoryMinBars = process.env.US_HISTORY_MIN_BARS ?? "260";
 const usHistorySleep = process.env.US_HISTORY_SLEEP_SECONDS ?? "0.25";
+const macroSyncDisabled = process.env.MACRO_SYNC_DISABLED === "1";
+const macroSyncYears = process.env.MACRO_SYNC_YEARS ?? "5";
 const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
 
 let syncChild = null;
 let fundamentalsChild = null;
 let usFundamentalsChild = null;
 let usHistoryChild = null;
+let macroChild = null;
 let marketRefreshChild = null;
 let marketRefreshPromise = null;
 let marketRefreshTimer = null;
@@ -112,6 +116,42 @@ async function waitForApp() {
   throw new Error("Next.js did not become ready for the signal scan");
 }
 
+async function runMacroSync(trigger) {
+  if (macroSyncDisabled) {
+    console.log(`[macro-sync] ${trigger} sync disabled by MACRO_SYNC_DISABLED=1`);
+    return;
+  }
+  if (!python) {
+    console.error("[macro-sync] no Python executable found");
+    return;
+  }
+  if (macroChild) {
+    console.log(`[macro-sync] skipping ${trigger}; sync still running`);
+    return;
+  }
+
+  const args = [macroPipeline, "--years", macroSyncYears];
+  if (process.env.MACRO_SYNC_SERIES) args.push("--series", process.env.MACRO_SYNC_SERIES);
+  if (process.env.MACRO_SYNC_DRY_RUN === "1") args.push("--dry-run");
+
+  await new Promise((resolveRun) => {
+    console.log(`[macro-sync] starting ${trigger} macro history update`);
+    macroChild = spawn(python, args, { cwd: root, env: process.env, stdio: "inherit" });
+    macroChild.on("error", (error) => {
+      console.error(`[macro-sync] unable to start: ${error.message}`);
+      macroChild = null;
+      resolveRun();
+    });
+    macroChild.on("close", (code, signal) => {
+      macroChild = null;
+      if (signal) console.log(`[macro-sync] stopped by ${signal}`);
+      else if (code === 0) console.log(`[macro-sync] ${trigger} update completed`);
+      else console.error(`[macro-sync] ${trigger} update failed with exit code ${code}`);
+      resolveRun();
+    });
+  });
+}
+
 function runMarketRefresh(trigger) {
   if (marketRefreshPromise) {
     console.log(`[market-refresh] skipping ${trigger}; refresh still running`);
@@ -137,6 +177,7 @@ function runMarketRefresh(trigger) {
       ]);
     }
     await runUSHistory(trigger);
+    await runMacroSync(trigger);
     await waitForApp();
     if (!process.env.CRON_SECRET) throw new Error("CRON_SECRET is not configured");
     const response = await fetch("http://127.0.0.1:3000/api/cron/scan", {
@@ -375,6 +416,7 @@ function shutdown(signal) {
   if (fundamentalsChild) fundamentalsChild.kill(signal);
   if (usFundamentalsChild) usFundamentalsChild.kill(signal);
   if (usHistoryChild) usHistoryChild.kill(signal);
+  if (macroChild) macroChild.kill(signal);
   if (marketRefreshChild) marketRefreshChild.kill(signal);
   nextChild.kill(signal);
 }
@@ -394,6 +436,7 @@ nextChild.on("close", (code, signal) => {
   if (fundamentalsChild) fundamentalsChild.kill("SIGTERM");
   if (usFundamentalsChild) usFundamentalsChild.kill("SIGTERM");
   if (usHistoryChild) usHistoryChild.kill("SIGTERM");
+  if (macroChild) macroChild.kill("SIGTERM");
   if (marketRefreshChild) marketRefreshChild.kill("SIGTERM");
   process.exitCode = signal ? 1 : (code ?? 1);
 });

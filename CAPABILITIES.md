@@ -1,17 +1,17 @@
 # InvestoGenie - Capabilities
 
-> Review-oriented snapshot of what has been achieved so far.
-> Current codebase: local PostgreSQL, Next.js 16, Yahoo/Google/NSE sync.
+> Current capability snapshot after the local Postgres migration, US/India data sync expansion, data health dashboard, and macro lead/lag activation.
+> Current codebase: local PostgreSQL, Next.js 16, Yahoo/Google/NSE/FRED-backed sync.
 
 ## In One Line
 
-InvestoGenie is a local-first US and India market terminal with portfolio tracking, live quote refreshes, buy-candidate swing screening, company fundamentals, market dashboards, and recurring data sync jobs.
+InvestoGenie is a local-first US and India market terminal with portfolio tracking, live quote refreshes, OHLCV history, buy-candidate swing screening, company fundamentals, macro lead/lag analytics, market dashboards, and recurring data sync jobs.
 
 ## Capabilities At A Glance
 
 | Area | What it does | Status |
 | --- | --- | --- |
-| Local Postgres backend | Users, assets, quotes, OHLCV, signals, reports, portfolio data | Working |
+| Local Postgres backend | Users, assets, quotes, OHLCV, signals, reports, macro, portfolio data | Working |
 | Landing experience | WebGL hero, market pivot, ticker tape, animated content | Working |
 | Market overviews | Separate US and India dashboards with quotes, breadth, charts, candidates | Working |
 | Auth | Local email/password with signed HTTP-only session cookie | Working |
@@ -19,7 +19,9 @@ InvestoGenie is a local-first US and India market terminal with portfolio tracki
 | Swing candidates | Buy-candidate screener with entry, target, stop, trail, score, days | Working |
 | Legendary strategies | Qullamaggie, Minervini, Darvas, PTJ, Simons tags and filters | Working |
 | Fundamentals | P/E, market cap, ROCE, YoY profit/sales growth in screener | Working |
-| Recurring sync | Startup, recurring, and daily jobs for quotes, OHLCV, fundamentals, scans | Working |
+| Macro lead/lag | FRED-backed cross-asset rolling correlation and lead/lag matrix | Working |
+| Sync health | Browser-visible `/admin/sync` freshness and provider status page | Working |
+| Recurring sync | Startup, recurring, and daily jobs for quotes, OHLCV, fundamentals, macro, scans | Working |
 | Provider fallback | Yahoo Finance primary, Google Finance fallback for quotes | Working |
 
 ## Current Local Data Coverage
@@ -29,38 +31,53 @@ Measured from the local `investogenie` PostgreSQL database:
 | Dataset | Count |
 | --- | ---: |
 | Assets | 18,070 |
-| Daily OHLCV bars | 4,304,693 |
-| Latest quotes | 17,242 |
-| Swing signals | 2,422 |
-| Financial reports | 83,443 |
-| Cron logs | 91 |
+| Daily OHLCV bars | 4,331,081 |
+| Latest quotes | 17,244 |
+| Swing signals | 2,465 |
+| Financial reports | 83,494 |
+| Macro indicators | 8,131 |
+| Cron logs | 95 |
 
 Asset universe:
 
 | Market | Exchange | Class | Count |
 | --- | --- | --- | ---: |
-| India | NSE | Stock | 2,407 |
+| India | BSE | Derivative | 1 |
 | India | BSE | Stock | 5,088 |
 | India | FX | Currency | 1 |
+| India | NSE | Derivative | 2 |
+| India | NSE | Stock | 2,407 |
+| US | CBOE | Stock | 30 |
 | US | NASDAQ | Stock | 4,387 |
+| US | NYSE | Bond | 1 |
 | US | NYSE | Stock | 3,332 |
 | US | OTC | Stock | 2,608 |
-| US | CBOE | Stock | 30 |
 | US | OTHER | Stock | 213 |
 
 Fundamentals coverage:
 
 | Market | Assets with reports |
 | --- | ---: |
-| India | 6,917 |
+| India | 6,926 |
 | US | 1,522 |
 
 Swing scan coverage:
 
 | Market | Scanned | Buy candidates |
 | --- | ---: | ---: |
-| India | 2,387 | 238 |
-| US | 34 | 6 |
+| India | 2,388 | 202 |
+| US | 77 | 7 |
+
+Macro coverage:
+
+| Indicator | Rows | Date range |
+| --- | ---: | --- |
+| BRENT_CRUDE | 1,264 | 2021-07-07 to 2026-07-06 |
+| FED_FUNDS | 1,829 | 2021-07-07 to 2026-07-09 |
+| US_10Y_YIELD | 1,252 | 2021-07-07 to 2026-07-09 |
+| US_DOLLAR_BROAD | 1,248 | 2021-07-07 to 2026-07-02 |
+| USD_INR | 1,249 | 2021-07-07 to 2026-07-02 |
+| VIX | 1,289 | 2021-07-07 to 2026-07-09 |
 
 ## User Experience
 
@@ -75,21 +92,19 @@ Swing scan coverage:
 
 ### Market Overview
 
-The app now has dedicated pages for:
+Dedicated pages:
 
 - `/markets/us`
 - `/markets/in`
 
-Each page presents a compact market terminal dashboard with quote panels, normalized performance charts, breadth, candidate rows, and fundamentals leaders. The visual treatment is denser and more terminal-like than the landing page.
+Each page presents a compact market terminal dashboard with quote panels, normalized performance charts, breadth, candidate rows, and fundamentals leaders.
 
 ### Portfolio Terminals
 
-The authenticated terminals are:
+Authenticated terminals:
 
 - `/terminal/us`
 - `/terminal/in`
-
-Each terminal is market-scoped. Holdings, watchlist, quotes, benchmarks, and currency formatting follow the selected market.
 
 Implemented terminal functions:
 
@@ -104,14 +119,12 @@ Implemented terminal functions:
 
 ### Swing Candidates
 
-The screener language has been shifted from long/short trading to clearer buy-candidate language.
-
 Routes:
 
 - `/terminal/us/screener`
 - `/terminal/in/screener`
 
-The India screener currently shows the top 20 NSE buy candidates. Rows include current price, entry, target, stop loss, trailing stop, score, expected days, strategy tags, and fundamentals.
+Rows include current price, entry, target, stop loss, trailing stop, score, expected days, strategy tags, and fundamentals.
 
 Filters include:
 
@@ -120,6 +133,20 @@ Filters include:
 - strategy ribbon,
 - ROCE minimum,
 - P/E maximum.
+
+### Data Health
+
+Route:
+
+- `/admin/sync`
+
+The page shows:
+
+- per-market asset, quote, history, and fundamentals counts,
+- latest quote, OHLCV, and financial-report dates,
+- quote provider coverage,
+- fundamentals provider coverage,
+- recent cron/sync job history.
 
 ## Analytics
 
@@ -134,11 +161,9 @@ The classifier uses:
 - open-interest buildup where available,
 - read-time risk derivation.
 
-Long entries are rebased to the latest available market price once a trigger has already traded, avoiding stale buy entries below the current quote.
+Buy entries are rebased to the latest available market price once a trigger has already traded, avoiding stale entries below the current quote.
 
 ### Legendary Strategy Tags
-
-The screener supports five strategy families:
 
 | Strategy | Core idea |
 | --- | --- |
@@ -148,9 +173,45 @@ The screener supports five strategy families:
 | Paul Tudor Jones | 200-day moving-average trend rule |
 | Simons | Statistical mean reversion at z-score extremes |
 
-### Fundamentals
+### Fund Intelligence
 
-Fundamentals are stored in `asset_financial_reports` and surfaced through a latest-financials view.
+- India mutual fund overlap engine is wired into the terminal.
+- It reads the signed-in user's actual mutual fund holdings.
+- It compares fund look-through holdings against `mutual_fund_holdings`.
+- It can flag overlap concentration and DIRECT-plan optimization suggestions when holding data exists.
+
+### Macro Lead/Lag
+
+The macro engine now has real historical data and recurring sync.
+
+Data source:
+
+- FRED public CSV downloads through `pipelines/macro_sync.py`.
+
+Synced indicators:
+
+- US 10Y yield,
+- Fed Funds,
+- USD/INR,
+- Brent crude,
+- VIX,
+- US broad dollar index.
+
+Market proxy baskets:
+
+- US: SPY, QQQ, NVDA.
+- India: RELIANCE, HDFCBANK, INFY, TCS.
+
+The engine computes:
+
+- rolling 30-day and 90-day return correlations,
+- best lead/lag over the configured lag window,
+- lead days,
+- accumulation, distribution, coincident, and weak signals.
+
+## Fundamentals
+
+Fundamentals are stored in `asset_financial_reports` and surfaced through latest-financials joins.
 
 Metrics include:
 
@@ -171,7 +232,7 @@ India values are stored in Rs. crore. US values are stored in USD millions.
 
 ## Data Sync
 
-The normal launcher is:
+Normal launcher:
 
 ```bash
 npm run dev
@@ -185,11 +246,13 @@ The sync loop does:
 - market quote refresh,
 - US Yahoo Finance quote sync,
 - US Google Finance fallback quote sync,
+- US OHLCV history expansion,
+- FRED macro history sync,
 - swing signal scan,
 - NSE incremental OHLCV sync,
 - India fundamentals sync,
 - US fundamentals sync,
-- recurring quote refresh while the server stays open,
+- recurring quote/macro/scan refresh while the server stays open,
 - daily NSE sync at the configured IST time.
 
 Manual sync commands:
@@ -201,6 +264,7 @@ npm run sync:us
 npm run sync:us-history
 npm run sync:us-quotes
 npm run sync:us-fundamentals
+npm run sync:macro
 ```
 
 ## Architecture
@@ -213,12 +277,27 @@ npm run sync:us-fundamentals
 | Database | Local PostgreSQL |
 | DB access | `pg` for app code, `psycopg2` for Python pipelines |
 | Auth | Local users table + signed HTTP-only cookies |
-| Data providers | Yahoo Finance, Google Finance, NSE/Yahoo Finance |
+| Data providers | Yahoo Finance, Google Finance, NSE/Yahoo Finance, FRED |
 | Scheduler | Node wrapper around Next.js plus Python child jobs |
+
+## Verification Status
+
+Latest checks run after macro lead/lag activation:
+
+```bash
+npm run sync:macro -- --years 5
+npm run lint
+npx tsc --noEmit
+npm run build
+npm run smoke
+```
+
+All passed.
 
 ## Remaining Gaps
 
-- US historical OHLCV scan coverage is still much smaller than US listings, quotes, and fundamentals coverage, but `sync:us-history` now expands it in recurring Yahoo-backed batches.
-- A browser-visible sync health/admin page should be added for `cron_logs`, `quote_sync_state`, and `fundamentals_sync_state`.
+- US historical OHLCV scan coverage is still smaller than US listings, quotes, and fundamentals coverage. `sync:us-history` expands it in recurring Yahoo-backed batches.
+- Open-interest validation is wired in the classifier, but local OHLCV currently has no populated open-interest data, so OI-specific confirmation is not active yet.
+- Fund overlap is implemented, but it depends on populated `mutual_fund_holdings` look-through data and actual user mutual-fund holdings.
 - Provider rate limits and unsupported symbols are expected; sync-state tables track attempts and keep recurring jobs rotating through the universe.
-- `ARCHITECTURE.md` should also be refreshed in a later pass; this capabilities document and README are now the most current product summary.
+- `ARCHITECTURE.md` should be refreshed in a later pass; this capabilities document and README are the most current product summaries.

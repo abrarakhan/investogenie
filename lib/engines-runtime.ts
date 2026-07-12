@@ -32,6 +32,11 @@ export interface TopSetup {
 }
 
 const num = (v: unknown) => (v === null || v === undefined ? 0 : Number(v));
+const dateOnly = (value: string | Date) => {
+  if (value instanceof Date) return value.toISOString().slice(0, 10);
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? String(value).slice(0, 10) : parsed.toISOString().slice(0, 10);
+};
 
 /** Top active swing setups for a market, with per-user levels applied. */
 export async function getTopSwingSetups(
@@ -134,7 +139,7 @@ export async function getFundOverlap(): Promise<OverlapReport | null> {
 
 /** OHLCV close series for one ticker (used as a sector proxy). */
 async function tickerCloseSeries(ticker: string): Promise<{ date: string; value: number }[]> {
-  const rows = await query<{ date: string; close: string | number }>(
+  const rows = await query<{ date: string | Date; close: string | number }>(
     `select o.date, o.close
        from public.daily_ohlcv o
        join public.assets a on a.id = o.asset_id
@@ -142,12 +147,34 @@ async function tickerCloseSeries(ticker: string): Promise<{ date: string; value:
       order by o.date asc`,
     [ticker],
   );
-  return rows.map((b) => ({ date: String(b.date).slice(0, 10), value: Number(b.close) }));
+  return rows.map((b) => ({ date: dateOnly(b.date), value: Number(b.close) }));
 }
 
-/** Macro lead/lag matrix scoped to the market's representative sector. */
+async function macroSectorSeries(market: MarketId): Promise<SeriesInput[]> {
+  const proxies = market === "US"
+    ? [
+        ["SPY", "US_BROAD"],
+        ["QQQ", "US_TECH"],
+        ["NVDA", "US_AI"],
+      ]
+    : [
+        ["RELIANCE", "IN_ENERGY"],
+        ["HDFCBANK", "IN_BANKS"],
+        ["INFY", "IN_IT"],
+        ["TCS", "IN_IT_SERVICES"],
+      ];
+
+  const sectors: SeriesInput[] = [];
+  for (const [ticker, key] of proxies) {
+    const points = await tickerCloseSeries(ticker);
+    if (points.length >= 90) sectors.push({ key, points });
+  }
+  return sectors;
+}
+
+/** Macro lead/lag matrix scoped to the market's representative sector proxies. */
 export async function getMacroMatrix(market: MarketId): Promise<MacroMatrix | null> {
-  const macro = await query<{ indicator_type: string; date: string; value: string | number }>(
+  const macro = await query<{ indicator_type: string; date: string | Date; value: string | number }>(
     "select indicator_type, date, value from public.macro_indicators order by date asc",
   );
   if (macro.length === 0) return null;
@@ -155,13 +182,11 @@ export async function getMacroMatrix(market: MarketId): Promise<MacroMatrix | nu
   const indicatorMap = new Map<string, SeriesInput>();
   for (const m of macro) {
     if (!indicatorMap.has(m.indicator_type)) indicatorMap.set(m.indicator_type, { key: m.indicator_type, points: [] });
-    indicatorMap.get(m.indicator_type)!.points.push({ date: String(m.date).slice(0, 10), value: Number(m.value) });
+    indicatorMap.get(m.indicator_type)!.points.push({ date: dateOnly(m.date), value: Number(m.value) });
   }
 
-  const sectorTicker = market === "US" ? "NVDA" : "RELIANCE";
-  const sectorLabel = market === "US" ? "US_TECH" : "IN_LARGECAP";
-  const points = await tickerCloseSeries(sectorTicker);
-  if (points.length === 0) return null;
+  const sectors = await macroSectorSeries(market);
+  if (sectors.length === 0) return null;
 
-  return buildMacroMatrix([...indicatorMap.values()], [{ key: sectorLabel, points }]);
+  return buildMacroMatrix([...indicatorMap.values()], sectors);
 }

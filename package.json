@@ -15,6 +15,7 @@
     "sync:us-quotes": ".venv/bin/python pipelines/us_market_sync.py --quotes-only",
     "sync:us-fundamentals": ".venv/bin/python pipelines/us_market_sync.py --fundamentals-only",
     "sync:us-history": ".venv/bin/python pipelines/us_history_sync.py",
+    "sync:macro": ".venv/bin/python pipelines/macro_sync.py",
     "smoke": "node scripts/smoke-routes.mjs"
   },
   "dependencies": {
