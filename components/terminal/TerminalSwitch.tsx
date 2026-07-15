@@ -9,14 +9,14 @@ import type { MarketId } from "@/lib/types";
  */
 export default function TerminalSwitch({ market }: { market: MarketId }) {
   return (
-    <div className="grid grid-cols-2 gap-1 rounded-full border border-white/15 bg-white/5 p-1">
+    <div className="grid grid-cols-2 gap-1 rounded-lg border border-white/10 bg-white/[0.035] p-1">
       {(["US", "IN"] as MarketId[]).map((m) => {
         const active = m === market;
         return (
           <Link
             key={m}
             href={`/terminal/${m.toLowerCase()}`}
-            className={`rounded-full px-5 py-1.5 text-center text-sm font-semibold transition-colors ${
+            className={`rounded-md px-4 py-1.5 text-center text-xs font-semibold transition-colors ${
               active ? "text-black" : "text-white/55 hover:text-white"
             }`}
             style={

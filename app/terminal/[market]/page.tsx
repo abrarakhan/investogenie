@@ -18,6 +18,7 @@ interface AssetLite {
   ticker: string;
   name: string | null;
   asset_class: string;
+  exchange: string | null;
   currency: string;
   country: string;
 }
@@ -65,9 +66,11 @@ export default async function TerminalPage({
   const [holdingRows, watchRows, benchmarkQuoteRows, swing, macro] = await Promise.all([
     query<HoldingRow>(
       `select h.id as hid, h.quantity, h.avg_cost,
-              a.id, a.ticker, a.name, a.asset_class, a.currency, a.country
+              a.id, a.ticker, a.name, a.asset_class, a.exchange, a.currency, a.country
          from public.holdings h join public.assets a on a.id = h.asset_id
-        where h.user_id = $1 order by h.updated_at desc`,
+        where h.user_id = $1
+          and coalesce(a.exchange, '') not in ('CAS_MF', 'CAS_STOCK')
+        order by h.updated_at desc`,
       [user.id],
     ),
     query<WatchRow>(
@@ -90,7 +93,7 @@ export default async function TerminalPage({
 
   const asset = (r: AssetLite): AssetLite => ({
     id: r.id, ticker: r.ticker, name: r.name, asset_class: r.asset_class,
-    currency: r.currency, country: r.country,
+    exchange: r.exchange, currency: r.currency, country: r.country,
   });
   // Scope holdings + watchlist to THIS market only.
   const holdings = holdingRows

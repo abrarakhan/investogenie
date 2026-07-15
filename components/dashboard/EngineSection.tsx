@@ -21,6 +21,30 @@ const MACRO_STYLE: Record<string, string> = {
 
 const formatVerdict = (verdict: string) => verdict.replace(/^LONG_/, "BUY_").replaceAll("_", " ");
 
+function LinkedMessage({ message }: { message: string }) {
+  const parts = message.split(/(https?:\/\/\S+)/g);
+
+  return (
+    <span>
+      {parts.map((part, index) =>
+        part.startsWith("http") ? (
+          <a
+            key={`${part}-${index}`}
+            href={part}
+            target="_blank"
+            rel="noreferrer"
+            className="text-[var(--ig-accent)] underline decoration-[var(--ig-accent)]/40 underline-offset-4 transition hover:text-white"
+          >
+            {part}
+          </a>
+        ) : (
+          <span key={`${part}-${index}`}>{part}</span>
+        ),
+      )}
+    </span>
+  );
+}
+
 function Panel({
   title,
   tag,
@@ -124,16 +148,27 @@ export default function EngineSection({
                     </span>
                   </div>
                 ))
+              ) : overlap.stockExposure.length === 0 && overlap.instructions.length > 0 ? (
+                <div className="rounded-2xl border border-amber-400/20 bg-amber-400/5 p-4">
+                  <p className="text-sm font-semibold text-amber-200">
+                    AMC monthly portfolios required
+                  </p>
+                  <p className="mt-1 text-xs leading-relaxed text-white/55">
+                    Your fund positions are present, but their latest stock-level
+                    disclosures have not been imported yet. Add those AMC files to
+                    activate true overlap and concentration scoring.
+                  </p>
+                </div>
               ) : (
                 <p className="text-sm text-emerald-300">No overlaps above threshold.</p>
               )}
 
               {overlap.instructions.length > 0 && (
                 <ul className="space-y-2">
-                  {overlap.instructions.slice(0, 3).map((ins, i) => (
+                  {overlap.instructions.slice(0, 5).map((ins, i) => (
                     <li key={i} className="flex gap-2 text-xs text-white/60">
                       <span className="mt-0.5 text-[var(--ig-accent)]">▸</span>
-                      <span>{ins.message}</span>
+                      <LinkedMessage message={ins.message} />
                     </li>
                   ))}
                 </ul>

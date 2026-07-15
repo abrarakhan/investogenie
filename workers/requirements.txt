@@ -1,0 +1,4 @@
+breeze-connect>=1.0.60
+psycopg2-binary>=2.9
+pypdf[crypto]>=6.0
+openpyxl>=3.1

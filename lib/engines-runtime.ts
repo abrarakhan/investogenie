@@ -7,6 +7,7 @@ import { getSessionUser } from "@/lib/auth";
 import {
   analyzeFundOverlap,
   type OverlapReport,
+  type RebalanceInstruction,
 } from "@/lib/analytics/fundOverlap";
 import {
   buildMacroMatrix,
@@ -79,28 +80,67 @@ export async function getTopSwingSetups(
     });
 }
 
+
+const AMC_DISCLOSURES: Array<{ match: RegExp; amc: string; url: string }> = [
+  { match: /INF209|ADITYA\s+BIRLA|ABSL/i, amc: "Aditya Birla Sun Life MF", url: "https://mutualfund.adityabirlacapital.com/forms-and-downloads/portfolio" },
+  { match: /INF760|CANARA\s+ROBECO/i, amc: "Canara Robeco MF", url: "https://www.canararobeco.com/downloads" },
+  { match: /INF740|\bDSP\b/i, amc: "DSP MF", url: "https://www.dspim.com/downloads" },
+  { match: /INF090|FRANKLIN|TEMPLETON/i, amc: "Franklin Templeton India", url: "https://www.franklintempletonindia.com/downloads" },
+  { match: /INF179|\bHDFC\b/i, amc: "HDFC MF", url: "https://www.hdfcfund.com/statutory-disclosure" },
+  { match: /INF109|ICICI|PRUDENTIAL/i, amc: "ICICI Prudential MF", url: "https://www.icicipruamc.com/downloads" },
+  { match: /INF204|NIPPON/i, amc: "Nippon India MF", url: "https://mf.nipponindiaim.com/investor-service/downloads" },
+  { match: /INF200|\bSBI\b/i, amc: "SBI MF", url: "https://www.sbimf.com/downloads" },
+  { match: /INF966|\bQUANT\b/i, amc: "Quant MF", url: "https://quantmutual.com/downloads/Notice-of-Monthly-Fortnightly-Portfolio" },
+];
+
+function disclosureInstruction(ticker: string, fundName?: string | null): RebalanceInstruction {
+  const row = AMC_DISCLOSURES.find((d) => d.match.test(ticker) || d.match.test(fundName ?? ""));
+  const label = fundName && fundName !== ticker ? `${fundName} (${ticker})` : ticker;
+  return {
+    kind: "DISCLOSURE_REQUIRED",
+    message: row
+      ? `Look-through pending for ${label}. Download the latest monthly portfolio disclosure from ${row.amc}: ${row.url}`
+      : `Look-through pending for ${label}. Find the AMC monthly portfolio disclosure and import its stock weights to activate overlap scoring.`,
+  };
+}
+
 /** Look-through fund overlap for the signed-in user's actual fund positions. */
 export async function getFundOverlap(): Promise<OverlapReport | null> {
   const user = await getSessionUser();
   if (!user) return null;
 
   const heldFunds = (
-    await query<{ ticker: string; asset_class: string; quantity: string | number; avg_cost: string | number | null }>(
-      `select a.ticker, a.asset_class, h.quantity, h.avg_cost
+    await query<{ id: string; ticker: string; name: string | null; asset_class: string; quantity: string | number; avg_cost: string | number | null }>(
+      `select a.id, a.ticker, a.name, a.asset_class, h.quantity, h.avg_cost
          from public.holdings h
          join public.assets a on a.id = h.asset_id
         where h.user_id = $1`,
       [user.id],
     )
   )
-    .map((h) => ({ ticker: h.ticker, assetClass: h.asset_class, units: Number(h.quantity), nav: Number(h.avg_cost ?? 0) }))
+    .map((h) => ({ id: h.id, ticker: h.ticker, name: h.name, assetClass: h.asset_class, units: Number(h.quantity), nav: Number(h.avg_cost ?? 0) }))
     .filter((h) => h.assetClass === "MUTUAL_FUND" && h.ticker && h.units > 0);
   if (heldFunds.length === 0) return null;
 
   const mfh = await query<{ fund_asset_id: string; stock_asset_id: string; weight_percentage: string | number }>(
     "select fund_asset_id, stock_asset_id, weight_percentage from public.mutual_fund_holdings",
   );
-  if (mfh.length === 0) return null;
+  if (mfh.length === 0) {
+    const totalValue = heldFunds.reduce((sum, h) => sum + h.units * (h.nav > 0 ? h.nav : 100), 0);
+    return {
+      totalValue,
+      fundValues: heldFunds.map((h) => ({
+        ticker: h.name || h.ticker,
+        value: h.units * (h.nav > 0 ? h.nav : 100),
+        sharePct: totalValue === 0 ? 0 : ((h.units * (h.nav > 0 ? h.nav : 100)) / totalValue) * 100,
+      })),
+      stockExposure: [],
+      pairwiseOverlaps: [],
+      flaggedOverlaps: [],
+      concentratedStocks: [],
+      instructions: heldFunds.slice(0, 8).map((h) => disclosureInstruction(h.ticker, h.name)),
+    };
+  }
 
   const ids = [...new Set(mfh.flatMap((r) => [r.fund_asset_id, r.stock_asset_id]))];
   const assets = await query<{ id: string; ticker: string }>(
@@ -116,6 +156,23 @@ export async function getFundOverlap(): Promise<OverlapReport | null> {
       weightPercentage: Number(r.weight_percentage),
     }))
     .filter((r) => r.fundTicker && r.stockTicker);
+  const coveredFunds = new Set(lookThrough.map((r) => r.fundTicker));
+  if (lookThrough.length === 0) {
+    const totalValue = heldFunds.reduce((sum, h) => sum + h.units * (h.nav > 0 ? h.nav : 100), 0);
+    return {
+      totalValue,
+      fundValues: heldFunds.map((h) => ({
+        ticker: h.name || h.ticker,
+        value: h.units * (h.nav > 0 ? h.nav : 100),
+        sharePct: totalValue === 0 ? 0 : ((h.units * (h.nav > 0 ? h.nav : 100)) / totalValue) * 100,
+      })),
+      stockExposure: [],
+      pairwiseOverlaps: [],
+      flaggedOverlaps: [],
+      concentratedStocks: [],
+      instructions: heldFunds.slice(0, 8).map((h) => disclosureInstruction(h.ticker, h.name)),
+    };
+  }
 
   const meta = await query<{ asset_id: string; expense_ratio: string | number | null; plan_type: string | null }>(
     "select asset_id, expense_ratio, plan_type from public.mutual_fund_meta",
@@ -134,7 +191,16 @@ export async function getFundOverlap(): Promise<OverlapReport | null> {
     planType: metaByTicker.get(h.ticker)?.planType,
   }));
 
-  return analyzeFundOverlap(portfolio, lookThrough, metaList);
+  const report = analyzeFundOverlap(portfolio, lookThrough, metaList);
+  const missingDisclosureInstructions = heldFunds
+    .filter((h) => !coveredFunds.has(h.ticker))
+    .slice(0, 5)
+    .map((h) => disclosureInstruction(h.ticker, h.name));
+
+  return {
+    ...report,
+    instructions: [...missingDisclosureInstructions, ...report.instructions],
+  };
 }
 
 /** OHLCV close series for one ticker (used as a sector proxy). */

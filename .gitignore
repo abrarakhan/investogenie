@@ -30,6 +30,9 @@ __pycache__/
 # obsolete local Supabase CLI state (the app uses direct PostgreSQL)
 /supabase/
 
+# local worker logs
+/logs/
+
 # debug
 npm-debug.log*
 yarn-debug.log*

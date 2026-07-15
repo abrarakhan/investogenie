@@ -45,7 +45,7 @@ export interface StockExposure {
 }
 
 export interface RebalanceInstruction {
-  kind: "TRIM_OVERLAP" | "SWITCH_TO_DIRECT" | "REDUCE_CONCENTRATION";
+  kind: "TRIM_OVERLAP" | "SWITCH_TO_DIRECT" | "REDUCE_CONCENTRATION" | "DISCLOSURE_REQUIRED";
   message: string;
   /** Estimated annual cost saved by a REGULAR→DIRECT switch (fractional of AUM). */
   estimatedAnnualSavingPct?: number;
