@@ -85,18 +85,33 @@ interface FreshnessRow {
   last_history_sync_status: string | null;
 }
 
+// Leaderboard outlier guards. market_cap is stored in MILLIONS of the quote
+// currency (NVDA ≈ 4,663,269 = $4.66T; RELIANCE ≈ 1,769,776 = ₹17.7 lakh cr), so
+// the floors below read as: US $300M, India ₹500 cr. Together with the price
+// floor these keep shells, warrants and sub-penny noise off the movers boards.
+const ROCE_MIN = 0;
+const ROCE_MAX = 100; // a real ROCE above this is a data artefact, not a leader
+const PE_MAX = 200;
+// Genuine hyper-growth tops out around 10x YoY; anything beyond is a bad row.
+const SALES_GROWTH_MIN = -100;
+const SALES_GROWTH_MAX = 1000;
+
 const REGION = {
   US: {
     country: "US",
     exchanges: ["NASDAQ", "NYSE"],
     instruments: ["AAPL", "MSFT", "NVDA"],
     chart: ["AAPL", "MSFT", "NVDA"],
+    minPrice: 5, // USD
+    minMarketCap: 300, // $300M
   },
   IN: {
     country: "IN",
     exchanges: ["NSE"],
     instruments: ["NIFTY", "SENSEX", "USDINR"],
     chart: ["RELIANCE", "HDFCBANK", "INFY"],
+    minPrice: 20, // INR
+    minMarketCap: 5000, // ₹500 cr
   },
 } as const;
 
@@ -141,21 +156,27 @@ export async function getMarketOverview(market: MarketId): Promise<MarketOvervie
       ),
       query<QuoteRow>(
         `select a.ticker,a.name,a.exchange,q.price,q.change_pct,q.as_of
-           from public.assets a join public.latest_quotes q on q.asset_id=a.id
+           from public.assets a
+           join public.latest_quotes q on q.asset_id=a.id
+           join public.latest_financials f on f.asset_id=a.id
           where a.country=$1 and a.exchange=any($2) and a.asset_class='STOCK'
             and q.change_pct is not null and q.change_pct between -40 and 40
-            and ($3::boolean=false or (q.price>=1 and not (length(a.ticker)>=5 and right(a.ticker,1) in ('W','R','U'))))
+            and q.price >= $4 and f.market_cap >= $5
+            and ($3::boolean=false or not (length(a.ticker)>=5 and right(a.ticker,1) in ('W','R','U')))
           order by q.change_pct desc limit 8`,
-        [cfg.country, [...cfg.exchanges], market === "US"],
+        [cfg.country, [...cfg.exchanges], market === "US", cfg.minPrice, cfg.minMarketCap],
       ),
       query<QuoteRow>(
         `select a.ticker,a.name,a.exchange,q.price,q.change_pct,q.as_of
-           from public.assets a join public.latest_quotes q on q.asset_id=a.id
+           from public.assets a
+           join public.latest_quotes q on q.asset_id=a.id
+           join public.latest_financials f on f.asset_id=a.id
           where a.country=$1 and a.exchange=any($2) and a.asset_class='STOCK'
             and q.change_pct is not null and q.change_pct between -40 and 40
-            and ($3::boolean=false or (q.price>=1 and not (length(a.ticker)>=5 and right(a.ticker,1) in ('W','R','U'))))
+            and q.price >= $4 and f.market_cap >= $5
+            and ($3::boolean=false or not (length(a.ticker)>=5 and right(a.ticker,1) in ('W','R','U')))
           order by q.change_pct asc limit 8`,
-        [cfg.country, [...cfg.exchanges], market === "US"],
+        [cfg.country, [...cfg.exchanges], market === "US", cfg.minPrice, cfg.minMarketCap],
       ),
       queryOne<{ advancers: string; decliners: string; unchanged: string }>(
         `select count(*) filter(where q.change_pct>0)::text advancers,
@@ -181,12 +202,20 @@ export async function getMarketOverview(market: MarketId): Promise<MarketOvervie
         sales_variance_yoy: string | number | null;
         profit_variance_yoy: string | number | null;
       }>(
+        // Outlier guard: a genuine leader is a real, profitable, sanely-valued
+        // company. Requiring a P/E and a market-cap floor drops the shells and
+        // warrants whose feed-derived ROCE runs to four figures.
         `select a.ticker,f.pe_ratio,f.market_cap,f.roce,
                 f.sales_variance_yoy,f.profit_variance_yoy
            from public.latest_financials f join public.assets a on a.id=f.asset_id
-          where a.country=$1 and a.exchange=$2 and f.roce is not null
-          order by f.roce desc nulls last limit 8`,
-        [cfg.country, primaryExchange],
+          where a.country=$1 and a.exchange=$2
+            and f.roce between $3 and $4
+            and f.pe_ratio is not null and f.pe_ratio > 0 and f.pe_ratio <= $5
+            and f.market_cap >= $6
+            and (f.sales_variance_yoy is null or f.sales_variance_yoy between $7 and $8)
+          order by f.roce desc limit 8`,
+        [cfg.country, primaryExchange, ROCE_MIN, ROCE_MAX, PE_MAX, cfg.minMarketCap,
+         SALES_GROWTH_MIN, SALES_GROWTH_MAX],
       ),
       queryOne<{ quoted: string; history: string; fundamentals: string }>(
         `select
