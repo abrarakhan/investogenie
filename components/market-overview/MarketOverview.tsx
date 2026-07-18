@@ -218,7 +218,7 @@ function Performance({
                 </span>
               );
             })}
-            <span className="text-[10px] text-white/25">Click any symbol on the left or right to plot it</span>
+            <span className="text-[10px] text-white/25">Click any symbol on the left or right to plot it · drag the chart to orbit</span>
           </div>
 
           <div
@@ -229,21 +229,8 @@ function Performance({
             }}
             onMouseLeave={() => setHover(null)}
           >
-            {/* Axis gutter overlays the canvas; the 3D plot occupies the middle
-                ~64% of the viewport height at this camera framing. */}
-            <div className="pointer-events-none absolute inset-y-0 left-0 z-10 w-12">
-              <div className="absolute inset-x-0" style={{ top: "18%", bottom: "18%" }}>
-                {ticks.map((value, i) => (
-                  <span
-                    key={value}
-                    className="absolute right-1 -translate-y-1/2 text-[10px] tabular-nums text-white/40"
-                    style={{ top: `${(i / (ticks.length - 1)) * 100}%` }}
-                  >
-                    {value.toFixed(1)}%
-                  </span>
-                ))}
-              </div>
-            </div>
+            {/* Axis labels are billboarded sprites inside the scene so they
+                track the camera as the user orbits — no HTML gutter here. */}
             <PerformanceChart3D
               lines={lines}
               colors={colors}
