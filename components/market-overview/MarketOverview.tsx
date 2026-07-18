@@ -380,7 +380,8 @@ export default function MarketOverview({ data }: { data: MarketOverviewData }) {
     setNotice(null);
     setLoading(true);
     try {
-      const res = await fetch(`/api/market-overview/series?market=${data.market}&tickers=${ticker}`);
+      const params = new URLSearchParams({ market: data.market, tickers: ticker });
+      const res = await fetch(`/api/market-overview/series?${params.toString()}`);
       const payload: { series?: OverviewSeries[] } = await res.json();
       if (payload.series?.length) {
         setCache((prev) => {
