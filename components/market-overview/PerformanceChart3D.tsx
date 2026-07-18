@@ -2,6 +2,7 @@
 
 import { memo, useEffect, useMemo, useRef } from "react";
 import { Canvas, useFrame } from "@react-three/fiber";
+import { OrbitControls } from "@react-three/drei";
 import * as THREE from "three";
 
 // -----------------------------------------------------------------------------
@@ -49,6 +50,44 @@ function Bar({
       <boxGeometry args={args} />
       <meshBasicMaterial color={color} transparent opacity={opacity} depthWrite={false} />
     </mesh>
+  );
+}
+
+/** Text baked to a canvas texture. Drawn on a sprite it billboards toward the
+ *  camera, so labels stay upright and legible at any orbit angle — and unlike a
+ *  3D text mesh there is no font file to fetch at runtime. */
+function makeLabelTexture(text: string, color: string, align: "left" | "right"): THREE.CanvasTexture {
+  const W = 256, H = 64, DPR = 2;
+  const canvas = document.createElement("canvas");
+  canvas.width = W * DPR;
+  canvas.height = H * DPR;
+  const ctx = canvas.getContext("2d")!;
+  ctx.scale(DPR, DPR);
+  ctx.font = "600 30px ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif";
+  ctx.fillStyle = color;
+  ctx.textAlign = align;
+  ctx.textBaseline = "middle";
+  ctx.fillText(text, align === "right" ? W - 6 : 6, H / 2);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.anisotropy = 4;
+  return tex;
+}
+
+function Label({
+  text, position, color = "#8b97a4", align = "right", scale = 1,
+}: {
+  text: string;
+  position: [number, number, number];
+  color?: string;
+  align?: "left" | "right";
+  scale?: number;
+}) {
+  const tex = useMemo(() => makeLabelTexture(text, color, align), [text, color, align]);
+  useEffect(() => () => tex.dispose(), [tex]);
+  return (
+    <sprite position={position} scale={[1.7 * scale, 0.425 * scale, 1]}>
+      <spriteMaterial map={tex} transparent depthWrite={false} depthTest={false} toneMapped={false} />
+    </sprite>
   );
 }
 
@@ -150,6 +189,17 @@ const SeriesTube = memo(function SeriesTube({
           depthWrite={false}
         />
       </mesh>
+      {/* Ticker rides with its own line, so the series stay identifiable
+          however far the view is orbited. */}
+      {!dimmed && (
+        <Label
+          text={line.ticker}
+          position={[headPos.x + 1.05, headPos.y + 0.28, 0]}
+          color={color}
+          align="left"
+          scale={0.8}
+        />
+      )}
     </group>
   );
 });
@@ -165,26 +215,14 @@ function Scene({
   hoverRatio: number | null;
   focus: string | null;
 }) {
-  const group = useRef<THREE.Group>(null);
   const zeroY = yFor(0, low, high);
   const depth = ((lines.length - 1) / 2) * Z_STEP;
-
-  useFrame((state) => {
-    const g = group.current;
-    if (!g) return;
-    const t = state.clock.elapsedTime;
-    // Idle drift + pointer parallax, damped. Kept small so the HTML axis
-    // overlay stays visually aligned with the 3D grid.
-    const targetY = state.pointer.x * 0.2 + Math.sin(t * 0.17) * 0.05;
-    const targetX = 0.05 - state.pointer.y * 0.1;
-    g.rotation.y += (targetY - g.rotation.y) * 0.06;
-    g.rotation.x += (targetX - g.rotation.x) * 0.06;
-  });
-
+  // The scene itself stays still — the user drives the view via OrbitControls,
+  // and a drifting scene under an orbiting camera reads as motion sickness.
   const backZ = -depth - 0.9;
 
   return (
-    <group ref={group}>
+    <group>
       <ambientLight intensity={0.65} />
       <directionalLight position={[4, 6, 6]} intensity={1.1} />
       <pointLight position={[-5, 2, 4]} intensity={22} distance={22} color="#7dd3fc" />
@@ -202,6 +240,21 @@ function Scene({
 
       {/* Zero plane running through the depth of the stack. */}
       <Bar position={[0, zeroY, 0]} length={PLOT_W} color="#8b97a4" opacity={0.35} />
+
+      {/* Axis scale lives in the scene (billboarded), so it stays attached to
+          its gridline no matter how the view is orbited. */}
+      {ticks.map((value) => (
+        <Label
+          key={`lbl${value}`}
+          // Centre depth, just outside the plot edge: keeps the scale inside the
+          // frustum at every orbit angle (parked at the back wall it swung out
+          // of frame once rotated).
+          position={[-PLOT_W / 2 - 0.75, yFor(value, low, high), 0]}
+          text={`${value.toFixed(1)}%`}
+          color={Math.abs(value) < 1e-9 ? "#c3ccd6" : "#8b97a4"}
+          scale={0.8}
+        />
+      ))}
 
       {/* Floor grid: rails running into the screen plus cross-ties. Together
           they give the eye the perspective cue that sells the depth. */}
@@ -267,7 +320,7 @@ export default memo(function PerformanceChart3D(props: {
         resize={{ debounce: 0 }}
         dpr={[1, 2]}
         gl={{ antialias: true, alpha: true }}
-        camera={{ position: [0, 2.6, 8.2], fov: 42 }}
+        camera={{ position: [0, 2.6, 9.2], fov: 42 }}
         onCreated={({ camera, gl }) => {
           // fiber only sets camera position; aim it at the plot centre.
           camera.lookAt(0, 0, 0);
@@ -284,6 +337,23 @@ export default memo(function PerformanceChart3D(props: {
         }}
       >
         <Scene {...props} />
+        {/* Drag to orbit. Pan is off and the angles/zoom are clamped so the
+            plot can be inspected from any useful angle but never lost. */}
+        <OrbitControls
+          makeDefault
+          target={[0, 0, 0]}
+          enablePan={false}
+          enableDamping
+          dampingFactor={0.08}
+          rotateSpeed={0.6}
+          zoomSpeed={0.6}
+          minDistance={5.5}
+          maxDistance={14}
+          minPolarAngle={Math.PI * 0.18}
+          maxPolarAngle={Math.PI * 0.62}
+          minAzimuthAngle={-Math.PI * 0.42}
+          maxAzimuthAngle={Math.PI * 0.42}
+        />
       </Canvas>
     </div>
   );
