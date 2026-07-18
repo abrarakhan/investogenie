@@ -126,13 +126,38 @@ function Empty({ label }: { label: string }) {
   return <div className="px-4 py-8 text-center text-xs text-white/35">{label}</div>;
 }
 
-function normalized(series: OverviewSeries, points: number) {
-  const slice = series.points.slice(-points);
-  const base = slice[0]?.close ?? 0;
-  return slice.map((point) => ({
-    date: point.date,
-    value: base ? ((point.close - base) / base) * 100 : 0,
-  }));
+/** Rebase every selected series to the first date they ALL share.
+ *
+ *  Rebasing each series to its own first bar meant a shorter history was
+ *  measured from a later start date than its peers, so the "normalized"
+ *  comparison was between returns over different periods. Anchoring to the
+ *  common start costs some leading history on the longer series, which is the
+ *  right trade for a like-for-like comparison. */
+function normalizeToCommonStart(
+  series: OverviewSeries[],
+  points: number,
+): { ticker: string; points: { date: string; value: number }[] }[] {
+  const sliced = series.map((item) => ({ ticker: item.ticker, points: item.points.slice(-points) }));
+  if (!sliced.length) return [];
+
+  // Latest first-bar across the selection = the earliest date everyone covers.
+  const commonStart = sliced.reduce((latest, item) => {
+    const first = item.points[0]?.date;
+    return first && first > latest ? first : latest;
+  }, "");
+
+  return sliced.map((item) => {
+    const from = item.points.findIndex((p) => p.date >= commonStart);
+    const kept = from === -1 ? [] : item.points.slice(from);
+    const base = kept[0]?.close ?? 0;
+    return {
+      ticker: item.ticker,
+      points: kept.map((p) => ({
+        date: p.date,
+        value: base ? ((p.close - base) / base) * 100 : 0,
+      })),
+    };
+  });
 }
 
 function Performance({
@@ -153,7 +178,7 @@ function Performance({
   const [range, setRange] = useState<Range>("1M");
   const [focus, setFocus] = useState<string | null>(null);
   const lines = useMemo(
-    () => series.map((item) => ({ ticker: item.ticker, points: normalized(item, RANGE_POINTS[range]) })),
+    () => normalizeToCommonStart(series, RANGE_POINTS[range]),
     [series, range],
   );
 
