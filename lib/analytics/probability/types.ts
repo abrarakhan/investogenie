@@ -13,7 +13,10 @@ export interface ProbabilityForecast {
   name: string;
   exchange: string;
   currency: string;
+  /** Anchor price for the projections: live quote when available, else last close. */
   lastPrice: number;
+  /** Quote day-change %, null when there is no live quote. */
+  changePct: number | null;
   bars: number;
   asOf: string;
   probabilityUpPct: number;
