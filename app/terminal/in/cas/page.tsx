@@ -43,10 +43,11 @@ export default async function CasUploadPage({
   const message = statusMessage(params.status, params.count, params.funds, params.stocks);
   const disclosureStatus = disclosureMessage(params.disclosure, params.rows);
   const funds = await query<{ id: string; ticker: string; name: string | null }>(
-    `select distinct a.id, a.ticker, a.name
+    `select a.id, a.ticker, a.name
        from public.holdings h
        join public.assets a on a.id = h.asset_id
       where h.user_id = $1 and a.asset_class = 'MUTUAL_FUND'::asset_class
+      group by a.id, a.ticker, a.name
       order by coalesce(a.name, a.ticker)`,
     [user.id],
   );
