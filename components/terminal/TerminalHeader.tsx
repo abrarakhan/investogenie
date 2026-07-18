@@ -28,6 +28,9 @@ export default function TerminalHeader({
             <Link href={`/markets/${market.toLowerCase()}`} className={navItem}>
               Overview
             </Link>
+            <Link href="/screener" className={navItem}>
+              Screener
+            </Link>
             <Link href={`/terminal/${market.toLowerCase()}/screener`} className={navItem}>
               Swing Candidates
             </Link>

@@ -17,6 +17,7 @@ InvestoGenie is a local-first US and India market terminal with portfolio tracki
 | Auth | Local email/password with signed HTTP-only session cookie | Working |
 | Portfolio terminal | Holdings, watchlist, trade ledger, benchmark cards | Working |
 | Swing candidates | Buy-candidate screener with entry, target, stop, trail, score, days | Working |
+| Stock Screener | `/screener` — US+India fundamental/price-action screener: filter engine, presets, saved screens, universes, CSV/Excel export, dashboard widget | Working |
 | Legendary strategies | Qullamaggie, Minervini, Darvas, PTJ, Simons tags and filters | Working |
 | Fundamentals | P/E, market cap, ROCE, YoY profit/sales growth in screener | Working |
 | Macro lead/lag | FRED-backed cross-asset rolling correlation and lead/lag matrix | Working |

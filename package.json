@@ -17,7 +17,9 @@
     "sync:us-history": ".venv/bin/python pipelines/us_history_sync.py",
     "sync:macro": ".venv/bin/python pipelines/macro_sync.py",
     "worker:breeze": ".venv/bin/python workers/breeze_daemon.py",
-    "smoke": "node scripts/smoke-routes.mjs"
+    "smoke": "node scripts/smoke-routes.mjs",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@react-three/drei": "^10.7.7",
@@ -41,6 +43,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.2.9",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^4.1.10"
   }
 }
