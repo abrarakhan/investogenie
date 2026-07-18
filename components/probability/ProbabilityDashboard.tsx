@@ -50,10 +50,11 @@ export default function ProbabilityDashboard({ summary }: { summary: Probability
 
       <section className="overflow-hidden rounded-3xl border border-white/10">
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[1120px] text-sm">
+          <table className="w-full min-w-[1220px] text-sm">
             <thead className="bg-white/[0.035] text-left text-xs uppercase tracking-wider text-white/40">
               <tr>
                 <th className="px-4 py-3">Ticker</th>
+                <th className="px-4 py-3 text-right">Price</th>
                 <th className="px-4 py-3 text-right">P(up)</th>
                 <th className="px-4 py-3 text-right">Median ret.</th>
                 <th className="px-4 py-3 text-right">21d sigma</th>
@@ -72,6 +73,16 @@ export default function ProbabilityDashboard({ summary }: { summary: Probability
                     <div className="font-semibold text-white/90">{row.ticker}</div>
                     <div className="max-w-[190px] truncate text-[11px] text-white/35">{row.name}</div>
                     <div className="text-[10px] uppercase text-white/25">{row.exchange} · {row.bars} bars</div>
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    <div className="font-semibold tabular-nums text-white/90">{formatMoney(row.lastPrice, row.currency)}</div>
+                    {row.changePct === null ? (
+                      <div className="text-[10px] text-white/25">last close</div>
+                    ) : (
+                      <div className={`text-[11px] tabular-nums ${row.changePct >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
+                        {pct(row.changePct, 2)}
+                      </div>
+                    )}
                   </td>
                   <td className={`px-4 py-3 text-right text-lg font-black tabular-nums ${toneClass(row.probabilityUpPct)}`}>
                     {plainPct(row.probabilityUpPct, 0)}

@@ -12,6 +12,8 @@ interface BarRow {
   currency: string;
   date: string | Date;
   close: string | number;
+  quote_price: string | number | null;
+  quote_change: string | number | null;
 }
 
 interface FeatureRow {
@@ -27,6 +29,8 @@ interface FeatureRow {
   priceZRaw: number;
   ret5ZRaw: number;
   sigmaDaily: number;
+  quotePrice: number | null;
+  quoteChangePct: number | null;
 }
 
 // Raw t(df=5) quantiles. A t_df variate has variance df/(df-2), so these must be
@@ -119,6 +123,8 @@ function featureRow(rows: BarRow[], cfg: ProbabilityConfig): FeatureRow | null {
     priceZRaw: (last - ma20) / sd20,
     ret5ZRaw: (ret5 - ret5Mean) / ret5Std,
     sigmaDaily: ewmaSigmaDaily(rets, cfg.ewmaLambda),
+    quotePrice: first.quote_price === null ? null : Number(first.quote_price),
+    quoteChangePct: first.quote_change === null ? null : Number(first.quote_change),
   };
 }
 
@@ -137,7 +143,10 @@ function buildForecasts(features: FeatureRow[], cfg: ProbabilityConfig): Probabi
     const signalToNoise = expectedReturnPct / Math.max(1, sigma21Pct);
     const probabilityUpPct = clamp(sigmoid(signalToNoise * 1.75) * 100, 5, 95);
     const drawdownRiskPct = clamp(sigmoid((sigma21Pct - cfg.drawdownThresholdPct + Math.max(0, -expectedReturnPct)) / 6) * 100, 3, 97);
-    const lastPrice = row.closes[row.closes.length - 1];
+    const quoted = row.quotePrice !== null && Number.isFinite(row.quotePrice) && row.quotePrice > 0
+      ? row.quotePrice
+      : null;
+    const lastPrice = quoted ?? row.closes[row.closes.length - 1];
     const tScale = tUnitScale(cfg.studentTdf);
     const percentileReturn = (q: keyof typeof T5) => expectedReturnPct + (T5[q] / tScale) * sigma21Pct;
     const percentiles = {
@@ -164,6 +173,7 @@ function buildForecasts(features: FeatureRow[], cfg: ProbabilityConfig): Probabi
       exchange: row.exchange,
       currency: row.currency,
       lastPrice,
+      changePct: row.quoteChangePct,
       bars: row.closes.length,
       asOf: row.dates[row.dates.length - 1],
       probabilityUpPct,
@@ -214,10 +224,12 @@ export async function getProbabilitySummary(
         order by f.market_cap desc nulls last, a.ticker
         limit $3
      )
-     select a.id asset_id, a.ticker, a.name, a.exchange, a.currency, o.date, o.close
+     select a.id asset_id, a.ticker, a.name, a.exchange, a.currency, o.date, o.close,
+            q.price as quote_price, q.change_pct as quote_change
        from ranked_assets r
        join public.assets a on a.id = r.id
        join public.daily_ohlcv o on o.asset_id = a.id
+       left join public.latest_quotes q on q.asset_id = a.id
       where o.date >= current_date - interval '430 days'
       order by a.ticker, o.date`,
     // Candidates are now pre-filtered for coverage, so a small multiple of
