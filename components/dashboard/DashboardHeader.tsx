@@ -17,13 +17,13 @@ export default function DashboardHeader({ email }: { email: string }) {
 
         <div className="flex items-center gap-4">
           <Link
-            href="/screener"
+            href="/terminal/in/stocks"
             className="hidden rounded-full border border-white/15 px-4 py-2 text-sm text-white/70 transition-colors hover:bg-white/10 hover:text-white sm:block"
           >
             Screener
           </Link>
           <Link
-            href="/swing-candidates"
+            href="/terminal/in/screener"
             className="hidden rounded-full border border-white/15 px-4 py-2 text-sm text-white/70 transition-colors hover:bg-white/10 hover:text-white sm:block"
           >
             Swing Candidates

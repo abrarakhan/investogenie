@@ -1,8 +1,7 @@
 import { redirect, notFound } from "next/navigation";
 import { getSessionUser } from "@/lib/auth";
 import { query } from "@/lib/db";
-import TerminalHeader from "@/components/terminal/TerminalHeader";
-import ApplyMarketTheme from "@/components/terminal/ApplyMarketTheme";
+import AppShell from "@/components/app/AppShell";
 import EngineSection from "@/components/dashboard/EngineSection";
 import AssetPicker from "@/components/dashboard/AssetPicker";
 import { getFundOverlap, getMacroMatrix, getTopSwingSetups } from "@/lib/engines-runtime";
@@ -138,11 +137,14 @@ export default async function TerminalPage({
   const pnl = marketVal - invested;
 
   return (
-    <div className="min-h-screen bg-[#05070d] text-white">
-      <ApplyMarketTheme market={marketId} />
-      <TerminalHeader email={user.email ?? ""} market={marketId} />
-
-      <main className="mx-auto max-w-7xl space-y-10 px-6 py-10">
+    <AppShell
+      email={user.email ?? ""}
+      market={marketId}
+      active="terminal"
+      title="Terminal"
+      subtitle="Portfolio, watchlist, market benchmarks, and engine intelligence in one market-scoped workspace."
+    >
+      <div className="space-y-10">
         {/* Portfolio value (single currency for this market) */}
         <section>
           <h2 className="mb-4 text-sm uppercase tracking-[0.25em] text-white/40">
@@ -303,13 +305,13 @@ export default async function TerminalPage({
         <section>
           <div className="mb-4 flex items-center justify-between">
             <h2 className="text-sm uppercase tracking-[0.25em] text-white/40">Market screener</h2>
-            <a href="/screener" className="text-[11px] font-semibold text-[var(--ig-accent,#22d3ee)] hover:underline">Open full screener →</a>
+            <a href={`/terminal/${marketId.toLowerCase()}/stocks`} className="text-[11px] font-semibold text-[var(--ig-accent,#22d3ee)] hover:underline">Open stock screener →</a>
           </div>
           <ScreenerWidget market={marketId as "US" | "IN"} universe={marketId === "US" ? "SP_500" : "NIFTY_500"} />
         </section>
 
         <EngineSection swing={swing} overlap={overlap} macro={macro} />
-      </main>
-    </div>
+      </div>
+    </AppShell>
   );
 }

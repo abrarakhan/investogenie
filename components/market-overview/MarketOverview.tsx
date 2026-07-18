@@ -461,10 +461,11 @@ export default function MarketOverview({ data }: { data: MarketOverviewData }) {
         <aside className="hidden w-16 shrink-0 border-r border-[#293039] bg-[#0d1115] lg:block">
           <nav className="sticky top-14 flex flex-col items-center gap-2 py-4 text-[10px] text-white/40">
             <Link title="Overview" href={`/markets/${data.market.toLowerCase()}`} className="grid h-10 w-10 place-items-center rounded-md bg-[var(--overview-soft)] font-bold text-[var(--overview-accent)]">OV</Link>
+            <Link title="Stock Screener" href={`/terminal/${data.market.toLowerCase()}/stocks`} className="grid h-10 w-10 place-items-center rounded-md hover:bg-white/5 hover:text-white">SC</Link>
             <Link title="Swing Candidates" href={`/terminal/${data.market.toLowerCase()}/screener`} className="grid h-10 w-10 place-items-center rounded-md hover:bg-white/5 hover:text-white">SW</Link>
+            <Link title="Probability" href={`/terminal/${data.market.toLowerCase()}/probability`} className="grid h-10 w-10 place-items-center rounded-md hover:bg-white/5 hover:text-white">PB</Link>
             <Link title="Terminal" href={`/terminal/${data.market.toLowerCase()}`} className="grid h-10 w-10 place-items-center rounded-md hover:bg-white/5 hover:text-white">TR</Link>
-            <Link title="Sync Status" href="/admin/sync" className="grid h-10 w-10 place-items-center rounded-md hover:bg-white/5 hover:text-white">SY</Link>
-            <Link title="Settings" href="/settings" className="grid h-10 w-10 place-items-center rounded-md hover:bg-white/5 hover:text-white">ST</Link>
+            <Link title="Data Health" href="/admin/sync" className="grid h-10 w-10 place-items-center rounded-md hover:bg-white/5 hover:text-white">DH</Link>
           </nav>
         </aside>
 

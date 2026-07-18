@@ -28,9 +28,9 @@ async function fetchTop(market: Market, universe: string, presetKey: string | nu
   return (data.rows ?? []) as ScreenerStock[];
 }
 
-function MiniRow({ row }: { row: ScreenerStock }) {
+function MiniRow({ row, market }: { row: ScreenerStock; market: Market }) {
   return (
-    <Link href="/screener" className="flex items-center justify-between gap-2 rounded px-2 py-1 text-xs hover:bg-white/5">
+    <Link href={`/terminal/${market.toLowerCase()}/stocks`} className="flex items-center justify-between gap-2 rounded px-2 py-1 text-xs hover:bg-white/5">
       <span className="truncate font-medium text-white/80">{row.symbol}</span>
       <span className="flex items-center gap-2 tabular-nums">
         <span className="text-white/50">{fmtPrice(row.ltp, row.currency)}</span>
@@ -96,18 +96,18 @@ export default function ScreenerWidget({
         <div className="grid grid-cols-2 gap-3">
           <div>
             <div className="mb-1 text-[11px] uppercase tracking-wide text-emerald-400/70">Top gainers</div>
-            {gainers.length ? gainers.map((r) => <MiniRow key={r.asset_id} row={r} />) : <div className="px-2 text-xs text-white/30">—</div>}
+            {gainers.length ? gainers.map((r) => <MiniRow key={r.asset_id} row={r} market={market} />) : <div className="px-2 text-xs text-white/30">—</div>}
           </div>
           <div>
             <div className="mb-1 text-[11px] uppercase tracking-wide text-rose-400/70">Top losers</div>
-            {losers.length ? losers.map((r) => <MiniRow key={r.asset_id} row={r} />) : <div className="px-2 text-xs text-white/30">—</div>}
+            {losers.length ? losers.map((r) => <MiniRow key={r.asset_id} row={r} market={market} />) : <div className="px-2 text-xs text-white/30">—</div>}
           </div>
         </div>
       ) : (
-        <div>{single.length ? single.map((r) => <MiniRow key={r.asset_id} row={r} />) : <div className="px-2 text-xs text-white/30">No matches</div>}</div>
+        <div>{single.length ? single.map((r) => <MiniRow key={r.asset_id} row={r} market={market} />) : <div className="px-2 text-xs text-white/30">No matches</div>}</div>
       )}
 
-      <Link href="/screener" className="mt-3 block text-center text-[11px] font-semibold text-[var(--ig-accent,#22d3ee)] hover:underline">
+      <Link href={`/terminal/${market.toLowerCase()}/stocks`} className="mt-3 block text-center text-[11px] font-semibold text-[var(--ig-accent,#22d3ee)] hover:underline">
         Open full screener →
       </Link>
     </div>

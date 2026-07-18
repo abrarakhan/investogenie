@@ -1,10 +1,10 @@
-import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { runScreener } from "@/lib/screener";
 import { getUserSwingSettings } from "@/lib/settings";
 import ScreenerTable from "@/components/screener/ScreenerTable";
-import ApplyMarketTheme from "@/components/terminal/ApplyMarketTheme";
-import { MARKETS, MARKET_COUNTRY, normalizeMarket } from "@/lib/markets";
+import AppShell from "@/components/app/AppShell";
+import { getSessionUser } from "@/lib/auth";
+import { MARKET_COUNTRY, normalizeMarket } from "@/lib/markets";
 
 export const dynamic = "force-dynamic";
 
@@ -17,7 +17,8 @@ export default async function TerminalScreener({
   const marketId = normalizeMarket(marketParam);
   if (!marketId) notFound();
   const country = MARKET_COUNTRY[marketId];
-  const cfg = MARKETS[marketId];
+  const user = await getSessionUser();
+  if (!user) redirect("/login");
 
   const isUS = marketId === "US";
   const settings = await getUserSwingSettings();
@@ -30,31 +31,15 @@ export default async function TerminalScreener({
   );
 
   return (
-    <div className="min-h-screen bg-[#05070d] text-white">
-      <ApplyMarketTheme market={marketId} />
-      <header className="sticky top-0 z-30 border-b border-white/10 bg-[#05070d]/80 backdrop-blur-xl">
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
-          <Link href="/" className="text-xl font-black tracking-tight">
-            Investo<span className="text-[var(--ig-accent)]">Genie</span>
-            <span className="ml-2 align-middle text-[10px] uppercase tracking-widest text-white/40">
-              {cfg.label} Swing Candidates
-            </span>
-          </Link>
-          <nav className="flex gap-5 text-sm text-white/60">
-            <Link href={`/terminal/${marketId.toLowerCase()}`} className="hover:text-white">Terminal</Link>
-            <Link href={`/terminal/${isUS ? "in" : "us"}/screener`} className="hover:text-white">
-              {isUS ? "🇮🇳 India" : "🇺🇸 US"} candidates
-            </Link>
-          </nav>
-        </div>
-      </header>
-
-      <main className="mx-auto max-w-7xl px-6 py-10">
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold">
-            {cfg.flag} {cfg.label} Swing Candidates{!isUS && " — Top 20"}
-          </h1>
-          <p className="mt-2 max-w-2xl text-white/50">
+    <AppShell
+      email={user.email ?? ""}
+      market={marketId}
+      active="swing"
+      title={`Swing Candidates${!isUS ? " - Top 20" : ""}`}
+      subtitle="Buy-side swing candidates ranked inside the selected market workspace."
+    >
+      <div className="mb-8">
+        <p className="max-w-2xl text-white/50">
             {isUS ? (
               <>
                 Buy-side swing candidates, precomputed nightly across the S&P 100
@@ -69,17 +54,16 @@ export default async function TerminalScreener({
                 Qullamaggie, Minervini, Darvas, PTJ, or Simons.
               </>
             )}
+        </p>
+        {isUS && (
+          <p className="mt-2 text-xs text-amber-300/70">
+            Note: US bars are an anchored demo feed (free US EOD providers block
+            scripted access here).
           </p>
-          {isUS && (
-            <p className="mt-2 text-xs text-amber-300/70">
-              Note: US bars are an anchored demo feed (free US EOD providers block
-              scripted access here).
-            </p>
-          )}
-        </div>
+        )}
+      </div>
 
-        <ScreenerTable rows={rows} scoped />
-      </main>
-    </div>
+      <ScreenerTable rows={rows} scoped />
+    </AppShell>
   );
 }

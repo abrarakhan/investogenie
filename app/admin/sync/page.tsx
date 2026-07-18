@@ -1,6 +1,6 @@
-import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getSessionUser } from "@/lib/auth";
+import AppShell from "@/components/app/AppShell";
 import { getSyncStatus } from "@/lib/syncStatus";
 
 export const dynamic = "force-dynamic";
@@ -52,31 +52,15 @@ export default async function SyncAdminPage() {
   const data = await getSyncStatus();
 
   return (
-    <div className="min-h-screen bg-[#05070d] text-white">
-      <header className="sticky top-0 z-30 border-b border-white/10 bg-[#05070d]/90 backdrop-blur-xl">
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
-          <Link href="/" className="text-xl font-black tracking-tight">
-            Investo<span className="text-cyan-300">Genie</span>
-            <span className="ml-2 align-middle text-[10px] uppercase tracking-widest text-white/40">Sync Status</span>
-          </Link>
-          <nav className="flex gap-4 text-sm text-white/55">
-            <Link href="/markets/us" className="hover:text-white">US Overview</Link>
-            <Link href="/markets/in" className="hover:text-white">India Overview</Link>
-            <Link href="/terminal/us" className="hover:text-white">Terminal</Link>
-          </nav>
-        </div>
-      </header>
-
-      <main className="mx-auto max-w-7xl space-y-6 px-6 py-8">
-        <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
-          <div>
-            <h1 className="text-3xl font-bold">Data sync health</h1>
-            <p className="mt-2 max-w-2xl text-sm text-white/45">
-              A single place to inspect market-data freshness, provider coverage, and recent job history.
-            </p>
-          </div>
-          <div className="text-xs text-white/35">Generated {stamp(data.generatedAt)}</div>
-        </div>
+    <AppShell
+      email={user.email ?? ""}
+      market="US"
+      active="data"
+      title="Data Health"
+      subtitle="Market-data freshness, provider coverage, and recent job history."
+      actions={<div className="text-xs text-white/35">Generated {stamp(data.generatedAt)}</div>}
+    >
+      <div className="space-y-6">
 
         <div className="grid gap-4 lg:grid-cols-2">
           {data.markets.map((market) => (
@@ -171,7 +155,7 @@ export default async function SyncAdminPage() {
             </table>
           </div>
         </Card>
-      </main>
-    </div>
+      </div>
+    </AppShell>
   );
 }

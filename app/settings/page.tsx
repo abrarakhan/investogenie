@@ -1,6 +1,6 @@
-import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getSessionUser } from "@/lib/auth";
+import AppShell from "@/components/app/AppShell";
 import { getUserSwingSettings } from "@/lib/settings";
 import { saveSwingSettings, resetSwingSettings } from "./actions";
 
@@ -29,23 +29,21 @@ function Field({
 }
 
 export default async function SettingsPage() {
-  if (!(await getSessionUser())) redirect("/login");
+  const user = await getSessionUser();
+  if (!user) redirect("/login");
   const s = await getUserSwingSettings();
 
   return (
-    <div className="min-h-screen bg-[#05070d] text-white">
-      <header className="border-b border-white/10 px-6 py-4">
-        <div className="mx-auto flex max-w-3xl items-center justify-between">
-          <Link href="/" className="text-xl font-black tracking-tight">
-            Investo<span className="text-[var(--ig-accent)]">Genie</span>
-            <span className="ml-2 align-middle text-[10px] uppercase tracking-widest text-white/40">Risk Settings</span>
-          </Link>
-          <Link href="/terminal/us" className="text-sm text-white/60 hover:text-white">← Terminal</Link>
-        </div>
-      </header>
-
-      <main className="mx-auto max-w-3xl px-6 py-10">
-        <h1 className="text-2xl font-bold">Swing risk settings</h1>
+    <AppShell
+      email={user.email ?? ""}
+      market="US"
+      active="settings"
+      title="Settings"
+      subtitle="Risk defaults and account-level preferences for the research workspace."
+      maxWidth="max-w-3xl"
+    >
+      <section>
+        <h2 className="text-2xl font-bold">Swing risk settings</h2>
         <p className="mt-2 text-sm text-white/50">
           These tune the trade levels (entry/target/stop/trail) computed for every
           stock. Leave them as-is to use the defaults. Changes apply instantly — no
@@ -79,7 +77,7 @@ export default async function SettingsPage() {
             Reset to defaults
           </button>
         </form>
-      </main>
-    </div>
+      </section>
+    </AppShell>
   );
 }

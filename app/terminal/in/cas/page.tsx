@@ -1,8 +1,6 @@
-import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getSessionUser } from "@/lib/auth";
-import TerminalHeader from "@/components/terminal/TerminalHeader";
-import ApplyMarketTheme from "@/components/terminal/ApplyMarketTheme";
+import AppShell from "@/components/app/AppShell";
 import { query } from "@/lib/db";
 import { importAmcDisclosure, importCasStatement } from "./actions";
 import ImportButton from "./ImportButton";
@@ -54,18 +52,15 @@ export default async function CasUploadPage({
   );
 
   return (
-    <div className="min-h-screen bg-[#05070d] text-white">
-      <ApplyMarketTheme market="IN" />
-      <TerminalHeader email={user.email ?? ""} market="IN" />
-      <main className="mx-auto max-w-4xl space-y-8 px-6 py-10">
-        <div>
-          <Link href="/terminal/in" className="text-sm text-white/50 hover:text-white">Back to India terminal</Link>
-          <h1 className="mt-4 text-3xl font-black">CAS Statement Import</h1>
-          <p className="mt-2 max-w-2xl text-white/55">
-            Use this when Breeze/OI data is empty or unavailable. Upload your CAS PDF, CSV, or copied text table,
-            and InvestoGenie will create local mutual fund and stock holdings for portfolio analysis.
-          </p>
-        </div>
+    <AppShell
+      email={user.email ?? ""}
+      market="IN"
+      active="import-holdings"
+      title="Import Holdings"
+      subtitle="Upload CAS statements and AMC monthly disclosures for local portfolio and Fund X-Ray analysis."
+      maxWidth="max-w-4xl"
+    >
+      <div className="space-y-8">
 
         {message && (
           <div className="rounded-2xl border border-white/10 bg-white/[0.04] px-5 py-4 text-sm text-white/75">
@@ -163,7 +158,7 @@ export default async function CasUploadPage({
             Mutual funds are imported as CAS fund assets, stocks are imported as CAS stock assets, and a local latest quote is derived from the statement value divided by units/quantity. That makes the India terminal useful immediately even before broker or exchange mapping is added.
           </p>
         </section>
-      </main>
-    </div>
+      </div>
+    </AppShell>
   );
 }
