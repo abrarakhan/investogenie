@@ -25,11 +25,13 @@ const PLOT_W = W - PAD.left - PAD.right;
 const PLOT_H = H - PAD.top - PAD.bottom;
 
 const fmtPct = (v: number) => `${v > 0 ? "+" : ""}${v.toFixed(2)}%`;
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"] as const;
 
 function fmtDate(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso.slice(5);
-  return d.toLocaleDateString(undefined, { day: "2-digit", month: "short" });
+  const match = iso.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!match) return iso.slice(5);
+  const month = MONTHS[Number(match[2]) - 1];
+  return month ? `${match[3]} ${month}` : iso.slice(5);
 }
 
 /** Catmull-Rom -> cubic bezier, so the curve stays smooth without overshooting
