@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   FundamentalLeader,
@@ -10,14 +9,9 @@ import type {
   OverviewSeries,
 } from "@/lib/marketOverview";
 
-// WebGL is client-only; skip prerender. `ssr: false` is valid here because this
-// is a Client Component (Next 16 requirement).
-const PerformanceChart3D = dynamic(() => import("./PerformanceChart3D"), {
-  ssr: false,
-  loading: () => <div className="h-[300px] w-full animate-pulse rounded bg-white/[0.03]" />,
-});
+import PerformanceChartPro from "./PerformanceChartPro";
 
-/** Max symbols plotted at once — beyond this the 3D stack gets unreadable. */
+/** Max symbols plotted at once — beyond this the chart gets unreadable. */
 const MAX_SELECTED = 5;
 
 const META = {
@@ -155,18 +149,10 @@ function Performance({
   onToggle: (ticker: string) => void;
 }) {
   const [range, setRange] = useState<Range>("1M");
-  const [hover, setHover] = useState<number | null>(null);
   const [focus, setFocus] = useState<string | null>(null);
   const lines = useMemo(
     () => series.map((item) => ({ ticker: item.ticker, points: normalized(item, RANGE_POINTS[range]) })),
     [series, range],
-  );
-  const values = lines.flatMap((line) => line.points.map((point) => point.value));
-  const low = Math.min(-1, ...values);
-  const high = Math.max(1, ...values);
-  const ticks = useMemo(
-    () => [0, 0.25, 0.5, 0.75, 1].map((ratio) => high - ratio * (high - low || 1)),
-    [low, high],
   );
 
   return (
@@ -194,10 +180,9 @@ function Performance({
               click x to drop the symbol from the plot. */}
           <div className="mb-2 flex flex-wrap items-center gap-3 text-[11px]">
             {lines.map((line, index) => {
-              const pointIndex = hover === null
-                ? line.points.length - 1
-                : Math.min(line.points.length - 1, Math.round(hover * Math.max(0, line.points.length - 1)));
-              const value = line.points[pointIndex]?.value ?? 0;
+              // Period return; the crosshair readout inside the chart covers
+              // point-in-time values.
+              const value = line.points[line.points.length - 1]?.value ?? 0;
               return (
                 <span
                   key={line.ticker}
@@ -218,29 +203,11 @@ function Performance({
                 </span>
               );
             })}
-            <span className="text-[10px] text-white/25">Click any symbol on the left or right to plot it · drag the chart to orbit</span>
+            <span className="text-[10px] text-white/25">Click any symbol on the left or right to plot it</span>
           </div>
 
-          <div
-            className="relative h-[300px] w-full"
-            onMouseMove={(event) => {
-              const box = event.currentTarget.getBoundingClientRect();
-              setHover(Math.max(0, Math.min(1, (event.clientX - box.left) / box.width)));
-            }}
-            onMouseLeave={() => setHover(null)}
-          >
-            {/* Axis labels are billboarded sprites inside the scene so they
-                track the camera as the user orbits — no HTML gutter here. */}
-            <PerformanceChart3D
-              lines={lines}
-              colors={colors}
-              low={low}
-              high={high}
-              ticks={ticks}
-              hoverRatio={hover}
-              focus={focus}
-            />
-          </div>
+          {/* The chart owns its own crosshair + readout, terminal-style. */}
+          <PerformanceChartPro lines={lines} colors={colors} focus={focus} onFocus={setFocus} />
         </div>
       ) : (
         <div className="space-y-3 p-4">
