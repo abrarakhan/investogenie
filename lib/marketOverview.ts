@@ -155,13 +155,26 @@ export async function getSeriesForTickers(
   ].slice(0, 8); // hard cap: the chart tops out well below this
   if (!wanted.length) return [];
 
+  // Match every exchange in the market, not just the primary: US gainers and
+  // decliners are drawn from NASDAQ *and* NYSE, and filtering to the primary
+  // silently returned nothing for every NYSE name. One listing is picked per
+  // ticker (primary exchange first) so a dual listing can't interleave points.
   const rows = await query<{ ticker: string; date: string | Date; close: string | number }>(
-    `select a.ticker,o.date,o.close
-       from public.daily_ohlcv o join public.assets a on a.id=o.asset_id
-      where a.country=$1 and a.exchange=$2 and a.ticker=any($3)
-        and o.date >= current_date - interval '400 days'
-      order by a.ticker,o.date`,
-    [cfg.country, primaryExchange, wanted],
+    `with picked as (
+       select distinct on (upper(a.ticker)) a.id, a.ticker
+         from public.assets a
+        where a.country=$1 and a.exchange=any($2) and a.asset_class='STOCK' and a.is_active
+          and upper(a.ticker)=any($3)
+        order by upper(a.ticker),
+                 case when a.exchange=$4 then 0 else 1 end,
+                 a.created_at
+     )
+     select p.ticker, o.date, o.close
+       from public.daily_ohlcv o
+       join picked p on p.id = o.asset_id
+      where o.date >= current_date - interval '400 days'
+      order by p.ticker, o.date`,
+    [cfg.country, [...cfg.exchanges], wanted, primaryExchange],
   );
 
   const seriesMap = new Map<string, OverviewSeries["points"]>();
