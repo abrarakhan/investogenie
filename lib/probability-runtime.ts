@@ -29,7 +29,11 @@ interface FeatureRow {
   sigmaDaily: number;
 }
 
+// Raw t(df=5) quantiles. A t_df variate has variance df/(df-2), so these must be
+// divided by sqrt(df/(df-2)) before scaling by sigma — otherwise the band is
+// ~29% wider than the sigma it was derived from.
 const T5 = { p5: -2.015, p25: -0.727, p50: 0, p75: 0.727, p95: 2.015 } as const;
+const tUnitScale = (df: number) => (df > 2 ? Math.sqrt(df / (df - 2)) : 1);
 
 const dateOnly = (value: string | Date): string =>
   value instanceof Date ? value.toISOString().slice(0, 10) : String(value).slice(0, 10);
@@ -59,11 +63,17 @@ function ewmaSigmaDaily(returns: number[], lambda: number): number {
   return Math.sqrt(Math.max(variance, 0));
 }
 
-function zScoreMap<T extends { ticker: string }>(rows: T[], pick: (row: T) => number): Map<string, number> {
-  const values = rows.map(pick).filter(Number.isFinite);
+/** Cross-sectional z-scores keyed by assetId. Keying by ticker collided for a
+ *  symbol listed on both NASDAQ and NYSE, silently giving one asset the other's
+ *  factor exposures. */
+function zScoreMap<T extends { assetId: string }>(rows: T[], pick: (row: T) => number): Map<string, number> {
+  const values = rows.map(pick).filter((v) => Number.isFinite(v));
   const m = mean(values);
   const s = std(values) || 1;
-  return new Map(rows.map((row) => [row.ticker, (pick(row) - m) / s]));
+  return new Map(rows.map((row) => {
+    const z = (pick(row) - m) / s;
+    return [row.assetId, Number.isFinite(z) ? z : 0];
+  }));
 }
 
 function sigmoid(x: number): number {
@@ -76,9 +86,15 @@ function clamp(value: number, lo: number, hi: number): number {
 
 function featureRow(rows: BarRow[], cfg: ProbabilityConfig): FeatureRow | null {
   const first = rows[0];
-  const closes = rows.map((r) => Number(r.close)).filter((n) => Number.isFinite(n) && n > 0);
+  // Filter closes and dates together: dropping a bad close while keeping every
+  // date desynchronised the arrays, shifting the momentum lookbacks and making
+  // asOf report a date whose close had been discarded.
+  const valid = rows
+    .map((r) => ({ close: Number(r.close), date: dateOnly(r.date) }))
+    .filter((p) => Number.isFinite(p.close) && p.close > 0);
+  const closes = valid.map((p) => p.close);
+  const dates = valid.map((p) => p.date);
   if (!first || closes.length < cfg.minBars) return null;
-  const dates = rows.map((r) => dateOnly(r.date));
   const last = closes[closes.length - 1];
   const idx = closes.length - 1;
   const ma20 = mean(closes.slice(-20));
@@ -106,15 +122,15 @@ function featureRow(rows: BarRow[], cfg: ProbabilityConfig): FeatureRow | null {
   };
 }
 
-function buildForecasts(features: FeatureRow[], market: MarketId, cfg: ProbabilityConfig): ProbabilityForecast[] {
+function buildForecasts(features: FeatureRow[], cfg: ProbabilityConfig): ProbabilityForecast[] {
   const z12 = zScoreMap(features, (r) => r.momentum12Raw);
   const z6 = zScoreMap(features, (r) => r.momentum6Raw);
   const zPrice = zScoreMap(features, (r) => r.priceZRaw);
   const zRet5 = zScoreMap(features, (r) => r.ret5ZRaw);
 
   return features.map((row) => {
-    const momentum = 1.15 * (z12.get(row.ticker) ?? 0) + 0.55 * (z6.get(row.ticker) ?? 0);
-    const snapback = -0.22 * (zPrice.get(row.ticker) ?? 0) - 0.14 * (zRet5.get(row.ticker) ?? 0);
+    const momentum = 1.15 * (z12.get(row.assetId) ?? 0) + 0.55 * (z6.get(row.assetId) ?? 0);
+    const snapback = -0.22 * (zPrice.get(row.assetId) ?? 0) - 0.14 * (zRet5.get(row.assetId) ?? 0);
     const volPenalty = -0.18 * Math.max(0, row.sigmaDaily * Math.sqrt(252) - 0.35);
     const expectedReturnPct = clamp((1.55 * momentum + snapback + volPenalty), -18, 18);
     const sigma21Pct = clamp(row.sigmaDaily * Math.sqrt(cfg.horizonDays) * 100, 2, 45);
@@ -122,7 +138,8 @@ function buildForecasts(features: FeatureRow[], market: MarketId, cfg: Probabili
     const probabilityUpPct = clamp(sigmoid(signalToNoise * 1.75) * 100, 5, 95);
     const drawdownRiskPct = clamp(sigmoid((sigma21Pct - cfg.drawdownThresholdPct + Math.max(0, -expectedReturnPct)) / 6) * 100, 3, 97);
     const lastPrice = row.closes[row.closes.length - 1];
-    const percentileReturn = (q: keyof typeof T5) => expectedReturnPct + T5[q] * sigma21Pct;
+    const tScale = tUnitScale(cfg.studentTdf);
+    const percentileReturn = (q: keyof typeof T5) => expectedReturnPct + (T5[q] / tScale) * sigma21Pct;
     const percentiles = {
       p5: percentileReturn("p5"),
       p25: percentileReturn("p25"),
@@ -134,10 +151,10 @@ function buildForecasts(features: FeatureRow[], market: MarketId, cfg: Probabili
       Object.entries(percentiles).map(([key, value]) => [key, lastPrice * (1 + value / 100)]),
     ) as ProbabilityForecast["priceRange"];
     const contributionRows = [
-      { label: "12-1M momentum", value: z12.get(row.ticker) ?? 0 },
-      { label: "6-1M momentum", value: z6.get(row.ticker) ?? 0 },
-      { label: "20DMA snapback", value: -(zPrice.get(row.ticker) ?? 0) },
-      { label: "5D snapback", value: -(zRet5.get(row.ticker) ?? 0) },
+      { label: "12-1M momentum", value: z12.get(row.assetId) ?? 0 },
+      { label: "6-1M momentum", value: z6.get(row.assetId) ?? 0 },
+      { label: "20DMA snapback", value: -(zPrice.get(row.assetId) ?? 0) },
+      { label: "5D snapback", value: -(zRet5.get(row.assetId) ?? 0) },
     ].sort((a, b) => Math.abs(b.value) - Math.abs(a.value));
 
     return {
@@ -176,12 +193,25 @@ export async function getProbabilitySummary(
   const country = MARKET_COUNTRY[market];
   const exchanges = market === "IN" ? ["NSE"] : ["NASDAQ", "NYSE"];
   const rows = await query<BarRow>(
-    `with ranked_assets as (
+    // Only consider assets that already have enough history to forecast, and
+    // rank by size rather than by |change_pct|. Ranking by biggest mover
+    // selected for volatility artefacts (low-priced names) and ignored coverage
+    // entirely, so on US only ~34 of 320 candidates cleared minBars and the rest
+    // of the fetch was discarded.
+    `with eligible as (
+       select o.asset_id, count(*) as bars
+         from public.daily_ohlcv o
+        where o.date >= current_date - interval '430 days'
+        group by o.asset_id
+       having count(*) >= $4
+     ),
+     ranked_assets as (
        select a.id
          from public.assets a
-         join public.latest_quotes q on q.asset_id = a.id
+         join eligible e on e.asset_id = a.id
+         left join public.latest_financials f on f.asset_id = a.id
         where a.country = $1 and a.exchange = any($2) and a.asset_class = 'STOCK'::asset_class and a.is_active
-        order by coalesce(abs(q.change_pct), 0) desc, a.ticker
+        order by f.market_cap desc nulls last, a.ticker
         limit $3
      )
      select a.id asset_id, a.ticker, a.name, a.exchange, a.currency, o.date, o.close
@@ -190,7 +220,9 @@ export async function getProbabilitySummary(
        join public.daily_ohlcv o on o.asset_id = a.id
       where o.date >= current_date - interval '430 days'
       order by a.ticker, o.date`,
-    [country, exchanges, Math.max(cfg.maxRows * 4, 240)],
+    // Candidates are now pre-filtered for coverage, so a small multiple of
+    // maxRows is plenty of headroom instead of a 4x over-fetch.
+    [country, exchanges, Math.max(cfg.maxRows * 2, 120), cfg.minBars],
   );
 
   const grouped = new Map<string, BarRow[]>();
@@ -204,7 +236,7 @@ export async function getProbabilitySummary(
     const f = featureRow(assetRows, cfg);
     return f ? [f] : [];
   });
-  const forecasts = buildForecasts(features, market, cfg).slice(0, cfg.maxRows);
+  const forecasts = buildForecasts(features, cfg).slice(0, cfg.maxRows);
 
   return {
     market,
