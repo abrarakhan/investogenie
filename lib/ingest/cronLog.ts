@@ -9,7 +9,8 @@ export type CronJob =
   | "scan"
   | "backfill-us"
   | "backfill-us-expand"
-  | "backfill-nse";
+  | "backfill-nse"
+  | "refresh-screener";
 export type CronStatus = "ok" | "error";
 
 export interface CronLogEntry {

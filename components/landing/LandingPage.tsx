@@ -36,6 +36,7 @@ export default function LandingPage({ quotes }: { quotes: LiveMarketQuotes }) {
           <nav className="hidden gap-8 text-sm text-white/60 md:flex">
             <a href="#engines" className="hover:text-white">Engines</a>
             <a href={`/markets/${market.id.toLowerCase()}`} className="hover:text-white">Market Overview</a>
+            <a href="/screener" className="hover:text-white">Screener</a>
             <a href={`/terminal/${market.id.toLowerCase()}/screener`} className="hover:text-white">Swing Candidates</a>
             <a href={`/terminal/${market.id.toLowerCase()}`} className="hover:text-white">Terminal</a>
           </nav>

@@ -10,6 +10,7 @@ import { getUserSwingSettings } from "@/lib/settings";
 import { getQuotesByAssetIds } from "@/lib/quotes";
 import { MARKETS, MARKET_COUNTRY, normalizeMarket, formatMoney, formatPct } from "@/lib/markets";
 import { addToWatchlist, ensureScaffold, recordTrade, removeWatchlistItem } from "@/app/dashboard/actions";
+import ScreenerWidget from "@/components/stock-screener/ScreenerWidget";
 
 export const dynamic = "force-dynamic";
 
@@ -298,6 +299,14 @@ export default async function TerminalPage({
             </form>
           </section>
         </div>
+
+        <section>
+          <div className="mb-4 flex items-center justify-between">
+            <h2 className="text-sm uppercase tracking-[0.25em] text-white/40">Market screener</h2>
+            <a href="/screener" className="text-[11px] font-semibold text-[var(--ig-accent,#22d3ee)] hover:underline">Open full screener →</a>
+          </div>
+          <ScreenerWidget market={marketId as "US" | "IN"} universe={marketId === "US" ? "SP_500" : "NIFTY_500"} />
+        </section>
 
         <EngineSection swing={swing} overlap={overlap} macro={macro} />
       </main>

@@ -282,6 +282,21 @@ def upsert_reports(
     trailing_pe = finite(info.get("trailingPE"))
     currency = str(info.get("financialCurrency") or info.get("currency") or default_currency)
 
+    # Screener fundamentals from yfinance .info. Normalise to the app's units:
+    #   ROE                fraction -> percent
+    #   Debt/Equity        yfinance reports debt/equity * 100 -> back to a ratio
+    #   Dividend yield     trailingAnnualDividendYield is a reliable fraction -> percent
+    #   Free cash flow     absolute currency units -> Rs. Cr / USD mn
+    roe_raw = finite(info.get("returnOnEquity"))
+    roe = round(roe_raw * 100, 4) if roe_raw is not None else None
+    de_raw = finite(info.get("debtToEquity"))
+    debt_to_equity = round(de_raw / 100, 4) if de_raw is not None else None
+    dy_raw = finite(info.get("trailingAnnualDividendYield"))
+    dividend_yield = round(dy_raw * 100, 4) if dy_raw is not None else None
+    fcf_raw = finite(info.get("freeCashflow"))
+    free_cash_flow = fcf_raw / monetary_divisor if fcf_raw is not None else None
+    sector = (str(info.get("sector")).strip() or None) if info.get("sector") else None
+
     rows: list[tuple] = []
     for asset_id in state.asset_ids:
         cmp = quotes.get(asset_id, provider_price)
@@ -304,6 +319,10 @@ def upsert_reports(
                     trailing_pe if latest else None,
                     normalized_market_cap if latest else None,
                     report["roce"],
+                    roe if latest else None,
+                    debt_to_equity if latest else None,
+                    dividend_yield if latest else None,
+                    free_cash_flow if latest else None,
                     report["profit_variance_yoy"],
                     report["sales_variance_yoy"],
                     source,
@@ -318,6 +337,7 @@ def upsert_reports(
               (asset_id,period_end_date,report_type,fiscal_period,currency,
                revenue,net_profit,operating_profit,ebit,capital_employed,
                eps,cmp,pe_ratio,market_cap,roce,
+               roe,debt_to_equity,dividend_yield,free_cash_flow,
                profit_variance_yoy,sales_variance_yoy,source)
             values %s
             on conflict (asset_id,period_end_date,report_type) do update set
@@ -333,6 +353,10 @@ def upsert_reports(
               pe_ratio=excluded.pe_ratio,
               market_cap=excluded.market_cap,
               roce=excluded.roce,
+              roe=excluded.roe,
+              debt_to_equity=excluded.debt_to_equity,
+              dividend_yield=excluded.dividend_yield,
+              free_cash_flow=excluded.free_cash_flow,
               profit_variance_yoy=excluded.profit_variance_yoy,
               sales_variance_yoy=excluded.sales_variance_yoy,
               source=excluded.source,
@@ -341,6 +365,12 @@ def upsert_reports(
             rows,
             page_size=500,
         )
+        # Sector lives on the instrument, not the periodic report; update once.
+        if sector:
+            cur.execute(
+                "update public.assets set sector=%s where id=any(%s::uuid[])",
+                (sector, list(state.asset_ids)),
+            )
     conn.commit()
     return len(rows)
 
