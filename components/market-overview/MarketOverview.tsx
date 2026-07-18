@@ -140,12 +140,14 @@ function Performance({
   quotes,
   colors,
   loading,
+  notice,
   onToggle,
 }: {
   series: OverviewSeries[];
   quotes: OverviewQuote[];
   colors: readonly string[];
   loading: boolean;
+  notice: string | null;
   onToggle: (ticker: string) => void;
 }) {
   const [range, setRange] = useState<Range>("1M");
@@ -203,7 +205,11 @@ function Performance({
                 </span>
               );
             })}
-            <span className="text-[10px] text-white/25">Click any symbol on the left or right to plot it</span>
+            {notice ? (
+              <span className="rounded-full border border-[#ff6b76]/30 bg-[#ff6b76]/10 px-2 py-0.5 text-[10px] text-[#ff6b76]">{notice}</span>
+            ) : (
+              <span className="text-[10px] text-white/25">Click any symbol on the left or right to plot it</span>
+            )}
           </div>
 
           {/* The chart owns its own crosshair + readout, terminal-style. */}
@@ -362,6 +368,7 @@ export default function MarketOverview({ data }: { data: MarketOverviewData }) {
     () => Object.fromEntries(data.series.map((s) => [s.ticker, s])),
   );
   const [loading, setLoading] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
 
   // Tickers already requested (seeded ones count as done) so a symbol is only
   // ever fetched once, however many times it is toggled.
@@ -370,6 +377,7 @@ export default function MarketOverview({ data }: { data: MarketOverviewData }) {
   const ensureSeries = useCallback(async (ticker: string) => {
     if (requested.current.has(ticker)) return;
     requested.current.add(ticker);
+    setNotice(null);
     setLoading(true);
     try {
       const res = await fetch(`/api/market-overview/series?market=${data.market}&tickers=${ticker}`);
@@ -380,6 +388,12 @@ export default function MarketOverview({ data }: { data: MarketOverviewData }) {
           for (const s of payload.series!) next[s.ticker] = s;
           return next;
         });
+      } else {
+        // No OHLC history for this symbol (US coverage is far thinner than the
+        // quoted universe). Un-select it and say so, rather than leaving a
+        // highlighted row that never appears on the chart.
+        setSelected((prev) => prev.filter((t) => t !== ticker));
+        setNotice(`No price history for ${ticker} yet`);
       }
     } catch {
       // Allow a retry on the next click; the symbol simply stays unplotted.
@@ -479,6 +493,7 @@ export default function MarketOverview({ data }: { data: MarketOverviewData }) {
                 quotes={data.quotes}
                 colors={meta.chartColors}
                 loading={loading}
+                notice={notice}
                 onToggle={toggleTicker}
               />
               <Panel title="Swing candidates" action={<Link href={`/terminal/${data.market.toLowerCase()}/screener`} className="text-[10px] font-semibold text-[var(--overview-accent)]">View all</Link>}>
