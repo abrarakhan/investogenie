@@ -122,9 +122,24 @@ export async function getFundOverlap(): Promise<OverlapReport | null> {
     .filter((h) => h.assetClass === "MUTUAL_FUND" && h.ticker && h.units > 0);
   if (heldFunds.length === 0) return null;
 
-  const mfh = await query<{ fund_asset_id: string; stock_asset_id: string; weight_percentage: string | number }>(
-    "select fund_asset_id, stock_asset_id, weight_percentage from public.mutual_fund_holdings",
+  const heldFundIds = heldFunds.map((h) => h.id);
+  const userMfh = await query<{ fund_asset_id: string; stock_asset_id: string; weight_percentage: string | number }>(
+    `select fund_asset_id, stock_asset_id, weight_percentage
+       from public.user_mutual_fund_holdings
+      where user_id = $1 and fund_asset_id = any($2)`,
+    [user.id, heldFundIds],
   );
+  const userScopedFunds = new Set(userMfh.map((r) => r.fund_asset_id));
+  const globalFallbackFundIds = heldFundIds.filter((id) => !userScopedFunds.has(id));
+  const globalMfh = globalFallbackFundIds.length
+    ? await query<{ fund_asset_id: string; stock_asset_id: string; weight_percentage: string | number }>(
+        `select fund_asset_id, stock_asset_id, weight_percentage
+           from public.mutual_fund_holdings
+          where fund_asset_id = any($1)`,
+        [globalFallbackFundIds],
+      )
+    : [];
+  const mfh = [...userMfh, ...globalMfh];
   if (mfh.length === 0) {
     const totalValue = heldFunds.reduce((sum, h) => sum + h.units * (h.nav > 0 ? h.nav : 100), 0);
     return {

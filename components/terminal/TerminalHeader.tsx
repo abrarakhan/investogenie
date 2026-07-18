@@ -34,6 +34,9 @@ export default function TerminalHeader({
             <Link href={`/terminal/${market.toLowerCase()}/screener`} className={navItem}>
               Swing Candidates
             </Link>
+            <Link href={`/terminal/${market.toLowerCase()}/probability`} className={navItem}>
+              Probability
+            </Link>
             <Link href="/admin/sync" className={navItem}>
               Sync
             </Link>

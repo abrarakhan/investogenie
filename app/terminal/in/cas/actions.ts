@@ -486,15 +486,21 @@ export async function importAmcDisclosure(formData: FormData): Promise<void> {
     }
 
     await tx(async (c) => {
-      await c.query("delete from public.mutual_fund_holdings where fund_asset_id = $1", [fundAssetId]);
+      await c.query(
+        "delete from public.user_mutual_fund_holdings where user_id = $1 and fund_asset_id = $2",
+        [user.id, fundAssetId],
+      );
       for (const row of stockIds) {
         await c.query(
-          `insert into public.mutual_fund_holdings (fund_asset_id, stock_asset_id, weight_percentage, as_of_date)
-           values ($1, $2, $3, $4)
-           on conflict (fund_asset_id, stock_asset_id) do update set
+          `insert into public.user_mutual_fund_holdings
+             (user_id, fund_asset_id, stock_asset_id, weight_percentage, as_of_date, source)
+           values ($1, $2, $3, $4, $5, 'AMC_DISCLOSURE')
+           on conflict (user_id, fund_asset_id, stock_asset_id) do update set
              weight_percentage = excluded.weight_percentage,
-             as_of_date = excluded.as_of_date`,
-          [fundAssetId, row.id, row.weight, asOfDate],
+             as_of_date = excluded.as_of_date,
+             source = excluded.source,
+             imported_at = now()`,
+          [user.id, fundAssetId, row.id, row.weight, asOfDate],
         );
       }
     });

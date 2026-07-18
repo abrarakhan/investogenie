@@ -54,7 +54,7 @@ if [ ! -x "$VENV_PYTHON" ]; then
   python3 -m venv "$APP_DIR/.venv" || pause_on_error
 fi
 
-if ! "$VENV_PYTHON" -c "import openpyxl, pandas, psycopg2, requests, yfinance" >/dev/null 2>&1; then
+if ! "$VENV_PYTHON" -c "import openpyxl, pandas, psycopg2, requests, xlrd, yfinance" >/dev/null 2>&1; then
   echo "Installing NSE updater dependencies..."
   "$APP_DIR/.venv/bin/pip" install -r "$APP_DIR/pipelines/requirements.txt" || pause_on_error
 fi
