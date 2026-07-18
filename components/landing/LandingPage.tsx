@@ -102,21 +102,29 @@ export default function LandingPage({ quotes }: { quotes: LiveMarketQuotes }) {
         className="mx-auto w-full max-w-5xl px-6 py-32 text-center"
       >
         <h2 className="text-4xl font-black sm:text-6xl">
-          Your terminal is{" "}
+          Open your{" "}
           <span className="bg-gradient-to-r from-[var(--ig-primary)] to-[var(--ig-accent)] bg-clip-text text-transparent">
-            ready to wire up.
+            market terminal.
           </span>
         </h2>
-        <p className="mx-auto mt-6 max-w-xl text-white/60">
-          Authentication, portfolios, and live ingestion plug directly into the
-          local Postgres backend provisioned for this build.
+        <p className="mx-auto mt-6 max-w-2xl text-white/60">
+          Analyze US and Indian markets, screen stocks, review swing candidates,
+          manage holdings, and monitor data freshness from one workspace.
         </p>
-        <a
-          href={`/markets/${market.id.toLowerCase()}`}
-          className="mt-10 inline-block rounded-full bg-gradient-to-r from-[var(--ig-primary)] to-[var(--ig-accent)] px-8 py-3 font-semibold text-black transition-transform hover:scale-105"
-        >
-          Open {market.label} Overview
-        </a>
+        <div className="mt-10 flex flex-col items-center justify-center gap-3 sm:flex-row">
+          <a
+            href={`/terminal/${market.id.toLowerCase()}`}
+            className="inline-block rounded-full bg-gradient-to-r from-[var(--ig-primary)] to-[var(--ig-accent)] px-8 py-3 font-semibold text-black transition-transform hover:scale-105"
+          >
+            Open Terminal
+          </a>
+          <a
+            href="/help"
+            className="inline-block rounded-full border border-white/15 bg-white/5 px-8 py-3 font-semibold text-white/75 transition-colors hover:bg-white/10 hover:text-white"
+          >
+            View Help
+          </a>
+        </div>
       </section>
 
       <footer className="border-t border-white/10 px-6 py-10 text-center text-xs text-white/40">
