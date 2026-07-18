@@ -78,17 +78,32 @@ columns.
 
 The screener reads `stock_snapshot`, which must be rebuilt after data changes.
 
-- **Manual:** `DATABASE_URL=... node scripts/refresh-screener.mjs [US|IN]`
-- **Scheduled:** `GET /api/cron/refresh-screener` (optional `?market=US|IN`),
-  gated by `CRON_SECRET`. Recommended cadence: **every 15 min during IST market
-  hours (09:15–15:30 Mon–Fri)**. Example crontab (server in IST):
+A full rebuild is ~2.5s for ~15k rows and is idempotent, so over-refreshing is
+cheap and safe.
 
-  ```cron
-  */15 9-15 * * 1-5  curl -s -H "Authorization: Bearer $CRON_SECRET" \
-    http://localhost:3000/api/cron/refresh-screener > /dev/null
+- **Manual:** `DATABASE_URL=... node scripts/refresh-screener.mjs [US|IN]`
+
+- **Scheduled (local / macOS — installed):** a launchd agent runs
+  `scripts/refresh-screener-cron.sh` every 15 minutes. The wrapper sources
+  `DATABASE_URL` from `.env.local` at run time (so no credential is duplicated
+  into the plist) and hits Postgres directly — it does **not** need the Next
+  server running.
+
+  ```bash
+  # install / start
+  launchctl load -w ~/Library/LaunchAgents/com.investogenie.screener-refresh.plist
+  # stop / remove
+  launchctl unload -w ~/Library/LaunchAgents/com.investogenie.screener-refresh.plist
+  # status + logs
+  launchctl list | grep screener
+  tail -f ~/Library/Logs/investogenie-screener-refresh.log
   ```
 
-  Or add to `vercel.json` `crons` with the same schedule.
+- **Scheduled (deployed):** `GET /api/cron/refresh-screener` (optional
+  `?market=US|IN`), gated by `CRON_SECRET`. Registered in `vercel.json` as
+  `*/15 3-10,13-21 * * 1-5` (UTC) — every 15 min on weekdays across **both**
+  sessions: 03:00–10:45 UTC covers the NSE day (09:15–15:30 IST) and
+  13:00–21:45 UTC covers US regular hours.
 
 ## Universes
 
