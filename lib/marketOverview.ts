@@ -141,6 +141,41 @@ const quote = (row: QuoteRow): OverviewQuote => ({
   asOf: isoDate(row.as_of),
 });
 
+/** Closing-price history for arbitrary tickers in a market. Powers the
+ *  interactive performance chart, where clicking any gainer / decliner /
+ *  fundamental leader swaps that symbol into the plot on demand. */
+export async function getSeriesForTickers(
+  market: MarketId,
+  tickers: string[],
+): Promise<OverviewSeries[]> {
+  const cfg = REGION[market];
+  const primaryExchange = cfg.exchanges[0];
+  const wanted = [
+    ...new Set(tickers.map((t) => String(t).trim().toUpperCase()).filter(Boolean)),
+  ].slice(0, 8); // hard cap: the chart tops out well below this
+  if (!wanted.length) return [];
+
+  const rows = await query<{ ticker: string; date: string | Date; close: string | number }>(
+    `select a.ticker,o.date,o.close
+       from public.daily_ohlcv o join public.assets a on a.id=o.asset_id
+      where a.country=$1 and a.exchange=$2 and a.ticker=any($3)
+        and o.date >= current_date - interval '400 days'
+      order by a.ticker,o.date`,
+    [cfg.country, primaryExchange, wanted],
+  );
+
+  const seriesMap = new Map<string, OverviewSeries["points"]>();
+  for (const row of rows) {
+    const points = seriesMap.get(row.ticker) ?? [];
+    points.push({ date: isoDate(row.date) ?? "", close: Number(row.close) });
+    seriesMap.set(row.ticker, points);
+  }
+  return wanted.flatMap((ticker) => {
+    const points = seriesMap.get(ticker);
+    return points?.length ? [{ ticker, points }] : [];
+  });
+}
+
 export async function getMarketOverview(market: MarketId): Promise<MarketOverviewData> {
   const cfg = REGION[market];
   const primaryExchange = cfg.exchanges[0];
