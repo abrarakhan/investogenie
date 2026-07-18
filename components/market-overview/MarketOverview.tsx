@@ -1,13 +1,24 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import dynamic from "next/dynamic";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   FundamentalLeader,
   MarketOverviewData,
   OverviewQuote,
   OverviewSeries,
 } from "@/lib/marketOverview";
+
+// WebGL is client-only; skip prerender. `ssr: false` is valid here because this
+// is a Client Component (Next 16 requirement).
+const PerformanceChart3D = dynamic(() => import("./PerformanceChart3D"), {
+  ssr: false,
+  loading: () => <div className="h-[300px] w-full animate-pulse rounded bg-white/[0.03]" />,
+});
+
+/** Max symbols plotted at once — beyond this the 3D stack gets unreadable. */
+const MAX_SELECTED = 5;
 
 const META = {
   US: {
@@ -18,7 +29,7 @@ const META = {
     accentSoft: "#172a38",
     zone: "America/New_York",
     currency: "USD",
-    chartColors: ["#43b5ff", "#a78bfa", "#f59e0b"],
+    chartColors: ["#43b5ff", "#a78bfa", "#f59e0b", "#35d399", "#ff6b76"],
   },
   IN: {
     label: "India Markets",
@@ -28,7 +39,7 @@ const META = {
     accentSoft: "#302617",
     zone: "Asia/Kolkata",
     currency: "INR",
-    chartColors: ["#f6b94b", "#35d399", "#43b5ff"],
+    chartColors: ["#f6b94b", "#35d399", "#43b5ff", "#a78bfa", "#ff6b76"],
   },
 } as const;
 
@@ -73,20 +84,46 @@ function Panel({
   );
 }
 
-function QuoteRows({ rows, currency }: { rows: OverviewQuote[]; currency: string }) {
+/** Accent bar + tint marking a row that is currently plotted on the chart. */
+function selectionStyle(active: boolean, color?: string): React.CSSProperties {
+  return active
+    ? { boxShadow: `inset 3px 0 0 ${color ?? "var(--overview-accent)"}`, background: "rgba(255,255,255,0.045)" }
+    : {};
+}
+
+function QuoteRows({
+  rows, currency, selected, colorFor, onToggle,
+}: {
+  rows: OverviewQuote[];
+  currency: string;
+  selected: string[];
+  colorFor: (ticker: string) => string | undefined;
+  onToggle: (ticker: string) => void;
+}) {
   if (!rows.length) return <Empty label="No live quotes" />;
   return (
     <div className="divide-y divide-[#242a31]">
-      {rows.map((row) => (
-        <div key={`${row.exchange}:${row.ticker}`} className="grid grid-cols-[1fr_auto_auto] items-center gap-3 px-3 py-2 text-xs hover:bg-white/[0.025]">
-          <div className="min-w-0">
-            <div className="truncate font-semibold text-white/85">{row.ticker}</div>
-            <div className="truncate text-[10px] text-white/35">{row.name}</div>
-          </div>
-          <span className="tabular-nums text-white/70">{money(row.price, currency)}</span>
-          <Change value={row.changePct} />
-        </div>
-      ))}
+      {rows.map((row) => {
+        const active = selected.includes(row.ticker);
+        return (
+          <button
+            key={`${row.exchange}:${row.ticker}`}
+            type="button"
+            onClick={() => onToggle(row.ticker)}
+            aria-pressed={active}
+            title={active ? `Remove ${row.ticker} from chart` : `Plot ${row.ticker} on the chart`}
+            style={selectionStyle(active, colorFor(row.ticker))}
+            className="grid w-full grid-cols-[1fr_auto_auto] items-center gap-3 px-3 py-2 text-left text-xs transition-colors hover:bg-white/[0.05]"
+          >
+            <div className="min-w-0">
+              <div className="truncate font-semibold text-white/85">{row.ticker}</div>
+              <div className="truncate text-[10px] text-white/35">{row.name}</div>
+            </div>
+            <span className="tabular-nums text-white/70">{money(row.price, currency)}</span>
+            <Change value={row.changePct} />
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -108,13 +145,18 @@ function Performance({
   series,
   quotes,
   colors,
+  loading,
+  onToggle,
 }: {
   series: OverviewSeries[];
   quotes: OverviewQuote[];
   colors: readonly string[];
+  loading: boolean;
+  onToggle: (ticker: string) => void;
 }) {
   const [range, setRange] = useState<Range>("1M");
   const [hover, setHover] = useState<number | null>(null);
+  const [focus, setFocus] = useState<string | null>(null);
   const lines = useMemo(
     () => series.map((item) => ({ ticker: item.ticker, points: normalized(item, RANGE_POINTS[range]) })),
     [series, range],
@@ -122,21 +164,17 @@ function Performance({
   const values = lines.flatMap((line) => line.points.map((point) => point.value));
   const low = Math.min(-1, ...values);
   const high = Math.max(1, ...values);
-  const span = high - low || 1;
-  const width = 720;
-  const height = 260;
-  const left = 46;
-  const right = 18;
-  const top = 18;
-  const bottom = 30;
-  const plotWidth = width - left - right;
-  const plotHeight = height - top - bottom;
+  const ticks = useMemo(
+    () => [0, 0.25, 0.5, 0.75, 1].map((ratio) => high - ratio * (high - low || 1)),
+    [low, high],
+  );
 
   return (
     <Panel
       title={series.length ? "Normalized performance" : "One-day leader performance"}
       action={series.length ? (
-        <div className="flex gap-1">
+        <div className="flex items-center gap-1">
+          {loading && <span className="mr-1 h-2 w-2 animate-pulse rounded-full bg-[var(--overview-accent)]" />}
           {(Object.keys(RANGE_POINTS) as Range[]).map((value) => (
             <button
               key={value}
@@ -152,53 +190,70 @@ function Performance({
     >
       {series.length ? (
         <div className="relative p-3">
-          <div className="mb-2 flex flex-wrap gap-4 text-[11px]">
+          {/* Legend doubles as the active-selection control: hover to spotlight,
+              click x to drop the symbol from the plot. */}
+          <div className="mb-2 flex flex-wrap items-center gap-3 text-[11px]">
             {lines.map((line, index) => {
               const pointIndex = hover === null
                 ? line.points.length - 1
                 : Math.min(line.points.length - 1, Math.round(hover * Math.max(0, line.points.length - 1)));
               const value = line.points[pointIndex]?.value ?? 0;
               return (
-                <span key={line.ticker} className="flex items-center gap-1.5 text-white/60">
-                  <i className="h-2 w-2 rounded-sm" style={{ background: colors[index] }} />
+                <span
+                  key={line.ticker}
+                  onMouseEnter={() => setFocus(line.ticker)}
+                  onMouseLeave={() => setFocus(null)}
+                  className="flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.03] px-2 py-0.5 text-white/60"
+                >
+                  <i className="h-2 w-2 rounded-sm" style={{ background: colors[index % colors.length] }} />
                   {line.ticker} <b className="tabular-nums text-white/90">{pct(value)}</b>
+                  <button
+                    type="button"
+                    onClick={() => onToggle(line.ticker)}
+                    className="ml-0.5 text-white/30 hover:text-[#ff6b76]"
+                    title={`Remove ${line.ticker}`}
+                  >
+                    ×
+                  </button>
                 </span>
               );
             })}
+            <span className="text-[10px] text-white/25">Click any symbol on the left or right to plot it</span>
           </div>
-          <svg
-            viewBox={`0 0 ${width} ${height}`}
-            className="h-[260px] w-full"
-            role="img"
-            aria-label="Normalized market performance chart"
+
+          <div
+            className="relative h-[300px] w-full"
             onMouseMove={(event) => {
               const box = event.currentTarget.getBoundingClientRect();
               setHover(Math.max(0, Math.min(1, (event.clientX - box.left) / box.width)));
             }}
             onMouseLeave={() => setHover(null)}
           >
-            {[0, 0.25, 0.5, 0.75, 1].map((ratio) => {
-              const y = top + ratio * plotHeight;
-              const label = high - ratio * span;
-              return (
-                <g key={ratio}>
-                  <line x1={left} x2={width - right} y1={y} y2={y} stroke="#293039" strokeWidth="1" />
-                  <text x={left - 7} y={y + 4} fill="#75808c" fontSize="10" textAnchor="end">{label.toFixed(1)}%</text>
-                </g>
-              );
-            })}
-            {lines.map((line, index) => {
-              const path = line.points.map((point, pointIndex) => {
-                const x = left + (pointIndex / Math.max(1, line.points.length - 1)) * plotWidth;
-                const y = top + ((high - point.value) / span) * plotHeight;
-                return `${x},${y}`;
-              }).join(" ");
-              return <polyline key={line.ticker} points={path} fill="none" stroke={colors[index]} strokeWidth="2.2" strokeLinejoin="round" />;
-            })}
-            {hover !== null && (
-              <line x1={left + hover * plotWidth} x2={left + hover * plotWidth} y1={top} y2={height - bottom} stroke="#d9e1e8" strokeDasharray="3 4" opacity="0.5" />
-            )}
-          </svg>
+            {/* Axis gutter overlays the canvas; the 3D plot occupies the middle
+                ~64% of the viewport height at this camera framing. */}
+            <div className="pointer-events-none absolute inset-y-0 left-0 z-10 w-12">
+              <div className="absolute inset-x-0" style={{ top: "18%", bottom: "18%" }}>
+                {ticks.map((value, i) => (
+                  <span
+                    key={value}
+                    className="absolute right-1 -translate-y-1/2 text-[10px] tabular-nums text-white/40"
+                    style={{ top: `${(i / (ticks.length - 1)) * 100}%` }}
+                  >
+                    {value.toFixed(1)}%
+                  </span>
+                ))}
+              </div>
+            </div>
+            <PerformanceChart3D
+              lines={lines}
+              colors={colors}
+              low={low}
+              high={high}
+              ticks={ticks}
+              hoverRatio={hover}
+              focus={focus}
+            />
+          </div>
         </div>
       ) : (
         <div className="space-y-3 p-4">
@@ -244,17 +299,35 @@ function CandidateRows({ data, currency }: { data: MarketOverviewData["candidate
   );
 }
 
-function FundamentalRows({ rows }: { rows: FundamentalLeader[] }) {
+function FundamentalRows({
+  rows, selected, colorFor, onToggle,
+}: {
+  rows: FundamentalLeader[];
+  selected: string[];
+  colorFor: (ticker: string) => string | undefined;
+  onToggle: (ticker: string) => void;
+}) {
   if (!rows.length) return <Empty label="Fundamentals are syncing" />;
   return (
     <div className="divide-y divide-[#242a31]">
-      {rows.map((row) => (
-        <div key={row.ticker} className="grid grid-cols-[1fr_58px_58px] gap-2 px-3 py-2.5 text-xs">
-          <div><b className="text-white/85">{row.ticker}</b><div className="mt-0.5 text-[10px] text-white/35">P/E {row.peRatio?.toFixed(1) ?? "-"}</div></div>
-          <div className="text-right"><span className="text-[10px] text-white/35">ROCE</span><div className="tabular-nums text-[#47d7a1]">{pct(row.roce, 1)}</div></div>
-          <div className="text-right"><span className="text-[10px] text-white/35">Sales</span><div className="tabular-nums"><Change value={row.salesGrowth} /></div></div>
-        </div>
-      ))}
+      {rows.map((row) => {
+        const active = selected.includes(row.ticker);
+        return (
+          <button
+            key={row.ticker}
+            type="button"
+            onClick={() => onToggle(row.ticker)}
+            aria-pressed={active}
+            title={active ? `Remove ${row.ticker} from chart` : `Plot ${row.ticker} on the chart`}
+            style={selectionStyle(active, colorFor(row.ticker))}
+            className="grid w-full grid-cols-[1fr_58px_58px] gap-2 px-3 py-2.5 text-left text-xs transition-colors hover:bg-white/[0.05]"
+          >
+            <div><b className="text-white/85">{row.ticker}</b><div className="mt-0.5 text-[10px] text-white/35">P/E {row.peRatio?.toFixed(1) ?? "-"}</div></div>
+            <div className="text-right"><span className="text-[10px] text-white/35">ROCE</span><div className="tabular-nums text-[#47d7a1]">{pct(row.roce, 1)}</div></div>
+            <div className="text-right"><span className="text-[10px] text-white/35">Sales</span><div className="tabular-nums"><Change value={row.salesGrowth} /></div></div>
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -326,6 +399,66 @@ export default function MarketOverview({ data }: { data: MarketOverviewData }) {
     return () => window.clearInterval(timer);
   }, [meta.zone]);
 
+  // ---- Interactive chart selection -----------------------------------------
+  // The server seeds a default trio; clicking any gainer / decliner /
+  // fundamental leader toggles that symbol into the plot, fetching its history
+  // on demand and caching it so re-selecting is instant.
+  const [selected, setSelected] = useState<string[]>(() => data.series.map((s) => s.ticker));
+  const [cache, setCache] = useState<Record<string, OverviewSeries>>(
+    () => Object.fromEntries(data.series.map((s) => [s.ticker, s])),
+  );
+  const [loading, setLoading] = useState(false);
+
+  // Tickers already requested (seeded ones count as done) so a symbol is only
+  // ever fetched once, however many times it is toggled.
+  const requested = useRef<Set<string>>(new Set(data.series.map((s) => s.ticker)));
+
+  const ensureSeries = useCallback(async (ticker: string) => {
+    if (requested.current.has(ticker)) return;
+    requested.current.add(ticker);
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/market-overview/series?market=${data.market}&tickers=${ticker}`);
+      const payload: { series?: OverviewSeries[] } = await res.json();
+      if (payload.series?.length) {
+        setCache((prev) => {
+          const next = { ...prev };
+          for (const s of payload.series!) next[s.ticker] = s;
+          return next;
+        });
+      }
+    } catch {
+      // Allow a retry on the next click; the symbol simply stays unplotted.
+      requested.current.delete(ticker);
+    } finally {
+      setLoading(false);
+    }
+  }, [data.market]);
+
+  const toggleTicker = useCallback((ticker: string) => {
+    setSelected((prev) => {
+      if (prev.includes(ticker)) {
+        // Never empty the chart entirely.
+        return prev.length === 1 ? prev : prev.filter((t) => t !== ticker);
+      }
+      // At the cap, drop the oldest to make room (FIFO) so a click always works.
+      return prev.length >= MAX_SELECTED ? [...prev.slice(1), ticker] : [...prev, ticker];
+    });
+    void ensureSeries(ticker);
+  }, [ensureSeries]);
+
+  const chartSeries = useMemo(
+    () => selected.map((t) => cache[t]).filter((s): s is OverviewSeries => Boolean(s)),
+    [selected, cache],
+  );
+  const colorFor = useCallback(
+    (ticker: string) => {
+      const i = chartSeries.findIndex((s) => s.ticker === ticker);
+      return i === -1 ? undefined : meta.chartColors[i % meta.chartColors.length];
+    },
+    [chartSeries, meta.chartColors],
+  );
+
   const totalBreadth = data.breadth.advancers + data.breadth.decliners + data.breadth.unchanged;
   const advanceWidth = totalBreadth ? data.breadth.advancers / totalBreadth * 100 : 0;
   const declineWidth = totalBreadth ? data.breadth.decliners / totalBreadth * 100 : 0;
@@ -378,12 +511,22 @@ export default function MarketOverview({ data }: { data: MarketOverviewData }) {
 
           <div className="grid gap-3 xl:grid-cols-[260px_minmax(0,1fr)_300px]">
             <div className="space-y-3">
-              <Panel title="Top gainers"><QuoteRows rows={data.gainers} currency={meta.currency} /></Panel>
-              <Panel title="Top decliners"><QuoteRows rows={data.losers} currency={meta.currency} /></Panel>
+              <Panel title="Top gainers">
+                <QuoteRows rows={data.gainers} currency={meta.currency} selected={selected} colorFor={colorFor} onToggle={toggleTicker} />
+              </Panel>
+              <Panel title="Top decliners">
+                <QuoteRows rows={data.losers} currency={meta.currency} selected={selected} colorFor={colorFor} onToggle={toggleTicker} />
+              </Panel>
             </div>
 
             <div className="min-w-0 space-y-3">
-              <Performance series={data.series} quotes={data.quotes} colors={meta.chartColors} />
+              <Performance
+                series={chartSeries}
+                quotes={data.quotes}
+                colors={meta.chartColors}
+                loading={loading}
+                onToggle={toggleTicker}
+              />
               <Panel title="Swing candidates" action={<Link href={`/terminal/${data.market.toLowerCase()}/screener`} className="text-[10px] font-semibold text-[var(--overview-accent)]">View all</Link>}>
                 <CandidateRows data={data.candidates} currency={meta.currency} />
               </Panel>
@@ -400,7 +543,9 @@ export default function MarketOverview({ data }: { data: MarketOverviewData }) {
                   <div className="mt-2 text-right text-[10px] text-white/35">{data.breadth.unchanged} unchanged / unavailable</div>
                 </div>
               </Panel>
-              <Panel title="Fundamental leaders"><FundamentalRows rows={data.fundamentals} /></Panel>
+              <Panel title="Fundamental leaders">
+                <FundamentalRows rows={data.fundamentals} selected={selected} colorFor={colorFor} onToggle={toggleTicker} />
+              </Panel>
               <Panel title="Data freshness">
                 <FreshnessRows data={data} />
               </Panel>
