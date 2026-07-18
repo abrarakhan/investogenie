@@ -89,6 +89,7 @@ export default function AppShell({
       title: "Operations",
       items: [
         { label: "Data Health", href: "/admin/sync", active: active === "data" },
+        { label: "Help", href: "/help" },
         { label: "Settings", href: "/settings", active: active === "settings" },
       ],
     },

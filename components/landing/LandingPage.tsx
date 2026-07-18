@@ -33,12 +33,17 @@ export default function LandingPage({ quotes }: { quotes: LiveMarketQuotes }) {
           <span className="text-lg font-black tracking-tight">
             Investo<span className="text-[var(--ig-accent)]">Genie</span>
           </span>
-          <nav className="hidden gap-8 text-sm text-white/60 md:flex">
-            <a href="#engines" className="hover:text-white">Engines</a>
-            <a href={`/markets/${market.id.toLowerCase()}`} className="hover:text-white">Market Overview</a>
-            <a href={`/terminal/${market.id.toLowerCase()}/stocks`} className="hover:text-white">Screener</a>
-            <a href={`/terminal/${market.id.toLowerCase()}/screener`} className="hover:text-white">Swing Candidates</a>
-            <a href={`/terminal/${market.id.toLowerCase()}`} className="hover:text-white">Terminal</a>
+          <nav className="hidden items-center gap-6 text-sm text-white/60 md:flex">
+            <a href="#features" className="hover:text-white">Features</a>
+            <a href="#markets" className="hover:text-white">Markets</a>
+            <a href="/help" className="hover:text-white">Help</a>
+            <a href="/about" className="hover:text-white">About</a>
+            <a
+              href={`/terminal/${market.id.toLowerCase()}`}
+              className="rounded-full border border-white/15 bg-white/5 px-4 py-2 font-semibold text-white/80 hover:bg-white/10 hover:text-white"
+            >
+              Open Terminal
+            </a>
           </nav>
         </header>
 
@@ -87,7 +92,7 @@ export default function LandingPage({ quotes }: { quotes: LiveMarketQuotes }) {
       </section>
 
       {/* ---------- ENGINES ---------- */}
-      <div id="engines">
+      <div id="features">
         <ScrollFeatures />
       </div>
 
