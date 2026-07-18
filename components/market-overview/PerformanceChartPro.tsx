@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useId, useMemo, useRef, useState } from "react";
 
 // -----------------------------------------------------------------------------
 // TradingView-style normalized performance chart. Pure SVG: crisp at any DPI,
@@ -67,9 +67,23 @@ export default function PerformanceChartPro({
   onFocus: (ticker: string | null) => void;
 }) {
   const svgRef = useRef<SVGSVGElement>(null);
+  // Tickers like M&M / J&KBANK are not safe as raw SVG ids, and ids are
+  // document-scoped, so two chart instances would resolve to one gradient.
+  const uid = useId().replace(/[^a-zA-Z0-9]/g, "");
+  const gradId = (ticker: string) => `fill-${uid}-${ticker.replace(/[^a-zA-Z0-9]/g, "_")}`;
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
 
-  const maxLen = Math.max(1, ...lines.map((l) => l.points.length));
+  // Shared date axis. Series are positioned by date, not by array index:
+  // index-alignment drew index 0 of a short series at the same x as index 0 of a
+  // long one, so stocks with different history lengths were compared at
+  // mismatched dates.
+  const axis = useMemo(() => {
+    const set = new Set<string>();
+    for (const l of lines) for (const p of l.points) set.add(p.date);
+    return [...set].sort();
+  }, [lines]);
+  const axisIndex = useMemo(() => new Map(axis.map((d, i) => [d, i])), [axis]);
+  const maxLen = Math.max(1, axis.length);
   const values = lines.flatMap((l) => l.points.map((p) => p.value));
   const rawLow = Math.min(-1, ...values);
   const rawHigh = Math.max(1, ...values);
@@ -88,11 +102,19 @@ export default function PerformanceChartPro({
   const series = useMemo(
     () =>
       lines.map((line, i) => {
-        const pts = line.points.map((p, idx) => ({ x: x(idx), y: y(p.value) }));
+        const pts = line.points.map((p) => ({ x: x(axisIndex.get(p.date) ?? 0), y: y(p.value) }));
+        // Value per axis slot; undefined where this series has no bar for that
+        // date, so readouts can say so instead of inventing a number.
+        const bySlot = new Map<number, number>();
+        for (const p of line.points) {
+          const slot = axisIndex.get(p.date);
+          if (slot !== undefined) bySlot.set(slot, p.value);
+        }
         return {
           ticker: line.ticker,
           color: colors[i % colors.length],
           points: line.points,
+          bySlot,
           path: smoothPath(pts),
           area: `${smoothPath(pts)} L${pts[pts.length - 1]?.x ?? 0},${PAD.top + PLOT_H} L${pts[0]?.x ?? 0},${PAD.top + PLOT_H} Z`,
           last: line.points[line.points.length - 1]?.value ?? 0,
@@ -100,20 +122,19 @@ export default function PerformanceChartPro({
         };
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [lines, colors, low, high, maxLen],
+    [lines, colors, low, high, maxLen, axisIndex],
   );
 
   // Date ticks: ~6 evenly spaced labels from the longest series.
   const dateTicks = useMemo(() => {
-    const src = lines.reduce((a, b) => (b.points.length > a.points.length ? b : a), lines[0]);
-    if (!src) return [];
-    const n = src.points.length;
+    const n = axis.length;
+    if (!n) return [];
     const count = Math.min(6, n);
     return Array.from({ length: count }, (_, k) => {
       const idx = Math.round((k / Math.max(1, count - 1)) * (n - 1));
-      return { idx, label: fmtDate(src.points[idx]?.date ?? "") };
+      return { idx, label: fmtDate(axis[idx] ?? "") };
     });
-  }, [lines]);
+  }, [axis]);
 
   const handleMove = (e: React.MouseEvent<SVGSVGElement>) => {
     const svg = svgRef.current;
@@ -126,7 +147,7 @@ export default function PerformanceChartPro({
   };
 
   const hoverX = hoverIdx === null ? null : x(hoverIdx);
-  const hoverDate = hoverIdx === null ? null : lines[0]?.points[hoverIdx]?.date ?? null;
+  const hoverDate = hoverIdx === null ? null : axis[hoverIdx] ?? null;
 
   return (
     <div className="relative w-full">
@@ -141,7 +162,7 @@ export default function PerformanceChartPro({
       >
         <defs>
           {series.map((s) => (
-            <linearGradient key={`g${s.ticker}`} id={`fill-${s.ticker}`} x1="0" y1="0" x2="0" y2="1">
+            <linearGradient key={`g${s.ticker}`} id={gradId(s.ticker)} x1="0" y1="0" x2="0" y2="1">
               <stop offset="0%" stopColor={s.color} stopOpacity="0.28" />
               <stop offset="60%" stopColor={s.color} stopOpacity="0.06" />
               <stop offset="100%" stopColor={s.color} stopOpacity="0" />
@@ -201,7 +222,7 @@ export default function PerformanceChartPro({
           const dim = focus !== null && focus !== s.ticker;
           return (
             <g key={s.ticker} opacity={dim ? 0.18 : 1} style={{ transition: "opacity 160ms" }}>
-              <path d={s.area} fill={`url(#fill-${s.ticker})`} />
+              <path d={s.area} fill={`url(#${gradId(s.ticker)})`} />
               <path
                 d={s.path}
                 fill="none"
@@ -236,13 +257,13 @@ export default function PerformanceChartPro({
         {/* Marker dots at the crosshair */}
         {hoverIdx !== null &&
           series.map((s) => {
-            const p = s.points[hoverIdx];
-            if (!p) return null;
+            const v = s.bySlot.get(hoverIdx);
+            if (v === undefined) return null;
             return (
               <circle
                 key={`d${s.ticker}`}
                 cx={x(hoverIdx)}
-                cy={y(p.value)}
+                cy={y(v)}
                 r="4"
                 fill="#0d1115"
                 stroke={s.color}
@@ -254,8 +275,10 @@ export default function PerformanceChartPro({
         {/* Live value tag on the price scale — the TradingView tell. */}
         {series.map((s) => {
           if (!s.lastPt) return null;
-          const shown = hoverIdx !== null ? s.points[hoverIdx]?.value ?? s.last : s.last;
-          const ty = hoverIdx !== null ? y(s.points[hoverIdx]?.value ?? s.last) : s.lastPt.y;
+          const hovered = hoverIdx === null ? undefined : s.bySlot.get(hoverIdx);
+          if (hoverIdx !== null && hovered === undefined) return null;
+          const shown = hovered ?? s.last;
+          const ty = hovered === undefined ? s.lastPt.y : y(hovered);
           return (
             <g key={`tag${s.ticker}`} opacity={focus !== null && focus !== s.ticker ? 0.25 : 1}>
               <rect x={W - PAD.right + 3} y={ty - 9} width={60} height={18} rx="3" fill={s.color} />
@@ -313,7 +336,7 @@ export default function PerformanceChartPro({
               <i className="h-2 w-2 rounded-sm" style={{ background: s.color }} />
               <span className="text-white/55">{s.ticker}</span>
               <b className="ml-auto font-mono tabular-nums text-white/90">
-                {fmtPct(s.points[hoverIdx]?.value ?? 0)}
+                {s.bySlot.get(hoverIdx) === undefined ? "\u2014" : fmtPct(s.bySlot.get(hoverIdx)!)}
               </b>
             </div>
           ))}
