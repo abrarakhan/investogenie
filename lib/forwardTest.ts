@@ -10,6 +10,23 @@ import { MARKET_COUNTRY } from "@/lib/markets";
 import type { MarketId } from "@/lib/types";
 
 const PER_METHOD = 2;
+const FILL_WINDOW_DAYS = 10;
+
+/** Keep forward tests on instruments a person could actually trade. The US
+ *  screener universe includes preferreds, units and OTC lines (AILLM, AIIA-UN,
+ *  BANC-PF, APTOF all got enrolled on the first run), and grading a strategy on
+ *  those measures nothing useful. */
+function isTradableCommon(row: { ticker: string; exchange: string; country: string; lastQuote: number | null; close: number }): boolean {
+  if (row.country === "US") {
+    if (!["NASDAQ", "NYSE"].includes(row.exchange)) return false;
+    // '-' and '.' mark preferred series, units and warrants (BANC-PF, AIIA-UN).
+    if (/[-.]/.test(row.ticker)) return false;
+    // 5-letter US tickers ending W/R/U are warrants/rights/units.
+    if (row.ticker.length >= 5 && /[WRU]$/.test(row.ticker)) return false;
+    if ((row.lastQuote ?? row.close) < 5) return false;
+  }
+  return true;
+}
 const SWING_HORIZON_DAYS = 21;
 
 export interface EnrollSummary {
@@ -36,6 +53,7 @@ export async function enrollCohort(market: MarketId): Promise<EnrollSummary> {
   const byStrategy = new Map<string, typeof rows>();
   for (const row of rows) {
     if (row.verdict === "NO_SETUP") continue;
+    if (!isTradableCommon(row)) { skipped++; continue; }
     for (const tag of row.strategyTags) {
       const bucket = byStrategy.get(tag) ?? [];
       bucket.push(row);
@@ -52,10 +70,14 @@ export async function enrollCohort(market: MarketId): Promise<EnrollSummary> {
     });
     for (const row of ranked.slice(0, PER_METHOD)) {
       const lv = row.strategyLevels[strategy];
-      const entry = row.lastQuote ?? row.close;
+      // Anchor to the strategy's ENTRY TRIGGER, not spot. target/stop are
+      // derived from the trigger, so pricing entry at spot left them on a
+      // different anchor — which is how a long got a stop above its entry.
+      const trigger = lv?.entry ?? row.entry;
       const target = lv?.target ?? row.target;
       const stop = lv?.stopLoss ?? row.stopLoss;
-      if (!entry || entry <= 0) { skipped++; continue; }
+      if (!trigger || trigger <= 0) { skipped++; continue; }
+      const entry = trigger;
       inserts.push({
         method: `SWING:${strategy}`,
         market,
@@ -64,6 +86,10 @@ export async function enrollCohort(market: MarketId): Promise<EnrollSummary> {
         horizon_days: lv?.expectedDays ?? row.expectedDays ?? SWING_HORIZON_DAYS,
         direction: (lv?.direction ?? row.direction) === "SHORT" ? "SHORT" : "LONG",
         entry_price: entry,
+        trigger_price: trigger,
+        // A swing call is a resting order: it only becomes a position if price
+        // reaches the trigger inside the fill window.
+        status: "PENDING",
         projected_target: target,
         projected_stop: stop,
         // Swing "projection" is the move to target from entry.
@@ -89,6 +115,8 @@ export async function enrollCohort(market: MarketId): Promise<EnrollSummary> {
       horizon_days: prob.horizonDays,
       direction: "LONG",
       entry_price: row.lastPrice,
+      trigger_price: null,
+      status: "OPEN",
       // No levels: this engine forecasts a distribution, so it closes on expiry.
       projected_target: null,
       projected_stop: null,
@@ -110,12 +138,13 @@ export async function enrollCohort(market: MarketId): Promise<EnrollSummary> {
         `insert into public.forward_test_positions
            (method, market, asset_id, ticker, horizon_days, direction, entry_price,
             projected_target, projected_stop, projected_return_pct, projected_prob_up_pct,
-            projected_p5_pct, projected_p95_pct, projection)
-         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb)
+            projected_p5_pct, projected_p95_pct, projection, trigger_price, status, fill_window_days)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,$15,$16,$17)
          on conflict (method, asset_id, enrolled_on) do nothing`,
         [r.method, r.market, r.asset_id, r.ticker, r.horizon_days, r.direction, r.entry_price,
          r.projected_target, r.projected_stop, r.projected_return_pct, r.projected_prob_up_pct,
-         r.projected_p5_pct, r.projected_p95_pct, r.projection],
+         r.projected_p5_pct, r.projected_p95_pct, r.projection,
+         r.trigger_price ?? null, r.status ?? "OPEN", FILL_WINDOW_DAYS],
       );
       enrolled += res.rowCount ?? 0;
     }
@@ -135,6 +164,10 @@ interface OpenPosition {
   projected_stop: string | number | null;
   projected_p5_pct: string | number | null;
   projected_p95_pct: string | number | null;
+  status: string;
+  trigger_price: string | number | null;
+  fill_window_days: number;
+  filled_on: string | Date | null;
 }
 
 export interface EvaluateSummary {
@@ -157,7 +190,8 @@ export async function evaluateOpenPositions(): Promise<EvaluateSummary> {
   const positions = await query<OpenPosition>(
     `select id, asset_id, direction, horizon_days, enrolled_on, entry_price,
             projected_target, projected_stop, projected_p5_pct, projected_p95_pct
-       from public.forward_test_positions where status = 'OPEN'`,
+       , status, trigger_price, fill_window_days, filled_on
+       from public.forward_test_positions where status in ('PENDING','OPEN')`,
   );
   const byStatus: Record<string, number> = {};
   let closed = 0;
@@ -183,6 +217,12 @@ export async function evaluateOpenPositions(): Promise<EvaluateSummary> {
     const stop = n(p.projected_stop);
     const signed = (price: number) => (isLong ? (price - entry) / entry : (entry - price) / entry) * 100;
 
+    const trigger = n(p.trigger_price);
+    let pending = p.status === "PENDING" && trigger !== null;
+    let filledOn: string | null = p.filled_on
+      ? (p.filled_on instanceof Date ? p.filled_on.toISOString().slice(0, 10) : String(p.filled_on).slice(0, 10))
+      : null;
+    let sincePending = 0;
     let maxFav = 0;
     let maxAdv = 0;
     let status: string | null = null;
@@ -191,10 +231,19 @@ export async function evaluateOpenPositions(): Promise<EvaluateSummary> {
     let held = 0;
 
     for (const bar of bars) {
-      held++;
       const high = Number(bar.high);
       const low = Number(bar.low);
       const date = bar.date instanceof Date ? bar.date.toISOString().slice(0, 10) : String(bar.date).slice(0, 10);
+
+      if (pending) {
+        sincePending++;
+        // Filled when price trades through the trigger.
+        const filled = isLong ? high >= trigger! : low <= trigger!;
+        if (filled) { pending = false; filledOn = date; }
+        else if (sincePending >= p.fill_window_days) { status = "UNFILLED"; exitDate = date; break; }
+        else continue;
+      }
+      held++;
       // Direction-aware path extremes.
       maxFav = Math.max(maxFav, signed(isLong ? high : low));
       maxAdv = Math.min(maxAdv, signed(isLong ? low : high));
@@ -216,13 +265,24 @@ export async function evaluateOpenPositions(): Promise<EvaluateSummary> {
       // Still running: record path stats so drawdown is visible before close.
       await query(
         `update public.forward_test_positions
-            set max_favorable_pct = $2, max_adverse_pct = $3, evaluated_through = $4, updated_at = now()
-          where id = $1`,
-        [p.id, maxFav, maxAdv, lastDate],
+            set max_favorable_pct=$2, max_adverse_pct=$3, evaluated_through=$4,
+                status=$5, filled_on=coalesce(filled_on, $6::date), updated_at=now()
+          where id=$1`,
+        [p.id, maxFav, maxAdv, lastDate, pending ? "PENDING" : "OPEN", filledOn],
       );
       continue;
     }
 
+    if (status === "UNFILLED") {
+      await query(
+        `update public.forward_test_positions
+            set status='UNFILLED', closed_at=$2::date, evaluated_through=$2::date, updated_at=now()
+          where id=$1`,
+        [p.id, exitDate],
+      );
+      closed++; byStatus.UNFILLED = (byStatus.UNFILLED ?? 0) + 1;
+      continue;
+    }
     const realized = signed(exitPrice!);
     const p5 = n(p.projected_p5_pct);
     const p95 = n(p.projected_p95_pct);
