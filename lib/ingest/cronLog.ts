@@ -10,7 +10,8 @@ export type CronJob =
   | "backfill-us"
   | "backfill-us-expand"
   | "backfill-nse"
-  | "refresh-screener";
+  | "refresh-screener"
+  | "forward-test";
 export type CronStatus = "ok" | "error";
 
 export interface CronLogEntry {
