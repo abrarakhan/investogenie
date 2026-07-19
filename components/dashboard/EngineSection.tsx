@@ -76,6 +76,14 @@ export default function EngineSection({
   overlap: OverlapReport | null;
   macro: MacroMatrix | null;
 }) {
+  const hasSnapshotContext = Boolean(
+    overlap?.availableSnapshots?.length || overlap?.referenceOverlaps?.length,
+  );
+  const visibleInstructions =
+    overlap?.instructions.filter(
+      (ins) => ins.kind !== "DISCLOSURE_REQUIRED" || !hasSnapshotContext,
+    ) ?? [];
+
   return (
     <div className="space-y-8">
       <h2 className="text-sm uppercase tracking-[0.25em] text-white/40">
@@ -236,9 +244,9 @@ export default function EngineSection({
               )}
 
 
-              {overlap.instructions.length > 0 && (
+              {visibleInstructions.length > 0 && (
                 <ul className="space-y-2">
-                  {overlap.instructions.slice(0, 5).map((ins, i) => (
+                  {visibleInstructions.slice(0, 5).map((ins, i) => (
                     <li key={i} className="flex gap-2 text-xs text-white/60">
                       <span className="mt-0.5 text-[var(--ig-accent)]">▸</span>
                       <LinkedMessage message={ins.message} />
