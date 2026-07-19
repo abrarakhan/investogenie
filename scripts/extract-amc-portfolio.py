@@ -57,18 +57,32 @@ WEIGHT_KEYS = {
     "percentage_of_net_assets", "in_aum", "aum", "pct", "market_value_percent",
 }
 
-EXCLUDE_NAME_RE = re.compile(
-    r"\b(total|sub\s*total|grand\s*total|cash|treps|reverse\s+repo|repo|net\s+current|"
+# Aggregate rows are never holdings and are always dropped.
+TOTALS_RE = re.compile(r"\b(total|sub\s*total|grand\s*total|net\s+assets)\b", re.I)
+# Non-equity lines: dropped in the default (equity-only) mode used by the CAS
+# route, KEPT in --full mode so a snapshot's weights can sum to ~100.
+NON_EQUITY_RE = re.compile(
+    r"\b(cash|treps|reverse\s+repo|repo|net\s+current|"
     r"margin|collateral|t[- ]?bill|treasury|g[- ]?sec|government\s+security|goi|"
     r"certificate\s+of\s+deposit|commercial\s+paper|cblo|derivative|futures?|options?)\b",
     re.I,
 )
 
 
+def excluded_name(name: str, full: bool) -> bool:
+    if TOTALS_RE.search(name):
+        return True
+    return (not full) and bool(NON_EQUITY_RE.search(name))
+
+
 def is_probable_header(cells: list[str]) -> bool:
     keys = [norm(c) for c in cells]
     has_name = any(k in NAME_KEYS or any(part in k for part in ["security", "instrument", "company", "issuer"]) for k in keys)
-    has_weight = any(k in WEIGHT_KEYS or ("weight" in k) or ("net_asset" in k) or ("portfolio" in k and "percent" in k) for k in keys)
+    has_weight = any(
+        k in WEIGHT_KEYS or ("weight" in k) or ("net_asset" in k) or ("aum" in k)
+        or ("portfolio" in k and "percent" in k)
+        for k in keys
+    )
     return has_name and has_weight
 
 
@@ -87,7 +101,7 @@ def row_cells(row: Any) -> list[str]:
     return [clean(v) for v in list(row)]
 
 
-def parse_frame(frame: Any) -> list[dict[str, Any]]:
+def parse_frame(frame: Any, full: bool = False) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     values = frame.fillna("").astype(str).values.tolist()
     header_idx = None
@@ -103,23 +117,36 @@ def parse_frame(frame: Any) -> list[dict[str, Any]]:
     name_col = find_col(headers, NAME_KEYS, ["security", "instrument", "company", "issuer", "stock", "scrip"])
     isin_col = find_col(headers, ISIN_KEYS, ["isin"])
     ticker_col = find_col(headers, TICKER_KEYS, ["symbol", "ticker", "scrip_code", "nse"])
-    weight_col = find_col(headers, WEIGHT_KEYS, ["weight", "net_asset", "percent", "percentage", "portfolio"])
+    weight_col = find_col(headers, WEIGHT_KEYS, ["weight", "net_asset", "aum", "percent", "percentage", "portfolio"])
     if name_col is None or weight_col is None:
         return rows
 
     for raw in values[header_idx + 1 :]:
         cells = row_cells(raw)
+        # Everything below the grand-total row is notes / returns tables, not
+        # holdings; without this stop, benchmark-return percentages parse as
+        # instrument weights.
+        if re.search(r"grand\s*total", " ".join(cells), re.I):
+            break
         if len(cells) <= max(name_col, weight_col):
             continue
         stock_name = clean(cells[name_col])
-        if not stock_name or len(stock_name) < 3 or EXCLUDE_NAME_RE.search(stock_name):
+        if not stock_name or len(stock_name) < 3 or excluded_name(stock_name, full):
             continue
         weight = to_number(cells[weight_col])
-        if weight is None or weight <= 0 or weight > 100:
+        if weight is None or weight > 100:
+            continue
+        # Full mode keeps negative weights (net receivables/payables can be
+        # negative); equity-only mode keeps the original positive-only rule.
+        if full:
+            if weight == 0 or weight <= -25:
+                continue
+        elif weight <= 0:
             continue
         isin = None
         if isin_col is not None and len(cells) > isin_col:
-            found = re.search(r"\bIN[A-Z0-9]{10}\b", cells[isin_col], re.I)
+            # Any-country ISIN, not just IN — PPFAS-style funds hold US stocks.
+            found = re.search(r"\b[A-Z]{2}[A-Z0-9]{9}[0-9]\b", cells[isin_col], re.I)
             isin = found.group(0).upper() if found else None
         ticker = None
         if ticker_col is not None and len(cells) > ticker_col:
@@ -135,14 +162,25 @@ def parse_frame(frame: Any) -> list[dict[str, Any]]:
     return rows
 
 
-def read_tabular(path: Path) -> list[dict[str, Any]]:
+def read_tabular(path: Path, full: bool = False, sheet: str = "") -> list[dict[str, Any]]:
     import pandas as pd
 
     suffix = path.suffix.lower()
     frames = []
     if suffix in {".xlsx", ".xlsm", ".xls"}:
         sheets = pd.read_excel(path, sheet_name=None, header=None, dtype=str)
-        frames.extend(sheets.values())
+        if sheet:
+            # AMC monthly workbooks carry one sheet per scheme; without a
+            # selector every scheme would merge into one bogus snapshot.
+            wanted = norm(sheet)
+            matched = {name: f for name, f in sheets.items() if wanted in norm(name)}
+            if not matched:
+                raise RuntimeError(
+                    f"sheet '{sheet}' not found; available: {', '.join(sheets.keys())}"
+                )
+            frames.extend(matched.values())
+        else:
+            frames.extend(sheets.values())
     else:
         for kwargs in [
             {"sep": None, "engine": "python"},
@@ -156,7 +194,7 @@ def read_tabular(path: Path) -> list[dict[str, Any]]:
                 continue
     out: list[dict[str, Any]] = []
     for frame in frames:
-        out.extend(parse_frame(frame))
+        out.extend(parse_frame(frame, full))
     return out
 
 
@@ -172,11 +210,11 @@ def read_pdf_text(path: Path, password: str = "") -> str:
     return "\n".join(page.extract_text() or "" for page in reader.pages)
 
 
-def parse_text(text: str) -> list[dict[str, Any]]:
+def parse_text(text: str, full: bool = False) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     lines = [clean(line) for line in text.splitlines() if clean(line)]
     for line in lines:
-        if EXCLUDE_NAME_RE.search(line):
+        if excluded_name(line, full):
             continue
         isin_match = re.search(r"\bIN[A-Z0-9]{10}\b", line, re.I)
         numbers = re.findall(r"-?\d+(?:,\d{2,3})*(?:\.\d+)?%?|-?\d+(?:\.\d+)?%?", line)
@@ -231,18 +269,24 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("file")
     parser.add_argument("--password", default="")
+    parser.add_argument("--full", action="store_true",
+                        help="keep cash/debt/TREPS lines so weights sum to ~100 (snapshot ingest)")
+    parser.add_argument("--sheet", default="",
+                        help="only parse workbook sheets whose name contains this (case/punctuation-insensitive)")
     args = parser.parse_args()
     path = Path(args.file)
     suffix = path.suffix.lower()
     try:
         if suffix == ".pdf":
-            rows = parse_text(read_pdf_text(path, args.password))
+            rows = parse_text(read_pdf_text(path, args.password), args.full)
         elif suffix in {".txt", ".text"}:
-            rows = parse_text(path.read_text(errors="ignore"))
+            rows = parse_text(path.read_text(errors="ignore"), args.full)
         else:
-            rows = read_tabular(path)
-            if not rows:
-                rows = parse_text(path.read_text(errors="ignore"))
+            rows = read_tabular(path, args.full, args.sheet)
+            # Text fallback only for text-like files; running it on raw
+            # xls/xlsx bytes "parses" zip garbage into thousands of rows.
+            if not rows and suffix not in {".xlsx", ".xlsm", ".xls"}:
+                rows = parse_text(path.read_text(errors="ignore"), args.full)
         rows = dedupe(rows)
         print(json.dumps({"rows": rows}, ensure_ascii=False))
         return 0

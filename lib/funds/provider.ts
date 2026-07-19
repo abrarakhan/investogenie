@@ -61,15 +61,21 @@ export interface FundDataProvider {
 // drift between sources.
 // ---------------------------------------------------------------------------
 
-const CASH_PATTERNS = /\b(TREPS|CBLO|REPO|CASH|NET\s+(CURRENT\s+)?ASSET|MARGIN|BANK\s+BALANCE|CLEARING\s+CORP)/i;
+const CASH_PATTERNS = /\b(TREPS|TRP_|CBLO|REPO|CASH|NET\s+(CURRENT\s+)?ASSET|NET\s+RECEIVABLE|MARGIN|BANK\s+BALANCE|CLEARING\s+CORP)/i;
 const DERIVATIVE_PATTERNS = /\b(FUTURE|FUT\b|OPTION|CALL\b|PUT\b|SWAP|FORWARD)/i;
+const DEBT_PATTERNS = /\b(NCD|DEBENTURE|BONDS?|GOI|G[- ]?SEC|SDL|T[- ]?BILL|TREASURY|GOVERNMENT\s+SECURIT|CERTIFICATE\s+OF\s+DEPOSIT|COMMERCIAL\s+PAPER|STRIPS)\b|^\d+(?:\.\d+)?%\s/i;
 
 /** Classify a factsheet line. Cash, TREPS and derivatives carry no ISIN; they
  *  must appear in allocation but must never count toward stock overlap — two
- *  funds each parking 5% in TREPS are not 5% overlapped. */
+ *  funds each parking 5% in TREPS are not 5% overlapped. Debt matters for the
+ *  same reason: g-secs and NCDs DO carry ISINs, so without this branch they
+ *  would classify as EQUITY and count toward overlap. Government ISINs live in
+ *  the IN<digit> namespace (corporates are INE, fund units INF). */
 export function classifyInstrument(name: string, isin: string | null): FundInstrumentType {
   if (DERIVATIVE_PATTERNS.test(name)) return "DERIVATIVE";
-  if (!isin || CASH_PATTERNS.test(name)) return CASH_PATTERNS.test(name) ? "CASH_EQUIVALENT" : "OTHER";
+  if (CASH_PATTERNS.test(name)) return "CASH_EQUIVALENT";
+  if (DEBT_PATTERNS.test(name) || (isin !== null && /^IN\d/.test(isin))) return "DEBT";
+  if (!isin) return "OTHER";
   return "EQUITY";
 }
 

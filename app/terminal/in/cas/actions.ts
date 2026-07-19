@@ -11,6 +11,12 @@ import { revalidatePath } from "next/cache";
 import { ensureScaffold } from "@/app/dashboard/actions";
 import { getSessionUser } from "@/lib/auth";
 import { query, queryOne, tx } from "@/lib/db";
+import {
+  AmcDisclosureProvider,
+  parseDisclosureSource,
+  SnapshotRejectedError,
+  type ParsedDisclosureRow,
+} from "@/lib/funds/amcProvider";
 
 const execFileAsync = promisify(execFile);
 
@@ -24,17 +30,6 @@ interface ParsedHoldingRow {
   price: number | null;
   value: number;
   assetClass: ImportedAssetClass;
-}
-
-interface ParsedDisclosureRow {
-  stock_name: string;
-  isin: string | null;
-  ticker: string | null;
-  weight_percentage: number;
-}
-
-interface DisclosureParseResult {
-  rows: ParsedDisclosureRow[];
 }
 
 const money = (value: string | undefined | null) => {
@@ -403,29 +398,6 @@ function disclosureStockTicker(row: ParsedDisclosureRow): string {
     .slice(0, 54);
 }
 
-async function extractDisclosureRows(file: File, password: string): Promise<DisclosureParseResult | "bad_password" | "parser_failed"> {
-  const dir = join(tmpdir(), "investogenie-amc");
-  await mkdir(dir, { recursive: true });
-  const safeExt = file.name.match(/\.[a-z0-9]+$/i)?.[0] ?? ".dat";
-  const inputPath = join(dir, `${randomUUID()}${safeExt}`);
-  await writeFile(inputPath, Buffer.from(await file.arrayBuffer()));
-  try {
-    const python = process.env.CAS_PDF_PYTHON ?? process.env.PYTHON_BIN ?? "python3";
-    const script = join(process.cwd(), "scripts/extract-amc-portfolio.py");
-    const args = [script, inputPath];
-    if (password) args.push("--password", password);
-    const { stdout } = await execFileAsync(python, args, { maxBuffer: 40 * 1024 * 1024 });
-    return JSON.parse(stdout) as DisclosureParseResult;
-  } catch (error) {
-    const stderr = typeof error === "object" && error && "stderr" in error ? String(error.stderr) : "";
-    if (stderr.includes("password") && stderr.includes("unlock")) return "bad_password";
-    console.error("AMC disclosure parser failed", stderr || error);
-    return "parser_failed";
-  } finally {
-    await unlink(inputPath).catch(() => {});
-  }
-}
-
 async function resolveStockAssetId(row: ParsedDisclosureRow): Promise<string> {
   const ticker = disclosureStockTicker(row);
   if (row.ticker) {
@@ -461,8 +433,8 @@ export async function importAmcDisclosure(formData: FormData): Promise<void> {
     if (!fundAssetId) redirect("/terminal/in/cas?disclosure=missing_fund");
     if (!(file instanceof File) || file.size === 0) redirect("/terminal/in/cas?disclosure=missing_file");
 
-    const fund = await queryOne<{ id: string }>(
-      `select a.id
+    const fund = await queryOne<{ id: string; ticker: string; name: string }>(
+      `select a.id, a.ticker, a.name
          from public.holdings h
          join public.assets a on a.id = h.asset_id
         where h.user_id = $1 and a.id = $2 and a.asset_class = 'MUTUAL_FUND'::asset_class
@@ -471,7 +443,7 @@ export async function importAmcDisclosure(formData: FormData): Promise<void> {
     );
     if (!fund) redirect("/terminal/in/cas?disclosure=invalid_fund");
 
-    const parsed = await extractDisclosureRows(file, password);
+    const parsed = await parseDisclosureSource(file, { password });
     if (parsed === "bad_password") redirect("/terminal/in/cas?disclosure=bad_password");
     if (parsed === "parser_failed") redirect("/terminal/in/cas?disclosure=failed");
 
@@ -504,6 +476,38 @@ export async function importAmcDisclosure(formData: FormData): Promise<void> {
         );
       }
     });
+
+    // Additive: also store the month-keyed snapshot (fund_schemes +
+    // fund_holdings_snapshot) that the X-Ray's history path reads. The
+    // user_mutual_fund_holdings write above stays exactly as it was — the
+    // current X-Ray keeps reading it. A snapshot that fails the ±2% weight
+    // check is rejected without failing the import the user just ran.
+    try {
+      const fullParsed = await parseDisclosureSource(file, { password, full: true });
+      if (typeof fullParsed === "string") {
+        console.warn(`AMC snapshot skipped: full-mode parse returned ${fullParsed}`);
+      } else {
+        await new AmcDisclosureProvider().ingestSnapshot({
+          meta: {
+            schemeCode: fund.ticker,
+            name: fund.name,
+            isin: /^IN[A-Z0-9]{10}$/.test(fund.ticker) ? fund.ticker : null,
+            amc: null,
+            category: null,
+            subCategory: null,
+          },
+          month: asOfDate,
+          rows: fullParsed.rows,
+          assetId: fund.id,
+        });
+      }
+    } catch (error) {
+      if (error instanceof SnapshotRejectedError) {
+        console.warn("AMC snapshot rejected at ingest:", error.message);
+      } else {
+        console.warn("AMC snapshot ingest failed (legacy import unaffected)", error);
+      }
+    }
 
     revalidatePath("/terminal/in");
     revalidatePath("/terminal/in/cas");
