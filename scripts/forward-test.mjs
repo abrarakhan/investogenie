@@ -22,8 +22,9 @@ const signed = (entry, price, isLong) => ((isLong ? price - entry : entry - pric
 async function evaluate() {
   const { rows: positions } = await client.query(
     `select id, asset_id, direction, horizon_days, enrolled_on, entry_price,
-            projected_target, projected_stop, projected_p5_pct, projected_p95_pct
-       from public.forward_test_positions where status = 'OPEN'`,
+            projected_target, projected_stop, projected_p5_pct, projected_p95_pct,
+            status, trigger_price, fill_window_days, filled_on
+       from public.forward_test_positions where status in ('PENDING','OPEN')`,
   );
   let closed = 0;
   const byStatus = {};
@@ -42,11 +43,25 @@ async function evaluate() {
     const target = p.projected_target === null ? null : Number(p.projected_target);
     const stop = p.projected_stop === null ? null : Number(p.projected_stop);
 
+    const trigger = p.trigger_price === null ? null : Number(p.trigger_price);
+    let pending = p.status === "PENDING" && trigger !== null;
+    let filledOn = p.filled_on ? new Date(p.filled_on).toISOString().slice(0, 10) : null;
+    let sincePending = 0;
     let maxFav = 0, maxAdv = 0, status = null, exitPrice = null, exitDate = null, held = 0;
     for (const bar of bars) {
-      held++;
       const high = Number(bar.high), low = Number(bar.low);
       const date = new Date(bar.date).toISOString().slice(0, 10);
+
+      if (pending) {
+        sincePending++;
+        // A swing call is a resting order: it only becomes a position once
+        // price trades through the trigger.
+        const filled = isLong ? high >= trigger : low <= trigger;
+        if (filled) { pending = false; filledOn = date; }
+        else if (sincePending >= p.fill_window_days) { status = "UNFILLED"; exitDate = date; break; }
+        else continue;
+      }
+      held++;
       maxFav = Math.max(maxFav, signed(entry, isLong ? high : low, isLong));
       maxAdv = Math.min(maxAdv, signed(entry, isLong ? low : high, isLong));
 
@@ -59,12 +74,25 @@ async function evaluate() {
 
     const lastDate = new Date(bars[bars.length - 1].date).toISOString().slice(0, 10);
     if (!status) {
+      // Persist a fill that happened without the position closing yet.
       await client.query(
         `update public.forward_test_positions
-            set max_favorable_pct=$2, max_adverse_pct=$3, evaluated_through=$4, updated_at=now()
+            set max_favorable_pct=$2, max_adverse_pct=$3, evaluated_through=$4,
+                status=$5, filled_on=coalesce(filled_on, $6::date), updated_at=now()
           where id=$1`,
-        [p.id, maxFav, maxAdv, lastDate],
+        [p.id, maxFav, maxAdv, lastDate, pending ? "PENDING" : "OPEN", filledOn],
       );
+      continue;
+    }
+
+    if (status === "UNFILLED") {
+      await client.query(
+        `update public.forward_test_positions
+            set status='UNFILLED', closed_at=$2::date, evaluated_through=$2::date, updated_at=now()
+          where id=$1`,
+        [p.id, exitDate],
+      );
+      closed++; byStatus.UNFILLED = (byStatus.UNFILLED ?? 0) + 1;
       continue;
     }
 
@@ -84,7 +112,7 @@ async function evaluate() {
     closed++;
     byStatus[status] = (byStatus[status] ?? 0) + 1;
   }
-  console.log(`Evaluated ${positions.length} open position(s); closed ${closed}`, byStatus);
+  console.log(`Examined ${positions.length} pending/open position(s); closed ${closed}`, byStatus);
 }
 
 async function scorecard() {
@@ -93,7 +121,9 @@ async function scorecard() {
   console.table(rows.map((r) => ({
     method: r.method,
     market: r.market,
+    pending: Number(r.pending_positions),
     open: Number(r.open_positions),
+    unfilled: Number(r.unfilled_positions),
     closed: Number(r.closed_positions),
     "win%": r.win_rate_pct,
     "realized%": r.avg_realized_pct,
