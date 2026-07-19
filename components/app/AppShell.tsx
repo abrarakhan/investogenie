@@ -72,7 +72,6 @@ export default function AppShell({
       items: [
         { label: "Overview", href: `/markets/${m}`, active: active === "overview" },
         { label: "Terminal", href: `/terminal/${m}`, active: active === "terminal" },
-        { label: "Forward test", href: `/terminal/${m}/forward-test`, active: active === "forward-test" },
         { label: "Stock Screener", href: `/terminal/${m}/stocks`, active: active === "stock-screener" },
         { label: "Swing Candidates", href: `/terminal/${m}/screener`, active: active === "swing", badge: "Buy" },
         { label: "Probability", href: `/terminal/${m}/probability`, active: active === "probability" },
@@ -84,6 +83,7 @@ export default function AppShell({
         { label: "Holdings", href: `/terminal/${m}`, active: false },
         { label: "Fund X-Ray", href: "/terminal/in", active: false, muted: market !== "IN" },
         { label: "Import Holdings", href: "/terminal/in/cas", active: active === "import-holdings", badge: market === "IN" ? undefined : "IN" },
+        { label: "Forward test", href: `/terminal/${m}/forward-test`, active: active === "forward-test" },
       ],
     },
     {
