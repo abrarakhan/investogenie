@@ -51,6 +51,16 @@ export interface RebalanceInstruction {
   estimatedAnnualSavingPct?: number;
 }
 
+export interface SnapshotCatalogEntry {
+  schemeCode: string;
+  name: string;
+  amc: string | null;
+  month: string;
+  lineItems: number;
+  equityWeightPct: number | null;
+  weightsOk: boolean;
+}
+
 export interface OverlapReport {
   totalValue: number;
   fundValues: { ticker: string; value: number; sharePct: number }[];
@@ -59,6 +69,14 @@ export interface OverlapReport {
   flaggedOverlaps: PairwiseOverlap[];
   concentratedStocks: StockExposure[];
   instructions: RebalanceInstruction[];
+  /** Disclosures loaded in the snapshot store, even if they are not yet linked
+   *  to the user's held fund assets. This lets the UI show what data exists
+   *  instead of looking empty while awaiting scheme mapping/imports. */
+  availableSnapshots?: SnapshotCatalogEntry[];
+  /** Reference overlap across loaded disclosures. Not portfolio-weighted unless
+   *  those schemes are actually held and linked. */
+  referenceOverlaps?: PairwiseOverlap[];
+  referenceStockExposure?: StockExposure[];
 }
 
 /** Within-fund weight map: fundTicker -> (stockTicker -> weight% 0..100). */

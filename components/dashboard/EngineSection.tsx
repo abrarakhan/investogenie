@@ -163,6 +163,75 @@ export default function EngineSection({
                 <p className="text-sm text-emerald-300">No overlaps above threshold.</p>
               )}
 
+              {overlap.stockExposure.length > 0 && (
+                <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                  <p className="mb-3 text-xs font-semibold uppercase tracking-[0.18em] text-white/38">Top effective stock exposure</p>
+                  <div className="space-y-2">
+                    {overlap.stockExposure.slice(0, 6).map((s) => (
+                      <div key={s.stockTicker} className="grid grid-cols-[1fr_auto] gap-3 text-xs">
+                        <span className="truncate text-white/70">{s.stockTicker}</span>
+                        <span className="font-mono text-white/85">{s.effectiveWeightPct.toFixed(2)}%</span>
+                        <span className="col-span-2 truncate text-[11px] text-white/35">via {s.contributingFunds.join(", ")}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {overlap.pairwiseOverlaps.length > 0 && (
+                <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                  <p className="mb-3 text-xs font-semibold uppercase tracking-[0.18em] text-white/38">Pairwise overlap detail</p>
+                  <div className="space-y-2">
+                    {overlap.pairwiseOverlaps.slice(0, 5).map((o) => (
+                      <div key={`${o.fundA}:${o.fundB}`} className="rounded-xl border border-white/5 bg-white/[0.025] px-3 py-2 text-xs">
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="truncate text-white/72">{o.fundA} ↔ {o.fundB}</span>
+                          <span className="font-mono text-white/85">{o.overlapPct.toFixed(2)}%</span>
+                        </div>
+                        <div className="mt-1 truncate text-[11px] text-white/35">Shared: {o.sharedStocks.slice(0, 5).join(", ")}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {overlap.referenceOverlaps && overlap.referenceOverlaps.length > 0 && overlap.stockExposure.length === 0 && (
+                <div className="rounded-2xl border border-cyan-300/20 bg-cyan-300/5 p-4">
+                  <p className="text-sm font-semibold text-cyan-200">Loaded disclosure reference detail</p>
+                  <p className="mt-1 text-xs leading-relaxed text-white/55">
+                    These AMC disclosures are loaded in the database, but they are not linked to your currently held fund assets yet. Import the matching pension-scheme disclosures to make this portfolio-weighted.
+                  </p>
+                  <div className="mt-3 space-y-2">
+                    {overlap.referenceOverlaps.slice(0, 5).map((o) => (
+                      <div key={`${o.fundA}:${o.fundB}`} className="rounded-xl border border-white/5 bg-black/20 px-3 py-2 text-xs">
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="truncate text-white/72">{o.fundA} ↔ {o.fundB}</span>
+                          <span className="font-mono text-cyan-100">{o.overlapPct.toFixed(2)}%</span>
+                        </div>
+                        <div className="mt-1 truncate text-[11px] text-white/35">Shared: {o.sharedStocks.slice(0, 5).join(", ")}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {overlap.availableSnapshots && overlap.availableSnapshots.length > 0 && overlap.stockExposure.length === 0 && (
+                <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                  <p className="mb-3 text-xs font-semibold uppercase tracking-[0.18em] text-white/38">Loaded AMC disclosures</p>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    {overlap.availableSnapshots.slice(0, 8).map((s) => (
+                      <div key={`${s.schemeCode}:${s.month}`} className="rounded-xl border border-white/5 bg-white/[0.025] px-3 py-2 text-xs">
+                        <div className="truncate font-semibold text-white/75">{s.name}</div>
+                        <div className="mt-1 flex items-center justify-between gap-3 text-[11px] text-white/38">
+                          <span>{s.month}</span>
+                          <span>{s.equityWeightPct === null ? "-" : `${s.equityWeightPct.toFixed(2)}% equity`}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {overlap.instructions.length > 0 && (
                 <ul className="space-y-2">
                   {overlap.instructions.slice(0, 5).map((ins, i) => (
