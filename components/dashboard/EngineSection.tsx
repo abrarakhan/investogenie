@@ -142,6 +142,26 @@ export default function EngineSection({
             <p className="text-sm text-white/50">No fund look-through data.</p>
           ) : (
             <div className="space-y-4">
+              {overlap.fundValues.length > 0 && (
+                <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-white/38">Your uploaded fund holdings</p>
+                    <span className="rounded-full border border-white/10 px-2 py-0.5 text-[10px] font-semibold text-white/50">
+                      {overlap.fundValues.length} funds
+                    </span>
+                  </div>
+                  <div className="max-h-72 space-y-2 overflow-auto pr-1">
+                    {overlap.fundValues.map((fund) => (
+                      <div key={fund.ticker} className="grid grid-cols-[1fr_auto] gap-3 rounded-xl border border-white/5 bg-white/[0.025] px-3 py-2 text-xs">
+                        <span className="truncate font-semibold text-white/75" title={fund.ticker}>{fund.ticker}</span>
+                        <span className="font-mono text-white/80">{fund.sharePct.toFixed(2)}%</span>
+                        <span className="col-span-2 font-mono text-[11px] text-white/35">INR {Math.round(fund.value).toLocaleString("en-IN")}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {overlap.availableSnapshots && overlap.availableSnapshots.length > 0 && overlap.stockExposure.length === 0 && (
                 <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
                   <div className="mb-3 flex items-center justify-between gap-3">

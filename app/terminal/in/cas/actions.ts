@@ -88,6 +88,17 @@ function inferAssetClass(name: string, row: Record<string, string> = {}): Import
   return "STOCK";
 }
 
+const AMC_HEADER_ONLY = /^(?:aditya\s+birla\s+sun\s+life|canara\s+robeco|dsp|franklin\s+templeton|hdfc|icici\s+prudential|motilal\s+oswal|nippon\s+india|sbi)\s+mutual\s+fund$/i;
+const CAS_DISCLOSURE_NOISE = /(?:scheme\s+name\s+(?:of|changed)|fundamental\s+attributes|load\s+structure|entry\s+load|exit\s+load|please\s+refer|sai\s*\/\s*sid|addendum|trxn\.ref\.no|purchase\s+trxn|available\s+on\s+www|for\s+further\s+details|w\.e\.f\.?|with\s+effect\s+from|registration\s*\/\s*enrolment|investor\s+service\s+centre|\bgst\b)/i;
+
+function isLikelyCasNoise(row: ParsedHoldingRow): boolean {
+  const name = row.name.replace(/\s+/g, " ").trim();
+  if (row.isin) return false;
+  if (CAS_DISCLOSURE_NOISE.test(name)) return true;
+  if (row.assetClass === "MUTUAL_FUND" && AMC_HEADER_ONLY.test(name)) return true;
+  return false;
+}
+
 function parseStructured(text: string): ParsedHoldingRow[] {
   const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
   const headerIndex = lines.findIndex((line) => looksLikeHeader(splitCsvLine(line)));
@@ -343,7 +354,7 @@ export async function importCasStatement(formData: FormData): Promise<void> {
   const parsed = parseStructured(text).concat(parseLooseText(text), parseIsinRows(text), parseNumericTailRows(text));
   const byKey = new Map<string, ParsedHoldingRow>();
   for (const row of parsed) byKey.set(`${row.assetClass}:${row.isin ?? row.name}:${row.folio ?? ""}`, row);
-  const rows = [...byKey.values()];
+  const rows = [...byKey.values()].filter((row) => !isLikelyCasNoise(row));
   if (rows.length === 0) redirect("/terminal/in/cas?status=empty");
 
   const scaffold = await ensureScaffold();

@@ -181,15 +181,22 @@ export async function getFundOverlap(): Promise<OverlapReport | null> {
   if (!user) return null;
 
   const heldFunds = (
-    await query<{ id: string; ticker: string; name: string | null; asset_class: string; quantity: string | number; avg_cost: string | number | null }>(
-      `select a.id, a.ticker, a.name, a.asset_class, h.quantity, h.avg_cost
+    await query<{ id: string; ticker: string; name: string | null; display_name: string | null; asset_class: string; quantity: string | number; avg_cost: string | number | null }>(
+      `select a.id, a.ticker, a.name, fs.name as display_name, a.asset_class, h.quantity, h.avg_cost
          from public.holdings h
          join public.assets a on a.id = h.asset_id
+         left join lateral (
+           select name
+             from public.fund_schemes
+            where asset_id = a.id
+            order by latest_month desc nulls last, created_at desc
+            limit 1
+         ) fs on true
         where h.user_id = $1`,
       [user.id],
     )
   )
-    .map((h) => ({ id: h.id, ticker: h.ticker, name: h.name, assetClass: h.asset_class, units: Number(h.quantity), nav: Number(h.avg_cost ?? 0) }))
+    .map((h) => ({ id: h.id, ticker: h.ticker, name: h.name, displayName: h.display_name ?? h.name ?? h.ticker, assetClass: h.asset_class, units: Number(h.quantity), nav: Number(h.avg_cost ?? 0) }))
     .filter((h) => h.assetClass === "MUTUAL_FUND" && h.ticker && h.units > 0);
   if (heldFunds.length === 0) return null;
 
@@ -253,7 +260,7 @@ export async function getFundOverlap(): Promise<OverlapReport | null> {
     return {
       totalValue,
       fundValues: heldFunds.map((h) => ({
-        ticker: h.name || h.ticker,
+        ticker: h.displayName,
         value: h.units * (h.nav > 0 ? h.nav : 100),
         sharePct: totalValue === 0 ? 0 : ((h.units * (h.nav > 0 ? h.nav : 100)) / totalValue) * 100,
       })),
@@ -310,7 +317,7 @@ export async function getFundOverlap(): Promise<OverlapReport | null> {
     return {
       totalValue,
       fundValues: heldFunds.map((h) => ({
-        ticker: h.name || h.ticker,
+        ticker: h.displayName,
         value: h.units * (h.nav > 0 ? h.nav : 100),
         sharePct: totalValue === 0 ? 0 : ((h.units * (h.nav > 0 ? h.nav : 100)) / totalValue) * 100,
       })),
@@ -334,7 +341,7 @@ export async function getFundOverlap(): Promise<OverlapReport | null> {
   const metaByTicker = new Map(metaList.map((m) => [m.ticker, m]));
 
   const portfolio: UserFundHolding[] = heldFunds.map((h) => ({
-    fundTicker: fundLabel.get(h.id) ?? h.ticker,
+    fundTicker: fundLabel.get(h.id) ?? h.displayName,
     units: h.units,
     navValue: h.nav > 0 ? h.nav : 100,
     planType: metaByTicker.get(h.ticker)?.planType,
