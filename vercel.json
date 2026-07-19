@@ -23,6 +23,18 @@
     {
       "path": "/api/cron/refresh-screener",
       "schedule": "*/15 3-10,13-21 * * 1-5"
+    },
+    {
+      "path": "/api/cron/forward-test?action=evaluate",
+      "schedule": "30 23 * * 1-5"
+    },
+    {
+      "path": "/api/cron/forward-test?action=enroll&market=IN",
+      "schedule": "45 23 * * 1"
+    },
+    {
+      "path": "/api/cron/forward-test?action=enroll&market=US",
+      "schedule": "50 23 * * 1"
     }
   ]
 }
