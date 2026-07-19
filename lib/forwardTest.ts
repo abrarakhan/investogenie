@@ -309,6 +309,8 @@ export interface ScorecardRow {
   total: number;
   open_positions: number;
   closed_positions: number;
+  pending_positions: number;
+  unfilled_positions: number;
   win_rate_pct: number | null;
   avg_realized_pct: number | null;
   avg_projected_pct: number | null;
@@ -330,11 +332,50 @@ export async function getForwardTestScorecard(market?: MarketId): Promise<Scorec
     total: Number(r.total),
     open_positions: Number(r.open_positions),
     closed_positions: Number(r.closed_positions),
+    pending_positions: Number(r.pending_positions),
+    unfilled_positions: Number(r.unfilled_positions),
     win_rate_pct: r.win_rate_pct === null ? null : Number(r.win_rate_pct),
     avg_realized_pct: r.avg_realized_pct === null ? null : Number(r.avg_realized_pct),
     avg_projected_pct: r.avg_projected_pct === null ? null : Number(r.avg_projected_pct),
     avg_projection_error_pct: r.avg_projection_error_pct === null ? null : Number(r.avg_projection_error_pct),
     avg_max_adverse_pct: r.avg_max_adverse_pct === null ? null : Number(r.avg_max_adverse_pct),
     band_coverage_pct: r.band_coverage_pct === null ? null : Number(r.band_coverage_pct),
+  }));
+}
+
+export interface PositionRow {
+  id: string; method: string; market: string; ticker: string; status: string;
+  direction: string; enrolled_on: string; filled_on: string | null;
+  entry_price: number; trigger_price: number | null;
+  projected_target: number | null; projected_stop: number | null;
+  projected_return_pct: number | null; realized_return_pct: number | null;
+  max_adverse_pct: number | null; within_projected_band: boolean | null;
+  horizon_days: number;
+}
+
+/** Every position for a market, newest cohort first. */
+export async function getForwardTestPositions(market?: MarketId): Promise<PositionRow[]> {
+  const rows = await query<Record<string, unknown>>(
+    `select id, method, market, ticker, status, direction,
+            enrolled_on::text as enrolled_on, filled_on::text as filled_on,
+            entry_price, trigger_price, projected_target, projected_stop,
+            projected_return_pct, realized_return_pct, max_adverse_pct,
+            within_projected_band, horizon_days
+       from public.forward_test_positions
+      ${market ? "where market = $1" : ""}
+      order by enrolled_on desc, method, ticker`,
+    market ? [market] : [],
+  );
+  const num = (v: unknown) => (v === null || v === undefined ? null : Number(v));
+  return rows.map((r) => ({
+    id: String(r.id), method: String(r.method), market: String(r.market),
+    ticker: String(r.ticker), status: String(r.status), direction: String(r.direction),
+    enrolled_on: String(r.enrolled_on), filled_on: r.filled_on ? String(r.filled_on) : null,
+    entry_price: Number(r.entry_price), trigger_price: num(r.trigger_price),
+    projected_target: num(r.projected_target), projected_stop: num(r.projected_stop),
+    projected_return_pct: num(r.projected_return_pct), realized_return_pct: num(r.realized_return_pct),
+    max_adverse_pct: num(r.max_adverse_pct),
+    within_projected_band: r.within_projected_band === null ? null : Boolean(r.within_projected_band),
+    horizon_days: Number(r.horizon_days),
   }));
 }
