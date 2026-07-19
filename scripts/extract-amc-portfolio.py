@@ -59,6 +59,19 @@ WEIGHT_KEYS = {
 
 # Aggregate rows are never holdings and are always dropped.
 TOTALS_RE = re.compile(r"\b(total|sub\s*total|grand\s*total|net\s+assets)\b", re.I)
+# Section captions. Some AMCs (ICICI Pru) repeat the section SUBTOTAL on the
+# caption row itself, so these parse as huge phantom holdings unless dropped.
+# Anchored to the whole cell so real instruments never match.
+SECTION_RE = re.compile(
+    r"^(equity\s*&\s*equity\s+related.*|equity\s+shares?|preference\s+shares?|"
+    r"listed\s*/?\s*awaiting\s+listing.*|"
+    r"unlisted\b.*|debt\s+instruments?|money\s+market\s+instruments?|"
+    r"government\s+securities|state\s+government\s+securities|treasury\s+bills|"
+    r"corporate\s+(debt|bonds?).*|units\s+of\s+(mutual\s+funds?|reits?).*|"
+    r"reits?\s*&\s*invits?|foreign\s+securities.*|international\s+equities.*|"
+    r"cash\s*,?\s*cash\s+equivalents?\s+and\s+others.*|others?)$",
+    re.I,
+)
 # Non-equity lines: dropped in the default (equity-only) mode used by the CAS
 # route, KEPT in --full mode so a snapshot's weights can sum to ~100.
 NON_EQUITY_RE = re.compile(
@@ -70,7 +83,7 @@ NON_EQUITY_RE = re.compile(
 
 
 def excluded_name(name: str, full: bool) -> bool:
-    if TOTALS_RE.search(name):
+    if TOTALS_RE.search(name) or SECTION_RE.match(name.strip()):
         return True
     return (not full) and bool(NON_EQUITY_RE.search(name))
 
