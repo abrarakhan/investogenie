@@ -58,7 +58,7 @@ export default function AppShell({
   children: React.ReactNode;
   email?: string;
   market: MarketId;
-  active: "overview" | "terminal" | "stock-screener" | "swing" | "probability" | "import-holdings" | "data" | "settings";
+  active: "overview" | "terminal" | "stock-screener" | "swing" | "probability" | "forward-test" | "import-holdings" | "data" | "settings";
   title: string;
   subtitle?: string;
   actions?: React.ReactNode;
@@ -72,6 +72,7 @@ export default function AppShell({
       items: [
         { label: "Overview", href: `/markets/${m}`, active: active === "overview" },
         { label: "Terminal", href: `/terminal/${m}`, active: active === "terminal" },
+        { label: "Forward test", href: `/terminal/${m}/forward-test`, active: active === "forward-test" },
         { label: "Stock Screener", href: `/terminal/${m}/stocks`, active: active === "stock-screener" },
         { label: "Swing Candidates", href: `/terminal/${m}/screener`, active: active === "swing", badge: "Buy" },
         { label: "Probability", href: `/terminal/${m}/probability`, active: active === "probability" },
