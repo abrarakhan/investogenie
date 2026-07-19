@@ -140,7 +140,43 @@ export async function getFundOverlap(): Promise<OverlapReport | null> {
       )
     : [];
   const mfh = [...userMfh, ...globalMfh];
-  if (mfh.length === 0) {
+
+  // Third source: month-keyed AMC disclosure snapshots (fund_holdings_snapshot),
+  // for held funds linked to a scheme via fund_schemes.asset_id. Joined on
+  // instrument ISIN — never name — then labelled with one canonical display
+  // name per ISIN so the engine's string keys still collapse across funds.
+  const mfhCoveredIds = new Set(mfh.map((r) => r.fund_asset_id));
+  const snapshotFundIds = heldFundIds.filter((id) => !mfhCoveredIds.has(id));
+  const snapRows = snapshotFundIds.length
+    ? await query<{ asset_id: string; scheme_name: string; instrument_isin: string; instrument_name: string; weight_pct: number }>(
+        `select fs.asset_id, fs.name as scheme_name,
+                fhs.instrument_isin, fhs.instrument_name, fhs.weight_pct::float8 as weight_pct
+           from public.fund_schemes fs
+           join public.fund_holdings_snapshot fhs
+             on fhs.scheme_code = fs.scheme_code
+            and fhs.month = (select max(month) from public.fund_holdings_snapshot m
+                              where m.scheme_code = fs.scheme_code)
+          where fs.asset_id = any($1) and fhs.instrument_type = 'EQUITY'
+          order by fs.scheme_code, fhs.weight_pct desc`,
+        [snapshotFundIds],
+      )
+    : [];
+
+  // Snapshot-covered funds get their scheme's proper name as the engine key
+  // (asset tickers are scheme ISINs and CAS-imported names are mangled).
+  // A name collision falls back to the ticker so two funds never merge.
+  const fundLabel = new Map<string, string>();
+  {
+    const usedFundLabels = new Set<string>();
+    for (const r of snapRows) {
+      if (fundLabel.has(r.asset_id)) continue;
+      const unique = !usedFundLabels.has(r.scheme_name);
+      usedFundLabels.add(r.scheme_name);
+      if (unique) fundLabel.set(r.asset_id, r.scheme_name);
+    }
+  }
+
+  if (mfh.length === 0 && snapRows.length === 0) {
     const totalValue = heldFunds.reduce((sum, h) => sum + h.units * (h.nav > 0 ? h.nav : 100), 0);
     return {
       totalValue,
@@ -157,20 +193,43 @@ export async function getFundOverlap(): Promise<OverlapReport | null> {
     };
   }
 
-  const ids = [...new Set(mfh.flatMap((r) => [r.fund_asset_id, r.stock_asset_id]))];
+  const ids = [
+    ...new Set([
+      ...mfh.flatMap((r) => [r.fund_asset_id, r.stock_asset_id]),
+      ...snapRows.map((r) => r.asset_id),
+    ]),
+  ];
   const assets = await query<{ id: string; ticker: string }>(
     "select id, ticker from public.assets where id = any($1)",
     [ids],
   );
   const idToTicker = new Map(assets.map((a) => [a.id, a.ticker]));
 
-  const lookThrough: FundStockWeight[] = mfh
-    .map((r) => ({
+  // One display label per ISIN (first variant seen); if two ISINs share a
+  // printed name, disambiguate so they never merge in the engine.
+  const isinLabel = new Map<string, string>();
+  const usedLabels = new Set<string>();
+  for (const r of snapRows) {
+    if (isinLabel.has(r.instrument_isin)) continue;
+    const label = usedLabels.has(r.instrument_name)
+      ? `${r.instrument_name} (${r.instrument_isin.slice(-4)})`
+      : r.instrument_name;
+    isinLabel.set(r.instrument_isin, label);
+    usedLabels.add(label);
+  }
+
+  const lookThrough: FundStockWeight[] = [
+    ...mfh.map((r) => ({
       fundTicker: idToTicker.get(r.fund_asset_id) ?? "",
       stockTicker: idToTicker.get(r.stock_asset_id) ?? "",
       weightPercentage: Number(r.weight_percentage),
-    }))
-    .filter((r) => r.fundTicker && r.stockTicker);
+    })),
+    ...snapRows.map((r) => ({
+      fundTicker: fundLabel.get(r.asset_id) ?? idToTicker.get(r.asset_id) ?? "",
+      stockTicker: isinLabel.get(r.instrument_isin) ?? r.instrument_isin,
+      weightPercentage: r.weight_pct,
+    })),
+  ].filter((r) => r.fundTicker && r.stockTicker);
   const coveredFunds = new Set(lookThrough.map((r) => r.fundTicker));
   if (lookThrough.length === 0) {
     const totalValue = heldFunds.reduce((sum, h) => sum + h.units * (h.nav > 0 ? h.nav : 100), 0);
@@ -200,7 +259,7 @@ export async function getFundOverlap(): Promise<OverlapReport | null> {
   const metaByTicker = new Map(metaList.map((m) => [m.ticker, m]));
 
   const portfolio: UserFundHolding[] = heldFunds.map((h) => ({
-    fundTicker: h.ticker,
+    fundTicker: fundLabel.get(h.id) ?? h.ticker,
     units: h.units,
     navValue: h.nav > 0 ? h.nav : 100,
     planType: metaByTicker.get(h.ticker)?.planType,
@@ -208,7 +267,7 @@ export async function getFundOverlap(): Promise<OverlapReport | null> {
 
   const report = analyzeFundOverlap(portfolio, lookThrough, metaList);
   const missingDisclosureInstructions = heldFunds
-    .filter((h) => !coveredFunds.has(h.ticker))
+    .filter((h) => !coveredFunds.has(fundLabel.get(h.id) ?? h.ticker))
     .slice(0, 5)
     .map((h) => disclosureInstruction(h.ticker, h.name));
 
