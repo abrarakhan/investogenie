@@ -104,77 +104,6 @@ function disclosureInstruction(ticker: string, fundName?: string | null): Rebala
   };
 }
 
-async function getLoadedSnapshotDetail(): Promise<Pick<OverlapReport, "availableSnapshots" | "referenceOverlaps" | "referenceStockExposure">> {
-  const catalog = await query<{
-    scheme_code: string;
-    name: string;
-    amc: string | null;
-    month: string;
-    line_items: string | number;
-    equity_weight_pct: string | number | null;
-    weights_ok: boolean;
-  }>(
-    `select fs.scheme_code, fs.name, fs.amc,
-            to_char(h.month, 'YYYY-MM-DD') as month,
-            h.line_items, h.equity_weight_pct, h.weights_ok
-       from public.fund_schemes fs
-       join public.fund_snapshot_health h on h.scheme_code = fs.scheme_code
-      where h.month = (select max(month) from public.fund_snapshot_health mh where mh.scheme_code = fs.scheme_code)
-      order by fs.amc nulls last, fs.name`,
-  );
-  if (catalog.length === 0) return {};
-
-  const rows = await query<{
-    scheme_code: string;
-    scheme_name: string;
-    instrument_isin: string;
-    instrument_name: string;
-    weight_pct: string | number;
-  }>(
-    `select fs.scheme_code, fs.name as scheme_name,
-            fhs.instrument_isin, fhs.instrument_name, fhs.weight_pct::float8 as weight_pct
-       from public.fund_schemes fs
-       join public.fund_holdings_snapshot fhs
-         on fhs.scheme_code = fs.scheme_code
-        and fhs.month = (select max(month) from public.fund_holdings_snapshot m where m.scheme_code = fs.scheme_code)
-      where fhs.instrument_type = 'EQUITY'
-      order by fs.scheme_code, fhs.weight_pct desc`,
-  );
-
-  const usedStockLabels = new Set<string>();
-  const stockLabel = new Map<string, string>();
-  for (const row of rows) {
-    if (stockLabel.has(row.instrument_isin)) continue;
-    const label = usedStockLabels.has(row.instrument_name)
-      ? `${row.instrument_name} (${row.instrument_isin.slice(-4)})`
-      : row.instrument_name;
-    stockLabel.set(row.instrument_isin, label);
-    usedStockLabels.add(label);
-  }
-
-  const portfolio = catalog.map((row) => ({ fundTicker: row.name, units: 1, navValue: 1 }));
-  const lookThrough: FundStockWeight[] = rows.map((row) => ({
-    fundTicker: row.scheme_name,
-    stockTicker: stockLabel.get(row.instrument_isin) ?? row.instrument_isin,
-    weightPercentage: Number(row.weight_pct),
-  }));
-  const reference = analyzeFundOverlap(portfolio, lookThrough, []);
-
-  return {
-    availableSnapshots: catalog.map((row) => ({
-      schemeCode: row.scheme_code,
-      name: row.name,
-      amc: row.amc,
-      month: row.month,
-      lineItems: Number(row.line_items),
-      equityWeightPct: row.equity_weight_pct === null ? null : Number(row.equity_weight_pct),
-      weightsOk: row.weights_ok,
-    })),
-    referenceOverlaps: reference.pairwiseOverlaps,
-    referenceStockExposure: reference.stockExposure,
-  };
-}
-
 /** Look-through fund overlap for the signed-in user's actual fund positions. */
 export async function getFundOverlap(): Promise<OverlapReport | null> {
   const user = await getSessionUser();
@@ -256,20 +185,20 @@ export async function getFundOverlap(): Promise<OverlapReport | null> {
 
   if (mfh.length === 0 && snapRows.length === 0) {
     const totalValue = heldFunds.reduce((sum, h) => sum + h.units * (h.nav > 0 ? h.nav : 100), 0);
-    const snapshotDetail = await getLoadedSnapshotDetail();
+    const fundValues = heldFunds.map((h) => ({
+      ticker: h.displayName,
+      value: h.units * (h.nav > 0 ? h.nav : 100),
+      sharePct: totalValue === 0 ? 0 : ((h.units * (h.nav > 0 ? h.nav : 100)) / totalValue) * 100,
+    }));
     return {
       totalValue,
-      fundValues: heldFunds.map((h) => ({
-        ticker: h.displayName,
-        value: h.units * (h.nav > 0 ? h.nav : 100),
-        sharePct: totalValue === 0 ? 0 : ((h.units * (h.nav > 0 ? h.nav : 100)) / totalValue) * 100,
-      })),
+      fundValues,
       stockExposure: [],
+      fundCompositions: fundValues.map((fund) => ({ fundTicker: fund.ticker, value: fund.value, sharePct: fund.sharePct, stocks: [], lookThroughAvailable: false })),
       pairwiseOverlaps: [],
       flaggedOverlaps: [],
       concentratedStocks: [],
       instructions: heldFunds.slice(0, 8).map((h) => disclosureInstruction(h.ticker, h.name)),
-      ...snapshotDetail,
     };
   }
 
@@ -313,20 +242,20 @@ export async function getFundOverlap(): Promise<OverlapReport | null> {
   const coveredFunds = new Set(lookThrough.map((r) => r.fundTicker));
   if (lookThrough.length === 0) {
     const totalValue = heldFunds.reduce((sum, h) => sum + h.units * (h.nav > 0 ? h.nav : 100), 0);
-    const snapshotDetail = await getLoadedSnapshotDetail();
+    const fundValues = heldFunds.map((h) => ({
+      ticker: h.displayName,
+      value: h.units * (h.nav > 0 ? h.nav : 100),
+      sharePct: totalValue === 0 ? 0 : ((h.units * (h.nav > 0 ? h.nav : 100)) / totalValue) * 100,
+    }));
     return {
       totalValue,
-      fundValues: heldFunds.map((h) => ({
-        ticker: h.displayName,
-        value: h.units * (h.nav > 0 ? h.nav : 100),
-        sharePct: totalValue === 0 ? 0 : ((h.units * (h.nav > 0 ? h.nav : 100)) / totalValue) * 100,
-      })),
+      fundValues,
       stockExposure: [],
+      fundCompositions: fundValues.map((fund) => ({ fundTicker: fund.ticker, value: fund.value, sharePct: fund.sharePct, stocks: [], lookThroughAvailable: false })),
       pairwiseOverlaps: [],
       flaggedOverlaps: [],
       concentratedStocks: [],
       instructions: heldFunds.slice(0, 8).map((h) => disclosureInstruction(h.ticker, h.name)),
-      ...snapshotDetail,
     };
   }
 
@@ -355,7 +284,6 @@ export async function getFundOverlap(): Promise<OverlapReport | null> {
 
   return {
     ...report,
-    ...(await getLoadedSnapshotDetail()),
     instructions: [...missingDisclosureInstructions, ...report.instructions],
   };
 }
