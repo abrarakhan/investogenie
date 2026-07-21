@@ -10,6 +10,9 @@ export type CronJob =
   | "backfill-us"
   | "backfill-us-expand"
   | "backfill-nse"
+  | "backfill-bse"
+  | "backfill_ohlcv"
+  | "backfill_ohlcv_cron"
   | "refresh-screener"
   | "forward-test";
 export type CronStatus = "ok" | "error";

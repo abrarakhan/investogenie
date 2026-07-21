@@ -131,7 +131,52 @@ npm run sync:us
 npm run sync:us-history
 npm run sync:us-quotes
 npm run sync:us-fundamentals
+npm run backfill
 ```
+
+## OHLCV Backfill Queue
+
+Large quote-without-history gaps are repaired through `public.backfill_queue` instead of one huge blast run. The queue is populated idempotently from live coverage gaps: assets with `latest_quotes` but zero `daily_ohlcv` bars.
+
+Priority order:
+
+1. India screener universe: `NIFTY_500`.
+2. US screener universe: `SP_500` and `NASDAQ_100` when seeded.
+3. User portfolio/watchlist holdings.
+4. Active swing signals or open forward-test positions.
+5. Remaining India quoted assets.
+6. Remaining US quoted assets.
+
+Manual trigger options:
+
+- Browser: open `/data/health`, then use **Populate Queue**, **Run Backfill Now**, or **Re-queue Failed**.
+- CLI: start the app first, then run `npm run backfill`.
+
+The app launcher also checks the queue after market-close windows and triggers one configured batch through `/api/backfill/run?job=cron`.
+
+Environment variables:
+
+```bash
+BACKFILL_BATCH_SIZE=100
+BACKFILL_DELAY_IN_MS=1500
+BACKFILL_DELAY_US_MS=1000
+BACKFILL_HISTORY_DAYS=504
+BACKFILL_SKIP_DURING_MARKET_HOURS=true
+BACKFILL_CRON_DISABLED=0
+BACKFILL_INDIA_HOUR_IST=17
+BACKFILL_US_HOUR_IST=22
+```
+
+Monitor progress in SQL:
+
+```sql
+select tier, status, count(*)
+from public.backfill_queue
+group by tier, status
+order by tier, status;
+```
+
+The worker only inserts/upserts OHLCV bars through the existing history scripts. It does not delete data. Rows that already gained history are marked `skipped`; failed rows retry up to three attempts before becoming `failed`.
 
 ## Local Setup
 

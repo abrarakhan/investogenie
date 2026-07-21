@@ -32,6 +32,8 @@ const syncHour = Number(process.env.NSE_SYNC_HOUR_IST ?? 18);
 const syncMinute = Number(process.env.NSE_SYNC_MINUTE_IST ?? 30);
 const syncSleep = process.env.NSE_SYNC_SLEEP_SECONDS ?? "1.2";
 const syncDisabled = process.env.NSE_SYNC_DISABLED === "1";
+const nseSyncProvider = (process.env.NSE_SYNC_PROVIDER ?? "bhavcopy").toLowerCase();
+const nseBhavcopyMaxSessions = process.env.NSE_BHAVCOPY_MAX_SESSIONS ?? "20";
 const fundamentalsSleep = process.env.FUNDAMENTALS_SYNC_SLEEP_SECONDS ?? "1.5";
 const fundamentalsDisabled = process.env.FUNDAMENTALS_SYNC_DISABLED === "1";
 const usQuoteDisabled = process.env.US_QUOTE_SYNC_DISABLED === "1";
@@ -49,9 +51,15 @@ const usHistoryMinBars = process.env.US_HISTORY_MIN_BARS ?? "260";
 const usHistorySleep = process.env.US_HISTORY_SLEEP_SECONDS ?? "0.25";
 const macroSyncDisabled = process.env.MACRO_SYNC_DISABLED === "1";
 const macroSyncYears = process.env.MACRO_SYNC_YEARS ?? "5";
+const backfillDisabled =
+  process.env.BACKFILL_CRON_ENABLED !== "1" ||
+  process.env.BACKFILL_CRON_DISABLED === "1";
+const backfillIndiaHour = Number(process.env.BACKFILL_INDIA_HOUR_IST ?? 17);
+const backfillUsHour = Number(process.env.BACKFILL_US_HOUR_IST ?? 22);
 const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
 
 let syncChild = null;
+let syncPromise = null;
 let fundamentalsChild = null;
 let usFundamentalsChild = null;
 let usHistoryChild = null;
@@ -59,7 +67,11 @@ let macroChild = null;
 let marketRefreshChild = null;
 let marketRefreshPromise = null;
 let marketRefreshTimer = null;
+let backfillTimer = null;
 let dailyTimer = null;
+let backfillPromise = null;
+let lastBackfillIndiaDate = null;
+let lastBackfillUsDate = null;
 let shuttingDown = false;
 
 const sleep = (milliseconds) => new Promise((resolveSleep) => setTimeout(resolveSleep, milliseconds));
@@ -209,7 +221,67 @@ function scheduleRecurringMarketRefresh() {
   );
 }
 
-function runSync(trigger) {
+function istClock() {
+  const now = new Date();
+  const ist = new Date(now.getTime() + IST_OFFSET_MS);
+  return {
+    date: ist.toISOString().slice(0, 10),
+    hour: ist.getUTCHours(),
+    minute: ist.getUTCMinutes(),
+  };
+}
+
+async function runBackfillCron(label) {
+  if (backfillDisabled) {
+    console.log(`[backfill] ${label} cron disabled; set BACKFILL_CRON_ENABLED=1 to enable`);
+    return;
+  }
+  if (backfillPromise) {
+    console.log(`[backfill] skipping ${label}; backfill still running`);
+    return backfillPromise;
+  }
+  backfillPromise = (async () => {
+    await waitForApp();
+    if (!process.env.CRON_SECRET) throw new Error("CRON_SECRET is not configured");
+    console.log(`[backfill] starting ${label} queued OHLCV repair`);
+    const response = await fetch("http://127.0.0.1:3000/api/backfill/run?job=cron", {
+      method: "POST",
+      headers: { authorization: `Bearer ${process.env.CRON_SECRET}` },
+    });
+    const body = await response.text();
+    if (!response.ok && response.status !== 409) throw new Error(`backfill failed (${response.status}): ${body}`);
+    console.log(`[backfill] ${label} completed: ${body}`);
+  })()
+    .catch((error) => console.error(`[backfill] ${label} failed: ${error.message}`))
+    .finally(() => {
+      backfillPromise = null;
+    });
+  return backfillPromise;
+}
+
+function scheduleBackfillCron() {
+  if (backfillDisabled) {
+    console.log("[backfill] queued OHLCV cron disabled; set BACKFILL_CRON_ENABLED=1 to enable");
+    return;
+  }
+  const initialClock = istClock();
+  if (initialClock.hour >= backfillIndiaHour) lastBackfillIndiaDate = initialClock.date;
+  if (initialClock.hour >= backfillUsHour) lastBackfillUsDate = initialClock.date;
+  console.log(`[backfill] queued OHLCV checks after ${backfillIndiaHour}:00 IST and ${backfillUsHour}:00 IST`);
+  backfillTimer = setInterval(() => {
+    const clock = istClock();
+    if (clock.hour >= backfillIndiaHour && lastBackfillIndiaDate !== clock.date) {
+      lastBackfillIndiaDate = clock.date;
+      runBackfillCron("india-close");
+    }
+    if (clock.hour >= backfillUsHour && lastBackfillUsDate !== clock.date) {
+      lastBackfillUsDate = clock.date;
+      runBackfillCron("us-close");
+    }
+  }, 60 * 1000);
+}
+
+function runYahooNseSync(trigger) {
   if (syncDisabled) {
     console.log(`[nse-sync] ${trigger} sync disabled by NSE_SYNC_DISABLED=1`);
     return;
@@ -246,6 +318,61 @@ function runSync(trigger) {
     else console.error(`[nse-sync] ${trigger} update failed with exit code ${code}`);
     if (!signal) runFundamentals(trigger);
   });
+}
+
+function runBhavcopyNseSync(trigger) {
+  if (syncDisabled) {
+    console.log(`[nse-sync] ${trigger} sync disabled by NSE_SYNC_DISABLED=1`);
+    return syncPromise;
+  }
+  if (syncPromise) {
+    console.log(`[nse-sync] skipping ${trigger}; another sync is still running`);
+    return syncPromise;
+  }
+
+  syncPromise = (async () => {
+    await waitForApp();
+    if (!process.env.CRON_SECRET) throw new Error("CRON_SECRET is not configured");
+
+    const runExchangeBhavcopy = async (exchange, path) => {
+      const url = new URL(`http://127.0.0.1:3000${path}`);
+      url.searchParams.set("maxSessions", nseBhavcopyMaxSessions);
+      console.log(
+        `[nse-sync] starting ${trigger} ${exchange} bhavcopy OHLCV update (max ${nseBhavcopyMaxSessions} sessions)`,
+      );
+      const response = await fetch(url, {
+        headers: { authorization: `Bearer ${process.env.CRON_SECRET}` },
+      });
+      const body = await response.text();
+      if (!response.ok) throw new Error(`${exchange} bhavcopy update failed (${response.status}): ${body}`);
+      console.log(`[nse-sync] ${trigger} ${exchange} bhavcopy update completed: ${body}`);
+    };
+
+    console.log(
+      `[nse-sync] ${trigger} India OHLCV standard provider: bhavcopy; Yahoo/Google remain queued repair fallback`,
+    );
+    await runExchangeBhavcopy("NSE", "/api/cron/backfill-nse");
+    await runExchangeBhavcopy("BSE", "/api/cron/backfill-bse");
+    runMarketRefresh(`${trigger} post-sync`);
+  })()
+    .catch((error) => {
+      console.error(`[nse-sync] ${trigger} NSE bhavcopy update failed: ${error.message}`);
+    })
+    .finally(() => {
+      syncPromise = null;
+      runFundamentals(trigger);
+    });
+  return syncPromise;
+}
+
+function runSync(trigger) {
+  if (nseSyncProvider === "yahoo" || nseSyncProvider === "yfinance") {
+    return runYahooNseSync(trigger);
+  }
+  if (nseSyncProvider !== "bhavcopy") {
+    console.warn(`[nse-sync] unknown NSE_SYNC_PROVIDER=${nseSyncProvider}; using bhavcopy`);
+  }
+  return runBhavcopyNseSync(trigger);
 }
 
 function runFundamentals(trigger) {
@@ -413,6 +540,7 @@ function shutdown(signal) {
   shuttingDown = true;
   if (dailyTimer) clearTimeout(dailyTimer);
   if (marketRefreshTimer) clearInterval(marketRefreshTimer);
+  if (backfillTimer) clearInterval(backfillTimer);
   if (syncChild) syncChild.kill(signal);
   if (fundamentalsChild) fundamentalsChild.kill(signal);
   if (usFundamentalsChild) usFundamentalsChild.kill(signal);
@@ -433,6 +561,7 @@ nextChild.on("error", (error) => {
 nextChild.on("close", (code, signal) => {
   if (dailyTimer) clearTimeout(dailyTimer);
   if (marketRefreshTimer) clearInterval(marketRefreshTimer);
+  if (backfillTimer) clearInterval(backfillTimer);
   if (syncChild) syncChild.kill("SIGTERM");
   if (fundamentalsChild) fundamentalsChild.kill("SIGTERM");
   if (usFundamentalsChild) usFundamentalsChild.kill("SIGTERM");
@@ -444,6 +573,7 @@ nextChild.on("close", (code, signal) => {
 
 scheduleDailySync();
 scheduleRecurringMarketRefresh();
+scheduleBackfillCron();
 setTimeout(() => {
   runMarketRefresh("startup");
   if (syncDisabled) runFundamentals("startup");

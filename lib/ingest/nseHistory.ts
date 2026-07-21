@@ -2,6 +2,8 @@ import { Client } from "pg";
 
 const NSE_BHAVCOPY_URL =
   "https://archives.nseindia.com/products/content/sec_bhavdata_full_{date}.csv";
+const BSE_BHAVCOPY_URL =
+  "https://www.bseindia.com/download/BhavCopy/Equity/BhavCopy_BSE_CM_0_0_0_{date}_F_0000.CSV";
 const UA =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36";
 
@@ -28,12 +30,15 @@ export interface NseHistoryOptions {
 }
 
 export interface NseHistorySummary {
+  exchange?: "NSE" | "BSE";
   latestDateBefore: string | null;
   latestDateAfter: string | null;
   datesAttempted: number;
   sessionsFetched: number;
   barsUpserted: number;
+  assets?: number;
   nseAssets: number;
+  bseAssets?: number;
   skipped: { date: string; reason: string }[];
   durationMs: number;
 }
@@ -79,6 +84,8 @@ function parseCsvLine(line: string): string[] {
 const isoDay = (d: Date) => d.toISOString().slice(0, 10);
 const ddmmyyyy = (d: Date) =>
   `${String(d.getUTCDate()).padStart(2, "0")}${String(d.getUTCMonth() + 1).padStart(2, "0")}${d.getUTCFullYear()}`;
+const yyyymmdd = (d: Date) =>
+  `${d.getUTCFullYear()}${String(d.getUTCMonth() + 1).padStart(2, "0")}${String(d.getUTCDate()).padStart(2, "0")}`;
 
 function addDays(d: Date, days: number): Date {
   const out = new Date(d);
@@ -159,6 +166,73 @@ async function fetchBhavcopy(
   return isoDate && rows.length ? { date: isoDate, rows } : null;
 }
 
+async function fetchBseBhavcopy(
+  day: Date,
+  idByTicker: Map<string, string>,
+): Promise<{ date: string; rows: BhavRow[] } | null> {
+  const dateToken = yyyymmdd(day);
+  const url = BSE_BHAVCOPY_URL.replace("{date}", dateToken);
+  const res = await fetch(url, {
+    headers: {
+      "User-Agent": UA,
+      Accept: "text/csv,*/*",
+      Referer: "https://www.bseindia.com/",
+    },
+  }).catch(() => null);
+  if (!res || !res.ok) return null;
+
+  const text = await res.text();
+  if (!text.includes("TckrSymb")) return null;
+
+  const lines = text.split(/\r?\n/).filter(Boolean);
+  if (lines.length < 2) return null;
+
+  const header = parseCsvLine(lines[0]);
+  const col = (name: string) => header.indexOf(name);
+  const iSym = col("TckrSymb");
+  const iType = col("FinInstrmTp");
+  const iDate = col("TradDt");
+  const iOpen = col("OpnPric");
+  const iHigh = col("HghPric");
+  const iLow = col("LwPric");
+  const iClose = col("ClsPric");
+  const iLast = col("LastPric");
+  const iVol = col("TtlTradgVol");
+  if ([iSym, iType, iDate, iOpen, iHigh, iLow, iClose, iVol].some((i) => i < 0)) {
+    throw new Error(`BSE bhavcopy schema changed for ${dateToken}`);
+  }
+
+  const rows: BhavRow[] = [];
+  let isoDate: string | null = null;
+  for (let i = 1; i < lines.length; i++) {
+    const p = parseCsvLine(lines[i]);
+    if (p[iType] !== "STK") continue;
+
+    const assetId = idByTicker.get(p[iSym].toUpperCase());
+    if (!assetId) continue;
+
+    isoDate = p[iDate];
+    const close = Number(p[iClose]) || Number(p[iLast]);
+    if (!isoDate || !Number.isFinite(close) || close <= 0) continue;
+
+    const open = Number(p[iOpen]);
+    const high = Number(p[iHigh]);
+    const low = Number(p[iLow]);
+    const volume = Math.max(0, Math.round(Number(p[iVol]) || 0));
+    rows.push({
+      assetId,
+      date: isoDate,
+      open: Number.isFinite(open) && open > 0 ? open : close,
+      high: Number.isFinite(high) && high > 0 ? high : close,
+      low: Number.isFinite(low) && low > 0 ? low : close,
+      close,
+      volume,
+    });
+  }
+
+  return isoDate && rows.length ? { date: isoDate, rows } : null;
+}
+
 async function upsertBars(client: Client, rows: BhavRow[]): Promise<number> {
   const cols = 7;
   let upserted = 0;
@@ -189,8 +263,9 @@ async function upsertBars(client: Client, rows: BhavRow[]): Promise<number> {
   return upserted;
 }
 
-export async function backfillNseHistory(
+async function backfillIndianExchangeHistory(
   databaseUrl: string,
+  exchange: "NSE" | "BSE",
   opts: NseHistoryOptions = {},
 ): Promise<NseHistorySummary> {
   const t0 = Date.now();
@@ -207,7 +282,8 @@ export async function backfillNseHistory(
   await client.connect();
   try {
     const { rows: assets } = await client.query<{ id: string; ticker: string }>(
-      "select id,ticker from public.assets where exchange='NSE' and asset_class='STOCK'",
+      "select id,ticker from public.assets where exchange=$1 and asset_class='STOCK' and is_active=true",
+      [exchange],
     );
     const idByTicker = new Map(assets.map((r) => [r.ticker.toUpperCase(), r.id]));
 
@@ -215,7 +291,8 @@ export async function backfillNseHistory(
       `select max(o.date)::text latest
          from public.daily_ohlcv o
          join public.assets a on a.id=o.asset_id
-        where a.exchange='NSE' and a.asset_class='STOCK'`,
+        where a.exchange=$1 and a.asset_class='STOCK'`,
+      [exchange],
     );
     const latestDateBefore = latestRows[0]?.latest ?? null;
 
@@ -238,7 +315,9 @@ export async function backfillNseHistory(
       }
 
       datesAttempted++;
-      const data = await fetchBhavcopy(new Date(`${date}T00:00:00Z`), idByTicker);
+      const data = exchange === "BSE"
+        ? await fetchBseBhavcopy(new Date(`${date}T00:00:00Z`), idByTicker)
+        : await fetchBhavcopy(new Date(`${date}T00:00:00Z`), idByTicker);
       if (!data) {
         skipped.push({ date, reason: "bhavcopy not available" });
         continue;
@@ -252,20 +331,38 @@ export async function backfillNseHistory(
       `select max(o.date)::text latest
          from public.daily_ohlcv o
          join public.assets a on a.id=o.asset_id
-        where a.exchange='NSE' and a.asset_class='STOCK'`,
+        where a.exchange=$1 and a.asset_class='STOCK'`,
+      [exchange],
     );
 
     return {
+      exchange,
       latestDateBefore,
       latestDateAfter: afterRows[0]?.latest ?? null,
       datesAttempted,
       sessionsFetched,
       barsUpserted,
+      assets: idByTicker.size,
       nseAssets: idByTicker.size,
+      bseAssets: exchange === "BSE" ? idByTicker.size : undefined,
       skipped: skipped.slice(-30),
       durationMs: Date.now() - t0,
     };
   } finally {
     await client.end();
   }
+}
+
+export async function backfillNseHistory(
+  databaseUrl: string,
+  opts: NseHistoryOptions = {},
+): Promise<NseHistorySummary> {
+  return backfillIndianExchangeHistory(databaseUrl, "NSE", opts);
+}
+
+export async function backfillBseHistory(
+  databaseUrl: string,
+  opts: NseHistoryOptions = {},
+): Promise<NseHistorySummary> {
+  return backfillIndianExchangeHistory(databaseUrl, "BSE", opts);
 }

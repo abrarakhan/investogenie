@@ -10,6 +10,7 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { ensureScaffold } from "@/app/dashboard/actions";
 import { getSessionUser } from "@/lib/auth";
+import { normalizeFolio, parseCasHoldings, type ParsedHoldingRow as CasParsedHoldingRow } from "@/lib/cas/parse";
 import { query, queryOne, tx } from "@/lib/db";
 import {
   AmcDisclosureProvider,
@@ -271,7 +272,11 @@ function parseNumericTailRows(text: string): ParsedHoldingRow[] {
   return rows;
 }
 
-function tickerFromRow(row: ParsedHoldingRow): string {
+function tickerFromRow(row: CasParsedHoldingRow): string {
+  if (row.assetClass === "MUTUAL_FUND" && row.isin && /^[A-Z]{2}[A-Z0-9]{10}$/i.test(row.isin)) {
+    const folioKey = normalizeFolio(row.folio)?.replace(/[^A-Z0-9]+/gi, "").slice(0, 20);
+    return `${row.isin.toUpperCase()}${folioKey ? `_${folioKey}` : ""}`.slice(0, 54);
+  }
   if (row.isin && /^[A-Z]{2}[A-Z0-9]{10}$/i.test(row.isin)) return row.isin.toUpperCase();
   const prefix = row.assetClass === "MUTUAL_FUND" ? "MF" : "EQ";
   return `${prefix}_${row.name}`
@@ -281,7 +286,7 @@ function tickerFromRow(row: ParsedHoldingRow): string {
     .slice(0, 54) || `CAS_${prefix}_${Date.now()}`;
 }
 
-async function upsertCasAsset(row: ParsedHoldingRow): Promise<string> {
+async function upsertCasAsset(row: CasParsedHoldingRow): Promise<string> {
   const ticker = tickerFromRow(row);
   const exchange = row.assetClass === "MUTUAL_FUND" ? "CAS_MF" : "CAS_STOCK";
   const asset = await queryOne<{ id: string }>(
@@ -337,6 +342,15 @@ async function fileToText(file: File, password: string): Promise<string | "encry
   return text;
 }
 
+async function rejectCasArtifact(scaffold: { userId: string; portfolioId: string }, row: CasParsedHoldingRow, reason: string) {
+  await query(
+    `insert into public.cas_import_rejected_holdings
+       (reason, user_id, portfolio_id, asset_id, ticker, name, quantity, avg_cost, value)
+     values ($1, $2, $3, null, $4, $5, $6, $7, $8)`,
+    [reason, scaffold.userId, scaffold.portfolioId, tickerFromRow(row), row.name, row.quantity, row.price ?? null, row.value],
+  );
+}
+
 export async function importCasStatement(formData: FormData): Promise<void> {
   try {
   const file = formData.get("casFile");
@@ -351,27 +365,39 @@ export async function importCasStatement(formData: FormData): Promise<void> {
   const text = extracted.trim();
   if (!text) redirect("/terminal/in/cas?status=empty");
 
-  const parsed = parseStructured(text).concat(parseLooseText(text), parseIsinRows(text), parseNumericTailRows(text));
-  const byKey = new Map<string, ParsedHoldingRow>();
-  for (const row of parsed) byKey.set(`${row.assetClass}:${row.isin ?? row.name}:${row.folio ?? ""}`, row);
-  const rows = [...byKey.values()].filter((row) => !isLikelyCasNoise(row));
+  const parsed = parseCasHoldings(text);
+  const rows = parsed.filter((row) => !isLikelyCasNoise(row as ParsedHoldingRow));
   if (rows.length === 0) redirect("/terminal/in/cas?status=empty");
 
   const scaffold = await ensureScaffold();
   if (!scaffold) redirect("/login");
 
+  for (const row of parsed.filter((row) => isLikelyCasNoise(row as ParsedHoldingRow))) {
+    await rejectCasArtifact(scaffold, row, "CAS parser artifact: AMC header or disclosure/legal text").catch(() => {});
+  }
+
   await tx(async (c) => {
+    await c.query(
+      `delete from public.holdings h
+        using public.assets a
+       where h.asset_id = a.id
+         and h.user_id = $1
+         and a.exchange in ('CAS_MF', 'CAS_STOCK')`,
+      [scaffold.userId],
+    );
     for (const row of rows) {
       const assetId = await upsertCasAsset(row);
-      const price = row.price && row.price > 0 ? row.price : row.value / row.quantity;
-      await c.query(
+      const currentPrice = row.price && row.price > 0 ? row.price : row.value / row.quantity;
+      const costPerUnit = row.costValue && row.costValue > 0 ? row.costValue / row.quantity : currentPrice;
+      const holding = await c.query<{ id: string }>(
         `insert into public.holdings (user_id, portfolio_id, asset_id, quantity, avg_cost)
          values ($1, $2, $3, $4, $5)
          on conflict (portfolio_id, asset_id) do update set
            quantity = excluded.quantity,
            avg_cost = excluded.avg_cost,
-           updated_at = now()`,
-        [scaffold.userId, scaffold.portfolioId, assetId, row.quantity, price],
+           updated_at = now()
+         returning id`,
+        [scaffold.userId, scaffold.portfolioId, assetId, row.quantity, costPerUnit],
       );
       await c.query(
         `insert into public.latest_quotes (asset_id, price, change_pct, currency, as_of, source)
@@ -382,8 +408,26 @@ export async function importCasStatement(formData: FormData): Promise<void> {
            as_of = excluded.as_of,
            source = excluded.source,
            updated_at = now()`,
-        [assetId, price],
+        [assetId, currentPrice],
       );
+      if (row.assetClass === "MUTUAL_FUND") {
+        await c.query(
+          `insert into public.cas_holding_details
+             (holding_id, user_id, asset_id, isin, folio_number, holder_name, cost_value, market_value, as_of_date, source_file)
+           values ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'CAS')
+           on conflict (holding_id) do update set
+             isin = excluded.isin,
+             folio_number = excluded.folio_number,
+             holder_name = excluded.holder_name,
+             cost_value = excluded.cost_value,
+             market_value = excluded.market_value,
+             as_of_date = excluded.as_of_date,
+             source_file = excluded.source_file,
+             imported_at = now()`,
+          [holding.rows[0]?.id, scaffold.userId, assetId, row.isin, normalizeFolio(row.folio), row.holderName ?? null, row.costValue ?? null, row.value, row.asOfDate ?? null],
+        );
+        console.log(`[CAS] Parsed: ${row.name} (${row.isin ?? "no ISIN"}) folio ${normalizeFolio(row.folio) ?? "-"} — ${row.quantity.toFixed(3)} units`);
+      }
     }
   });
 
@@ -530,4 +574,3 @@ export async function importAmcDisclosure(formData: FormData): Promise<void> {
     redirect("/terminal/in/cas?disclosure=failed");
   }
 }
-

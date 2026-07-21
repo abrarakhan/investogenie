@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import Link from "next/link";
 import { getSessionUser } from "@/lib/auth";
 import AppShell from "@/components/app/AppShell";
 import { getSyncStatus } from "@/lib/syncStatus";
@@ -58,7 +59,14 @@ export default async function SyncAdminPage() {
       active="data"
       title="Data Health"
       subtitle="Market-data freshness, provider coverage, and recent job history."
-      actions={<div className="text-xs text-white/35">Generated {stamp(data.generatedAt)}</div>}
+      actions={(
+        <div className="flex items-center gap-3">
+          <Link href="/data/health" className="rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-xs font-semibold text-white/70 hover:bg-white/[0.08]">
+            Open full health dashboard
+          </Link>
+          <div className="text-xs text-white/35">Generated {stamp(data.generatedAt)}</div>
+        </div>
+      )}
     >
       <div className="space-y-6">
 

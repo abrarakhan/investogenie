@@ -1,8 +1,11 @@
 import Link from "next/link";
+import { Suspense } from "react";
 import { signout } from "@/app/login/actions";
 import { MARKETS } from "@/lib/markets";
 import type { MarketId } from "@/lib/types";
 import ApplyMarketTheme from "@/components/terminal/ApplyMarketTheme";
+import { getWorstDataHealthStatus } from "@/lib/dataHealth";
+import type { FreshnessStatus } from "@/lib/status";
 
 type NavSection = {
   title: string;
@@ -11,6 +14,7 @@ type NavSection = {
     href: string;
     active?: boolean;
     badge?: string;
+    statusDot?: "data-health";
     muted?: boolean;
   }>;
 };
@@ -19,6 +23,19 @@ const marketPath = (market: MarketId) => market.toLowerCase();
 
 function cx(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
+}
+
+const DOT: Record<FreshnessStatus, string> = {
+  fresh: "bg-emerald-400",
+  stale: "bg-amber-400",
+  failed: "bg-rose-400",
+  unknown: "bg-white/35",
+  off_hours: "bg-slate-400",
+};
+
+async function DataHealthDot() {
+  const status = await getWorstDataHealthStatus();
+  return <span title={`Data health: ${status}`} className={`h-2 w-2 rounded-full ${DOT[status]}`} />;
 }
 
 function MarketSwitch({ market, activeArea }: { market: MarketId; activeArea: string }) {
@@ -58,7 +75,7 @@ export default function AppShell({
   children: React.ReactNode;
   email?: string;
   market: MarketId;
-  active: "overview" | "terminal" | "stock-screener" | "swing" | "probability" | "forward-test" | "import-holdings" | "data" | "settings";
+  active: "overview" | "terminal" | "stock-screener" | "swing" | "probability" | "forward-test" | "import-holdings" | "fund-mapping" | "data" | "settings";
   title: string;
   subtitle?: string;
   actions?: React.ReactNode;
@@ -81,15 +98,16 @@ export default function AppShell({
       title: "Portfolio",
       items: [
         { label: "Holdings", href: `/terminal/${m}`, active: false },
-        { label: "Fund X-Ray", href: "/terminal/in", active: false, muted: market !== "IN" },
         { label: "Import Holdings", href: "/terminal/in/cas", active: active === "import-holdings", badge: market === "IN" ? undefined : "IN" },
+        { label: "Fund Mapping", href: "/portfolio/fund-mapping", active: active === "fund-mapping", badge: market === "IN" ? undefined : "IN" },
+        { label: "Fund X-Ray", href: "/terminal/in", active: false, muted: market !== "IN" },
         { label: "Forward test", href: `/terminal/${m}/forward-test`, active: active === "forward-test" },
       ],
     },
     {
       title: "Operations",
       items: [
-        { label: "Data Health", href: "/admin/sync", active: active === "data" },
+        { label: "Data Health", href: "/data/health", active: active === "data", statusDot: "data-health" },
         { label: "Help", href: "/help" },
         { label: "Settings", href: "/settings", active: active === "settings" },
       ],
@@ -133,11 +151,18 @@ export default function AppShell({
                         )}
                       >
                         <span>{item.label}</span>
+                        <span className="flex items-center gap-2">
+                        {item.statusDot === "data-health" && (
+                          <Suspense fallback={<span className="h-2 w-2 rounded-full bg-white/20" />}>
+                            <DataHealthDot />
+                          </Suspense>
+                        )}
                         {item.badge && (
                           <span className="rounded-full border border-white/10 px-1.5 py-0.5 text-[9px] uppercase text-white/38">
                             {item.badge}
                           </span>
                         )}
+                        </span>
                       </Link>
                     ))}
                   </div>
@@ -195,7 +220,12 @@ export default function AppShell({
                     item.muted && "opacity-45",
                   )}
                 >
-                  {item.label}
+                  <span>{item.label}</span>
+                  {item.statusDot === "data-health" && (
+                    <Suspense fallback={<span className="ml-1 inline-block h-1.5 w-1.5 rounded-full bg-white/20" />}>
+                      <DataHealthDot />
+                    </Suspense>
+                  )}
                 </Link>
               ))}
             </nav>

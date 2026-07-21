@@ -1,3 +1,4 @@
+import Link from "next/link";
 import type { TopSetup } from "@/lib/engines-runtime";
 import type { OverlapReport } from "@/lib/analytics/fundOverlap";
 import type { MacroMatrix } from "@/lib/analytics/macroCorrelator";
@@ -58,6 +59,15 @@ export default function EngineSection({
       .map((stock) => stock.stockTicker) ?? [],
   );
   const fundCompositions = overlap?.fundCompositions ?? [];
+  const fundCompositionMatches = new Map<string, number>();
+
+  const nextCompositionFor = (fundTicker: string) => {
+    const offset = fundCompositionMatches.get(fundTicker) ?? 0;
+    const matches = fundCompositions.filter((item) => item.fundTicker === fundTicker);
+    const composition = matches[offset] ?? matches[0];
+    fundCompositionMatches.set(fundTicker, offset + 1);
+    return composition;
+  };
 
   return (
     <div className="space-y-8">
@@ -111,6 +121,7 @@ export default function EngineSection({
           )}
         </Panel>
 
+        {/* TODO: Adopt MatchStatusBadge here when the X-Ray panel gets its next visual pass. */}
         {/* ---- Fund overlap ---- */}
         <Panel title="Fund Overlap X-Ray" tag="Your funds · overlaps · underlying stocks">
           {!overlap ? (
@@ -137,15 +148,20 @@ export default function EngineSection({
               <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
                 <div className="mb-3 flex items-center justify-between gap-3">
                   <p className="text-xs font-semibold uppercase tracking-[0.18em] text-white/38">All uploaded funds</p>
-                  <span className="rounded-full border border-white/10 px-2 py-0.5 text-[10px] font-semibold text-white/50">
-                    INR {Math.round(overlap.totalValue).toLocaleString("en-IN")}
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <Link href="/portfolio/fund-mapping" className="rounded-full border border-[var(--ig-accent)]/30 px-2 py-0.5 text-[10px] font-semibold text-[var(--ig-accent)] hover:bg-[var(--ig-accent)]/10">
+                      Fix mapping
+                    </Link>
+                    <span className="rounded-full border border-white/10 px-2 py-0.5 text-[10px] font-semibold text-white/50">
+                      INR {Math.round(overlap.totalValue).toLocaleString("en-IN")}
+                    </span>
+                  </div>
                 </div>
                 <div className="max-h-80 space-y-2 overflow-auto pr-1">
-                  {overlap.fundValues.map((fund) => {
-                    const composition = fundCompositions.find((item) => item.fundTicker === fund.ticker);
+                  {overlap.fundValues.map((fund, index) => {
+                    const composition = nextCompositionFor(fund.ticker);
                     return (
-                      <div key={fund.ticker} className="grid gap-2 rounded-xl border border-white/5 bg-white/[0.025] px-3 py-2 text-xs md:grid-cols-[1fr_auto_auto] md:items-center">
+                      <div key={`${fund.ticker}:${index}`} className="grid gap-2 rounded-xl border border-white/5 bg-white/[0.025] px-3 py-2 text-xs md:grid-cols-[1fr_auto_auto] md:items-center">
                         <span className="truncate font-semibold text-white/75" title={fund.ticker}>{fund.ticker}</span>
                         <span className="font-mono text-white/80">{fund.sharePct.toFixed(2)}%</span>
                         <span className={composition?.lookThroughAvailable ? "text-cyan-200" : "text-amber-200/80"}>
@@ -185,8 +201,8 @@ export default function EngineSection({
               <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
                 <p className="mb-3 text-xs font-semibold uppercase tracking-[0.18em] text-white/38">Stocks inside each fund</p>
                 <div className="grid gap-3 lg:grid-cols-2">
-                  {fundCompositions.map((fund) => (
-                    <div key={fund.fundTicker} className="rounded-2xl border border-white/5 bg-white/[0.025] p-3">
+                  {fundCompositions.map((fund, index) => (
+                    <div key={`${fund.fundTicker}:${index}`} className="rounded-2xl border border-white/5 bg-white/[0.025] p-3">
                       <div className="mb-2 flex items-start justify-between gap-3">
                         <div className="min-w-0">
                           <p className="truncate text-sm font-semibold text-white/80" title={fund.fundTicker}>{fund.fundTicker}</p>

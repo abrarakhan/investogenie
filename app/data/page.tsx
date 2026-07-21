@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
 
 export default function DataRedirect() {
-  redirect("/admin/sync");
+  redirect("/data/health");
 }

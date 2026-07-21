@@ -110,22 +110,23 @@ export async function getFundOverlap(): Promise<OverlapReport | null> {
   if (!user) return null;
 
   const heldFunds = (
-    await query<{ id: string; ticker: string; name: string | null; display_name: string | null; asset_class: string; quantity: string | number; avg_cost: string | number | null }>(
-      `select a.id, a.ticker, a.name, fs.name as display_name, a.asset_class, h.quantity, h.avg_cost
+    await query<{ holding_id: string; id: string; ticker: string; name: string | null; display_name: string | null; asset_class: string; quantity: string | number; avg_cost: string | number | null }>(
+      `select h.id as holding_id, a.id, a.ticker, a.name, fs.name as display_name, a.asset_class, h.quantity, h.avg_cost
          from public.holdings h
          join public.assets a on a.id = h.asset_id
          left join lateral (
-           select name
-             from public.fund_schemes
-            where asset_id = a.id
-            order by latest_month desc nulls last, created_at desc
+           select fs.name
+             from public.user_fund_mappings map
+             join public.fund_schemes fs on fs.scheme_code = map.scheme_code
+            where map.user_id = h.user_id and map.user_holding_id = h.id and map.status = 'matched'
+            order by map.matched_at desc nulls last
             limit 1
          ) fs on true
         where h.user_id = $1`,
       [user.id],
     )
   )
-    .map((h) => ({ id: h.id, ticker: h.ticker, name: h.name, displayName: h.display_name ?? h.name ?? h.ticker, assetClass: h.asset_class, units: Number(h.quantity), nav: Number(h.avg_cost ?? 0) }))
+    .map((h) => ({ holdingId: h.holding_id, id: h.id, ticker: h.ticker, name: h.name, displayName: h.display_name ?? h.name ?? h.ticker, assetClass: h.asset_class, units: Number(h.quantity), nav: Number(h.avg_cost ?? 0) }))
     .filter((h) => h.assetClass === "MUTUAL_FUND" && h.ticker && h.units > 0);
   if (heldFunds.length === 0) return null;
 
@@ -149,23 +150,28 @@ export async function getFundOverlap(): Promise<OverlapReport | null> {
   const mfh = [...userMfh, ...globalMfh];
 
   // Third source: month-keyed AMC disclosure snapshots (fund_holdings_snapshot),
-  // for held funds linked to a scheme via fund_schemes.asset_id. Joined on
+  // for held funds explicitly linked through user_fund_mappings. Joined on
   // instrument ISIN — never name — then labelled with one canonical display
   // name per ISIN so the engine's string keys still collapse across funds.
   const mfhCoveredIds = new Set(mfh.map((r) => r.fund_asset_id));
-  const snapshotFundIds = heldFundIds.filter((id) => !mfhCoveredIds.has(id));
-  const snapRows = snapshotFundIds.length
+  const snapshotHoldingIds = heldFunds.filter((h) => !mfhCoveredIds.has(h.id)).map((h) => h.holdingId);
+  const snapRows = snapshotHoldingIds.length
     ? await query<{ asset_id: string; scheme_name: string; instrument_isin: string; instrument_name: string; weight_pct: number }>(
-        `select fs.asset_id, fs.name as scheme_name,
+        `select h.asset_id, fs.name as scheme_name,
                 fhs.instrument_isin, fhs.instrument_name, fhs.weight_pct::float8 as weight_pct
-           from public.fund_schemes fs
+           from public.user_fund_mappings map
+           join public.holdings h on h.id = map.user_holding_id
+           join public.fund_schemes fs on fs.scheme_code = map.scheme_code
            join public.fund_holdings_snapshot fhs
              on fhs.scheme_code = fs.scheme_code
             and fhs.month = (select max(month) from public.fund_holdings_snapshot m
                               where m.scheme_code = fs.scheme_code)
-          where fs.asset_id = any($1) and fhs.instrument_type = 'EQUITY'
+          where map.user_id = $1
+            and map.user_holding_id = any($2)
+            and map.status = 'matched'
+            and fhs.instrument_type = 'EQUITY'
           order by fs.scheme_code, fhs.weight_pct desc`,
-        [snapshotFundIds],
+        [user.id, snapshotHoldingIds],
       )
     : [];
 
@@ -278,7 +284,7 @@ export async function getFundOverlap(): Promise<OverlapReport | null> {
 
   const report = analyzeFundOverlap(portfolio, lookThrough, metaList);
   const missingDisclosureInstructions = heldFunds
-    .filter((h) => !coveredFunds.has(fundLabel.get(h.id) ?? h.ticker))
+    .filter((h) => !coveredFunds.has(fundLabel.get(h.id) ?? h.displayName))
     .slice(0, 5)
     .map((h) => disclosureInstruction(h.ticker, h.name));
 
