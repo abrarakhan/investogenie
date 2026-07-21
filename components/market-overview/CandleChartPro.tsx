@@ -1,25 +1,23 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  CandlestickSeries,
+  ColorType,
+  CrosshairMode,
+  HistogramSeries,
+  createChart,
+  type CandlestickData,
+  type HistogramData,
+  type IChartApi,
+  type ISeriesApi,
+  type MouseEventParams,
+  type Time,
+} from "lightweight-charts";
 import type { OverviewCandle } from "@/lib/marketOverview";
 
-const W = 940;
-const H = 380;
-const PAD = { top: 20, right: 78, bottom: 30, left: 10 };
-const VOL_H = 58;
-const GAP = 14;
-const PRICE_H = H - PAD.top - PAD.bottom - VOL_H - GAP;
-const PLOT_W = W - PAD.left - PAD.right;
-const PRICE_BOTTOM = PAD.top + PRICE_H;
-const VOL_TOP = PRICE_BOTTOM + GAP;
-
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"] as const;
-
 function fmtDate(iso: string): string {
-  const match = iso.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (!match) return iso.slice(5);
-  const month = MONTHS[Number(match[2]) - 1];
-  return month ? `${match[3]} ${month}` : iso.slice(5);
+  return new Intl.DateTimeFormat("en-IN", { day: "2-digit", month: "short", year: "2-digit" }).format(new Date(`${iso}T00:00:00Z`));
 }
 
 function fmtPrice(value: number, currency: string): string {
@@ -36,6 +34,21 @@ function fmtVolume(value: number | null): string {
   return value.toFixed(0);
 }
 
+function pct(from: number, to: number): string {
+  if (!from) return "-";
+  const value = ((to - from) / from) * 100;
+  return `${value > 0 ? "+" : ""}${value.toFixed(2)}%`;
+}
+
+interface Readout {
+  date: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number | null;
+}
+
 export default function CandleChartPro({
   candle,
   accent,
@@ -45,151 +58,184 @@ export default function CandleChartPro({
   accent: string;
   currency: string;
 }) {
-  const svgRef = useRef<SVGSVGElement>(null);
-  const [hoverIdx, setHoverIdx] = useState<number | null>(null);
-  const points = candle.points;
+  const containerRef = useRef<HTMLDivElement>(null);
+  const chartRef = useRef<IChartApi | null>(null);
+  const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
+  const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
+  const [readout, setReadout] = useState<Readout | null>(null);
 
-  const scale = useMemo(() => {
-    const highs = points.map((p) => p.high).filter(Number.isFinite);
-    const lows = points.map((p) => p.low).filter(Number.isFinite);
-    const rawHigh = Math.max(...highs, 1);
-    const rawLow = Math.min(...lows, rawHigh * 0.98);
-    const pad = Math.max((rawHigh - rawLow) * 0.08, rawHigh * 0.002, 1e-6);
-    const high = rawHigh + pad;
-    const low = rawLow - pad;
-    const maxVolume = Math.max(...points.map((p) => p.volume ?? 0), 1);
-    return { high, low, maxVolume };
-  }, [points]);
-
-  const n = Math.max(points.length, 1);
-  const slot = PLOT_W / n;
-  const bodyW = Math.max(2, Math.min(12, slot * 0.58));
-  const x = (i: number) => PAD.left + slot * i + slot / 2;
-  const y = (value: number) => PAD.top + ((scale.high - value) / Math.max(1e-6, scale.high - scale.low)) * PRICE_H;
-  const volY = (value: number | null) => VOL_TOP + VOL_H - ((value ?? 0) / scale.maxVolume) * VOL_H;
-
-  const priceTicks = useMemo(
-    () => [0, 0.25, 0.5, 0.75, 1].map((r) => scale.high - r * (scale.high - scale.low)),
-    [scale.high, scale.low],
+  const candleData = useMemo<CandlestickData<Time>[]>(
+    () => candle.points.map((point) => ({
+      time: point.date,
+      open: point.open,
+      high: point.high,
+      low: point.low,
+      close: point.close,
+    })),
+    [candle.points],
   );
 
-  const dateTicks = useMemo(() => {
-    if (!points.length) return [];
-    const count = Math.min(6, points.length);
-    return Array.from({ length: count }, (_, k) => {
-      const idx = Math.round((k / Math.max(1, count - 1)) * (points.length - 1));
-      return { idx, label: fmtDate(points[idx]?.date ?? "") };
+  const volumeData = useMemo<HistogramData<Time>[]>(
+    () => candle.points.map((point) => ({
+      time: point.date,
+      value: point.volume ?? 0,
+      color: point.close >= point.open ? "rgba(53, 211, 153, 0.32)" : "rgba(255, 107, 118, 0.32)",
+    })),
+    [candle.points],
+  );
+
+  const byTime = useMemo(() => {
+    const map = new Map<string, Readout>();
+    for (const point of candle.points) {
+      map.set(point.date, {
+        date: point.date,
+        open: point.open,
+        high: point.high,
+        low: point.low,
+        close: point.close,
+        volume: point.volume,
+      });
+    }
+    return map;
+  }, [candle.points]);
+
+  const latest = candle.points[candle.points.length - 1] ?? null;
+  const shown = readout ?? (latest ? {
+    date: latest.date,
+    open: latest.open,
+    high: latest.high,
+    low: latest.low,
+    close: latest.close,
+    volume: latest.volume,
+  } : null);
+  const change = latest ? pct(latest.open, latest.close) : "-";
+  const changeTone = latest && latest.close >= latest.open ? "text-[#35d399]" : "text-[#ff6b76]";
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const chart = createChart(container, {
+      autoSize: true,
+      height: 430,
+      layout: {
+        background: { type: ColorType.Solid, color: "#0d1115" },
+        textColor: "rgba(231, 235, 239, 0.62)",
+        fontFamily: "Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+      },
+      grid: {
+        vertLines: { color: "rgba(53, 211, 153, 0.055)" },
+        horzLines: { color: "rgba(255, 255, 255, 0.07)" },
+      },
+      crosshair: {
+        mode: CrosshairMode.Normal,
+        vertLine: { color: "rgba(139, 151, 164, 0.72)", labelBackgroundColor: "#1a222b" },
+        horzLine: { color: "rgba(139, 151, 164, 0.72)", labelBackgroundColor: "#1a222b" },
+      },
+      rightPriceScale: {
+        borderColor: "rgba(255, 255, 255, 0.12)",
+        scaleMargins: { top: 0.08, bottom: 0.24 },
+      },
+      timeScale: {
+        borderColor: "rgba(255, 255, 255, 0.12)",
+        timeVisible: false,
+        secondsVisible: false,
+        rightOffset: 8,
+        barSpacing: 8,
+        minBarSpacing: 3,
+        fixLeftEdge: false,
+        fixRightEdge: false,
+      },
+      handleScroll: {
+        mouseWheel: true,
+        pressedMouseMove: true,
+        horzTouchDrag: true,
+        vertTouchDrag: false,
+      },
+      handleScale: {
+        axisPressedMouseMove: true,
+        mouseWheel: true,
+        pinch: true,
+      },
+      localization: {
+        priceFormatter: (price: number) => fmtPrice(price, currency),
+      },
     });
-  }, [points]);
 
-  const handleMove = (e: React.MouseEvent<SVGSVGElement>) => {
-    const svg = svgRef.current;
-    if (!svg) return;
-    const box = svg.getBoundingClientRect();
-    const ratio = (e.clientX - box.left) / box.width;
-    const px = ratio * W;
-    const idx = Math.round((px - PAD.left - slot / 2) / slot);
-    setHoverIdx(Math.max(0, Math.min(points.length - 1, idx)));
-  };
+    const candleSeries = chart.addSeries(CandlestickSeries, {
+      upColor: "#35d399",
+      downColor: "#ff6b76",
+      borderUpColor: "#35d399",
+      borderDownColor: "#ff6b76",
+      wickUpColor: "#35d399",
+      wickDownColor: "#ff6b76",
+      priceLineColor: accent,
+      priceLineWidth: 2,
+      priceFormat: { type: "price", precision: currency === "INR" ? 2 : 2, minMove: 0.01 },
+    });
 
-  const latest = points[points.length - 1];
-  const hovered = hoverIdx === null ? latest : points[hoverIdx];
-  const priceColor = latest && latest.close >= latest.open ? "#35d399" : "#ff6b76";
-  const latestY = latest ? y(latest.close) : null;
-  const hoverX = hoverIdx === null ? null : x(hoverIdx);
+    const volumeSeries = chart.addSeries(HistogramSeries, {
+      priceFormat: { type: "volume" },
+      priceScaleId: "volume",
+      lastValueVisible: false,
+      priceLineVisible: false,
+    });
+
+    chart.priceScale("volume").applyOptions({
+      scaleMargins: { top: 0.82, bottom: 0 },
+      borderVisible: false,
+    });
+
+    candleSeries.setData(candleData);
+    volumeSeries.setData(volumeData);
+    chart.timeScale().fitContent();
+
+    const handleCrosshair = (param: MouseEventParams<Time>) => {
+      if (!param.time) {
+        setReadout(null);
+        return;
+      }
+      setReadout(byTime.get(String(param.time)) ?? null);
+    };
+
+    chart.subscribeCrosshairMove(handleCrosshair);
+    chartRef.current = chart;
+    candleSeriesRef.current = candleSeries;
+    volumeSeriesRef.current = volumeSeries;
+
+    return () => {
+      chart.unsubscribeCrosshairMove(handleCrosshair);
+      chart.remove();
+      chartRef.current = null;
+      candleSeriesRef.current = null;
+      volumeSeriesRef.current = null;
+    };
+  }, [accent, byTime, candleData, currency, volumeData]);
 
   return (
-    <div className="relative w-full">
-      <svg
-        ref={svgRef}
-        viewBox={`0 0 ${W} ${H}`}
-        className="h-[380px] w-full select-none"
-        onMouseMove={handleMove}
-        onMouseLeave={() => setHoverIdx(null)}
-        role="img"
-        aria-label={`${candle.ticker} candlestick chart`}
-      >
-        <defs>
-          <linearGradient id="igCandleVolumeFade" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor={accent} stopOpacity="0.28" />
-            <stop offset="100%" stopColor={accent} stopOpacity="0.04" />
-          </linearGradient>
-        </defs>
-
-        {priceTicks.map((tick) => (
-          <g key={`pt${tick}`}>
-            <line x1={PAD.left} x2={PAD.left + PLOT_W} y1={y(tick)} y2={y(tick)} stroke="#232a32" strokeDasharray="3 5" />
-            <text x={W - PAD.right + 8} y={y(tick) + 4} fill="#7d8894" fontSize="11" fontFamily="ui-monospace, SFMono-Regular, monospace">
-              {fmtPrice(tick, currency)}
-            </text>
-          </g>
-        ))}
-
-        {dateTicks.map((tick) => (
-          <line key={`vt${tick.idx}`} x1={x(tick.idx)} x2={x(tick.idx)} y1={PAD.top} y2={VOL_TOP + VOL_H} stroke="#1c222a" />
-        ))}
-
-        <line x1={PAD.left} x2={PAD.left + PLOT_W} y1={PRICE_BOTTOM} y2={PRICE_BOTTOM} stroke="#2b333d" />
-        <line x1={PAD.left} x2={PAD.left + PLOT_W} y1={VOL_TOP} y2={VOL_TOP} stroke="#1d242c" />
-
-        {points.map((point, i) => {
-          const up = point.close >= point.open;
-          const color = up ? "#35d399" : "#ff6b76";
-          const bodyTop = y(Math.max(point.open, point.close));
-          const bodyBottom = y(Math.min(point.open, point.close));
-          const bodyH = Math.max(1.5, bodyBottom - bodyTop);
-          const vx = x(i) - bodyW / 2;
-          const vy = volY(point.volume);
-          return (
-            <g key={`${point.date}-${i}`} opacity={hoverIdx === null || hoverIdx === i ? 1 : 0.72}>
-              <rect x={vx} y={vy} width={bodyW} height={VOL_TOP + VOL_H - vy} rx="1" fill={up ? "#35d399" : "#ff6b76"} opacity="0.28" />
-              <line x1={x(i)} x2={x(i)} y1={y(point.high)} y2={y(point.low)} stroke={color} strokeWidth="1.2" />
-              <rect x={vx} y={bodyTop} width={bodyW} height={bodyH} rx="1.5" fill={up ? color : "#0d1115"} stroke={color} strokeWidth="1.3" />
-            </g>
-          );
-        })}
-
-        {latestY !== null && latest && (
-          <g>
-            <line x1={PAD.left} x2={PAD.left + PLOT_W} y1={latestY} y2={latestY} stroke={priceColor} strokeDasharray="4 5" opacity="0.55" />
-            <rect x={W - PAD.right + 3} y={latestY - 10} width={70} height={20} rx="3" fill={priceColor} />
-            <text x={W - PAD.right + 38} y={latestY + 4} textAnchor="middle" fontSize="11" fontWeight="800" fill="#080c10" fontFamily="ui-monospace, SFMono-Regular, monospace">
-              {fmtPrice(latest.close, currency)}
-            </text>
-          </g>
-        )}
-
-        {hoverX !== null && hovered && (
-          <g>
-            <line x1={hoverX} x2={hoverX} y1={PAD.top} y2={VOL_TOP + VOL_H} stroke="#8b97a4" strokeDasharray="4 4" />
-            <line x1={PAD.left} x2={PAD.left + PLOT_W} y1={y(hovered.close)} y2={y(hovered.close)} stroke="#8b97a4" strokeDasharray="4 4" opacity="0.5" />
-          </g>
-        )}
-
-        {dateTicks.map((tick) => (
-          <text key={`dl${tick.idx}`} x={x(tick.idx)} y={H - 8} textAnchor="middle" fill="#6b7683" fontSize="10.5" fontFamily="ui-monospace, SFMono-Regular, monospace">
-            {tick.label}
-          </text>
-        ))}
-
-        <rect x={PAD.left} y={VOL_TOP} width={PLOT_W} height={VOL_H} fill="url(#igCandleVolumeFade)" opacity="0.18" />
-      </svg>
-
-      {hovered && (
-        <div className="pointer-events-none absolute left-3 top-2 z-10 rounded-md border border-[#2b333d] bg-[#0d1115]/95 px-2.5 py-2 shadow-xl backdrop-blur">
-          <div className="mb-1 flex items-center gap-2 font-mono text-[10px] text-white/45">
-            <span>{candle.ticker}</span>
-            <span>{fmtDate(hovered.date)}</span>
-          </div>
-          <div className="grid grid-cols-5 gap-2 text-[10px] uppercase tracking-wider text-white/35">
-            <span>O <b className="font-mono text-white/85">{fmtPrice(hovered.open, currency)}</b></span>
-            <span>H <b className="font-mono text-[#35d399]">{fmtPrice(hovered.high, currency)}</b></span>
-            <span>L <b className="font-mono text-[#ff6b76]">{fmtPrice(hovered.low, currency)}</b></span>
-            <span>C <b className="font-mono text-white/85">{fmtPrice(hovered.close, currency)}</b></span>
-            <span>V <b className="font-mono text-white/85">{fmtVolume(hovered.volume)}</b></span>
-          </div>
+    <div className="relative overflow-hidden rounded-md border border-[#293039] bg-[#0d1115]">
+      <div className="pointer-events-none absolute left-3 top-3 z-10 rounded-md border border-[#2b333d] bg-[#0d1115]/92 px-3 py-2 shadow-xl backdrop-blur">
+        <div className="mb-1 flex flex-wrap items-center gap-2 text-[10px] uppercase tracking-[0.16em] text-white/35">
+          <span className="font-bold text-white/70">{candle.ticker}</span>
+          {shown && <span>{fmtDate(shown.date)}</span>}
+          <span className={changeTone}>{change}</span>
         </div>
-      )}
+        {shown && (
+          <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[10px] uppercase tracking-wider text-white/35 sm:grid-cols-5">
+            <span>O <b className="font-mono text-white/85">{fmtPrice(shown.open, currency)}</b></span>
+            <span>H <b className="font-mono text-[#35d399]">{fmtPrice(shown.high, currency)}</b></span>
+            <span>L <b className="font-mono text-[#ff6b76]">{fmtPrice(shown.low, currency)}</b></span>
+            <span>C <b className="font-mono text-white/85">{fmtPrice(shown.close, currency)}</b></span>
+            <span>V <b className="font-mono text-white/85">{fmtVolume(shown.volume)}</b></span>
+          </div>
+        )}
+      </div>
+
+      <div ref={containerRef} className="h-[430px] w-full" />
+
+      <div className="pointer-events-none absolute bottom-2 right-3 rounded-full border border-white/10 bg-black/35 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-white/35">
+        Scroll to zoom · drag to pan
+      </div>
     </div>
   );
 }

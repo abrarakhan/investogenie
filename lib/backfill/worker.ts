@@ -1,6 +1,4 @@
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
-import { resolve } from "node:path";
 import { query, queryOne } from "@/lib/db";
 import { logCronRun, type CronJob } from "@/lib/ingest/cronLog";
 import {
@@ -52,14 +50,11 @@ export function backfillWorkerOptionsFromEnv(overrides: BackfillWorkerOptions = 
 }
 
 function pythonBin(): string {
-  const candidates = [
-    process.env.PYTHON_BIN,
-    process.env.CAS_PDF_PYTHON,
-    resolve(process.cwd(), ".venv/bin/python"),
-    resolve(process.cwd(), ".venv/bin/python3"),
-    "python3",
-  ].filter((value): value is string => Boolean(value));
-  return candidates.find((candidate) => candidate.includes("/") ? existsSync(candidate) : true) ?? "python3";
+  // Keep app-route bundles away from project-local .venv symlinks. Turbopack
+  // traces fs probes during production builds and can panic when .venv points
+  // outside the project root, so callers that need the venv should pass
+  // PYTHON_BIN from the launcher process.
+  return process.env.PYTHON_BIN ?? process.env.CAS_PDF_PYTHON ?? "python3";
 }
 
 async function barCount(assetId: string): Promise<number> {
@@ -97,7 +92,7 @@ async function runHistoryScript(item: BackfillQueueItem, historyDays: number): P
   const bin = pythonBin();
   await new Promise<void>((resolveRun, rejectRun) => {
     let output = "";
-    const child = spawn(bin, args, { cwd: process.cwd(), env: process.env, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(bin, args, { env: process.env, stdio: ["ignore", "pipe", "pipe"] });
     child.stdout.on("data", (chunk) => {
       const text = String(chunk);
       output += text;

@@ -27,6 +27,7 @@ const python = pythonCandidates.find((candidate) =>
   candidate.includes("/") ? existsSync(candidate) : true,
 );
 if (python && !process.env.CAS_PDF_PYTHON) process.env.CAS_PDF_PYTHON = python;
+if (python && !process.env.PYTHON_BIN) process.env.PYTHON_BIN = python;
 
 const syncHour = Number(process.env.NSE_SYNC_HOUR_IST ?? 18);
 const syncMinute = Number(process.env.NSE_SYNC_MINUTE_IST ?? 30);
