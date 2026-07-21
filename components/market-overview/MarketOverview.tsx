@@ -3,12 +3,14 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
+  OverviewCandle,
   FundamentalLeader,
   MarketOverviewData,
   OverviewQuote,
   OverviewSeries,
 } from "@/lib/marketOverview";
 
+import CandleChartPro from "./CandleChartPro";
 import PerformanceChartPro from "./PerformanceChartPro";
 
 /** Max symbols plotted at once — beyond this the chart gets unreadable. */
@@ -38,7 +40,9 @@ const META = {
 } as const;
 
 const RANGE_POINTS = { "5D": 5, "1M": 22, "3M": 66, "6M": 132, "1Y": 260 } as const;
+const CANDLE_DAYS = { "5D": 10, "1M": 45, "3M": 120, "6M": 220, "1Y": 420 } as const;
 type Range = keyof typeof RANGE_POINTS;
+type ChartMode = "performance" | "candles";
 
 function money(value: number, currency: string): string {
   return new Intl.NumberFormat(currency === "INR" ? "en-IN" : "en-US", {
@@ -161,33 +165,95 @@ function normalizeToCommonStart(
 }
 
 function Performance({
+  market,
   series,
   quotes,
   colors,
+  accent,
+  currency,
   loading,
   notice,
   onToggle,
 }: {
+  market: MarketOverviewData["market"];
   series: OverviewSeries[];
   quotes: OverviewQuote[];
   colors: readonly string[];
+  accent: string;
+  currency: string;
   loading: boolean;
   notice: string | null;
   onToggle: (ticker: string) => void;
 }) {
   const [range, setRange] = useState<Range>("1M");
+  const [mode, setMode] = useState<ChartMode>("performance");
   const [focus, setFocus] = useState<string | null>(null);
+  const [activeCandleTicker, setActiveCandleTicker] = useState<string | null>(series[0]?.ticker ?? null);
+  const [candleCache, setCandleCache] = useState<Record<string, OverviewCandle>>({});
+  const [candleLoading, setCandleLoading] = useState(false);
+  const [candleNotice, setCandleNotice] = useState<string | null>(null);
   const lines = useMemo(
     () => normalizeToCommonStart(series, RANGE_POINTS[range]),
     [series, range],
   );
+  const effectiveCandleTicker = activeCandleTicker && series.some((item) => item.ticker === activeCandleTicker)
+    ? activeCandleTicker
+    : series[0]?.ticker ?? null;
+  const candleKey = effectiveCandleTicker ? `${effectiveCandleTicker}:${range}` : "";
+  const candle = candleKey ? candleCache[candleKey] : undefined;
+
+  useEffect(() => {
+    if (mode !== "candles" || !effectiveCandleTicker || candleCache[candleKey]) return;
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      setCandleLoading(true);
+      setCandleNotice(null);
+      const params = new URLSearchParams({
+        market,
+        ticker: effectiveCandleTicker,
+        days: String(CANDLE_DAYS[range]),
+      });
+      fetch(`/api/market-overview/candles?${params.toString()}`)
+        .then((res) => res.json())
+        .then((payload: { candle?: OverviewCandle | null }) => {
+          if (cancelled) return;
+          if (payload.candle?.points.length) {
+            setCandleCache((prev) => ({ ...prev, [candleKey]: payload.candle! }));
+          } else {
+            setCandleNotice(`No OHLCV candles for ${effectiveCandleTicker} yet`);
+          }
+        })
+        .catch(() => {
+          if (!cancelled) setCandleNotice(`Could not load candles for ${effectiveCandleTicker}`);
+        })
+        .finally(() => {
+          if (!cancelled) setCandleLoading(false);
+        });
+    }, 0);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [candleCache, candleKey, effectiveCandleTicker, market, mode, range]);
 
   return (
     <Panel
-      title={series.length ? "Normalized performance" : "One-day leader performance"}
+      title={series.length ? (mode === "candles" ? "Trading chart" : "Normalized performance") : "One-day leader performance"}
       action={series.length ? (
-        <div className="flex items-center gap-1">
-          {loading && <span className="mr-1 h-2 w-2 animate-pulse rounded-full bg-[var(--overview-accent)]" />}
+        <div className="flex flex-wrap items-center justify-end gap-1">
+          {(loading || candleLoading) && <span className="mr-1 h-2 w-2 animate-pulse rounded-full bg-[var(--overview-accent)]" />}
+          <div className="mr-1 flex overflow-hidden rounded border border-white/10 bg-[#0d1115] p-0.5">
+            {(["performance", "candles"] as ChartMode[]).map((value) => (
+              <button
+                key={value}
+                type="button"
+                onClick={() => setMode(value)}
+                className={`rounded px-2 py-1 text-[10px] font-semibold ${mode === value ? "bg-[var(--overview-accent)] text-black" : "text-white/45 hover:bg-white/5"}`}
+              >
+                {value === "performance" ? "Performance" : "Candles"}
+              </button>
+            ))}
+          </div>
           {(Object.keys(RANGE_POINTS) as Range[]).map((value) => (
             <button
               key={value}
@@ -215,10 +281,18 @@ function Performance({
                   key={line.ticker}
                   onMouseEnter={() => setFocus(line.ticker)}
                   onMouseLeave={() => setFocus(null)}
-                  className="flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.03] px-2 py-0.5 text-white/60"
+                  className={`flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-white/60 ${mode === "candles" && effectiveCandleTicker === line.ticker ? "border-[var(--overview-accent)] bg-[var(--overview-soft)]" : "border-white/10 bg-white/[0.03]"}`}
                 >
                   <i className="h-2 w-2 rounded-sm" style={{ background: colors[index % colors.length] }} />
-                  {line.ticker} <b className="tabular-nums text-white/90">{pct(value)}</b>
+                  <button
+                    type="button"
+                    onClick={() => mode === "candles" && setActiveCandleTicker(line.ticker)}
+                    className="font-semibold text-white/75"
+                    title={mode === "candles" ? `Show ${line.ticker} candles` : line.ticker}
+                  >
+                    {line.ticker}
+                  </button>
+                  <b className="tabular-nums text-white/90">{pct(value)}</b>
                   <button
                     type="button"
                     onClick={() => onToggle(line.ticker)}
@@ -230,15 +304,24 @@ function Performance({
                 </span>
               );
             })}
-            {notice ? (
-              <span className="rounded-full border border-[#ff6b76]/30 bg-[#ff6b76]/10 px-2 py-0.5 text-[10px] text-[#ff6b76]">{notice}</span>
+            {notice || candleNotice ? (
+              <span className="rounded-full border border-[#ff6b76]/30 bg-[#ff6b76]/10 px-2 py-0.5 text-[10px] text-[#ff6b76]">{candleNotice ?? notice}</span>
             ) : (
-              <span className="text-[10px] text-white/25">Click any symbol on the left or right to plot it</span>
+              <span className="text-[10px] text-white/25">{mode === "candles" ? "Select a plotted symbol to inspect candles" : "Click any symbol on the left or right to plot it"}</span>
             )}
           </div>
 
-          {/* The chart owns its own crosshair + readout, terminal-style. */}
-          <PerformanceChartPro lines={lines} colors={colors} focus={focus} onFocus={setFocus} />
+          {mode === "candles" ? (
+            candle ? (
+              <CandleChartPro candle={candle} accent={accent} currency={currency} />
+            ) : (
+              <div className="grid h-[380px] place-items-center rounded-md border border-[#293039] bg-[#0d1115] text-xs text-white/35">
+                {candleLoading ? `Loading candles for ${effectiveCandleTicker}...` : candleNotice ?? "Choose a symbol with OHLCV history"}
+              </div>
+            )
+          ) : (
+            <PerformanceChartPro lines={lines} colors={colors} focus={focus} onFocus={setFocus} />
+          )}
         </div>
       ) : (
         <div className="space-y-3 p-4">
@@ -369,20 +452,6 @@ function FreshnessRows({ data }: { data: MarketOverviewData }) {
 
 export default function MarketOverview({ data }: { data: MarketOverviewData }) {
   const meta = META[data.market];
-  const other = data.market === "US" ? "in" : "us";
-  const [clock, setClock] = useState("");
-  useEffect(() => {
-    const update = () => setClock(new Intl.DateTimeFormat("en-GB", {
-      timeZone: meta.zone,
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-      hour12: false,
-    }).format(new Date()));
-    update();
-    const timer = window.setInterval(update, 1000);
-    return () => window.clearInterval(timer);
-  }, [meta.zone]);
 
   // ---- Interactive chart selection -----------------------------------------
   // The server seeds a default trio; clicking any gainer / decliner /
@@ -459,42 +528,10 @@ export default function MarketOverview({ data }: { data: MarketOverviewData }) {
 
   return (
     <div
-      className="min-h-screen bg-[#090c0f] text-[#e7ebef]"
+      className="text-[#e7ebef]"
       style={{ "--overview-accent": meta.accent, "--overview-soft": meta.accentSoft } as React.CSSProperties}
     >
-      <header className="sticky top-0 z-40 border-b border-[#293039] bg-[#0d1115]/95 backdrop-blur">
-        <div className="flex min-h-14 items-center gap-4 px-4 lg:px-6">
-          <Link href="/" className="shrink-0 text-base font-black tracking-tight">Investo<span className="text-[var(--overview-accent)]">Genie</span></Link>
-          <div className="hidden h-6 w-px bg-[#303740] sm:block" />
-          <div className="min-w-0 flex-1">
-            <div className="truncate text-sm font-semibold">{meta.label} Overview</div>
-            <div className="text-[10px] uppercase tracking-[0.16em] text-white/35">Live intelligence workspace</div>
-          </div>
-          <div className="hidden items-center gap-2 text-xs md:flex">
-            <span className="h-2 w-2 animate-pulse rounded-full bg-[#47d7a1]" />
-            <span className="text-white/45">Market clock</span>
-            <span className="font-mono text-white/80">{clock || "--:--:--"}</span>
-          </div>
-          <div className="flex rounded-md border border-[#303740] p-0.5 text-xs">
-            <Link href={`/markets/${data.market.toLowerCase()}`} className="rounded px-3 py-1.5 font-bold text-black" style={{ background: meta.accent }}>{meta.short}</Link>
-            <Link href={`/markets/${other}`} className="rounded px-3 py-1.5 text-white/50 hover:bg-white/5">{other.toUpperCase()}</Link>
-          </div>
-        </div>
-      </header>
-
-      <div className="flex">
-        <aside className="hidden w-16 shrink-0 border-r border-[#293039] bg-[#0d1115] lg:block">
-          <nav className="sticky top-14 flex flex-col items-center gap-2 py-4 text-[10px] text-white/40">
-            <Link title="Overview" href={`/markets/${data.market.toLowerCase()}`} className="grid h-10 w-10 place-items-center rounded-md bg-[var(--overview-soft)] font-bold text-[var(--overview-accent)]">OV</Link>
-            <Link title="Stock Screener" href={`/terminal/${data.market.toLowerCase()}/stocks`} className="grid h-10 w-10 place-items-center rounded-md hover:bg-white/5 hover:text-white">SC</Link>
-            <Link title="Swing Candidates" href={`/terminal/${data.market.toLowerCase()}/screener`} className="grid h-10 w-10 place-items-center rounded-md hover:bg-white/5 hover:text-white">SW</Link>
-            <Link title="Probability" href={`/terminal/${data.market.toLowerCase()}/probability`} className="grid h-10 w-10 place-items-center rounded-md hover:bg-white/5 hover:text-white">PB</Link>
-            <Link title="Terminal" href={`/terminal/${data.market.toLowerCase()}`} className="grid h-10 w-10 place-items-center rounded-md hover:bg-white/5 hover:text-white">TR</Link>
-            <Link title="Data Health" href="/admin/sync" className="grid h-10 w-10 place-items-center rounded-md hover:bg-white/5 hover:text-white">DH</Link>
-          </nav>
-        </aside>
-
-        <main className="min-w-0 flex-1 p-3 lg:p-4">
+      <div className="min-w-0">
           <div className="mb-3 grid gap-2 sm:grid-cols-3">
             {data.quotes.map((item) => (
               <div key={item.ticker} className="rounded-md border border-[#293039] bg-[#12161b] px-4 py-3">
@@ -516,9 +553,12 @@ export default function MarketOverview({ data }: { data: MarketOverviewData }) {
 
             <div className="min-w-0 space-y-3">
               <Performance
+                market={data.market}
                 series={chartSeries}
                 quotes={data.quotes}
                 colors={meta.chartColors}
+                accent={meta.accent}
+                currency={meta.currency}
                 loading={loading}
                 notice={notice}
                 onToggle={toggleTicker}
@@ -547,7 +587,6 @@ export default function MarketOverview({ data }: { data: MarketOverviewData }) {
               </Panel>
             </div>
           </div>
-        </main>
       </div>
     </div>
   );

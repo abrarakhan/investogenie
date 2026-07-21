@@ -143,13 +143,11 @@ async function fetchNSEIndices() {
 
 async function fetchDirectBenchmarks() {
   const quotes = new Map();
-  const [sensexRes, fxRes] = await Promise.all([
+  const [sensexRes, usdInr] = await Promise.all([
     fetch("https://priceapi.moneycontrol.com/pricefeed/notapplicable/inidicesindia/in%3BSEN", {
       headers: { "User-Agent": UA, Accept: "application/json" },
     }).catch(() => null),
-    fetch("https://open.er-api.com/v6/latest/USD", {
-      headers: { "User-Agent": UA, Accept: "application/json" },
-    }).catch(() => null),
+    fetchUsdInr(),
   ]);
 
   if (sensexRes?.ok) {
@@ -157,13 +155,60 @@ async function fetchDirectBenchmarks() {
     const price = num(json?.data?.pricecurrent);
     if (price !== null) quotes.set("SENSEX", { price, changePct: num(json?.data?.pricepercentchange) });
   }
-  if (fxRes?.ok) {
-    const json = await fxRes.json().catch(() => null);
-    const price = num(json?.rates?.INR);
-    if (price !== null) quotes.set("USDINR", { price, changePct: null });
-  }
+  if (usdInr !== null) quotes.set("USDINR", { price: usdInr.price, changePct: null, source: usdInr.source });
   console.log(`  direct benchmarks: ${quotes.size} quotes`);
   return quotes;
+}
+
+function validUsdInr(value) {
+  const price = num(value);
+  return price !== null && price >= 50 && price <= 150 ? price : null;
+}
+
+async function fetchUsdInr() {
+  const yahoo = await fetch("https://query2.finance.yahoo.com/v8/finance/chart/INR=X?range=5d&interval=1d", {
+    headers: { "User-Agent": UA, Accept: "application/json" },
+  }).catch(() => null);
+  if (yahoo?.ok) {
+    const json = await yahoo.json().catch(() => null);
+    const result = json?.chart?.result?.[0];
+    const metaPrice = validUsdInr(result?.meta?.regularMarketPrice);
+    if (metaPrice !== null) return { price: metaPrice, source: "YAHOO_FX" };
+    const closes = Array.isArray(result?.indicators?.quote?.[0]?.close) ? result.indicators.quote[0].close : [];
+    for (let i = closes.length - 1; i >= 0; i--) {
+      const close = validUsdInr(closes[i]);
+      if (close !== null) return { price: close, source: "YAHOO_FX" };
+    }
+  }
+
+  const currencyApi = await fetch("https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/usd.json", {
+    headers: { "User-Agent": UA, Accept: "application/json" },
+  }).catch(() => null);
+  if (currencyApi?.ok) {
+    const json = await currencyApi.json().catch(() => null);
+    const price = validUsdInr(json?.usd?.inr);
+    if (price !== null) return { price, source: "CURRENCY_API" };
+  }
+
+  const frankfurter = await fetch("https://api.frankfurter.app/latest?from=USD&to=INR", {
+    headers: { "User-Agent": UA, Accept: "application/json" },
+  }).catch(() => null);
+  if (frankfurter?.ok) {
+    const json = await frankfurter.json().catch(() => null);
+    const price = validUsdInr(json?.rates?.INR);
+    if (price !== null) return { price, source: "FRANKFURTER_FX" };
+  }
+
+  const erApi = await fetch("https://open.er-api.com/v6/latest/USD", {
+    headers: { "User-Agent": UA, Accept: "application/json" },
+  }).catch(() => null);
+  if (erApi?.ok) {
+    const json = await erApi.json().catch(() => null);
+    const price = validUsdInr(json?.rates?.INR);
+    if (price !== null) return { price, source: "ER_API_FX" };
+  }
+
+  return null;
 }
 
 async function main() {
@@ -186,7 +231,7 @@ async function main() {
   const rows = [];
   for (const [t, q] of usQuotes) { const id = usMap.get(t); if (id) rows.push({ assetId: id, price: q.price, changePct: q.changePct, currency: "USD", asOf: null, source: "NASDAQ" }); }
   for (const [t, q] of nseIndices) { const id = nseMap.get(t); if (id) rows.push({ assetId: id, price: q.price, changePct: q.changePct, currency: "INR", asOf: new Date().toISOString().slice(0, 10), source: "NSE_INDEX" }); }
-  for (const [t, q] of directBenchmarks) { const id = directMap.get(t); if (id) rows.push({ assetId: id, price: q.price, changePct: q.changePct, currency: "INR", asOf: new Date().toISOString().slice(0, 10), source: "DIRECT_QUOTE" }); }
+  for (const [t, q] of directBenchmarks) { const id = directMap.get(t); if (id) rows.push({ assetId: id, price: q.price, changePct: q.changePct, currency: "INR", asOf: new Date().toISOString().slice(0, 10), source: q.source ?? "DIRECT_QUOTE" }); }
   for (const [t, q] of nse.quotes) { const id = nseMap.get(t); if (id) rows.push({ assetId: id, price: q.price, changePct: q.changePct, currency: "INR", asOf: nse.asOf, source: "NSE_BHAVCOPY" }); }
   for (const [t, q] of bse.quotes) { const id = bseMap.get(t); if (id) rows.push({ assetId: id, price: q.price, changePct: q.changePct, currency: "INR", asOf: bse.asOf, source: "BSE_BHAVCOPY" }); }
 

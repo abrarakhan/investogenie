@@ -73,12 +73,17 @@ export default function DataHealthClient({ data }: { data: DataHealthPageData })
   }, []);
 
   useEffect(() => {
-    void refreshBackfillStatus();
+    const initial = window.setTimeout(() => {
+      void refreshBackfillStatus();
+    }, 0);
     const timer = window.setInterval(() => {
       void refreshBackfillStatus();
       router.refresh();
     }, 30_000);
-    return () => window.clearInterval(timer);
+    return () => {
+      window.clearTimeout(initial);
+      window.clearInterval(timer);
+    };
   }, [refreshBackfillStatus, router]);
 
   useEffect(() => {
