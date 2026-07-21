@@ -19,6 +19,7 @@ export interface CoverageGapInput {
   market: "IN" | "US";
   hasQuote?: boolean;
   quoteUpdatedAt?: string | null;
+  quoteAsOf?: string | null;
   hasHistory?: boolean;
   latestHistoryDate?: string | null;
   inUniverse?: boolean;
@@ -113,7 +114,14 @@ export function classifyCoverageGaps(input: CoverageGapInput): CoverageGap[] {
   const gaps: CoverageGap[] = [];
   const historyGap = daysBetween(now, input.latestHistoryDate);
   const quoteAge = hoursBetween(now, input.quoteUpdatedAt);
-  const staleQuote = input.hasQuote && (quoteAge === null || quoteAge > 1);
+  const indianQuoteAsOf = input.market === "IN" ? input.quoteAsOf?.slice(0, 10) ?? null : null;
+  const expectedIndianAsOf = input.market === "IN" ? expectedIndianBhavcopyDate(asDate(now) ?? new Date()) : null;
+  const indianQuoteLagDays = expectedIndianAsOf && indianQuoteAsOf
+    ? daysBetween(`${expectedIndianAsOf}T00:00:00.000Z`, `${indianQuoteAsOf}T00:00:00.000Z`)
+    : null;
+  const staleQuote = input.market === "IN"
+    ? !!input.hasQuote && (indianQuoteLagDays === null || indianQuoteLagDays > 3)
+    : !!input.hasQuote && (quoteAge === null || quoteAge > 1);
   const staleHistory = input.hasHistory && (historyGap === null || historyGap > 3);
 
   if (input.hasQuote && !input.hasHistory) {
@@ -217,7 +225,59 @@ export function countSeverities(gaps: CoverageGap[]): SeverityCounts {
 
 const iso = (value: Date | string | null): string | null => value ? new Date(value).toISOString() : null;
 
-interface SourceRow { source: string; last_success_at: Date | string | null; record_count: string | number; failed: boolean; cadence_hours: string | number; detail: string }
+interface SourceRow { source: string; last_success_at: Date | string | null; quote_as_of: string | null; record_count: string | number; failed: boolean; cadence_hours: string | number; detail: string }
+
+function istParts(now: Date) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(now);
+  const get = (type: string) => parts.find((part) => part.type === type)?.value ?? "";
+  return {
+    date: `${get("year")}-${get("month")}-${get("day")}`,
+    weekday: get("weekday"),
+    minutes: Number(get("hour")) * 60 + Number(get("minute")),
+  };
+}
+
+function previousWeekday(dateIso: string): string {
+  const d = new Date(`${dateIso}T00:00:00Z`);
+  do {
+    d.setUTCDate(d.getUTCDate() - 1);
+  } while (d.getUTCDay() === 0 || d.getUTCDay() === 6);
+  return d.toISOString().slice(0, 10);
+}
+
+function expectedIndianBhavcopyDate(now: Date): string {
+  const ist = istParts(now);
+  const weekend = ist.weekday === "Sat" || ist.weekday === "Sun";
+  const afterEodPublicationWindow = ist.minutes >= 18 * 60;
+  return !weekend && afterEodPublicationWindow ? ist.date : previousWeekday(ist.date);
+}
+
+function isIndianQuoteSource(source: string): boolean {
+  return source === "NSE Quotes" || source === "BSE Quotes";
+}
+
+function classifySourceFreshness(row: SourceRow, now: Date, nowIso: string): FreshnessStatus {
+  if (isIndianQuoteSource(row.source)) {
+    const expectedAsOf = expectedIndianBhavcopyDate(now);
+    const quoteAsOf = row.quote_as_of?.slice(0, 10) ?? null;
+    if (quoteAsOf && quoteAsOf >= expectedAsOf) return "fresh";
+  }
+  return classifyFreshness({
+    lastSuccessAt: iso(row.last_success_at),
+    failed: row.failed,
+    cadenceHours: Number(row.cadence_hours),
+    now: nowIso,
+  });
+}
 
 export async function getDataHealthSummary(now = new Date()): Promise<SourceHealthCard[]> {
   const nowIso = now.toISOString();
@@ -227,37 +287,37 @@ export async function getDataHealthSummary(now = new Date()): Promise<SourceHeal
          from public.cron_logs
         order by job, created_at desc
      ), counts as (
-       select 'NSE Quotes' source, max(q.updated_at) last_success_at, count(*) record_count, 1 cadence_hours, 'NSE latest quote rows' detail
+       select 'NSE Quotes' source, max(q.updated_at) last_success_at, max(q.as_of)::text quote_as_of, count(*) record_count, 1 cadence_hours, 'NSE latest quote rows' detail
          from public.latest_quotes q join public.assets a on a.id=q.asset_id where a.country='IN' and a.exchange='NSE' and a.asset_class='STOCK'
        union all
-       select 'BSE Quotes', max(q.updated_at), count(*), 1, 'BSE/inferred Indian quote rows'
+       select 'BSE Quotes', max(q.updated_at), max(q.as_of)::text, count(*), 1, 'BSE/inferred Indian quote rows'
          from public.latest_quotes q join public.assets a on a.id=q.asset_id where a.country='IN' and a.exchange='BSE'
        union all
-       select 'NSE OHLCV History', max(o.date)::timestamptz, count(distinct o.asset_id), 24, 'NSE assets with OHLCV bars'
+       select 'NSE OHLCV History', max(o.date)::timestamptz, null::text, count(distinct o.asset_id), 24, 'NSE assets with OHLCV bars'
          from public.daily_ohlcv o join public.assets a on a.id=o.asset_id where a.country='IN' and a.exchange='NSE' and a.asset_class='STOCK'
        union all
-       select 'BSE OHLCV History', max(o.date)::timestamptz, count(distinct o.asset_id), 24, 'BSE assets with OHLCV bars'
+       select 'BSE OHLCV History', max(o.date)::timestamptz, null::text, count(distinct o.asset_id), 24, 'BSE assets with OHLCV bars'
          from public.daily_ohlcv o join public.assets a on a.id=o.asset_id where a.country='IN' and a.exchange='BSE' and a.asset_class='STOCK'
        union all
-       select 'US Quotes', max(q.updated_at), count(*), 1, 'US latest quote rows'
+       select 'US Quotes', max(q.updated_at), null::text, count(*), 1, 'US latest quote rows'
          from public.latest_quotes q join public.assets a on a.id=q.asset_id where a.country='US' and a.asset_class='STOCK'
        union all
-       select 'US OHLCV History', max(o.date)::timestamptz, count(distinct o.asset_id), 24, 'US assets with OHLCV bars'
+       select 'US OHLCV History', max(o.date)::timestamptz, null::text, count(distinct o.asset_id), 24, 'US assets with OHLCV bars'
          from public.daily_ohlcv o join public.assets a on a.id=o.asset_id where a.country='US' and a.asset_class='STOCK'
        union all
-       select 'US Fundamentals', max(f.updated_at), count(distinct f.asset_id), 168, 'US financial report rows'
+       select 'US Fundamentals', max(f.updated_at), null::text, count(distinct f.asset_id), 168, 'US financial report rows'
          from public.asset_financial_reports f join public.assets a on a.id=f.asset_id where a.country='US'
        union all
-       select 'India Fundamentals', max(f.updated_at), count(distinct f.asset_id), 168, 'India financial report rows'
+       select 'India Fundamentals', max(f.updated_at), null::text, count(distinct f.asset_id), 168, 'India financial report rows'
          from public.asset_financial_reports f join public.assets a on a.id=f.asset_id where a.country='IN'
        union all
-       select 'Macro Indicators', max(m.date)::timestamptz, count(*), 168, 'Macro indicator rows'
+       select 'Macro Indicators', max(m.date)::timestamptz, null::text, count(*), 168, 'Macro indicator rows'
          from public.macro_indicators m
        union all
-       select 'AMC Fund Snapshots', max(fs.last_synced_at), count(distinct fs.scheme_code), 840, 'Loaded AMC monthly portfolio disclosures'
+       select 'AMC Fund Snapshots', max(fs.last_synced_at), null::text, count(distinct fs.scheme_code), 840, 'Loaded AMC monthly portfolio disclosures'
          from public.fund_schemes fs
        union all
-       select 'CAS Imports', max(h.updated_at), count(*), 840, 'Imported user holdings'
+       select 'CAS Imports', max(h.updated_at), null::text, count(*), 840, 'Imported user holdings'
          from public.holdings h join public.assets a on a.id=h.asset_id where a.asset_class='MUTUAL_FUND'
      )
      select c.*, coalesce(l.status='error', false) failed
@@ -266,7 +326,7 @@ export async function getDataHealthSummary(now = new Date()): Promise<SourceHeal
   );
   return rows.map((row) => ({
     source: row.source,
-    status: classifyFreshness({ lastSuccessAt: iso(row.last_success_at), failed: row.failed, cadenceHours: Number(row.cadence_hours), now: nowIso }),
+    status: classifySourceFreshness(row, now, nowIso),
     lastSuccessAt: iso(row.last_success_at),
     recordCount: Number(row.record_count),
     detail: row.detail,
@@ -285,6 +345,7 @@ interface AssetGapRow {
   symbol: string;
   market: "IN" | "US";
   quote_updated_at: Date | string | null;
+  quote_as_of: string | null;
   latest_history_date: Date | string | null;
   latest_fundamentals_date: Date | string | null;
   in_universe: boolean;
@@ -319,24 +380,41 @@ export async function getCoverageGaps(userId: string, now = new Date()): Promise
           fin as (select asset_id, max(period_end_date) latest_fundamentals_date from public.asset_financial_reports group by asset_id),
           uni as (select distinct asset_id from public.universe_members where universe in ('NIFTY_500','SP_500')),
           swing as (select distinct asset_id from public.swing_signals where verdict <> 'NO_SETUP'),
-          fwd as (select distinct asset_id from public.forward_test_positions where status = 'OPEN')
-     select a.ticker symbol,
-            a.country::text market,
-            q.updated_at quote_updated_at,
-            hist.latest_history_date,
-            fin.latest_fundamentals_date,
-            (uni.asset_id is not null) in_universe,
-            (swing.asset_id is not null) active_swing_signal,
-            (fwd.asset_id is not null) open_forward_test
-       from public.assets a
-       left join public.latest_quotes q on q.asset_id = a.id
-       left join hist on hist.asset_id = a.id
-       left join fin on fin.asset_id = a.id
-       left join uni on uni.asset_id = a.id
-       left join swing on swing.asset_id = a.id
-       left join fwd on fwd.asset_id = a.id
-      where a.asset_class = 'STOCK' and a.country in ('IN','US') and (q.asset_id is not null or uni.asset_id is not null or swing.asset_id is not null or fwd.asset_id is not null)
-      order by a.country, a.ticker
+          fwd as (select distinct asset_id from public.forward_test_positions where status = 'OPEN'),
+          scoped as (
+            select a.ticker symbol,
+                   a.country::text market,
+                   q.updated_at quote_updated_at,
+                   q.as_of::text quote_as_of,
+                   hist.latest_history_date,
+                   fin.latest_fundamentals_date,
+                   (uni.asset_id is not null) in_universe,
+                   (swing.asset_id is not null) active_swing_signal,
+                   (fwd.asset_id is not null) open_forward_test
+              from public.assets a
+              left join public.latest_quotes q on q.asset_id = a.id
+              left join hist on hist.asset_id = a.id
+              left join fin on fin.asset_id = a.id
+              left join uni on uni.asset_id = a.id
+              left join swing on swing.asset_id = a.id
+              left join fwd on fwd.asset_id = a.id
+             where a.asset_class = 'STOCK'
+               and a.country in ('IN','US')
+               and coalesce(a.is_active, true)
+               and (q.asset_id is not null or uni.asset_id is not null or swing.asset_id is not null or fwd.asset_id is not null)
+          )
+     select symbol,
+            market,
+            max(quote_updated_at) quote_updated_at,
+            max(quote_as_of) quote_as_of,
+            max(latest_history_date) latest_history_date,
+            max(latest_fundamentals_date) latest_fundamentals_date,
+            bool_or(in_universe) in_universe,
+            bool_or(active_swing_signal) active_swing_signal,
+            bool_or(open_forward_test) open_forward_test
+       from scoped
+      group by symbol, market
+      order by market, symbol
       limit 8000`,
   );
 
@@ -346,6 +424,7 @@ export async function getCoverageGaps(userId: string, now = new Date()): Promise
     market: row.market,
     hasQuote: row.quote_updated_at !== null,
     quoteUpdatedAt: iso(row.quote_updated_at),
+    quoteAsOf: row.quote_as_of,
     hasHistory: row.latest_history_date !== null,
     latestHistoryDate: iso(row.latest_history_date),
     inUniverse: row.in_universe,
@@ -402,14 +481,19 @@ export async function getRecentCronLogs(limit = 50): Promise<CronLogEntry[]> {
 
 export async function getQuoteNoHistoryCount(): Promise<number> {
   const row = await queryOne<{ count: string }>(
-    `with hist as (select asset_id from public.daily_ohlcv group by asset_id)
+    `with scoped as (
+       select a.ticker, a.country::text market, bool_or(o.asset_id is not null) has_history
+         from public.assets a
+         join public.latest_quotes q on q.asset_id = a.id
+         left join public.daily_ohlcv o on o.asset_id = a.id
+        where a.asset_class='STOCK'
+          and a.country in ('IN','US')
+          and coalesce(a.is_active, true)
+        group by a.ticker, a.country
+     )
      select count(*)::text
-       from public.assets a
-       join public.latest_quotes q on q.asset_id = a.id
-       left join hist on hist.asset_id = a.id
-      where a.asset_class='STOCK'
-        and a.country in ('IN','US')
-        and hist.asset_id is null`,
+       from scoped
+      where not has_history`,
   );
   return Number(row?.count ?? 0);
 }

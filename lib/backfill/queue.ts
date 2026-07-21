@@ -252,7 +252,27 @@ export async function requeueFailedBackfillItems(): Promise<number> {
   return rows.length;
 }
 
+async function reconcileCoveredBackfillItems(): Promise<void> {
+  await query(
+    `with hist as (
+       select asset_id, count(*)::int bar_count
+         from public.daily_ohlcv
+        group by asset_id
+     )
+     update public.backfill_queue q
+        set status='done',
+            bars_loaded=greatest(coalesce(q.bars_loaded, 0), hist.bar_count),
+            completed_at=coalesce(q.completed_at, now()),
+            last_error=null
+       from hist
+      where hist.asset_id = q.asset_id
+        and hist.bar_count > 0
+        and q.status in ('pending','failed','skipped')`,
+  );
+}
+
 export async function getBackfillStatusSummary(): Promise<BackfillStatusSummary> {
+  await reconcileCoveredBackfillItems();
   const [rows, activeRows, lastRunRows] = await Promise.all([
     query<{ tier: number; status: QueueStatusRow["status"]; count: string }>(
       `select tier, status, count(*)::text count
@@ -271,7 +291,7 @@ export async function getBackfillStatusSummary(): Promise<BackfillStatusSummary>
     query<{ created_at: Date | string; duration_ms: string | number | null; status: string; detail: unknown; error: string | null }>(
       `select created_at, duration_ms, status, detail, error
          from public.cron_logs
-        where job in ('backfill_ohlcv', 'backfill_ohlcv_cron')
+        where job in ('backfill_ohlcv', 'backfill_ohlcv_cron', 'backfill-nse', 'backfill-bse')
         order by created_at desc
         limit 1`,
     ),

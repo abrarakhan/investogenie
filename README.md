@@ -111,16 +111,22 @@ npm run dev
 
 That command starts Next.js through `scripts/run-with-nse-sync.mjs`, which:
 
+- waits until the local server is reachable,
+- runs official NSE bhavcopy OHLCV top-up,
+- runs official BSE bhavcopy OHLCV top-up,
 - refreshes security listings,
-- refreshes latest market quotes,
+- refreshes latest market quotes from bhavcopy,
 - syncs US quotes from Yahoo Finance,
 - falls back to Google Finance for unresolved US quotes,
 - runs the swing scan,
-- starts NSE incremental OHLCV sync,
 - starts Indian fundamentals sync,
 - starts US fundamentals sync,
 - repeats market quote refresh on `MARKET_REFRESH_INTERVAL_MINUTES`,
-- schedules the daily NSE history sync by IST time.
+- schedules the daily NSE/BSE bhavcopy history sync by IST time.
+
+Yahoo/Google history fetches are no longer the normal India update path. They
+remain available through the queued backfill repair flow for symbols/dates that
+official bhavcopy does not cover.
 
 Useful manual commands:
 

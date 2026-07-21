@@ -575,7 +575,10 @@ scheduleDailySync();
 scheduleRecurringMarketRefresh();
 scheduleBackfillCron();
 setTimeout(() => {
-  runMarketRefresh("startup");
-  if (syncDisabled) runFundamentals("startup");
-  else runSync("startup");
+  if (syncDisabled) {
+    runMarketRefresh("startup");
+    runFundamentals("startup");
+  } else {
+    runSync("startup");
+  }
 }, 0);

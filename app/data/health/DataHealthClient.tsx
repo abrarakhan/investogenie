@@ -28,7 +28,7 @@ function commandFor(gap: CoverageGap): string {
   if (gap.action === "Go to Fund Mapping") return "/portfolio/fund-mapping";
   if (gap.action === "Sync quotes") return "npm run dev or POST /api/cron/refresh-quotes with CRON_SECRET";
   if (gap.action === "Sync fundamentals") return gap.market === "US" ? "npm run sync:us-fundamentals" : "npm run sync:fundamentals";
-  if (gap.action === "Backfill history") return gap.market === "US" ? "npm run sync:us-history" : "npm run sync:nse-history";
+  if (gap.action === "Backfill history") return gap.market === "US" ? "npm run sync:us-history" : "npm run dev for bhavcopy, or use Run Backfill Now for repair";
   return gap.action;
 }
 
@@ -71,6 +71,15 @@ export default function DataHealthClient({ data }: { data: DataHealthPageData })
     }
     return null;
   }, []);
+
+  useEffect(() => {
+    void refreshBackfillStatus();
+    const timer = window.setInterval(() => {
+      void refreshBackfillStatus();
+      router.refresh();
+    }, 30_000);
+    return () => window.clearInterval(timer);
+  }, [refreshBackfillStatus, router]);
 
   useEffect(() => {
     if (!watchBackfill && !backfill.running) return;
