@@ -15,7 +15,7 @@ export type CronJob =
   | "backfill_ohlcv_cron"
   | "refresh-screener"
   | "forward-test";
-export type CronStatus = "ok" | "error";
+export type CronStatus = "ok" | "error" | "skipped";
 
 export interface CronLogEntry {
   job: CronJob;

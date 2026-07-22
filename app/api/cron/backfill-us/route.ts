@@ -1,19 +1,19 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { backfillUsHistory } from "@/lib/ingest/usHistory";
 import { checkCronAuth, logCronRun } from "@/lib/ingest/cronLog";
+import { runSyncJobWithRetry } from "@/lib/ingest/syncJobWrapper";
 
 // Scheduled US daily-EOD top-up into daily_ohlcv from the real provider
 // (FINANCIAL_API_KEY). Runs incrementally — a short trailing window keeps the
 // 200-day series current for the Minervini / PTJ indicators. The one-off full
 // ≥250-session seed is scripts/backfill-us-history.mjs. Strictly CRON_SECRET
 // gated; every run recorded to public.cron_logs.
+// Retries on transient failures (network, timeouts) up to 2x with backoff.
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
 
 export async function GET(request: NextRequest) {
-  const t0 = Date.now();
-
   const auth = checkCronAuth(request.headers.get("authorization"), process.env.CRON_SECRET);
   if (!auth.ok) {
     return NextResponse.json({ ok: false, error: auth.reason }, { status: auth.status });
@@ -26,40 +26,43 @@ export async function GET(request: NextRequest) {
   const apiKey = process.env.FINANCIAL_API_KEY;
   if (!apiKey) {
     // Surface the misconfiguration AND record it, rather than silently skipping.
-    await logCronRun(databaseUrl, {
-      job: "backfill-us",
-      status: "error",
-      error: "FINANCIAL_API_KEY not configured",
-      durationMs: Date.now() - t0,
-    });
-    return NextResponse.json({ ok: false, error: "FINANCIAL_API_KEY not configured" }, { status: 500 });
-  }
-
-  try {
-    // Trailing ~15 sessions covers weekends/holidays/late corrections.
-    const summary = await backfillUsHistory(databaseUrl, apiKey, { sessions: 15 });
-    await logCronRun(databaseUrl, {
-      job: "backfill-us",
-      status: summary.failures.length ? "error" : "ok",
-      error: summary.failures.length ? `${summary.failures.length} ticker failures` : null,
-      detail: {
-        tickersRequested: summary.tickersRequested,
-        tickersFetched: summary.tickersFetched,
-        barsUpserted: summary.barsUpserted,
-        failures: summary.failures.slice(0, 25),
-      },
-      durationMs: summary.durationMs,
-    });
-    return NextResponse.json({ ok: true, ...summary });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = "FINANCIAL_API_KEY not configured";
     await logCronRun(databaseUrl, {
       job: "backfill-us",
       status: "error",
       error: message,
-      detail: { stack: err instanceof Error ? err.stack : undefined },
-      durationMs: Date.now() - t0,
+      durationMs: 0,
     });
     return NextResponse.json({ ok: false, error: message }, { status: 500 });
   }
+
+  const result = await runSyncJobWithRetry(
+    "backfill-us",
+    () => backfillUsHistory(databaseUrl, apiKey, { sessions: 15 }),
+    {
+      maxRetries: 2,
+      backoffMs: 3000,
+      timeoutMs: 110000, // 110s timeout for backfill (less than maxDuration 120s)
+      databaseUrl,
+    }
+  );
+
+  if (result.success) {
+    const summary = result.detail as any;
+    return NextResponse.json({
+      ok: true,
+      tickersRequested: summary?.tickersRequested,
+      tickersFetched: summary?.tickersFetched,
+      barsUpserted: summary?.barsUpserted,
+      failures: summary?.failures?.slice(0, 25),
+      attempts: result.attempts,
+      durationMs: result.durationMs,
+    });
+  }
+
+  // Return 503 Service Unavailable on failure (signals to Vercel to retry)
+  return NextResponse.json(
+    { ok: false, error: result.error, attempts: result.attempts },
+    { status: 503 }
+  );
 }

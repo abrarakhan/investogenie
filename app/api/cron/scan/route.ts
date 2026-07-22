@@ -1,10 +1,13 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { computeSignals } from "@/lib/ingest/signals";
 import { checkCronAuth, logCronRun } from "@/lib/ingest/cronLog";
+import { runSyncJobWithRetry } from "@/lib/ingest/syncJobWrapper";
+import { getSyncTrend } from "@/lib/ingest/syncMonitor";
 
 // Scheduled swing scan over the whole universe → swing_signals (read by the
 // screener). Strictly gated by CRON_SECRET. Node runtime (uses `pg`). Every run
 // is recorded to public.cron_logs.
+// Gracefully degrades if upstream (quotes/OHLCV) is stale: skips with "skipped" status.
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
@@ -22,24 +25,48 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ ok: false, error: "DATABASE_URL not configured" }, { status: 500 });
   }
 
-  try {
-    const summary = await computeSignals(databaseUrl);
+  // Check if upstream (quote refresh) has been successful recently (< 20% failure rate)
+  const quoteTrend = await getSyncTrend("refresh-quotes", 24);
+  if (quoteTrend.failureRate > 0.2) {
+    const durationMs = Date.now() - t0;
     await logCronRun(databaseUrl, {
       job: "scan",
-      status: "ok",
-      detail: { scanned: summary.scanned, setups: summary.setups },
-      durationMs: summary.durationMs,
-    });
-    return NextResponse.json({ ok: true, ...summary });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    await logCronRun(databaseUrl, {
-      job: "scan",
-      status: "error",
-      error: message,
-      detail: { stack: err instanceof Error ? err.stack : undefined },
-      durationMs: Date.now() - t0,
-    });
-    return NextResponse.json({ ok: false, error: message }, { status: 500 });
+      status: "skipped",
+      error: `quotes too stale (${(quoteTrend.failureRate * 100).toFixed(1)}% failure rate in 24h)`,
+      detail: { quoteTrend },
+      durationMs,
+    }).catch(() => null);
+    return NextResponse.json(
+      { ok: true, skipped: true, reason: "upstream quotes too stale" },
+      { status: 200 }
+    );
   }
+
+  const result = await runSyncJobWithRetry(
+    "scan",
+    () => computeSignals(databaseUrl),
+    {
+      maxRetries: 1,
+      backoffMs: 2000,
+      timeoutMs: 110000, // 110s timeout for signal scan
+      databaseUrl,
+    }
+  );
+
+  if (result.success) {
+    const summary = result.detail as any;
+    return NextResponse.json({
+      ok: true,
+      scanned: summary?.scanned,
+      setups: summary?.setups,
+      attempts: result.attempts,
+      durationMs: result.durationMs,
+    });
+  }
+
+  // Return 503 Service Unavailable on failure
+  return NextResponse.json(
+    { ok: false, error: result.error, attempts: result.attempts },
+    { status: 503 }
+  );
 }
