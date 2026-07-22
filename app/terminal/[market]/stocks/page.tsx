@@ -3,7 +3,7 @@ import { getSessionUser } from "@/lib/auth";
 import { query } from "@/lib/db";
 import { normalizeMarket } from "@/lib/markets";
 import { getScreenerResults, getSectors, getUniverses, type Market } from "@/lib/screener/service";
-import { listSavedScreens } from "@/app/screener/actions";
+import { listSavedScreens } from "@/lib/screener-actions";
 import AppShell from "@/components/app/AppShell";
 import StockScreener from "@/components/stock-screener/StockScreener";
 import type { HeldPosition } from "@/components/stock-screener/ResultsTable";

@@ -17,6 +17,18 @@ export interface OverviewSeries {
   points: { date: string; close: number }[];
 }
 
+export interface OverviewCandle {
+  ticker: string;
+  points: {
+    date: string;
+    open: number;
+    high: number;
+    low: number;
+    close: number;
+    volume: number | null;
+  }[];
+}
+
 export interface OverviewCandidate {
   ticker: string;
   current: number | null;
@@ -187,6 +199,60 @@ export async function getSeriesForTickers(
     const points = seriesMap.get(ticker);
     return points?.length ? [{ ticker, points }] : [];
   });
+}
+
+/** OHLCV history for one symbol. Used by the TradingView-style candle view in
+ *  market overview. The same listing-pick rule as getSeriesForTickers keeps US
+ *  NYSE/NASDAQ symbols working without interleaving duplicate listings. */
+export async function getCandlesForTicker(
+  market: MarketId,
+  ticker: string,
+  days = 260,
+): Promise<OverviewCandle | null> {
+  const cfg = REGION[market];
+  const primaryExchange = cfg.exchanges[0];
+  const wanted = String(ticker).trim().toUpperCase();
+  if (!wanted) return null;
+  const windowDays = Math.max(20, Math.min(800, Math.round(days)));
+
+  const rows = await query<{
+    ticker: string;
+    date: string | Date;
+    open: string | number;
+    high: string | number;
+    low: string | number;
+    close: string | number;
+    volume: string | number | null;
+  }>(
+    `with picked as (
+       select distinct on (upper(a.ticker)) a.id, a.ticker
+         from public.assets a
+        where a.country=$1 and a.exchange=any($2) and a.asset_class='STOCK' and a.is_active
+          and upper(a.ticker)=$3
+        order by upper(a.ticker),
+                 case when a.exchange=$4 then 0 else 1 end,
+                 a.created_at
+     )
+     select p.ticker,o.date,o.open,o.high,o.low,o.close,o.volume
+       from public.daily_ohlcv o
+       join picked p on p.id = o.asset_id
+      where o.date >= current_date - ($5::int * interval '1 day')
+      order by o.date`,
+    [cfg.country, [...cfg.exchanges], wanted, primaryExchange, windowDays],
+  );
+
+  if (!rows.length) return null;
+  return {
+    ticker: rows[0]?.ticker ?? wanted,
+    points: rows.map((row) => ({
+      date: isoDate(row.date) ?? "",
+      open: Number(row.open),
+      high: Number(row.high),
+      low: Number(row.low),
+      close: Number(row.close),
+      volume: row.volume === null ? null : Number(row.volume),
+    })),
+  };
 }
 
 export async function getMarketOverview(market: MarketId): Promise<MarketOverviewData> {

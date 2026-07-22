@@ -44,6 +44,20 @@ export interface StockExposure {
   contributingFunds: string[];
 }
 
+export interface FundCompositionStock {
+  stockTicker: string;
+  weightPct: number;
+  sharedByFunds: string[];
+}
+
+export interface FundComposition {
+  fundTicker: string;
+  value: number;
+  sharePct: number;
+  stocks: FundCompositionStock[];
+  lookThroughAvailable: boolean;
+}
+
 export interface RebalanceInstruction {
   kind: "TRIM_OVERLAP" | "SWITCH_TO_DIRECT" | "REDUCE_CONCENTRATION" | "DISCLOSURE_REQUIRED";
   message: string;
@@ -65,6 +79,7 @@ export interface OverlapReport {
   totalValue: number;
   fundValues: { ticker: string; value: number; sharePct: number }[];
   stockExposure: StockExposure[];
+  fundCompositions: FundComposition[];
   pairwiseOverlaps: PairwiseOverlap[];
   flaggedOverlaps: PairwiseOverlap[];
   concentratedStocks: StockExposure[];
@@ -154,6 +169,23 @@ export function analyzeFundOverlap(
       contributingFunds: [...e.funds],
     }))
     .sort((a, b) => b.effectiveWeightPct - a.effectiveWeightPct);
+  const sharedByStock = new Map(stockExposure.map((s) => [s.stockTicker, s.contributingFunds]));
+  const fundCompositions: FundComposition[] = fundValues.map((fund) => {
+    const stocks = [...(lt.get(fund.ticker)?.entries() ?? [])]
+      .map(([stockTicker, weightPct]) => ({
+        stockTicker,
+        weightPct,
+        sharedByFunds: sharedByStock.get(stockTicker) ?? [],
+      }))
+      .sort((a, b) => b.weightPct - a.weightPct);
+    return {
+      fundTicker: fund.ticker,
+      value: fund.value,
+      sharePct: fund.sharePct,
+      stocks,
+      lookThroughAvailable: stocks.length > 0,
+    };
+  });
 
   // ---- 3. Pairwise fund overlap ----
   const funds = [...lt.keys()].filter((f) => shareByFund.has(f));
@@ -232,6 +264,7 @@ export function analyzeFundOverlap(
     totalValue,
     fundValues,
     stockExposure,
+    fundCompositions,
     pairwiseOverlaps,
     flaggedOverlaps,
     concentratedStocks,

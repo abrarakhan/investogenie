@@ -27,11 +27,14 @@ const python = pythonCandidates.find((candidate) =>
   candidate.includes("/") ? existsSync(candidate) : true,
 );
 if (python && !process.env.CAS_PDF_PYTHON) process.env.CAS_PDF_PYTHON = python;
+if (python && !process.env.PYTHON_BIN) process.env.PYTHON_BIN = python;
 
 const syncHour = Number(process.env.NSE_SYNC_HOUR_IST ?? 18);
 const syncMinute = Number(process.env.NSE_SYNC_MINUTE_IST ?? 30);
 const syncSleep = process.env.NSE_SYNC_SLEEP_SECONDS ?? "1.2";
 const syncDisabled = process.env.NSE_SYNC_DISABLED === "1";
+const nseSyncProvider = (process.env.NSE_SYNC_PROVIDER ?? "bhavcopy").toLowerCase();
+const nseBhavcopyMaxSessions = process.env.NSE_BHAVCOPY_MAX_SESSIONS ?? "20";
 const fundamentalsSleep = process.env.FUNDAMENTALS_SYNC_SLEEP_SECONDS ?? "1.5";
 const fundamentalsDisabled = process.env.FUNDAMENTALS_SYNC_DISABLED === "1";
 const usQuoteDisabled = process.env.US_QUOTE_SYNC_DISABLED === "1";
@@ -39,6 +42,8 @@ const usQuoteLimit = process.env.US_QUOTE_LIMIT ?? "1500";
 const usQuoteBatchSize = process.env.US_QUOTE_BATCH_SIZE ?? "100";
 const usGoogleFallbackLimit = process.env.US_GOOGLE_FALLBACK_LIMIT ?? "100";
 const marketRefreshIntervalMinutes = Number(process.env.MARKET_REFRESH_INTERVAL_MINUTES ?? 60);
+const indiaMarketQuoteRefreshIntervalMinutes = Number(process.env.INDIA_MARKET_QUOTE_REFRESH_INTERVAL_MINUTES ?? 15);
+const indiaMarketQuoteRefreshDisabled = process.env.INDIA_MARKET_QUOTE_REFRESH_DISABLED === "1";
 const usSyncSleep = process.env.US_SYNC_SLEEP_SECONDS ?? "0.4";
 const usFundamentalsLimit = process.env.US_FUNDAMENTALS_LIMIT ?? "250";
 const usFundamentalsStaleDays = process.env.US_FUNDAMENTALS_STALE_DAYS ?? "7";
@@ -49,9 +54,15 @@ const usHistoryMinBars = process.env.US_HISTORY_MIN_BARS ?? "260";
 const usHistorySleep = process.env.US_HISTORY_SLEEP_SECONDS ?? "0.25";
 const macroSyncDisabled = process.env.MACRO_SYNC_DISABLED === "1";
 const macroSyncYears = process.env.MACRO_SYNC_YEARS ?? "5";
+const backfillDisabled =
+  process.env.BACKFILL_CRON_ENABLED !== "1" ||
+  process.env.BACKFILL_CRON_DISABLED === "1";
+const backfillIndiaHour = Number(process.env.BACKFILL_INDIA_HOUR_IST ?? 17);
+const backfillUsHour = Number(process.env.BACKFILL_US_HOUR_IST ?? 22);
 const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
 
 let syncChild = null;
+let syncPromise = null;
 let fundamentalsChild = null;
 let usFundamentalsChild = null;
 let usHistoryChild = null;
@@ -59,7 +70,13 @@ let macroChild = null;
 let marketRefreshChild = null;
 let marketRefreshPromise = null;
 let marketRefreshTimer = null;
+let indiaMarketQuoteRefreshTimer = null;
+let indiaMarketQuoteRefreshPromise = null;
+let backfillTimer = null;
 let dailyTimer = null;
+let backfillPromise = null;
+let lastBackfillIndiaDate = null;
+let lastBackfillUsDate = null;
 let shuttingDown = false;
 
 const sleep = (milliseconds) => new Promise((resolveSleep) => setTimeout(resolveSleep, milliseconds));
@@ -209,7 +226,123 @@ function scheduleRecurringMarketRefresh() {
   );
 }
 
-function runSync(trigger) {
+function istClock() {
+  const now = new Date();
+  const ist = new Date(now.getTime() + IST_OFFSET_MS);
+  return {
+    date: ist.toISOString().slice(0, 10),
+    day: ist.getUTCDay(),
+    hour: ist.getUTCHours(),
+    minute: ist.getUTCMinutes(),
+  };
+}
+
+function isIndiaMarketOpen(clock = istClock()) {
+  if (clock.day === 0 || clock.day === 6) return false;
+  const minutes = clock.hour * 60 + clock.minute;
+  return minutes >= 9 * 60 + 15 && minutes <= 15 * 60 + 30;
+}
+
+async function runIndiaMarketQuoteRefresh(trigger) {
+  if (indiaMarketQuoteRefreshDisabled) {
+    console.log(`[india-quotes] ${trigger} 15-minute refresh disabled by INDIA_MARKET_QUOTE_REFRESH_DISABLED=1`);
+    return;
+  }
+  if (!isIndiaMarketOpen()) {
+    console.log(`[india-quotes] skipping ${trigger}; Indian market is closed`);
+    return;
+  }
+  if (indiaMarketQuoteRefreshPromise) {
+    console.log(`[india-quotes] skipping ${trigger}; quote refresh still running`);
+    return indiaMarketQuoteRefreshPromise;
+  }
+
+  indiaMarketQuoteRefreshPromise = (async () => {
+    await waitForApp();
+    if (!process.env.CRON_SECRET) throw new Error("CRON_SECRET is not configured");
+    console.log(`[india-quotes] starting ${trigger} NSE/BSE market-hours quote refresh`);
+    const response = await fetch("http://127.0.0.1:3000/api/cron/refresh-quotes", {
+      headers: { authorization: `Bearer ${process.env.CRON_SECRET}` },
+    });
+    const body = await response.text();
+    if (!response.ok) throw new Error(`quote refresh failed (${response.status}): ${body}`);
+    console.log(`[india-quotes] ${trigger} completed: ${body}`);
+  })()
+    .catch((error) => console.error(`[india-quotes] ${trigger} failed: ${error.message}`))
+    .finally(() => {
+      indiaMarketQuoteRefreshPromise = null;
+    });
+  return indiaMarketQuoteRefreshPromise;
+}
+
+function scheduleIndiaMarketQuoteRefresh() {
+  if (indiaMarketQuoteRefreshDisabled) {
+    console.log("[india-quotes] 15-minute market-hours refresh disabled");
+    return;
+  }
+  if (!Number.isFinite(indiaMarketQuoteRefreshIntervalMinutes) || indiaMarketQuoteRefreshIntervalMinutes <= 0) {
+    console.log("[india-quotes] 15-minute market-hours refresh disabled by interval");
+    return;
+  }
+  console.log(`[india-quotes] NSE/BSE quote refresh every ${indiaMarketQuoteRefreshIntervalMinutes} minutes during 09:15-15:30 IST`);
+  indiaMarketQuoteRefreshTimer = setInterval(
+    () => runIndiaMarketQuoteRefresh("market-hours"),
+    indiaMarketQuoteRefreshIntervalMinutes * 60 * 1000,
+  );
+  setTimeout(() => runIndiaMarketQuoteRefresh("startup-market-hours"), 0);
+}
+
+async function runBackfillCron(label) {
+  if (backfillDisabled) {
+    console.log(`[backfill] ${label} cron disabled; set BACKFILL_CRON_ENABLED=1 to enable`);
+    return;
+  }
+  if (backfillPromise) {
+    console.log(`[backfill] skipping ${label}; backfill still running`);
+    return backfillPromise;
+  }
+  backfillPromise = (async () => {
+    await waitForApp();
+    if (!process.env.CRON_SECRET) throw new Error("CRON_SECRET is not configured");
+    console.log(`[backfill] starting ${label} queued OHLCV repair`);
+    const response = await fetch("http://127.0.0.1:3000/api/backfill/run?job=cron", {
+      method: "POST",
+      headers: { authorization: `Bearer ${process.env.CRON_SECRET}` },
+    });
+    const body = await response.text();
+    if (!response.ok && response.status !== 409) throw new Error(`backfill failed (${response.status}): ${body}`);
+    console.log(`[backfill] ${label} completed: ${body}`);
+  })()
+    .catch((error) => console.error(`[backfill] ${label} failed: ${error.message}`))
+    .finally(() => {
+      backfillPromise = null;
+    });
+  return backfillPromise;
+}
+
+function scheduleBackfillCron() {
+  if (backfillDisabled) {
+    console.log("[backfill] queued OHLCV cron disabled; set BACKFILL_CRON_ENABLED=1 to enable");
+    return;
+  }
+  const initialClock = istClock();
+  if (initialClock.hour >= backfillIndiaHour) lastBackfillIndiaDate = initialClock.date;
+  if (initialClock.hour >= backfillUsHour) lastBackfillUsDate = initialClock.date;
+  console.log(`[backfill] queued OHLCV checks after ${backfillIndiaHour}:00 IST and ${backfillUsHour}:00 IST`);
+  backfillTimer = setInterval(() => {
+    const clock = istClock();
+    if (clock.hour >= backfillIndiaHour && lastBackfillIndiaDate !== clock.date) {
+      lastBackfillIndiaDate = clock.date;
+      runBackfillCron("india-close");
+    }
+    if (clock.hour >= backfillUsHour && lastBackfillUsDate !== clock.date) {
+      lastBackfillUsDate = clock.date;
+      runBackfillCron("us-close");
+    }
+  }, 60 * 1000);
+}
+
+function runYahooNseSync(trigger) {
   if (syncDisabled) {
     console.log(`[nse-sync] ${trigger} sync disabled by NSE_SYNC_DISABLED=1`);
     return;
@@ -246,6 +379,61 @@ function runSync(trigger) {
     else console.error(`[nse-sync] ${trigger} update failed with exit code ${code}`);
     if (!signal) runFundamentals(trigger);
   });
+}
+
+function runBhavcopyNseSync(trigger) {
+  if (syncDisabled) {
+    console.log(`[nse-sync] ${trigger} sync disabled by NSE_SYNC_DISABLED=1`);
+    return syncPromise;
+  }
+  if (syncPromise) {
+    console.log(`[nse-sync] skipping ${trigger}; another sync is still running`);
+    return syncPromise;
+  }
+
+  syncPromise = (async () => {
+    await waitForApp();
+    if (!process.env.CRON_SECRET) throw new Error("CRON_SECRET is not configured");
+
+    const runExchangeBhavcopy = async (exchange, path) => {
+      const url = new URL(`http://127.0.0.1:3000${path}`);
+      url.searchParams.set("maxSessions", nseBhavcopyMaxSessions);
+      console.log(
+        `[nse-sync] starting ${trigger} ${exchange} bhavcopy OHLCV update (max ${nseBhavcopyMaxSessions} sessions)`,
+      );
+      const response = await fetch(url, {
+        headers: { authorization: `Bearer ${process.env.CRON_SECRET}` },
+      });
+      const body = await response.text();
+      if (!response.ok) throw new Error(`${exchange} bhavcopy update failed (${response.status}): ${body}`);
+      console.log(`[nse-sync] ${trigger} ${exchange} bhavcopy update completed: ${body}`);
+    };
+
+    console.log(
+      `[nse-sync] ${trigger} India OHLCV standard provider: bhavcopy; Yahoo/Google remain queued repair fallback`,
+    );
+    await runExchangeBhavcopy("NSE", "/api/cron/backfill-nse");
+    await runExchangeBhavcopy("BSE", "/api/cron/backfill-bse");
+    runMarketRefresh(`${trigger} post-sync`);
+  })()
+    .catch((error) => {
+      console.error(`[nse-sync] ${trigger} NSE bhavcopy update failed: ${error.message}`);
+    })
+    .finally(() => {
+      syncPromise = null;
+      runFundamentals(trigger);
+    });
+  return syncPromise;
+}
+
+function runSync(trigger) {
+  if (nseSyncProvider === "yahoo" || nseSyncProvider === "yfinance") {
+    return runYahooNseSync(trigger);
+  }
+  if (nseSyncProvider !== "bhavcopy") {
+    console.warn(`[nse-sync] unknown NSE_SYNC_PROVIDER=${nseSyncProvider}; using bhavcopy`);
+  }
+  return runBhavcopyNseSync(trigger);
 }
 
 function runFundamentals(trigger) {
@@ -413,6 +601,8 @@ function shutdown(signal) {
   shuttingDown = true;
   if (dailyTimer) clearTimeout(dailyTimer);
   if (marketRefreshTimer) clearInterval(marketRefreshTimer);
+  if (indiaMarketQuoteRefreshTimer) clearInterval(indiaMarketQuoteRefreshTimer);
+  if (backfillTimer) clearInterval(backfillTimer);
   if (syncChild) syncChild.kill(signal);
   if (fundamentalsChild) fundamentalsChild.kill(signal);
   if (usFundamentalsChild) usFundamentalsChild.kill(signal);
@@ -433,6 +623,8 @@ nextChild.on("error", (error) => {
 nextChild.on("close", (code, signal) => {
   if (dailyTimer) clearTimeout(dailyTimer);
   if (marketRefreshTimer) clearInterval(marketRefreshTimer);
+  if (indiaMarketQuoteRefreshTimer) clearInterval(indiaMarketQuoteRefreshTimer);
+  if (backfillTimer) clearInterval(backfillTimer);
   if (syncChild) syncChild.kill("SIGTERM");
   if (fundamentalsChild) fundamentalsChild.kill("SIGTERM");
   if (usFundamentalsChild) usFundamentalsChild.kill("SIGTERM");
@@ -444,8 +636,13 @@ nextChild.on("close", (code, signal) => {
 
 scheduleDailySync();
 scheduleRecurringMarketRefresh();
+scheduleIndiaMarketQuoteRefresh();
+scheduleBackfillCron();
 setTimeout(() => {
-  runMarketRefresh("startup");
-  if (syncDisabled) runFundamentals("startup");
-  else runSync("startup");
+  if (syncDisabled) {
+    runMarketRefresh("startup");
+    runFundamentals("startup");
+  } else {
+    runSync("startup");
+  }
 }, 0);

@@ -8,6 +8,8 @@ import { FIELDS } from "@/lib/screener/fields";
 import { PROVENANCE_BY_FIELD } from "@/lib/screener/provider";
 import { formatValue, fmtPrice, fmtPct, signColor, DASH } from "./format";
 
+// TODO: Adopt FreshnessBadge here once screener rows expose quote/report age.
+
 export interface HeldPosition {
   quantity: number;
   avgCost: number | null;

@@ -34,6 +34,7 @@ HISTORY_DAYS = 365 * 10 + 10
 ADJUSTMENT_RATIO_LOW = 0.75
 ADJUSTMENT_RATIO_HIGH = 1.34
 GOOGLE_FINANCE_URL = "https://www.google.com/finance/quote/{symbol}:NSE?hl=en"
+YAHOO_SUFFIX_BY_EXCHANGE = {"NSE": "NS", "BSE": "BO"}
 HTTP_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -58,9 +59,16 @@ def parse_args() -> argparse.Namespace:
         help="Postgres connection URL (defaults to DATABASE_URL or local Investogenie DB)",
     )
     parser.add_argument("--symbols", help="Comma-separated NSE symbols to synchronize")
+    parser.add_argument(
+        "--exchange",
+        choices=sorted(YAHOO_SUFFIX_BY_EXCHANGE),
+        default="NSE",
+        help="Indian exchange to synchronize. NSE uses Yahoo .NS; BSE uses Yahoo .BO.",
+    )
     parser.add_argument("--limit", type=int, help="Maximum number of symbols to process")
     parser.add_argument("--sleep", type=float, default=1.2, help="Seconds between Yahoo requests")
     parser.add_argument("--retries", type=int, default=3, help="Download attempts per symbol")
+    parser.add_argument("--history-days", type=int, default=HISTORY_DAYS, help="Calendar days for first/full history fetch")
     parser.add_argument("--dry-run", action="store_true", help="Fetch and validate without writing")
     parser.add_argument(
         "--no-full-adjustment",
@@ -70,7 +78,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def load_assets(conn, requested: set[str] | None, limit: int | None) -> list[AssetState]:
+def load_assets(conn, requested: set[str] | None, limit: int | None, exchange: str) -> list[AssetState]:
     params: list[object] = []
     symbol_filter = ""
     if requested:
@@ -83,6 +91,7 @@ def load_assets(conn, requested: set[str] | None, limit: int | None) -> list[Ass
         limit_sql = "limit %s"
 
     with conn.cursor() as cur:
+        quote_source = f"{exchange}_BHAVCOPY"
         cur.execute(
             f"""
             select a.id::text, a.ticker, latest.date, latest.close
@@ -94,13 +103,20 @@ def load_assets(conn, requested: set[str] | None, limit: int | None) -> list[Ass
                  order by o.date desc
                  limit 1
               ) latest on true
-             where a.exchange = 'NSE'
+             where a.exchange = %s
                and a.asset_class = 'STOCK'
+               and a.is_active = true
+               and a.ticker !~ '-RE[0-9]*$'
+               and exists (
+                 select 1 from public.latest_quotes q
+                  where q.asset_id = a.id
+                    and q.source = %s
+               )
                {symbol_filter}
              order by coalesce(latest.date, date '1900-01-01'), a.ticker
              {limit_sql}
             """,
-            params,
+            [exchange, quote_source, *params],
         )
         return [
             AssetState(
@@ -143,12 +159,13 @@ def normalize_download(frame: pd.DataFrame) -> pd.DataFrame:
     return out.sort_values("date").drop_duplicates("date", keep="last")
 
 
-def download(symbol: str, start: date, end: date, retries: int) -> pd.DataFrame:
+def download(symbol: str, start: date, end: date, retries: int, exchange: str) -> pd.DataFrame:
+    suffix = YAHOO_SUFFIX_BY_EXCHANGE[exchange]
     last_error: Exception | None = None
     for attempt in range(1, retries + 1):
         try:
             frame = yf.download(
-                f"{symbol}.NS",
+                f"{symbol}.{suffix}",
                 start=start.isoformat(),
                 end=end.isoformat(),
                 auto_adjust=True,
@@ -272,8 +289,8 @@ def main() -> None:
 
     conn = psycopg2.connect(args.database_url)
     try:
-        assets = load_assets(conn, requested, args.limit)
-        print(f"Identified {len(assets)} NSE stocks for incremental synchronization.")
+        assets = load_assets(conn, requested, args.limit, args.exchange)
+        print(f"Identified {len(assets)} {args.exchange} stocks for incremental synchronization.")
 
         written = 0
         added = 0
@@ -286,7 +303,7 @@ def main() -> None:
             missing_start = (
                 state.last_date + timedelta(days=1)
                 if state.last_date
-                else today - timedelta(days=HISTORY_DAYS)
+                else today - timedelta(days=max(1, args.history_days))
             )
             fetch_start = (
                 state.last_date - timedelta(days=OVERLAP_DAYS)
@@ -299,24 +316,29 @@ def main() -> None:
                 f"{missing_start.isoformat()} to {today.isoformat()}"
             )
             try:
-                frame = download(state.ticker, fetch_start, today, max(1, args.retries))
+                frame = download(state.ticker, fetch_start, today, max(1, args.retries), args.exchange)
                 split, ratio = adjustment_detected(state, frame)
                 if split and not args.no_full_adjustment:
                     print(f"   adjustment ratio {ratio:.4f}; rebuilding adjusted ten-year history")
                     frame = download(
                         state.ticker,
-                        today - timedelta(days=HISTORY_DAYS),
+                        today - timedelta(days=max(1, args.history_days)),
                         today,
                         max(1, args.retries),
+                        args.exchange,
                     )
                     rebuilt += 1
 
                 if frame.empty:
-                    price = fetch_google_quote(state.ticker)
-                    if not args.dry_run:
-                        upsert_google_quote(conn, state.asset_id, price)
-                    google_fallbacks += 1
-                    print(f"   Yahoo returned no bars; Google Finance quote {price:.2f}")
+                    if args.exchange == "NSE":
+                        price = fetch_google_quote(state.ticker)
+                        if not args.dry_run:
+                            upsert_google_quote(conn, state.asset_id, price)
+                        google_fallbacks += 1
+                        print(f"   Yahoo returned no bars; Google Finance quote {price:.2f}")
+                    else:
+                        unchanged += 1
+                        print("   Yahoo returned no bars")
                 else:
                     new_count = int((frame["date"] >= missing_start).sum())
                     count = 0 if args.dry_run else upsert_bars(conn, state.asset_id, frame)
@@ -329,6 +351,8 @@ def main() -> None:
             except Exception as exc:
                 conn.rollback()
                 try:
+                    if args.exchange != "NSE":
+                        raise
                     price = fetch_google_quote(state.ticker)
                     if not args.dry_run:
                         upsert_google_quote(conn, state.asset_id, price)
@@ -343,7 +367,7 @@ def main() -> None:
                 time.sleep(args.sleep)
 
         print(
-            "NSE sync complete: "
+            f"{args.exchange} sync complete: "
             f"processed={len(assets)} written={written} new={added} "
             f"rebuilt={rebuilt} unchanged={unchanged} "
             f"google_fallbacks={google_fallbacks} failed={failed}"

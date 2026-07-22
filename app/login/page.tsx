@@ -5,7 +5,7 @@ import LoginForm from "./LoginForm";
 
 // If already authenticated, skip straight to the terminal.
 export default async function LoginPage() {
-  if (await getSessionUser()) redirect("/dashboard");
+  if (await getSessionUser()) redirect("/terminal/us");
 
   return (
     <main className="relative flex min-h-screen flex-col items-center justify-center bg-[#05070d] px-6 text-white">

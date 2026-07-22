@@ -7,7 +7,7 @@ import { type Preset } from "@/lib/screener/presets";
 import type { ScreenerStock, ScreenResult, Market } from "@/lib/screener/service";
 import {
   addToWatchlistById, saveScreen, deleteScreen, renameScreen, type SavedScreen,
-} from "@/app/screener/actions";
+} from "@/lib/screener-actions";
 import FilterPanel from "./FilterPanel";
 import ResultsTable, { type HeldPosition } from "./ResultsTable";
 import { exportCsv, exportExcel } from "./exportData";
@@ -30,6 +30,19 @@ const UNIVERSE_LABEL: Record<string, string> = {
   ALL: "All stocks", NIFTY_50: "Nifty 50", NIFTY_100: "Nifty 100", NIFTY_500: "Nifty 500",
   FNO: "F&O", SP_500: "S&P 500",
 };
+
+function formatSnapshotStamp(value: string): string {
+  return new Intl.DateTimeFormat("en-IN", {
+    timeZone: "Asia/Kolkata",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).format(new Date(value));
+}
 
 export default function StockScreener(props: Props) {
   const [market, setMarket] = useState<Market>(props.initialMarket);
@@ -138,7 +151,7 @@ export default function StockScreener(props: Props) {
   const marketMeta = props.meta[market];
   const holdings = props.holdings[market] ?? {};
   const totalPages = Math.max(1, Math.ceil(result.total / pageSize));
-  const asOf = result.refreshedAt ? new Date(result.refreshedAt).toLocaleString() : null;
+  const asOf = result.refreshedAt ? formatSnapshotStamp(result.refreshedAt) : null;
 
   return (
     <div className="space-y-4">
