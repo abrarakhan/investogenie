@@ -81,6 +81,40 @@ let shuttingDown = false;
 
 const sleep = (milliseconds) => new Promise((resolveSleep) => setTimeout(resolveSleep, milliseconds));
 
+// Sync job tracking for startup summary
+const syncStats = {
+  attempted: 0,
+  succeeded: 0,
+  failed: 0,
+  skipped: 0,
+  jobs: [],
+};
+
+function recordSyncJob(name, status, error = null, attempts = 1, durationMs = 0) {
+  syncStats.jobs.push({ name, status, error, attempts, durationMs });
+  if (status === "ok") syncStats.succeeded++;
+  else if (status === "error") syncStats.failed++;
+  else if (status === "skipped") syncStats.skipped++;
+  syncStats.attempted++;
+}
+
+function printSyncSummary() {
+  console.log("\n=== Startup Sync Summary ===");
+  for (const job of syncStats.jobs) {
+    const emoji = job.status === "ok" ? "✓" : job.status === "error" ? "✗" : "⊘";
+    const duration = job.durationMs > 0 ? ` (${Math.round(job.durationMs / 1000)}s)` : "";
+    const error = job.error ? ` — ${job.error}` : "";
+    console.log(`${emoji} ${job.name}${duration}${error}`);
+  }
+  console.log(
+    `\nTotal: ${syncStats.succeeded}✓ ${syncStats.failed}✗ ${syncStats.skipped}⊘ (${syncStats.attempted} attempted)`
+  );
+  if (syncStats.failed > 0) {
+    console.warn("\n⚠️  Some syncs failed. App is running but data may be stale.");
+  }
+  console.log("============================\n");
+}
+
 function runNodeScript(label, script) {
   return new Promise((resolveRun, rejectRun) => {
     console.log(`[market-refresh] ${label}`);
@@ -176,38 +210,46 @@ function runMarketRefresh(trigger) {
     return marketRefreshPromise;
   }
 
+  const t0 = Date.now();
   marketRefreshPromise = (async () => {
-    console.log(`[market-refresh] starting ${trigger}`);
-    await runNodeScript("refreshing security listings", "scripts/ingest-listings.mjs");
-    await runNodeScript("refreshing market quotes", "scripts/ingest-quotes.mjs");
-    if (!usQuoteDisabled) {
-      await runMarketPython("refreshing Yahoo/Google US quotes", [
-        usPipeline,
-        "--quotes-only",
-        "--quote-batch-size",
-        usQuoteBatchSize,
-        "--quote-limit",
-        usQuoteLimit,
-        "--google-fallback-limit",
-        usGoogleFallbackLimit,
-        "--sleep",
-        usSyncSleep,
-      ]);
+    try {
+      console.log(`[market-refresh] starting ${trigger}`);
+      await runNodeScript("refreshing security listings", "scripts/ingest-listings.mjs");
+      await runNodeScript("refreshing market quotes", "scripts/ingest-quotes.mjs");
+      if (!usQuoteDisabled) {
+        await runMarketPython("refreshing Yahoo/Google US quotes", [
+          usPipeline,
+          "--quotes-only",
+          "--quote-batch-size",
+          usQuoteBatchSize,
+          "--quote-limit",
+          usQuoteLimit,
+          "--google-fallback-limit",
+          usGoogleFallbackLimit,
+          "--sleep",
+          usSyncSleep,
+        ]);
+      }
+      await runUSHistory(trigger);
+      await runMacroSync(trigger);
+      await waitForApp();
+      if (!process.env.CRON_SECRET) throw new Error("CRON_SECRET is not configured");
+      const response = await fetch("http://127.0.0.1:3000/api/cron/scan", {
+        headers: { authorization: `Bearer ${process.env.CRON_SECRET}` },
+      });
+      const body = await response.text();
+      if (!response.ok) throw new Error(`signal scan failed (${response.status}): ${body}`);
+      console.log(`[market-refresh] ${trigger} completed: ${body}`);
+
+      const durationMs = Date.now() - t0;
+      recordSyncJob(`market-refresh/${trigger}`, "ok", null, 1, durationMs);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const durationMs = Date.now() - t0;
+      recordSyncJob(`market-refresh/${trigger}`, "error", message, 1, durationMs);
+      console.error(`[market-refresh] ${trigger} failed: ${message}`);
     }
-    await runUSHistory(trigger);
-    await runMacroSync(trigger);
-    await waitForApp();
-    if (!process.env.CRON_SECRET) throw new Error("CRON_SECRET is not configured");
-    const response = await fetch("http://127.0.0.1:3000/api/cron/scan", {
-      headers: { authorization: `Bearer ${process.env.CRON_SECRET}` },
-    });
-    const body = await response.text();
-    if (!response.ok) throw new Error(`signal scan failed (${response.status}): ${body}`);
-    console.log(`[market-refresh] ${trigger} completed: ${body}`);
   })()
-    .catch((error) => {
-      console.error(`[market-refresh] ${trigger} failed: ${error.message}`);
-    })
     .finally(() => {
       marketRefreshPromise = null;
     });
@@ -381,9 +423,61 @@ function runYahooNseSync(trigger) {
   });
 }
 
+async function runBhavcopyNseSyncWithRetry(trigger, maxRetries = 2) {
+  const t0 = Date.now();
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      await waitForApp();
+      if (!process.env.CRON_SECRET) throw new Error("CRON_SECRET is not configured");
+
+      const runExchangeBhavcopy = async (exchange, path) => {
+        const url = new URL(`http://127.0.0.1:3000${path}`);
+        url.searchParams.set("maxSessions", nseBhavcopyMaxSessions);
+        console.log(
+          `[nse-sync] starting ${trigger} ${exchange} bhavcopy OHLCV update (max ${nseBhavcopyMaxSessions} sessions)`,
+        );
+        const response = await fetch(url, {
+          headers: { authorization: `Bearer ${process.env.CRON_SECRET}` },
+        });
+        const body = await response.text();
+        if (!response.ok) throw new Error(`${exchange} bhavcopy update failed (${response.status}): ${body}`);
+        console.log(`[nse-sync] ${trigger} ${exchange} bhavcopy update completed: ${body}`);
+      };
+
+      console.log(
+        `[nse-sync] ${trigger} India OHLCV standard provider: bhavcopy; Yahoo/Google remain queued repair fallback`,
+      );
+      await runExchangeBhavcopy("NSE", "/api/cron/backfill-nse");
+      await runExchangeBhavcopy("BSE", "/api/cron/backfill-bse");
+
+      const durationMs = Date.now() - t0;
+      recordSyncJob(`nse-sync/${trigger}`, "ok", null, attempt, durationMs);
+      return true;
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
+
+      if (attempt < maxRetries) {
+        const backoffMs = 1000 * Math.pow(2, attempt - 1); // 1s, 2s, 4s...
+        console.warn(
+          `[nse-sync] ${trigger} attempt ${attempt} failed: ${lastError}. Retrying in ${Math.round(backoffMs)}ms...`,
+        );
+        await sleep(backoffMs);
+      }
+    }
+  }
+
+  const durationMs = Date.now() - t0;
+  recordSyncJob(`nse-sync/${trigger}`, "error", lastError, maxRetries, durationMs);
+  console.error(`[nse-sync] ${trigger} failed after ${maxRetries} attempts: ${lastError}`);
+  return false;
+}
+
 function runBhavcopyNseSync(trigger) {
   if (syncDisabled) {
     console.log(`[nse-sync] ${trigger} sync disabled by NSE_SYNC_DISABLED=1`);
+    recordSyncJob(`nse-sync/${trigger}`, "skipped", "disabled");
     return syncPromise;
   }
   if (syncPromise) {
@@ -392,32 +486,14 @@ function runBhavcopyNseSync(trigger) {
   }
 
   syncPromise = (async () => {
-    await waitForApp();
-    if (!process.env.CRON_SECRET) throw new Error("CRON_SECRET is not configured");
-
-    const runExchangeBhavcopy = async (exchange, path) => {
-      const url = new URL(`http://127.0.0.1:3000${path}`);
-      url.searchParams.set("maxSessions", nseBhavcopyMaxSessions);
-      console.log(
-        `[nse-sync] starting ${trigger} ${exchange} bhavcopy OHLCV update (max ${nseBhavcopyMaxSessions} sessions)`,
-      );
-      const response = await fetch(url, {
-        headers: { authorization: `Bearer ${process.env.CRON_SECRET}` },
-      });
-      const body = await response.text();
-      if (!response.ok) throw new Error(`${exchange} bhavcopy update failed (${response.status}): ${body}`);
-      console.log(`[nse-sync] ${trigger} ${exchange} bhavcopy update completed: ${body}`);
-    };
-
-    console.log(
-      `[nse-sync] ${trigger} India OHLCV standard provider: bhavcopy; Yahoo/Google remain queued repair fallback`,
-    );
-    await runExchangeBhavcopy("NSE", "/api/cron/backfill-nse");
-    await runExchangeBhavcopy("BSE", "/api/cron/backfill-bse");
-    runMarketRefresh(`${trigger} post-sync`);
+    const success = await runBhavcopyNseSyncWithRetry(trigger, 2);
+    if (success) {
+      runMarketRefresh(`${trigger} post-sync`);
+    }
   })()
     .catch((error) => {
-      console.error(`[nse-sync] ${trigger} NSE bhavcopy update failed: ${error.message}`);
+      console.error(`[nse-sync] ${trigger} fatal error: ${error.message}`);
+      recordSyncJob(`nse-sync/${trigger}`, "error", error.message);
     })
     .finally(() => {
       syncPromise = null;
@@ -439,6 +515,7 @@ function runSync(trigger) {
 function runFundamentals(trigger) {
   if (fundamentalsDisabled) {
     console.log(`[fundamentals] ${trigger} sync disabled by FUNDAMENTALS_SYNC_DISABLED=1`);
+    recordSyncJob(`fundamentals/${trigger}`, "skipped", "disabled");
     runUSFundamentals(trigger);
     return;
   }
@@ -460,12 +537,20 @@ function runFundamentals(trigger) {
   fundamentalsChild = spawn(python, args, { cwd: root, env: process.env, stdio: "inherit" });
   fundamentalsChild.on("error", (error) => {
     console.error(`[fundamentals] unable to start: ${error.message}`);
+    recordSyncJob(`fundamentals/${trigger}`, "error", error.message);
   });
   fundamentalsChild.on("close", (code, signal) => {
     fundamentalsChild = null;
-    if (signal) console.log(`[fundamentals] stopped by ${signal}`);
-    else if (code === 0) console.log(`[fundamentals] ${trigger} update completed`);
-    else console.error(`[fundamentals] ${trigger} update failed with exit code ${code}`);
+    if (signal) {
+      console.log(`[fundamentals] stopped by ${signal}`);
+      recordSyncJob(`fundamentals/${trigger}`, "error", `stopped by ${signal}`);
+    } else if (code === 0) {
+      console.log(`[fundamentals] ${trigger} update completed`);
+      recordSyncJob(`fundamentals/${trigger}`, "ok");
+    } else {
+      console.error(`[fundamentals] ${trigger} update failed with exit code ${code}`);
+      recordSyncJob(`fundamentals/${trigger}`, "error", `exit code ${code}`);
+    }
     if (!signal) runUSFundamentals(trigger);
   });
 }
@@ -609,6 +694,12 @@ function shutdown(signal) {
   if (usHistoryChild) usHistoryChild.kill(signal);
   if (macroChild) macroChild.kill(signal);
   if (marketRefreshChild) marketRefreshChild.kill(signal);
+
+  // Print startup summary before killing Next.js
+  if (syncStats.attempted > 0) {
+    printSyncSummary();
+  }
+
   nextChild.kill(signal);
 }
 
@@ -645,4 +736,10 @@ setTimeout(() => {
   } else {
     runSync("startup");
   }
+  // Print summary after startup syncs have time to complete (10 seconds)
+  setTimeout(() => {
+    if (syncStats.attempted > 0) {
+      printSyncSummary();
+    }
+  }, 10000);
 }, 0);
