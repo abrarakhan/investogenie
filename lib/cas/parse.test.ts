@@ -162,6 +162,7 @@ describe("parseCasHoldings (end to end)", () => {
       expect(row.name).not.toMatch(/total|page|statement|fundamental/i);
     }
   });
+<<<<<<< HEAD
 
   it("splits multiple schemes under one folio by ISIN", () => {
     const text = [
@@ -247,4 +248,6 @@ describe("parseCasHoldings (end to end)", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ isin: "INF109KC1O90", folio: "8414850/88", quantity: 5024.874 });
   });
+=======
+>>>>>>> claude/vigilant-wu-216d1d
 });
