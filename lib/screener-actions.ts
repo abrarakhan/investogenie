@@ -2,7 +2,7 @@
 
 import { getSessionUser } from "@/lib/auth";
 import { query } from "@/lib/db";
-import { ensureScaffold } from "@/app/dashboard/actions";
+import { ensureScaffold } from "@/lib/dashboard-actions";
 import type { Filter, SortSpec } from "@/lib/screener/filterEngine";
 
 /** Add an asset to the user's default watchlist by id (screener row action). */

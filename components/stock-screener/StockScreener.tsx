@@ -7,7 +7,7 @@ import { type Preset } from "@/lib/screener/presets";
 import type { ScreenerStock, ScreenResult, Market } from "@/lib/screener/service";
 import {
   addToWatchlistById, saveScreen, deleteScreen, renameScreen, type SavedScreen,
-} from "@/app/screener/actions";
+} from "@/lib/screener-actions";
 import FilterPanel from "./FilterPanel";
 import ResultsTable, { type HeldPosition } from "./ResultsTable";
 import { exportCsv, exportExcel } from "./exportData";

@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { ensureScaffold } from "@/app/dashboard/actions";
+import { ensureScaffold } from "@/lib/dashboard-actions";
 import { getSessionUser } from "@/lib/auth";
 import { normalizeFolio, parseCasHoldings, type ParsedHoldingRow as CasParsedHoldingRow } from "@/lib/cas/parse";
 import { query, queryOne, tx } from "@/lib/db";

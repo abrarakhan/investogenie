@@ -87,29 +87,33 @@ export default function AppShell({
     {
       title: "Market Workspace",
       items: [
-        { label: "Overview", href: `/markets/${m}`, active: active === "overview" },
+        { label: "Markets", href: `/markets/${m}`, active: active === "overview" },
         { label: "Terminal", href: `/terminal/${m}`, active: active === "terminal" },
         { label: "Stock Screener", href: `/terminal/${m}/stocks`, active: active === "stock-screener" },
         { label: "Swing Candidates", href: `/terminal/${m}/screener`, active: active === "swing", badge: "Buy" },
+      ],
+    },
+    {
+      title: "Analysis",
+      items: [
         { label: "Probability", href: `/terminal/${m}/probability`, active: active === "probability" },
+        { label: "Forward Test", href: `/terminal/${m}/forward-test`, active: active === "forward-test" },
       ],
     },
     {
       title: "Portfolio",
       items: [
-        { label: "Holdings", href: `/terminal/${m}`, active: false },
         { label: "Import Holdings", href: "/terminal/in/cas", active: active === "import-holdings", badge: market === "IN" ? undefined : "IN" },
         { label: "Fund Mapping", href: "/portfolio/fund-mapping", active: active === "fund-mapping", badge: market === "IN" ? undefined : "IN" },
         { label: "Fund X-Ray", href: "/terminal/in", active: false, muted: market !== "IN" },
-        { label: "Forward test", href: `/terminal/${m}/forward-test`, active: active === "forward-test" },
       ],
     },
     {
       title: "Operations",
       items: [
         { label: "Data Health", href: "/data/health", active: active === "data", statusDot: "data-health" },
-        { label: "Help", href: "/help" },
         { label: "Settings", href: "/settings", active: active === "settings" },
+        { label: "Help", href: "/help" },
       ],
     },
   ];

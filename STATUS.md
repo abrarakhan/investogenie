@@ -1,6 +1,6 @@
 # InvestoGenie Status
 
-_Last updated: 2026-07-20_
+_Last updated: 2026-07-22_
 
 This file summarizes what has been built so far, what is currently working, what is partial, and what to build next.
 
@@ -71,13 +71,13 @@ Current database migration stack:
 
 ## Current Local Data Coverage
 
-Latest local Postgres snapshot checked on 2026-07-20:
+Latest local Postgres snapshot checked on 2026-07-22:
 
 | Area | Count / Status |
 |---|---:|
-| Assets | 18,241 |
-| Latest quotes | 17,439 |
-| OHLCV bars | 6,215,878 |
+| Assets | 18,228 stock assets / 18k+ total assets |
+| Latest quotes | 17,505 |
+| OHLCV bars | 6.2M+ |
 | Swing signals | 3,399 |
 | Financial report rows | 113,129 |
 | Macro indicator rows | 8,161 |
@@ -85,9 +85,9 @@ Latest local Postgres snapshot checked on 2026-07-20:
 | Fund snapshot rows | 936 |
 | Explicit user fund mappings | 6 |
 | Forward-test positions | 40 |
-| Imported user mutual funds | 16 |
-| Imported user fund value | INR 38,70,147.70 |
-| Quote rows with no OHLCV history | 10,759 |
+| Imported user mutual funds | 21 CAS fund holdings imported in the current local DB |
+| Imported user fund value | INR 85,32,803.53 from latest CAS inventory |
+| Quote rows with no OHLCV history | Still material, especially long-tail US and some IN symbols |
 
 ## Data Sync And Workers
 
@@ -97,17 +97,26 @@ Latest local Postgres snapshot checked on 2026-07-20:
 
 The wrapper currently handles:
 
-- Daily NSE incremental history sync scheduling.
-- Recurring market refresh every configured interval.
+- Official NSE/BSE bhavcopy OHLCV catch-up on startup.
+- Daily NSE/BSE bhavcopy history sync scheduling by IST time.
+- NSE/BSE latest quote refresh every 15 minutes during Indian market hours
+  (`09:15-15:30 IST`, Monday-Friday), configurable with
+  `INDIA_MARKET_QUOTE_REFRESH_INTERVAL_MINUTES` and disabled with
+  `INDIA_MARKET_QUOTE_REFRESH_DISABLED=1`.
+- Recurring broader market refresh every configured interval.
 - Security listing refresh.
 - Quote refresh.
 - US quote/fundamental/history sync hooks.
 - Macro sync hook.
 - Signal scan trigger through cron API.
+- Queued OHLCV repair trigger through a detached local worker script.
 
 Known issue:
 
-- Startup market refresh can fail on BSE/NSE response-format or 503 errors. The Next app still starts, but the refresh job logs a failure. This needs more resilient fetch handling and graceful fallback.
+- NSE/BSE bhavcopy remains end-of-day data. The new 15-minute scheduler keeps
+  the app refreshed from the configured source, but true live intraday
+  all-stock quotes require an intraday provider beyond bhavcopy.
+- Some long-tail Yahoo/Google symbols still emit provider 404/delisted noise.
 
 ### Pipeline Scripts
 
@@ -139,10 +148,15 @@ Built:
 
 - India and US market overview pages.
 - Normalized performance chart.
+- TradingView-style candlestick chart powered by `lightweight-charts`.
+- OHLCV candle API: `/api/market-overview/candles`.
+- Performance/Candles toggle in Market Overview.
 - Multi-symbol chart selection.
 - Fix for US multi-exchange lookup so NYSE and NASDAQ symbols can both resolve.
 - Empty-history handling for symbols without OHLCV coverage.
 - Hydration-safe date formatting fix.
+- Market Overview now uses the shared app shell instead of the older standalone
+  side rail.
 
 Current limitations:
 
@@ -171,6 +185,8 @@ Current limitations:
 Built:
 
 - Stock screener UI and API.
+- Hydration-safe screener snapshot timestamp formatting (`en-IN`,
+  `Asia/Kolkata`) to avoid server/client locale mismatch.
 - Filter engine with test coverage.
 - Financial report storage.
 - India and US fundamentals sync paths.
@@ -234,7 +250,7 @@ Built:
 
 Current local data:
 
-- 16 user mutual-fund holdings are active.
+- 21 user mutual-fund holdings are active from the latest CAS import.
 - 6 funds are currently matched to AMC snapshots.
 - 6 explicit `user_fund_mappings` rows are present after migration backfill.
 - 473 underlying stock rows are available for matched funds.
@@ -245,7 +261,7 @@ Current limitations:
 - Not all uploaded funds have matched AMC monthly portfolio disclosures yet; the mapping screen now makes this repairable.
 - Some CAS-extracted fund names are still messy when there is no clean linked scheme snapshot.
 - Matching is intentionally conservative: scheme/fund joining should be by ISIN or explicit mapping, not fuzzy name joins.
-- Current mapping coverage remains 6/16 until more AMC disclosures are imported or manually linked.
+- Current mapping coverage remains 6/21 until more AMC disclosures are imported or manually linked.
 
 ## Data Health
 
@@ -284,11 +300,18 @@ Built:
 
 Current local finding:
 
-- Data Health currently reports a large quote-without-history gap: 10,759 assets with quotes but no OHLCV history.
+- Data Health now reconciles queued backfill rows against existing `daily_ohlcv`
+  coverage so the backfill progress bar reflects actual database coverage after
+  refresh.
+- Quote-without-history remains the biggest data-coverage issue, especially for
+  US long-tail names.
 
 Current limitations:
 
 - Quick-fix actions are intentionally conservative: heavy syncs are not auto-triggered from the UI yet.
+- Backfill can be started from the UI and continues in the background through
+  `scripts/local-backfill-worker.mjs`; progress is visible through the Data
+  Health backfill status panel.
 - `cron_logs` only stores `created_at` and `duration_ms`, not separate started/finished timestamps.
 - Health status is source-level and asset-level, but not yet tied into every candidate/screener row visually.
 
@@ -391,11 +414,15 @@ Recent checks after Fund Mapping and Data Health implementation:
 - `npm run lint`: passing.
 - `npx tsc --noEmit`: passing.
 - `npm test`: passing, 30/30 tests.
-- `npm run build`: passing.
+- `npm run build`: passing cleanly under Turbopack.
 
-Known non-code issue:
+Recent verified command set on 2026-07-22:
 
-- Startup market refresh can fail because BSE/NSE remote endpoints sometimes return malformed headers, redirects, or 503 responses. The app still launches.
+- `node --check scripts/run-with-nse-sync.mjs`: passing.
+- `node --check scripts/local-backfill-worker.mjs`: passing.
+- `npx tsc --noEmit`: passing.
+- `npm run lint`: passing.
+- `npm run build`: passing with no Turbopack warning.
 
 ## Git State At Time Of This File
 
@@ -405,25 +432,30 @@ Current branch:
 
 Recent local commits ahead of remote:
 
-- `7c1c761 Rework Fund X-Ray portfolio detail`
-- `8dbf06e Stabilize Fund X-Ray CAS holdings`
-- `f801c72 Hide noisy Fund X-Ray disclosure prompts`
-- `5e49b57 Clarify Fund X-Ray loaded disclosures`
+- `79b6a9a Refresh India quotes during market hours`
+- `7abfe6d Use lightweight market charts and clean build`
+- `bdec47b Add TradingView-style market candles`
+- `deb66da Automate bhavcopy sync on startup`
+- `7c01fa8 Add data health and fund mapping workflows`
 
-Uncommitted app work observed:
+Committed app work now includes:
 
-- `0017_fund_mapping.sql`.
-- `/portfolio/fund-mapping` route and export route.
-- `/data/health` route.
-- Reusable status badges.
-- Fund mapping and data health libraries/tests.
-- App shell/Data navigation updates.
-- Fund X-Ray explicit mapping rewrite.
+- Explicit fund mapping schema and UI.
+- Data Health dashboard and status badges.
+- Bhavcopy startup automation.
+- TradingView-style charting with `lightweight-charts`.
+- Clean Turbopack build by moving local backfill execution to a detached worker.
+- 15-minute market-hours NSE/BSE quote refresh.
+- Stock screener hydration fix.
 
 Uncommitted non-app files observed:
 
 - `.claude/context/...`
 - `CLAUDE.md`
+
+Uncommitted app file observed:
+
+- `STATUS.md` itself after this update.
 
 These appear to be Claude/context notes rather than app functionality.
 
@@ -431,7 +463,7 @@ These appear to be Claude/context notes rather than app functionality.
 
 ### 1. Complete Fund Mapping Coverage
 
-Use the new `/portfolio/fund-mapping` screen to move Fund X-Ray from 6/16 matched funds toward full coverage.
+Use the new `/portfolio/fund-mapping` screen to move Fund X-Ray from 6/21 matched funds toward full coverage.
 
 Next actions:
 

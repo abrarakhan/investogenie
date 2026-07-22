@@ -31,7 +31,7 @@ export async function login(_prev: AuthState, formData: FormData): Promise<AuthS
   }
   await createSession({ id: user.id, email: user.email });
   revalidatePath("/", "layout");
-  redirect("/dashboard");
+  redirect("/terminal/us");
 }
 
 export async function signup(_prev: AuthState, formData: FormData): Promise<AuthState> {
@@ -45,7 +45,7 @@ export async function signup(_prev: AuthState, formData: FormData): Promise<Auth
   const user = await createUser(email, password);
   await createSession(user);
   revalidatePath("/", "layout");
-  redirect("/dashboard");
+  redirect("/terminal/us");
 }
 
 export async function signout(): Promise<void> {

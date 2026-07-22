@@ -8,7 +8,7 @@ import { getFundOverlap, getMacroMatrix, getTopSwingSetups } from "@/lib/engines
 import { getUserSwingSettings } from "@/lib/settings";
 import { getQuotesByAssetIds } from "@/lib/quotes";
 import { MARKETS, MARKET_COUNTRY, normalizeMarket, formatMoney, formatPct } from "@/lib/markets";
-import { addToWatchlist, ensureScaffold, recordTrade, removeWatchlistItem } from "@/app/dashboard/actions";
+import { addToWatchlist, ensureScaffold, recordTrade, removeWatchlistItem } from "@/lib/dashboard-actions";
 import ScreenerWidget from "@/components/stock-screener/ScreenerWidget";
 
 export const dynamic = "force-dynamic";
