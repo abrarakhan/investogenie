@@ -79,7 +79,41 @@ let lastBackfillIndiaDate = null;
 let lastBackfillUsDate = null;
 let shuttingDown = false;
 
+import { Client } from "pg";
+
 const sleep = (milliseconds) => new Promise((resolveSleep) => setTimeout(resolveSleep, milliseconds));
+
+/**
+ * Query cron_logs to check if a upstream sync is healthy.
+ * Returns true if the sync succeeded in the last run.
+ */
+async function isUpstreamSyncHealthy(jobName, timeWindowHours = 24) {
+  try {
+    const databaseUrl = process.env.DATABASE_URL;
+    if (!databaseUrl) return true; // Assume healthy if DB not configured
+
+    const client = new Client({ connectionString: databaseUrl });
+    await client.connect();
+
+    try {
+      const result = await client.query(
+        `SELECT status FROM public.cron_logs
+         WHERE job = $1 AND created_at > NOW() - INTERVAL '${timeWindowHours} hours'
+         ORDER BY created_at DESC LIMIT 1`,
+        [jobName]
+      );
+
+      if (result.rows.length === 0) return true; // No history = assume healthy
+      return result.rows[0].status === "ok";
+    } finally {
+      await client.end();
+    }
+  } catch (error) {
+    // If we can't check, assume healthy (don't block startup)
+    console.debug(`[health-check] Unable to check upstream ${jobName}: ${error instanceof Error ? error.message : String(error)}`);
+    return true;
+  }
+}
 
 // Sync job tracking for startup summary
 const syncStats = {
@@ -411,7 +445,7 @@ function runYahooNseSync(trigger) {
   syncChild.on("error", (error) => {
     console.error(`[nse-sync] unable to start: ${error.message}`);
   });
-  syncChild.on("close", (code, signal) => {
+  syncChild.on("close", async (code, signal) => {
     syncChild = null;
     if (signal) console.log(`[nse-sync] stopped by ${signal}`);
     else if (code === 0) {
@@ -419,7 +453,7 @@ function runYahooNseSync(trigger) {
       runMarketRefresh(`${trigger} post-sync`);
     }
     else console.error(`[nse-sync] ${trigger} update failed with exit code ${code}`);
-    if (!signal) runFundamentals(trigger);
+    if (!signal) await runFundamentals(trigger);
   });
 }
 
@@ -495,9 +529,9 @@ function runBhavcopyNseSync(trigger) {
       console.error(`[nse-sync] ${trigger} fatal error: ${error.message}`);
       recordSyncJob(`nse-sync/${trigger}`, "error", error.message);
     })
-    .finally(() => {
+    .finally(async () => {
       syncPromise = null;
-      runFundamentals(trigger);
+      await runFundamentals(trigger);
     });
   return syncPromise;
 }
@@ -512,15 +546,32 @@ function runSync(trigger) {
   return runBhavcopyNseSync(trigger);
 }
 
-function runFundamentals(trigger) {
+async function runFundamentals(trigger) {
   if (fundamentalsDisabled) {
     console.log(`[fundamentals] ${trigger} sync disabled by FUNDAMENTALS_SYNC_DISABLED=1`);
     recordSyncJob(`fundamentals/${trigger}`, "skipped", "disabled");
-    runUSFundamentals(trigger);
+    await runUSFundamentals(trigger);
     return;
   }
   if (!python || fundamentalsChild) {
     if (fundamentalsChild) console.log(`[fundamentals] skipping ${trigger}; sync still running`);
+    return;
+  }
+
+  // Check if upstream NSE sync succeeded before running fundamentals
+  // Fundamentals depends on fresh OHLCV data
+  const nseHealth = await isUpstreamSyncHealthy("backfill-nse", 24);
+  const bseHealth = await isUpstreamSyncHealthy("backfill-bse", 24);
+  if (!nseHealth || !bseHealth) {
+    console.log(
+      `[fundamentals] skipping ${trigger}; upstream OHLCV sync unhealthy (NSE: ${nseHealth ? "✓" : "✗"}, BSE: ${bseHealth ? "✓" : "✗"})`
+    );
+    recordSyncJob(
+      `fundamentals/${trigger}`,
+      "skipped",
+      `upstream unhealthy (NSE: ${nseHealth ? "ok" : "error"}, BSE: ${bseHealth ? "ok" : "error"})`
+    );
+    await runUSFundamentals(trigger);
     return;
   }
   const pipelinePath = resolve(root, "pipelines/stock_fundamentals_sync.py");
@@ -604,15 +655,31 @@ function runUSHistory(trigger) {
   });
 }
 
-function runUSFundamentals(trigger) {
+async function runUSFundamentals(trigger) {
   if (usFundamentalsDisabled) {
     console.log(`[us-fundamentals] ${trigger} sync disabled by US_FUNDAMENTALS_SYNC_DISABLED=1`);
+    recordSyncJob(`us-fundamentals/${trigger}`, "skipped", "disabled");
     return;
   }
   if (!python || usFundamentalsChild) {
     if (usFundamentalsChild) {
       console.log(`[us-fundamentals] skipping ${trigger}; sync still running`);
     }
+    return;
+  }
+
+  // Check if upstream US history sync succeeded
+  // US fundamentals depends on fresh US OHLCV data
+  const usHistoryHealth = await isUpstreamSyncHealthy("backfill-us", 24);
+  if (!usHistoryHealth) {
+    console.log(
+      `[us-fundamentals] skipping ${trigger}; upstream US OHLCV sync unhealthy`
+    );
+    recordSyncJob(
+      `us-fundamentals/${trigger}`,
+      "skipped",
+      "upstream US history unhealthy"
+    );
     return;
   }
 
