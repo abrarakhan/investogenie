@@ -121,6 +121,10 @@ That command starts Next.js through `scripts/run-with-nse-sync.mjs`, which:
 - runs the swing scan,
 - starts Indian fundamentals sync,
 - starts US fundamentals sync,
+- refreshes NSE/BSE latest quotes every 15 minutes during Indian market hours
+  (09:15-15:30 IST, Mon-Fri). Tune with
+  `INDIA_MARKET_QUOTE_REFRESH_INTERVAL_MINUTES`, or disable with
+  `INDIA_MARKET_QUOTE_REFRESH_DISABLED=1`,
 - repeats market quote refresh on `MARKET_REFRESH_INTERVAL_MINUTES`,
 - schedules the daily NSE/BSE bhavcopy history sync by IST time.
 
