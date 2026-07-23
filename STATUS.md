@@ -1,6 +1,6 @@
 # InvestoGenie Status
 
-_Last updated: 2026-07-22_
+_Last updated: 2026-07-23_
 
 This file summarizes what has been built so far, what is currently working, what is partial, and what to build next.
 
@@ -187,11 +187,20 @@ Built:
 - Stock screener UI and API.
 - Hydration-safe screener snapshot timestamp formatting (`en-IN`,
   `Asia/Kolkata`) to avoid server/client locale mismatch.
-- Filter engine with test coverage.
+- Filter engine with comprehensive test coverage.
 - Financial report storage.
 - India and US fundamentals sync paths.
 - Latest financial snapshot joins for screener analysis.
 - Screener snapshot rebuild SQL.
+- **Natural Language Query feature (in progress):**
+  - `NlQueryBar.tsx` component for plain-English screener queries.
+  - `nlQuery.ts` with Claude Opus 4.8 structured-output integration.
+  - Three-layer validation: Zod schema → validateFilter → sanitizeIntent.
+  - Unit conversion handling (Rs. Crore vs USD millions, percents vs ratios).
+  - One-turn repair loop for parse failures.
+  - Comprehensive test suite covering sanitization, sector/universe validation, bounds swapping.
+  - Prompt caching on system rules (stable 4096+ tokens) for performance.
+  - Structured output with `ScreenIntent` JSON schema including filters, sort, universe, valueBelowSectorMedian, search, and explanatory notes.
 
 Current local data:
 
@@ -199,6 +208,7 @@ Current local data:
 
 Current limitations:
 
+- NL query feature awaiting final integration into StockScreener UI and API wiring.
 - Data quality varies by source and symbol.
 - Financial statement normalization is still basic.
 - Need better source provenance and freshness badges in the UI.
@@ -409,57 +419,76 @@ Current limitations:
 
 ## Quality Checks Currently Passing
 
-Recent checks after Fund Mapping and Data Health implementation:
+Recent checks after NL Query feature and startup robustness:
 
-- `npm run lint`: passing.
-- `npx tsc --noEmit`: passing.
-- `npm test`: passing, 30/30 tests.
-- `npm run build`: passing cleanly under Turbopack.
+- `npm test`: passing, 76/76 tests (including 30 new NL query validation tests).
+- `npx tsc --noEmit`: passing, no type errors.
+- `npm run build`: passing cleanly under Turbopack with all routes recognized.
+- `npm run lint`: 4 pre-existing errors in unrelated files (backfill/refresh/scan/syncJobWrapper/syncMonitor).
 
-Recent verified command set on 2026-07-22:
+Recent verified command set on 2026-07-23:
 
 - `node --check scripts/run-with-nse-sync.mjs`: passing.
 - `node --check scripts/local-backfill-worker.mjs`: passing.
-- `npx tsc --noEmit`: passing.
-- `npm run lint`: passing.
-- `npm run build`: passing with no Turbopack warning.
+- `npx tsc --noEmit`: passing, no errors.
+- `npm test`: passing, 76 tests.
+- `npm run build`: passing with all routes generated.
 
 ## Git State At Time Of This File
 
 Current branch:
 
-- `feat/fund-xray-schema`
+- `main`
 
-Recent local commits ahead of remote:
+Recent upstream commits merged:
 
-- `79b6a9a Refresh India quotes during market hours`
-- `7abfe6d Use lightweight market charts and clean build`
-- `bdec47b Add TradingView-style market candles`
-- `deb66da Automate bhavcopy sync on startup`
-- `7c01fa8 Add data health and fund mapping workflows`
+- `8beea5b Merge claude/vigilant-wu-216d1d: Fix CAS statement import validation`
+- `234dd1f Merge pull request #18 from abrarakhan/feat/startup-robustness`
+- `a273ae1 Phase 5: Add graceful degradation for dependent jobs`
+- `ab65d86 Phase 2: Improve startup sync orchestration with retry and logging`
+- `47d5218 Repair startup refresh robustness: add retry harness and observability`
 
-Committed app work now includes:
+Committed app work includes:
 
-- Explicit fund mapping schema and UI.
+- Startup robustness improvements: retry harness, graceful degradation, sync orchestration.
+- CAS statement import validation fixes.
+- Fund mapping schema and UI.
 - Data Health dashboard and status badges.
 - Bhavcopy startup automation.
 - TradingView-style charting with `lightweight-charts`.
-- Clean Turbopack build by moving local backfill execution to a detached worker.
 - 15-minute market-hours NSE/BSE quote refresh.
-- Stock screener hydration fix.
 
-Uncommitted non-app files observed:
+Work in progress (uncommitted):
 
-- `.claude/context/...`
+- Natural Language Query feature for screener:
+  - `components/stock-screener/NlQueryBar.tsx` (new component)
+  - `lib/screener/nlQuery.ts` (new implementation)
+  - `lib/screener/nlQuery.test.ts` (new tests)
+  - `components/stock-screener/StockScreener.tsx` (updated for NL integration)
+  - `lib/screener-actions.ts` (updated for parseScreenIntent)
+  - `lib/cas/parse.test.ts` (test updates)
+  - `package.json` and `package-lock.json` (dependencies)
+
+Uncommitted non-app files:
+
+- `.claude/context/context_summary.md`
 - `CLAUDE.md`
-
-Uncommitted app file observed:
-
-- `STATUS.md` itself after this update.
-
-These appear to be Claude/context notes rather than app functionality.
+- `.claude/context/decisions_history/` entries
 
 ## Recommended Build Next
+
+### 0. Complete NL Query Feature (Current)
+
+Finish integrating the Claude-powered Natural Language Query feature for the stock screener:
+
+- Complete `StockScreener.tsx` integration: wire NlQueryBar into the filter flow
+- Complete API endpoint in `lib/screener-actions.ts`: implement `parseScreenIntent` that calls `parseScreenQuery`
+- Test the full pipeline: plain English query → Claude structured output → validated filters → screener results
+- Add error recovery UI for edge cases (query too long, sectors/universes not loaded, API errors)
+- Add usage telemetry/logging if desired
+- Commit and close the NL query PR
+
+This unlocks conversational screener access without manual filter UI navigation.
 
 ### 1. Complete Fund Mapping Coverage
 
