@@ -59,6 +59,9 @@ const backfillDisabled =
   process.env.BACKFILL_CRON_DISABLED === "1";
 const backfillIndiaHour = Number(process.env.BACKFILL_INDIA_HOUR_IST ?? 17);
 const backfillUsHour = Number(process.env.BACKFILL_US_HOUR_IST ?? 22);
+const emailDigestDisabled = process.env.EMAIL_DIGEST_CRON_DISABLED === "1";
+const emailDigestHour = Number(process.env.EMAIL_DIGEST_HOUR_IST ?? 7);
+const emailDigestMinute = Number(process.env.EMAIL_DIGEST_MINUTE_IST ?? 0);
 const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
 
 let syncChild = null;
@@ -77,6 +80,9 @@ let dailyTimer = null;
 let backfillPromise = null;
 let lastBackfillIndiaDate = null;
 let lastBackfillUsDate = null;
+let emailDigestTimer = null;
+let emailDigestPromise = null;
+let lastEmailDigestDate = null;
 let shuttingDown = false;
 
 import { Client } from "pg";
@@ -418,6 +424,61 @@ function scheduleBackfillCron() {
   }, 60 * 1000);
 }
 
+async function runEmailDigest(label) {
+  if (emailDigestDisabled) {
+    console.log(`[email-digest] ${label} disabled by EMAIL_DIGEST_CRON_DISABLED=1`);
+    return;
+  }
+  if (emailDigestPromise) {
+    console.log(`[email-digest] skipping ${label}; a send is still running`);
+    return emailDigestPromise;
+  }
+  emailDigestPromise = (async () => {
+    await waitForApp();
+    if (!process.env.CRON_SECRET) throw new Error("CRON_SECRET is not configured");
+    console.log(`[email-digest] starting ${label} daily digest send`);
+    const response = await fetch("http://127.0.0.1:3000/api/cron/send-email-digest", {
+      headers: { authorization: `Bearer ${process.env.CRON_SECRET}` },
+    });
+    const body = await response.text();
+    if (!response.ok) throw new Error(`email digest failed (${response.status}): ${body}`);
+    console.log(`[email-digest] ${label} completed: ${body}`);
+  })()
+    .catch((error) => console.error(`[email-digest] ${label} failed: ${error.message}`))
+    .finally(() => {
+      emailDigestPromise = null;
+    });
+  return emailDigestPromise;
+}
+
+function emailDigestTargetMinutes() {
+  return emailDigestHour * 60 + emailDigestMinute;
+}
+
+function scheduleEmailDigest() {
+  if (emailDigestDisabled) {
+    console.log("[email-digest] daily digest disabled; set EMAIL_DIGEST_CRON_DISABLED=1 to keep off");
+    return;
+  }
+  const initialClock = istClock();
+  // If we start up past today's send time, mark today done so a restart doesn't
+  // fire an out-of-schedule digest; the next send is tomorrow at the target time.
+  if (initialClock.hour * 60 + initialClock.minute >= emailDigestTargetMinutes()) {
+    lastEmailDigestDate = initialClock.date;
+  }
+  const hh = String(emailDigestHour).padStart(2, "0");
+  const mm = String(emailDigestMinute).padStart(2, "0");
+  console.log(`[email-digest] daily digest scheduled for ${hh}:${mm} IST`);
+  emailDigestTimer = setInterval(() => {
+    const clock = istClock();
+    const nowMinutes = clock.hour * 60 + clock.minute;
+    if (nowMinutes >= emailDigestTargetMinutes() && lastEmailDigestDate !== clock.date) {
+      lastEmailDigestDate = clock.date;
+      runEmailDigest("daily");
+    }
+  }, 60 * 1000);
+}
+
 function runYahooNseSync(trigger) {
   if (syncDisabled) {
     console.log(`[nse-sync] ${trigger} sync disabled by NSE_SYNC_DISABLED=1`);
@@ -755,6 +816,7 @@ function shutdown(signal) {
   if (marketRefreshTimer) clearInterval(marketRefreshTimer);
   if (indiaMarketQuoteRefreshTimer) clearInterval(indiaMarketQuoteRefreshTimer);
   if (backfillTimer) clearInterval(backfillTimer);
+  if (emailDigestTimer) clearInterval(emailDigestTimer);
   if (syncChild) syncChild.kill(signal);
   if (fundamentalsChild) fundamentalsChild.kill(signal);
   if (usFundamentalsChild) usFundamentalsChild.kill(signal);
@@ -783,6 +845,7 @@ nextChild.on("close", (code, signal) => {
   if (marketRefreshTimer) clearInterval(marketRefreshTimer);
   if (indiaMarketQuoteRefreshTimer) clearInterval(indiaMarketQuoteRefreshTimer);
   if (backfillTimer) clearInterval(backfillTimer);
+  if (emailDigestTimer) clearInterval(emailDigestTimer);
   if (syncChild) syncChild.kill("SIGTERM");
   if (fundamentalsChild) fundamentalsChild.kill("SIGTERM");
   if (usFundamentalsChild) usFundamentalsChild.kill("SIGTERM");
@@ -796,6 +859,7 @@ scheduleDailySync();
 scheduleRecurringMarketRefresh();
 scheduleIndiaMarketQuoteRefresh();
 scheduleBackfillCron();
+scheduleEmailDigest();
 setTimeout(() => {
   if (syncDisabled) {
     runMarketRefresh("startup");

@@ -113,6 +113,9 @@ The wrapper currently handles:
 - Macro sync hook.
 - Signal scan trigger through cron API.
 - Queued OHLCV repair trigger through a detached local worker script.
+- Daily email digest trigger at 07:00 IST (configurable via `EMAIL_DIGEST_HOUR_IST` /
+  `EMAIL_DIGEST_MINUTE_IST`, disabled with `EMAIL_DIGEST_CRON_DISABLED=1`), calling
+  `/api/cron/send-email-digest` with the `CRON_SECRET` bearer.
 
 Known issue:
 
@@ -365,7 +368,7 @@ Built:
   - Responsive `@media` rules so cards render cleanly on mobile and desktop.
 - **Encrypted per-user credentials** (`user_credentials` table): SMTP password plus optional Anthropic/OpenAI API keys, encrypted with AES-256-GCM (`lib/crypto/credentials.ts`, master key in `CREDENTIAL_ENCRYPTION_KEY`). Managed in Settings → Secured credentials (`components/settings/CredentialsForm.tsx`). Digest send decrypts the stored SMTP password on demand.
 - Nodemailer SMTP integration via `sendEmailWithConfig()` (per-user DB credentials), supporting Gmail (app password), Outlook, SendGrid, or any SMTP provider.
-- Cron endpoint `/api/cron/send-email-digest`, secured by `CRON_SECRET`, with external scheduler support (cron-job.org, Vercel crons, etc.).
+- Cron endpoint `/api/cron/send-email-digest`, secured by `CRON_SECRET`. Scheduled **in-app** by the startup wrapper `scripts/run-with-nse-sync.mjs` (07:00 IST daily, same tick that drives the scan/backfill/quote jobs); external schedulers (cron-job.org, Vercel crons) remain an option for bare deploys.
 - Graceful degradation: if one user's email fails, others still send; `last_sent_at` updated per user.
 - Full logging to `cron_logs` (job `send-email-digest`) with send counts and per-recipient errors.
 
@@ -529,21 +532,28 @@ Uncommitted non-app files:
 
 ## Recommended Build Next
 
-### 0. Schedule the Email Digest in Production
+### 0. Email Digest — Scheduling & Ops
 
 The email digest is built, verified end-to-end, and pushed to `origin/main`.
-Remaining work is deployment-only:
+Scheduling is handled **in-app** by the startup wrapper `scripts/run-with-nse-sync.mjs`
+(same mechanism as the scan/backfill/quote jobs), so no external scheduler is needed
+when the app runs under `npm run start` / `npm run dev`.
 
-1. **Set env vars** in the deployment (see `docs/EMAIL_SETUP.md` / `docs/SECURE_CREDENTIALS.md`):
+1. **Set env vars** (see `docs/EMAIL_SETUP.md` / `docs/SECURE_CREDENTIALS.md`):
    - `CREDENTIAL_ENCRYPTION_KEY` (AES master key — `openssl rand -hex 32`)
-   - `CRON_SECRET` for cron authorization
+   - `CRON_SECRET` — the wrapper sends this as the bearer to the digest endpoint.
    - SMTP is stored per-user in Settings → Secured credentials (env `SMTP_*` optional fallback).
+   - Optional: `EMAIL_DIGEST_HOUR_IST` (default 7), `EMAIL_DIGEST_MINUTE_IST` (default 0),
+     `EMAIL_DIGEST_CRON_DISABLED=1` to turn it off.
 
-2. **Schedule the cron job** at 7 AM IST (02:30 UTC):
-   - External: cron-job.org, EasyCron → GET `/api/cron/send-email-digest` with `Authorization: Bearer $CRON_SECRET`
-   - Vercel: add to `vercel.json` crons array
+2. **How it fires**: the wrapper's 60-second tick calls `/api/cron/send-email-digest`
+   once per day at/after the target IST time, deduped by date. A restart past the
+   send time waits until the next day (no out-of-schedule send).
 
-3. **Monitor**:
+3. **Alternative schedulers** (only if not using the wrapper — e.g. a bare serverless
+   deploy): cron-job.org / EasyCron hitting the endpoint, or a `vercel.json` crons entry.
+
+4. **Monitor**:
    - Enabled users: `select * from public.email_preferences where enabled = true;`
    - Send logs: `select * from public.cron_logs where job = 'send-email-digest' order by created_at desc;`
 
