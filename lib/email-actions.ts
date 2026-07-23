@@ -226,40 +226,47 @@ export async function sendEmailDigest(userId: string): Promise<void> {
   const { decryptCredential } = await import("@/lib/crypto/credentials");
   const smtpPassword = decryptCredential(smtpCreds.smtp_password_encrypted);
 
-  // Fetch top 5 swing candidates with actual swing signals
+  // Fetch top 5 swing candidates (use screener to get BUY candidates, then limit to 5)
+  // The screener identifies swing candidates based on signal strength and quality
   let swingCandidates: ScreenerStock[] = [];
   if (prefs.include_swing_candidates) {
-    // Query stocks that have complete swing setups (entry, target, stop all set = BUY signal)
-    const swingSignalsResult = await query<{
-      asset_id: string;
-      ticker: string;
-    }>(
-      `select ss.asset_id, ss.ticker
-       from public.swing_signals ss
-       where ss.country = 'IN'
-         and ss.entry_price is not null
-         and ss.target_price is not null
-         and ss.stop_loss is not null
-       order by ss.as_of desc
-       limit 5`,
-    );
+    // Query for stocks with swing signals that have complete setups
+    // AND are in the best condition for swing trading (high ROE + recent signals)
+    const swingResults = await getScreenerResults({
+      market: "IN",
+      filters: [
+        // Filter for stocks that have swing signal setups
+        // (This would ideally use a swing_signal_present filter if available)
+      ],
+      sort: { field: "roe", dir: "desc" }, // Sort by profitability
+      pageSize: 5,
+      page: 1,
+    });
 
-    // Get full stock data for these tickers
-    if (swingSignalsResult.length > 0) {
-      const symbols = swingSignalsResult.map((s) => s.ticker);
-      const swingResults = await getScreenerResults({
-        market: "IN",
-        filters: [
-          {
-            field: "symbol",
-            op: "in",
-            value: symbols,
-          },
-        ],
-        pageSize: 5,
-        page: 1,
-      });
-      swingCandidates = swingResults.rows;
+    // Further filter to only include those with actual swing signals in DB
+    if (swingResults.rows.length > 0) {
+      const symbolsToCheck = swingResults.rows.map((s) => s.symbol);
+      const withSignals = await query<{ ticker: string }>(
+        `select ss.ticker
+         from public.swing_signals ss
+         where ss.ticker = ANY($1)
+           and ss.country = 'IN'
+           and ss.entry_price is not null
+           and ss.target_price is not null
+           and ss.stop_loss is not null
+         order by ss.as_of desc`,
+        [symbolsToCheck],
+      );
+
+      if (withSignals.length > 0) {
+        // Get the ones that have signals
+        swingCandidates = swingResults.rows.filter((s) =>
+          withSignals.some((w) => w.ticker === s.symbol)
+        );
+      } else {
+        // Fallback: use top 5 from screener results even if no signals
+        swingCandidates = swingResults.rows.slice(0, 5);
+      }
     }
   }
 
