@@ -9,6 +9,7 @@ import {
   type ScreenerStock,
   type Market,
 } from "@/lib/screener/service";
+import { queryOne as dbQueryOne } from "@/lib/db";
 
 export interface EmailPreferences {
   id: string;
@@ -225,21 +226,41 @@ export async function sendEmailDigest(userId: string): Promise<void> {
   const { decryptCredential } = await import("@/lib/crypto/credentials");
   const smtpPassword = decryptCredential(smtpCreds.smtp_password_encrypted);
 
-  // Fetch top 5 swing candidates for India market
-  // Swing candidates are stocks with recent swing signals, sorted by ROE (quality)
+  // Fetch top 5 swing candidates with actual swing signals
   let swingCandidates: ScreenerStock[] = [];
   if (prefs.include_swing_candidates) {
-    const swingResults = await getScreenerResults({
-      market: "IN",
-      filters: [], // Would need swing_signal presence filter if available
-      sort: { field: "roe", dir: "desc" }, // Sort by quality (ROE)
-      pageSize: 5,
-      page: 1,
-    });
-    swingCandidates = swingResults.rows;
+    // Query stocks that have recent swing signals (LONG verdict)
+    const swingSignalsResult = await query<{
+      asset_id: string;
+      ticker: string;
+    }>(
+      `select ss.asset_id, ss.ticker
+       from public.swing_signals ss
+       where ss.country = 'IN' and ss.verdict = 'LONG'
+       order by ss.as_of desc
+       limit 5`,
+    );
+
+    // Get full stock data for these tickers
+    if (swingSignalsResult.length > 0) {
+      const symbols = swingSignalsResult.map((s) => s.ticker);
+      const swingResults = await getScreenerResults({
+        market: "IN",
+        filters: [
+          {
+            field: "symbol",
+            op: "in",
+            value: symbols,
+          },
+        ],
+        pageSize: 5,
+        page: 1,
+      });
+      swingCandidates = swingResults.rows;
+    }
   }
 
-  // Fetch top 5 probability candidates
+  // Fetch top 5 probability candidates (highest quality by ROE)
   let probabilityCandidates: ScreenerStock[] = [];
   if (prefs.include_probability) {
     const probResults = await getScreenerResults({
