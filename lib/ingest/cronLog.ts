@@ -14,7 +14,8 @@ export type CronJob =
   | "backfill_ohlcv"
   | "backfill_ohlcv_cron"
   | "refresh-screener"
-  | "forward-test";
+  | "forward-test"
+  | "send-email-digest";
 export type CronStatus = "ok" | "error" | "skipped";
 
 export interface CronLogEntry {

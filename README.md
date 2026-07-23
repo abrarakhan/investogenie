@@ -202,6 +202,11 @@ Create `.env.local`:
 DATABASE_URL=postgresql://abrarahmedkhan@127.0.0.1:5432/investogenie
 SESSION_SECRET=replace-with-a-long-random-secret
 CRON_SECRET=replace-with-a-long-random-secret
+
+# Optional — powers the natural-language screener box on /terminal/{us,in}/stocks.
+# Without it the rest of the screener works normally and the NL box reports that
+# it is unconfigured. Get a key at https://console.anthropic.com/settings/keys
+ANTHROPIC_API_KEY=sk-ant-...
 ```
 
 Start the app:

@@ -8,7 +8,9 @@ import type { ScreenerStock, ScreenResult, Market } from "@/lib/screener/service
 import {
   addToWatchlistById, saveScreen, deleteScreen, renameScreen, type SavedScreen,
 } from "@/lib/screener-actions";
+import type { ScreenIntent } from "@/lib/screener/nlQuery";
 import FilterPanel from "./FilterPanel";
+import NlQueryBar from "./NlQueryBar";
 import ResultsTable, { type HeldPosition } from "./ResultsTable";
 import { exportCsv, exportExcel } from "./exportData";
 
@@ -105,6 +107,18 @@ export default function StockScreener(props: Props) {
     setSort(p.sort ?? DEFAULT_SORT);
     setValueFlag(p.dynamic === "value");
     setActivePreset(p.key);
+    setPage(1);
+  };
+
+  // Same setters as applyPreset — the debounced effect re-queries, and the
+  // generated filters land in the existing chip row, individually removable.
+  const applyIntent = (i: ScreenIntent) => {
+    setFilters(i.filters);
+    if (i.sort) setSort(i.sort);
+    if (i.universe) setUniverse(i.universe);
+    setValueFlag(i.valueBelowSectorMedian);
+    if (i.search !== null) setSearch(i.search);
+    setActivePreset(null);
     setPage(1);
   };
 
@@ -232,6 +246,8 @@ export default function StockScreener(props: Props) {
           ))}
         </div>
       )}
+
+      <NlQueryBar market={market} isAuthed={props.isAuthed} onApply={applyIntent} />
 
       <FilterPanel
         sectors={marketMeta.sectors}

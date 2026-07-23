@@ -4,6 +4,8 @@ import { getSessionUser } from "@/lib/auth";
 import { query } from "@/lib/db";
 import { ensureScaffold } from "@/lib/dashboard-actions";
 import type { Filter, SortSpec } from "@/lib/screener/filterEngine";
+import { parseScreenQuery, MAX_QUERY_CHARS, type ScreenIntent } from "@/lib/screener/nlQuery";
+import { getSectors, getUniverses, type Market } from "@/lib/screener/service";
 
 /** Add an asset to the user's default watchlist by id (screener row action). */
 export async function addToWatchlistById(assetId: string): Promise<{ ok: boolean }> {
@@ -16,6 +18,20 @@ export async function addToWatchlistById(assetId: string): Promise<{ ok: boolean
     [scaffold.userId, scaffold.watchlistId, assetId],
   );
   return { ok: true };
+}
+
+/** Turn a plain-English screen description into filters the engine accepts.
+ *  Signed-in only — the rest of the screener is open, but this one call is
+ *  metered. Every clause is put through validateFilter() before returning. */
+export async function parseScreenIntent(input: { query: string; market: string }): Promise<ScreenIntent> {
+  const user = await getSessionUser();
+  if (!user) throw new Error("Not signed in");
+  const query = input.query.trim().slice(0, MAX_QUERY_CHARS);
+  if (!query) throw new Error("Enter a query first");
+
+  const market: Market = input.market === "US" ? "US" : "IN";
+  const [sectors, universes] = await Promise.all([getSectors(market), getUniverses(market)]);
+  return parseScreenQuery({ query, market, sectors, universes });
 }
 
 export interface SavedScreen {

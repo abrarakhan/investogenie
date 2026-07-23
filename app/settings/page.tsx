@@ -2,7 +2,9 @@ import { redirect } from "next/navigation";
 import { getSessionUser } from "@/lib/auth";
 import AppShell from "@/components/app/AppShell";
 import { getUserSwingSettings } from "@/lib/settings";
+import { getEmailPreferences } from "@/lib/email-actions";
 import { saveSwingSettings, resetSwingSettings } from "./actions";
+import EmailPreferencesForm from "@/components/settings/EmailPreferencesForm";
 
 export const dynamic = "force-dynamic";
 
@@ -32,6 +34,7 @@ export default async function SettingsPage() {
   const user = await getSessionUser();
   if (!user) redirect("/login");
   const s = await getUserSwingSettings();
+  const emailPrefs = await getEmailPreferences();
 
   return (
     <AppShell
@@ -77,6 +80,15 @@ export default async function SettingsPage() {
             Reset to defaults
           </button>
         </form>
+      </section>
+
+      <section className="mt-12 border-t border-white/10 pt-12">
+        <h2 className="text-2xl font-bold">Email digest</h2>
+        <p className="mt-2 text-sm text-white/50">
+          Receive a daily morning email with top 5 stocks from the swing candidates
+          and probability screens, with full details on each.
+        </p>
+        <EmailPreferencesForm initialPrefs={emailPrefs} userEmail={user.email || ""} />
       </section>
     </AppShell>
   );
