@@ -3,8 +3,10 @@ import { getSessionUser } from "@/lib/auth";
 import AppShell from "@/components/app/AppShell";
 import { getUserSwingSettings } from "@/lib/settings";
 import { getEmailPreferences } from "@/lib/email-actions";
+import { getUserCredentials } from "@/lib/credentials-actions";
 import { saveSwingSettings, resetSwingSettings } from "./actions";
 import EmailPreferencesForm from "@/components/settings/EmailPreferencesForm";
+import CredentialsForm from "@/components/settings/CredentialsForm";
 
 export const dynamic = "force-dynamic";
 
@@ -35,6 +37,7 @@ export default async function SettingsPage() {
   if (!user) redirect("/login");
   const s = await getUserSwingSettings();
   const emailPrefs = await getEmailPreferences();
+  const creds = await getUserCredentials();
 
   return (
     <AppShell
@@ -89,6 +92,17 @@ export default async function SettingsPage() {
           and probability screens, with full details on each.
         </p>
         <EmailPreferencesForm initialPrefs={emailPrefs} userEmail={user.email || ""} />
+      </section>
+
+      <section className="mt-12 border-t border-white/10 pt-12">
+        <h2 className="text-2xl font-bold">Secured credentials</h2>
+        <p className="mt-2 text-sm text-white/50">
+          Store your email and API keys securely. All credentials are encrypted with AES-256-GCM
+          before storage in the database.
+        </p>
+        <div className="mt-8">
+          <CredentialsForm initialCreds={creds} />
+        </div>
       </section>
     </AppShell>
   );
