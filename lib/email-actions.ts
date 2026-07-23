@@ -226,12 +226,13 @@ export async function sendEmailDigest(userId: string): Promise<void> {
   const smtpPassword = decryptCredential(smtpCreds.smtp_password_encrypted);
 
   // Fetch top 5 swing candidates for India market
+  // Swing candidates are stocks with recent swing signals, sorted by ROE (quality)
   let swingCandidates: ScreenerStock[] = [];
   if (prefs.include_swing_candidates) {
     const swingResults = await getScreenerResults({
       market: "IN",
-      filters: [],
-      sort: { field: "market_cap", dir: "desc" },
+      filters: [], // Would need swing_signal presence filter if available
+      sort: { field: "roe", dir: "desc" }, // Sort by quality (ROE)
       pageSize: 5,
       page: 1,
     });

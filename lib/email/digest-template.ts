@@ -8,28 +8,48 @@ export interface EmailDigestData {
   generatedAt: Date;
 }
 
-function formatCandidateRow(stock: ScreenerStock, index: number): string {
+function formatCandidateCard(stock: ScreenerStock, index: number): string {
   const pe = stock.pe_ratio ? stock.pe_ratio.toFixed(1) : "–";
   const roe = stock.roe ? stock.roe.toFixed(1) : "–";
   const roce = stock.roce ? stock.roce.toFixed(1) : "–";
-  const mcap = stock.market_cap ? `₹${(stock.market_cap / 10000).toFixed(0)}Cr` : "–";
   const price = stock.ltp ? `₹${stock.ltp.toFixed(0)}` : "–";
   const pctChange = stock.change_pct_1d
     ? `${stock.change_pct_1d > 0 ? "+" : ""}${stock.change_pct_1d.toFixed(1)}%`
     : "–";
+  const pctChangeColor = stock.change_pct_1d && stock.change_pct_1d > 0 ? "#10b981" : "#ef4444";
 
   return `
-    <tr style="background-color: ${index % 2 === 0 ? "#f9fafb" : "white"}; border-bottom: 1px solid #e5e7eb;">
-      <td style="padding: 12px; color: #1f2937; font-weight: 500;">${index + 1}</td>
-      <td style="padding: 12px; color: #1f2937; font-weight: 600;">${stock.symbol}</td>
-      <td style="padding: 12px; color: #6b7280;">${stock.name || "–"}</td>
-      <td style="padding: 12px; text-align: right; color: #1f2937;">${price}</td>
-      <td style="padding: 12px; text-align: right; color: #6b7280;">${pctChange}</td>
-      <td style="padding: 12px; text-align: right; color: #6b7280;">${pe}</td>
-      <td style="padding: 12px; text-align: right; color: #6b7280;">${roe}%</td>
-      <td style="padding: 12px; text-align: right; color: #6b7280;">${roce}%</td>
-      <td style="padding: 12px; text-align: right; color: #6b7280;">${stock.sector || "–"}</td>
-    </tr>
+    <div style="background: white; border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px; margin-bottom: 12px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
+      <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 12px;">
+        <div>
+          <div style="font-size: 18px; font-weight: 700; color: #1f2937; margin-bottom: 4px;">${stock.symbol}</div>
+          <div style="font-size: 12px; color: #6b7280; line-height: 1.4;">${stock.name || "–"}</div>
+        </div>
+        <div style="text-align: right;">
+          <div style="font-size: 16px; font-weight: 600; color: #1f2937;">${price}</div>
+          <div style="font-size: 13px; color: ${pctChangeColor}; font-weight: 500;">${pctChange}</div>
+        </div>
+      </div>
+
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; font-size: 13px;">
+        <div>
+          <div style="color: #6b7280; margin-bottom: 2px;">P/E Ratio</div>
+          <div style="color: #1f2937; font-weight: 600;">${pe}</div>
+        </div>
+        <div>
+          <div style="color: #6b7280; margin-bottom: 2px;">ROE</div>
+          <div style="color: #1f2937; font-weight: 600;">${roe}%</div>
+        </div>
+        <div>
+          <div style="color: #6b7280; margin-bottom: 2px;">ROCE</div>
+          <div style="color: #1f2937; font-weight: 600;">${roce}%</div>
+        </div>
+        <div>
+          <div style="color: #6b7280; margin-bottom: 2px;">Sector</div>
+          <div style="color: #1f2937; font-weight: 600;">${stock.sector || "–"}</div>
+        </div>
+      </div>
+    </div>
   `;
 }
 
@@ -43,116 +63,102 @@ export function buildEmailHtml(data: EmailDigestData): string {
     minute: "2-digit",
   });
 
-  const swingTable =
+  const swingContent =
     data.swingCandidates.length > 0
-      ? `
-      <table style="width: 100%; border-collapse: collapse; margin-top: 12px;">
-        <thead>
-          <tr style="background-color: #111827; color: white;">
-            <th style="padding: 12px; text-align: left;">#</th>
-            <th style="padding: 12px; text-align: left;">Symbol</th>
-            <th style="padding: 12px; text-align: left;">Company</th>
-            <th style="padding: 12px; text-align: right;">Price</th>
-            <th style="padding: 12px; text-align: right;">5D %</th>
-            <th style="padding: 12px; text-align: right;">P/E</th>
-            <th style="padding: 12px; text-align: right;">ROE</th>
-            <th style="padding: 12px; text-align: right;">ROCE</th>
-            <th style="padding: 12px; text-align: right;">Sector</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${data.swingCandidates.map((stock, i) => formatCandidateRow(stock, i)).join("")}
-        </tbody>
-      </table>
-    `
-      : '<p style="color: #6b7280; font-style: italic;">No swing candidates found today.</p>';
+      ? data.swingCandidates.map((stock, i) => formatCandidateCard(stock, i)).join("")
+      : '<p style="color: #6b7280; font-style: italic; text-align: center; padding: 20px;">No swing candidates found today.</p>';
 
-  const probTable =
+  const probContent =
     data.probabilityCandidates.length > 0
-      ? `
-      <table style="width: 100%; border-collapse: collapse; margin-top: 12px;">
-        <thead>
-          <tr style="background-color: #111827; color: white;">
-            <th style="padding: 12px; text-align: left;">#</th>
-            <th style="padding: 12px; text-align: left;">Symbol</th>
-            <th style="padding: 12px; text-align: left;">Company</th>
-            <th style="padding: 12px; text-align: right;">Price</th>
-            <th style="padding: 12px; text-align: right;">5D %</th>
-            <th style="padding: 12px; text-align: right;">P/E</th>
-            <th style="padding: 12px; text-align: right;">ROE</th>
-            <th style="padding: 12px; text-align: right;">ROCE</th>
-            <th style="padding: 12px; text-align: right;">Sector</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${data.probabilityCandidates.map((stock, i) => formatCandidateRow(stock, i)).join("")}
-        </tbody>
-      </table>
-    `
-      : '<p style="color: #6b7280; font-style: italic;">No probability candidates found today.</p>';
+      ? data.probabilityCandidates.map((stock, i) => formatCandidateCard(stock, i)).join("")
+      : '<p style="color: #6b7280; font-style: italic; text-align: center; padding: 20px;">No probability candidates found today.</p>';
 
   return `
     <!DOCTYPE html>
-    <html>
+    <html lang="en">
       <head>
         <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>InvestoGenie Daily Digest</title>
         <style>
-          body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: #1f2937; line-height: 1.5; }
+          * { margin: 0; padding: 0; box-sizing: border-box; }
+          body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            color: #1f2937;
+            line-height: 1.6;
+            background-color: #f3f4f6;
+          }
           a { color: #0ea5e9; text-decoration: none; }
           a:hover { text-decoration: underline; }
+
+          /* Mobile responsive */
+          @media only screen and (max-width: 600px) {
+            .container { padding: 16px !important; }
+            .header { padding: 20px 16px !important; }
+            .body { padding: 16px !important; }
+            h1 { font-size: 22px !important; }
+            h2 { font-size: 16px !important; }
+            .cta-button { width: 100% !important; display: block !important; padding: 12px 16px !important; }
+          }
         </style>
       </head>
-      <body style="background-color: #f3f4f6; padding: 20px;">
-        <div style="max-width: 900px; margin: 0 auto; background-color: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+      <body>
+        <div class="container" style="max-width: 600px; margin: 0 auto; background-color: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+
           <!-- Header -->
-          <div style="background: linear-gradient(135deg, #0ea5e9 0%, #06b6d4 100%); padding: 30px; color: white;">
-            <h1 style="margin: 0; font-size: 28px;">InvestoGenie Daily Digest</h1>
-            <p style="margin: 8px 0 0 0; opacity: 0.9; font-size: 14px;">Top swing and probability candidates</p>
+          <div class="header" style="background: linear-gradient(135deg, #0ea5e9 0%, #06b6d4 100%); padding: 30px; color: white;">
+            <h1 style="font-size: 26px; font-weight: 700; margin-bottom: 8px;">InvestoGenie Daily Digest</h1>
+            <p style="opacity: 0.95; font-size: 14px;">Top swing and probability candidates • ${timestamp} IST</p>
           </div>
 
           <!-- Body -->
-          <div style="padding: 30px;">
-            <p style="margin: 0 0 20px 0; color: #6b7280;">
+          <div class="body" style="padding: 24px;">
+            <p style="margin-bottom: 20px; color: #6b7280; font-size: 15px;">
               Hello <strong>${data.userName}</strong>,
             </p>
-            <p style="margin: 0 0 20px 0; color: #6b7280;">
-              Here are your top 5 candidates from today's screening, generated at <strong>${timestamp}</strong> IST.
+            <p style="margin-bottom: 28px; color: #6b7280; font-size: 15px; line-height: 1.6;">
+              Here are your top 5 candidates from today's market screening. Click any stock to view detailed analysis in InvestoGenie.
             </p>
 
             <!-- Swing Candidates Section -->
-            <div style="margin-bottom: 40px;">
-              <h2 style="margin: 0 0 12px 0; font-size: 18px; color: #1f2937; border-bottom: 2px solid #0ea5e9; padding-bottom: 8px;">
+            <div style="margin-bottom: 36px;">
+              <h2 style="font-size: 18px; font-weight: 700; color: #1f2937; margin-bottom: 16px; padding-bottom: 10px; border-bottom: 3px solid #0ea5e9;">
                 🎯 Swing Candidates
               </h2>
-              ${swingTable}
+              <div style="margin-top: 12px;">
+                ${swingContent}
+              </div>
             </div>
 
             <!-- Probability Section -->
-            <div style="margin-bottom: 30px;">
-              <h2 style="margin: 0 0 12px 0; font-size: 18px; color: #1f2937; border-bottom: 2px solid #06b6d4; padding-bottom: 8px;">
+            <div style="margin-bottom: 36px;">
+              <h2 style="font-size: 18px; font-weight: 700; color: #1f2937; margin-bottom: 16px; padding-bottom: 10px; border-bottom: 3px solid #06b6d4;">
                 📊 Probability Screen
               </h2>
-              ${probTable}
+              <div style="margin-top: 12px;">
+                ${probContent}
+              </div>
             </div>
 
-            <!-- Footer CTA -->
-            <div style="background-color: #f9fafb; padding: 20px; border-radius: 6px; margin-top: 30px; text-align: center;">
-              <p style="margin: 0; color: #6b7280; font-size: 14px;">
-                View full details and manage your portfolio:
+            <!-- CTA Section -->
+            <div style="background: linear-gradient(135deg, #f0f9ff 0%, #f0f4ff 100%); padding: 24px; border-radius: 8px; border: 1px solid #e0f2fe; text-align: center; margin-top: 32px;">
+              <p style="margin-bottom: 16px; color: #1e40af; font-size: 14px; font-weight: 500;">
+                📈 Dive deeper into each stock's analysis
               </p>
-              <a href="${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/terminal/in/screener" style="display: inline-block; margin-top: 12px; background-color: #0ea5e9; color: white; padding: 10px 20px; border-radius: 6px; font-weight: 500;">
-                Open InvestoGenie
+              <a href="${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/terminal/in/screener" class="cta-button" style="display: inline-block; background-color: #0ea5e9; color: white; padding: 12px 28px; border-radius: 6px; font-weight: 600; font-size: 15px; cursor: pointer;">
+                Open InvestoGenie Terminal
               </a>
             </div>
           </div>
 
           <!-- Footer -->
-          <div style="background-color: #f3f4f6; padding: 20px; text-align: center; border-top: 1px solid #e5e7eb;">
-            <p style="margin: 0; color: #9ca3af; font-size: 12px;">
-              You can manage your email preferences in <a href="${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/settings">Settings</a>.
+          <div style="background-color: #f9fafb; padding: 20px 24px; border-top: 1px solid #e5e7eb; text-align: center;">
+            <p style="color: #6b7280; font-size: 12px; margin-bottom: 8px;">
+              <a href="${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/settings" style="color: #0ea5e9;">Manage email preferences</a> •
+              <a href="${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/help" style="color: #0ea5e9;">Help</a>
             </p>
-            <p style="margin: 8px 0 0 0; color: #9ca3af; font-size: 12px;">
-              © InvestoGenie. This is not financial advice.
+            <p style="color: #9ca3af; font-size: 11px;">
+              © InvestoGenie • This is not investment advice
             </p>
           </div>
         </div>
