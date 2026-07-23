@@ -229,14 +229,17 @@ export async function sendEmailDigest(userId: string): Promise<void> {
   // Fetch top 5 swing candidates with actual swing signals
   let swingCandidates: ScreenerStock[] = [];
   if (prefs.include_swing_candidates) {
-    // Query stocks that have recent swing signals (LONG verdict)
+    // Query stocks that have complete swing setups (entry, target, stop all set = BUY signal)
     const swingSignalsResult = await query<{
       asset_id: string;
       ticker: string;
     }>(
       `select ss.asset_id, ss.ticker
        from public.swing_signals ss
-       where ss.country = 'IN' and ss.verdict = 'LONG'
+       where ss.country = 'IN'
+         and ss.entry_price is not null
+         and ss.target_price is not null
+         and ss.stop_loss is not null
        order by ss.as_of desc
        limit 5`,
     );
