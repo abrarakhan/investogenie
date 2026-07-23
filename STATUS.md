@@ -1,6 +1,6 @@
 # InvestoGenie Status
 
-_Last updated: 2026-07-23 (email digest feature added)_
+_Last updated: 2026-07-23 (email digest wired to real Swing/Probability engines; encrypted credentials)_
 
 This file summarizes what has been built so far, what is currently working, what is partial, and what to build next.
 
@@ -70,6 +70,7 @@ Current database migration stack:
 - `0016_fund_snapshots.sql`: monthly AMC fund holdings snapshots.
 - `0017_fund_mapping.sql`: explicit per-user CAS fund holding to AMC snapshot scheme mappings.
 - `0020_email_preferences.sql`: user email digest opt-in settings (send time, screen toggles, last sent timestamp).
+- `0021_user_credentials.sql`: per-user encrypted credentials (SMTP password, Anthropic/OpenAI API keys) via AES-256-GCM.
 
 ## Current Local Data Coverage
 
@@ -351,28 +352,49 @@ Current limitations:
 
 Built:
 
-- Daily morning email feature with top 5 stocks from swing candidates and probability screens.
+- Daily morning email with the top 5 Swing Candidates and top 5 Probability forecasts.
 - User opt-in via Settings → Email digest, with 7 AM IST default send time.
-- Configurable send time and per-screen toggles (include swing candidates, include probability screen).
-- Email template with stock details: symbol, company name, current price, 1-day % change, P/E, ROE, ROCE, sector.
-- Nodemailer SMTP integration supporting Gmail, Outlook, SendGrid, or any SMTP provider.
-- Cron endpoint `/api/cron/send-email-digest` with external scheduler support (cron-job.org, Vercel crons, etc.).
-- Graceful degradation: if one user's email fails, others still send.
-- Full logging to `cron_logs` table with send counts and error details.
-- `email_preferences` table tracks opt-in status, send time, last sent timestamp per user.
+- Configurable send time and per-section toggles (include swing candidates, include probability).
+- **Correct data sources — the digest reads the SAME engines that power the on-screen views:**
+  - Swing section calls `runScreener("IN", { ...DEFAULT_SETTINGS, includeShort: false }, { exchange: "NSE", limit: 20 })` and takes the top 5, so the email rows match the Swing Candidates screen exactly (verified: AMDIND, CARERATING, FIEMIND, GRPLTD, HEROMOTOCO in order). `limit: 20` (the screen's cap) is used rather than 5 so SHORT-biased rows filtered out of the top scores don't starve the buy-only list.
+  - Probability section calls `getProbabilitySummary("IN").rows.slice(0, 5)`, already ranked by probability of an up move — same source as the Probability screen.
+  - (An earlier version incorrectly used `getScreenerResults()`, a generic fundamentals screener unrelated to either screen; that is fixed.)
+- **Two distinct, mobile-responsive card layouts** in `lib/email/digest-template.ts`:
+  - Swing card: BUY/SELL badge, price + day change, Entry / Target / Stop / Trail, R:R, ~Days, P/E, ROCE, score.
+  - Probability card: price + day change, Prob-Up (21d), Expected Return, Volatility, Drawdown Risk, Median (p50) target price.
+  - Responsive `@media` rules so cards render cleanly on mobile and desktop.
+- **Encrypted per-user credentials** (`user_credentials` table): SMTP password plus optional Anthropic/OpenAI API keys, encrypted with AES-256-GCM (`lib/crypto/credentials.ts`, master key in `CREDENTIAL_ENCRYPTION_KEY`). Managed in Settings → Secured credentials (`components/settings/CredentialsForm.tsx`). Digest send decrypts the stored SMTP password on demand.
+- Nodemailer SMTP integration via `sendEmailWithConfig()` (per-user DB credentials), supporting Gmail (app password), Outlook, SendGrid, or any SMTP provider.
+- Cron endpoint `/api/cron/send-email-digest`, secured by `CRON_SECRET`, with external scheduler support (cron-job.org, Vercel crons, etc.).
+- Graceful degradation: if one user's email fails, others still send; `last_sent_at` updated per user.
+- Full logging to `cron_logs` (job `send-email-digest`) with send counts and per-recipient errors.
 
-Environment setup required:
+Verified end-to-end: real email delivered to the account inbox; swing rows match the screen; 76/76 tests pass; `tsc` and build clean.
 
-- `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS` for email delivery.
-- `CRON_SECRET` for authorizing scheduled sends.
-- Documentation: `docs/EMAIL_SETUP.md` with full configuration guide.
+Files:
+
+- `lib/email-actions.ts` — preferences CRUD + `sendEmailDigest()`.
+- `lib/email/digest-template.ts` — HTML template with swing/probability cards.
+- `lib/email/nodemailer-service.ts` — `sendEmailWithConfig()` transporter.
+- `lib/credentials-actions.ts` + `lib/crypto/credentials.ts` — encrypted credentials.
+- `components/settings/EmailPreferencesForm.tsx`, `components/settings/CredentialsForm.tsx` — Settings UI.
+- `app/api/cron/send-email-digest/route.ts` — daily cron endpoint.
+- Migrations `0020_email_preferences.sql`, `0021_user_credentials.sql`.
+
+Environment / activation:
+
+- `CREDENTIAL_ENCRYPTION_KEY` (required) — AES master key; generate with `openssl rand -hex 32`.
+- `CRON_SECRET` — authorizes the cron endpoint.
+- SMTP is stored per-user in `user_credentials` via Settings (env `SMTP_*` remain a fallback).
+- Schedule `/api/cron/send-email-digest` for 7 AM IST (02:30 UTC) in the deployment cron.
+- Docs: `docs/EMAIL_SETUP.md`, `docs/SECURE_CREDENTIALS.md`, `docs/QUICK_START_CREDENTIALS.md`.
 
 Current limitations:
 
 - Requires external cron service or cloud platform scheduling (Vercel, Render, etc.).
-- Email templates use a fixed set of fields; styling may need adjustment for different email clients.
-- No retry queue yet; failed sends are logged but not re-attempted.
-- Search/custom filters per user not yet supported in digest (always fetches top 5 by default sort).
+- Fixed IN market and top-5 count; no per-user custom filters or market selection in the digest yet.
+- No retry queue; failed sends are logged but not re-attempted.
+- Styling is inline-CSS card based; some niche email clients may render differently.
 
 ## Macro Lead/Lag
 
@@ -471,14 +493,18 @@ Current branch:
 
 Recent commits:
 
+- `cdcc449 Fix email digest to use the real Swing & Probability data sources`
+- `1f1be30 Add encrypted credentials storage for SMTP and AI API keys`
 - `ef3c80d Add daily email digest feature with swing candidates and probability picks`
-- `dd12517 Update STATUS.md: NL query feature in progress, startup robustness merged`
 - `8beea5b Merge claude/vigilant-wu-216d1d: Fix CAS statement import validation`
 - `234dd1f Merge pull request #18 from abrarakhan/feat/startup-robustness`
 
+(Pushed to `origin/main`.)
+
 Committed app work now includes:
 
-- Email digest with daily morning sends of top 5 swing candidates and probability screen picks.
+- Email digest with daily morning sends of top 5 Swing Candidates (`runScreener`) and top 5 Probability forecasts (`getProbabilitySummary`) — same engines as the on-screen views.
+- Encrypted per-user credentials (AES-256-GCM) for SMTP password and AI API keys, managed in Settings.
 - Opt-in email preferences in Settings with configurable send time.
 - Nodemailer SMTP integration for any email provider.
 - Cron scheduling support (external services, Vercel, or local).
@@ -503,30 +529,23 @@ Uncommitted non-app files:
 
 ## Recommended Build Next
 
-### 0. Test and Launch Email Digest (Current)
+### 0. Schedule the Email Digest in Production
 
-Email digest feature is built and deployed. To activate:
+The email digest is built, verified end-to-end, and pushed to `origin/main`.
+Remaining work is deployment-only:
 
-1. **Set SMTP environment variables** in your `.env.local` (see `docs/EMAIL_SETUP.md`):
-   - `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`
+1. **Set env vars** in the deployment (see `docs/EMAIL_SETUP.md` / `docs/SECURE_CREDENTIALS.md`):
+   - `CREDENTIAL_ENCRYPTION_KEY` (AES master key — `openssl rand -hex 32`)
    - `CRON_SECRET` for cron authorization
-   - Example: Gmail with app password, or SendGrid relay
+   - SMTP is stored per-user in Settings → Secured credentials (env `SMTP_*` optional fallback).
 
-2. **Schedule the cron job** at 7 AM IST:
-   - External: cron-job.org, EasyCron → POST `/api/cron/send-email-digest` with `Authorization: Bearer $CRON_SECRET`
+2. **Schedule the cron job** at 7 AM IST (02:30 UTC):
+   - External: cron-job.org, EasyCron → GET `/api/cron/send-email-digest` with `Authorization: Bearer $CRON_SECRET`
    - Vercel: add to `vercel.json` crons array
-   - Local dev: manual `curl` test
 
-3. **Test on your account**:
-   - Go to Settings → Email digest
-   - Toggle "Enable daily email digest"
-   - Optionally adjust send time or which screens to include
-   - Save preferences
-   - Manually trigger cron with curl to verify template and SMTP setup
-
-4. **Monitor**:
-   - Check database: `select * from public.email_preferences where enabled = true;`
-   - Check logs: `select * from public.cron_logs where job = 'send-email-digest' order by created_at desc;`
+3. **Monitor**:
+   - Enabled users: `select * from public.email_preferences where enabled = true;`
+   - Send logs: `select * from public.cron_logs where job = 'send-email-digest' order by created_at desc;`
 
 ### 1. Complete NL Query Feature
 
