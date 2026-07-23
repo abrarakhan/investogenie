@@ -3,7 +3,7 @@
 import { getSessionUser } from "@/lib/auth";
 import { query, queryOne } from "@/lib/db";
 import { buildEmailHtml, type EmailDigestData } from "@/lib/email/digest-template";
-import { sendEmail } from "@/lib/email/nodemailer-service";
+import { sendEmailWithConfig } from "@/lib/email/nodemailer-service";
 import {
   getScreenerResults,
   type ScreenerStock,
@@ -205,6 +205,26 @@ export async function sendEmailDigest(userId: string): Promise<void> {
 
   if (!prefs || !prefs.enabled) return;
 
+  // Get SMTP credentials from database
+  const smtpCreds = await queryOne<{
+    smtp_host: string;
+    smtp_port: number;
+    smtp_user: string;
+    smtp_password_encrypted: string;
+  }>(
+    `select smtp_host, smtp_port, smtp_user, smtp_password_encrypted
+     from public.user_credentials where user_id = $1`,
+    [userId],
+  );
+
+  if (!smtpCreds?.smtp_host || !smtpCreds.smtp_user || !smtpCreds.smtp_password_encrypted) {
+    throw new Error("SMTP credentials not configured for user");
+  }
+
+  // Import crypto here to avoid circular dependency
+  const { decryptCredential } = await import("@/lib/crypto/credentials");
+  const smtpPassword = decryptCredential(smtpCreds.smtp_password_encrypted);
+
   // Fetch top 5 swing candidates for India market
   let swingCandidates: ScreenerStock[] = [];
   if (prefs.include_swing_candidates) {
@@ -241,11 +261,20 @@ export async function sendEmailDigest(userId: string): Promise<void> {
 
   const html = buildEmailHtml(digestData);
 
-  await sendEmail({
-    to: prefs.email,
-    subject: `InvestoGenie Daily Digest - ${new Date().toLocaleDateString("en-IN")}`,
-    html,
-  });
+  // Send with database credentials
+  await sendEmailWithConfig(
+    {
+      host: smtpCreds.smtp_host,
+      port: smtpCreds.smtp_port || 587,
+      user: smtpCreds.smtp_user,
+      password: smtpPassword,
+    },
+    {
+      to: prefs.email,
+      subject: `InvestoGenie Daily Digest - ${new Date().toLocaleDateString("en-IN")}`,
+      html,
+    },
+  );
 
   // Update last_sent_at
   await query(
