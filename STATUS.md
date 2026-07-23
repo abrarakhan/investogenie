@@ -1,6 +1,6 @@
 # InvestoGenie Status
 
-_Last updated: 2026-07-23_
+_Last updated: 2026-07-23 (email digest feature added)_
 
 This file summarizes what has been built so far, what is currently working, what is partial, and what to build next.
 
@@ -33,7 +33,7 @@ InvestoGenie is now a local-first market terminal and portfolio intelligence app
 - New market workspace route family: `/app/[market]`
 - Market overview route: `/markets/[market]`
 - Stocks route: `/terminal/[market]/stocks`
-- Screener route: `/terminal/[market]/screener`
+- Screener route: `/terminal/[market]/screener` (with NL query support)
 - Probability route: `/terminal/[market]/probability`
 - Forward-test route: `/terminal/[market]/forward-test`
 - Import holdings / CAS route: `/terminal/in/cas`
@@ -43,7 +43,8 @@ InvestoGenie is now a local-first market terminal and portfolio intelligence app
 - Portfolio pages: `/portfolio`, `/portfolio/import`, `/portfolio/fund-mapping`, `/portfolio/fund-xray`
 - Data pages: `/data`, `/data/sync`, `/data/health`
 - Admin sync page: `/admin/sync`
-- Settings: `/settings`
+- Settings: `/settings` (includes email digest preferences)
+- Email digest cron: `/api/cron/send-email-digest`
 
 ## Backend And Database
 
@@ -68,6 +69,7 @@ Current database migration stack:
 - `0015_forward_test_fill.sql`: trigger/fill tracking for forward tests.
 - `0016_fund_snapshots.sql`: monthly AMC fund holdings snapshots.
 - `0017_fund_mapping.sql`: explicit per-user CAS fund holding to AMC snapshot scheme mappings.
+- `0020_email_preferences.sql`: user email digest opt-in settings (send time, screen toggles, last sent timestamp).
 
 ## Current Local Data Coverage
 
@@ -345,6 +347,33 @@ Current limitations:
 - Needs historical performance summaries per strategy and per market.
 - Needs guardrails against stale price data creating false results.
 
+## Email Digest
+
+Built:
+
+- Daily morning email feature with top 5 stocks from swing candidates and probability screens.
+- User opt-in via Settings → Email digest, with 7 AM IST default send time.
+- Configurable send time and per-screen toggles (include swing candidates, include probability screen).
+- Email template with stock details: symbol, company name, current price, 1-day % change, P/E, ROE, ROCE, sector.
+- Nodemailer SMTP integration supporting Gmail, Outlook, SendGrid, or any SMTP provider.
+- Cron endpoint `/api/cron/send-email-digest` with external scheduler support (cron-job.org, Vercel crons, etc.).
+- Graceful degradation: if one user's email fails, others still send.
+- Full logging to `cron_logs` table with send counts and error details.
+- `email_preferences` table tracks opt-in status, send time, last sent timestamp per user.
+
+Environment setup required:
+
+- `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS` for email delivery.
+- `CRON_SECRET` for authorizing scheduled sends.
+- Documentation: `docs/EMAIL_SETUP.md` with full configuration guide.
+
+Current limitations:
+
+- Requires external cron service or cloud platform scheduling (Vercel, Render, etc.).
+- Email templates use a fixed set of fields; styling may need adjustment for different email clients.
+- No retry queue yet; failed sends are logged but not re-attempted.
+- Search/custom filters per user not yet supported in digest (always fetches top 5 by default sort).
+
 ## Macro Lead/Lag
 
 Built:
@@ -440,16 +469,25 @@ Current branch:
 
 - `main`
 
-Recent upstream commits merged:
+Recent commits:
 
+- `ef3c80d Add daily email digest feature with swing candidates and probability picks`
+- `dd12517 Update STATUS.md: NL query feature in progress, startup robustness merged`
 - `8beea5b Merge claude/vigilant-wu-216d1d: Fix CAS statement import validation`
 - `234dd1f Merge pull request #18 from abrarakhan/feat/startup-robustness`
-- `a273ae1 Phase 5: Add graceful degradation for dependent jobs`
-- `ab65d86 Phase 2: Improve startup sync orchestration with retry and logging`
-- `47d5218 Repair startup refresh robustness: add retry harness and observability`
 
-Committed app work includes:
+Committed app work now includes:
 
+- Email digest with daily morning sends of top 5 swing candidates and probability screen picks.
+- Opt-in email preferences in Settings with configurable send time.
+- Nodemailer SMTP integration for any email provider.
+- Cron scheduling support (external services, Vercel, or local).
+- Natural Language Query feature for screener:
+  - Claude Opus 4.8 structured output with adaptive thinking.
+  - Three-layer validation (Zod schema → validateFilter → sanitizeIntent).
+  - One-turn repair loop for parse failures.
+  - 30 comprehensive tests covering all sanitization edge cases.
+  - Prompt caching on system rules for performance.
 - Startup robustness improvements: retry harness, graceful degradation, sync orchestration.
 - CAS statement import validation fixes.
 - Fund mapping schema and UI.
@@ -458,32 +496,50 @@ Committed app work includes:
 - TradingView-style charting with `lightweight-charts`.
 - 15-minute market-hours NSE/BSE quote refresh.
 
-Work in progress (uncommitted):
-
-- Natural Language Query feature for screener:
-  - `components/stock-screener/NlQueryBar.tsx` (new component)
-  - `lib/screener/nlQuery.ts` (new implementation)
-  - `lib/screener/nlQuery.test.ts` (new tests)
-  - `components/stock-screener/StockScreener.tsx` (updated for NL integration)
-  - `lib/screener-actions.ts` (updated for parseScreenIntent)
-  - `lib/cas/parse.test.ts` (test updates)
-  - `package.json` and `package-lock.json` (dependencies)
-
 Uncommitted non-app files:
 
-- `.claude/context/context_summary.md`
-- `CLAUDE.md`
-- `.claude/context/decisions_history/` entries
+- `.claude/context/decisions_history/` (tracking session decisions)
+- Decision notes from previous sessions
 
 ## Recommended Build Next
 
-### 0. Complete NL Query Feature (Current)
+### 0. Test and Launch Email Digest (Current)
 
-Finish integrating the Claude-powered Natural Language Query feature for the stock screener:
+Email digest feature is built and deployed. To activate:
 
-- Complete `StockScreener.tsx` integration: wire NlQueryBar into the filter flow
-- Complete API endpoint in `lib/screener-actions.ts`: implement `parseScreenIntent` that calls `parseScreenQuery`
-- Test the full pipeline: plain English query → Claude structured output → validated filters → screener results
+1. **Set SMTP environment variables** in your `.env.local` (see `docs/EMAIL_SETUP.md`):
+   - `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`
+   - `CRON_SECRET` for cron authorization
+   - Example: Gmail with app password, or SendGrid relay
+
+2. **Schedule the cron job** at 7 AM IST:
+   - External: cron-job.org, EasyCron → POST `/api/cron/send-email-digest` with `Authorization: Bearer $CRON_SECRET`
+   - Vercel: add to `vercel.json` crons array
+   - Local dev: manual `curl` test
+
+3. **Test on your account**:
+   - Go to Settings → Email digest
+   - Toggle "Enable daily email digest"
+   - Optionally adjust send time or which screens to include
+   - Save preferences
+   - Manually trigger cron with curl to verify template and SMTP setup
+
+4. **Monitor**:
+   - Check database: `select * from public.email_preferences where enabled = true;`
+   - Check logs: `select * from public.cron_logs where job = 'send-email-digest' order by created_at desc;`
+
+### 1. Complete NL Query Feature
+
+The Claude-powered Natural Language Query feature for the stock screener is built:
+
+- ✅ `NlQueryBar.tsx` component rendering in StockScreener
+- ✅ `nlQuery.ts` with Claude Opus 4.8 structured output
+- ✅ `parseScreenIntent()` server action in screener-actions
+- ✅ 30 tests covering sanitization, validation, edge cases
+
+To finish and ship:
+
+- Test the full pipeline in dev: plain English query → Claude structured output → validated filters → screener results
 - Add error recovery UI for edge cases (query too long, sectors/universes not loaded, API errors)
 - Add usage telemetry/logging if desired
 - Commit and close the NL query PR
