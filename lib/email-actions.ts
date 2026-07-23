@@ -4,12 +4,9 @@ import { getSessionUser } from "@/lib/auth";
 import { query, queryOne } from "@/lib/db";
 import { buildEmailHtml, type EmailDigestData } from "@/lib/email/digest-template";
 import { sendEmailWithConfig } from "@/lib/email/nodemailer-service";
-import {
-  getScreenerResults,
-  type ScreenerStock,
-  type Market,
-} from "@/lib/screener/service";
-import { queryOne as dbQueryOne } from "@/lib/db";
+import { runScreener } from "@/lib/screener";
+import { getProbabilitySummary } from "@/lib/probability-runtime";
+import { DEFAULT_SETTINGS } from "@/lib/settings";
 
 export interface EmailPreferences {
   id: string;
@@ -226,57 +223,20 @@ export async function sendEmailDigest(userId: string): Promise<void> {
   const { decryptCredential } = await import("@/lib/crypto/credentials");
   const smtpPassword = decryptCredential(smtpCreds.smtp_password_encrypted);
 
-  // Fetch top 5 swing candidates: stocks with recent swing signals (complete setups)
-  let swingCandidates: ScreenerStock[] = [];
-  if (prefs.include_swing_candidates) {
-    // Get stocks that HAVE swing signal setups (entry/target/stop prices)
-    // These are the actual BUY signals shown on the swing candidates screener
-    const symbolsWithSignals = await query<{ ticker: string }>(
-      `select ss.ticker, ss.as_of
-       from public.swing_signals ss
-       where ss.country = 'IN'
-         and ss.entry_price is not null
-         and ss.target_price is not null
-         and ss.stop_loss is not null
-       order by ss.as_of desc
-       limit 10`,
-    );
+  // Swing candidates — the SAME source and args as the Swing Candidates screen:
+  // runScreener() over the NSE universe, buy-only, capped at 20. We fetch the
+  // full 20 (so SHORT-biased rows filtered out of the top scores don't starve
+  // the list) and take the top 5 the screen would show first.
+  const buyOnlySettings = { ...DEFAULT_SETTINGS, includeShort: false };
+  const swingCandidates = prefs.include_swing_candidates
+    ? (await runScreener("IN", buyOnlySettings, { exchange: "NSE", limit: 20 })).slice(0, 5)
+    : [];
 
-    if (symbolsWithSignals.length > 0) {
-      const symbolList = symbolsWithSignals.map((s) => s.ticker);
-
-      // Get full screener data for these symbols
-      const results = await getScreenerResults({
-        market: "IN",
-        filters: [
-          {
-            field: "symbol",
-            op: "in",
-            value: symbolList,
-          },
-        ],
-        sort: { field: "market_cap", dir: "desc" }, // Sort by market cap (size/stability)
-        pageSize: 10,
-        page: 1,
-      });
-
-      // Take top 5
-      swingCandidates = results.rows.slice(0, 5);
-    }
-  }
-
-  // Fetch top 5 probability candidates (highest quality by ROE)
-  let probabilityCandidates: ScreenerStock[] = [];
-  if (prefs.include_probability) {
-    const probResults = await getScreenerResults({
-      market: "IN",
-      filters: [],
-      sort: { field: "roe", dir: "desc" },
-      pageSize: 5,
-      page: 1,
-    });
-    probabilityCandidates = probResults.rows;
-  }
+  // Probability forecasts — the SAME source as the Probability screen:
+  // getProbabilitySummary(), already ranked by probability of an up move.
+  const probabilityCandidates = prefs.include_probability
+    ? (await getProbabilitySummary("IN")).rows.slice(0, 5)
+    : [];
 
   const digestData: EmailDigestData = {
     userName: prefs.email.split("@")[0],
