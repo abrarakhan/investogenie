@@ -35,6 +35,10 @@
     {
       "path": "/api/cron/forward-test?action=enroll&market=US",
       "schedule": "50 23 * * 1"
+    },
+    {
+      "path": "/api/cron/send-email-digest",
+      "schedule": "30 1 * * *"
     }
   ]
 }
