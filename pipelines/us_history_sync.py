@@ -31,6 +31,12 @@ DEFAULT_DATABASE_URL = "postgresql://localhost:5432/investogenie"
 DEFAULT_MIN_BARS = 260
 DEFAULT_HISTORY_DAYS = 365 * 3 + 30
 OVERLAP_DAYS = 7
+# Matches the "History stale" / "Swing signal on stale data" threshold in
+# lib/dataHealth.ts (historyGap > 3). Without this, a ticker that already has
+# >= min_bars is excluded from every future run forever, no matter how old its
+# latest bar gets — this job's WHERE clause used to only ever grow shallow
+# coverage, never refresh deep-but-stale coverage.
+DEFAULT_STALE_DAYS = 3
 
 
 @dataclass(frozen=True)
@@ -52,6 +58,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--symbols", help="Comma-separated US tickers to synchronize")
     parser.add_argument("--limit", type=int, default=250, help="Maximum tickers to process this run")
     parser.add_argument("--min-bars", type=int, default=DEFAULT_MIN_BARS, help="Coverage target per ticker")
+    parser.add_argument(
+        "--stale-days",
+        type=int,
+        default=DEFAULT_STALE_DAYS,
+        help="Also refresh tickers whose latest bar is this many days old, even above --min-bars "
+             "(keeps already-covered symbols current, not just under-covered ones)",
+    )
     parser.add_argument("--history-days", type=int, default=DEFAULT_HISTORY_DAYS, help="Calendar days for first full fetch")
     parser.add_argument("--sleep", type=float, default=0.25, help="Seconds between Yahoo requests")
     parser.add_argument("--retries", type=int, default=2, help="Download attempts per symbol")
@@ -70,15 +83,25 @@ def yahoo_symbol(ticker: str) -> str:
     return ticker.replace("/", "-").replace(".", "-")
 
 
-def load_assets(conn, requested: set[str] | None, limit: int | None, min_bars: int) -> list[AssetState]:
+def load_assets(
+    conn, requested: set[str] | None, limit: int | None, min_bars: int, stale_days: int
+) -> list[AssetState]:
     params: list[object] = []
     filters = ["a.country='US'", "a.asset_class='STOCK'", "a.is_active=true"]
     if requested:
         filters.append("a.ticker=any(%s)")
         params.append(sorted(requested))
     else:
-        filters.append("coalesce(o.bar_count, 0) < %s")
-        params.append(min_bars)
+        # Select a ticker if it either needs deeper history (below min_bars) OR
+        # already has enough bars but hasn't been refreshed recently (stale).
+        # Without the staleness leg, any ticker that ever crossed min_bars would
+        # never be selected again by this job, regardless of how old it gets.
+        filters.append(
+            "(coalesce(o.bar_count, 0) < %s"
+            " or o.last_date is null"
+            " or o.last_date < current_date - (%s * interval '1 day'))"
+        )
+        params.extend([min_bars, stale_days])
 
     limit_sql = ""
     if limit is not None and not requested:
@@ -97,7 +120,13 @@ def load_assets(conn, requested: set[str] | None, limit: int | None, min_bars: i
                  group by asset_id
               ) o on o.asset_id=a.id
              where {' and '.join(filters)}
-             order by coalesce(o.bar_count,0), o.last_date nulls first, a.ticker, a.exchange
+             -- Oldest last_date first, so an already-covered ticker whose data
+             -- is aging gets refreshed ahead of a fully fresh one. Never-fetched
+             -- (null) sorts LAST, not first: most are delisted/no-data tickers
+             -- that will never gain a last_date, and putting them first would
+             -- let them monopolize every run forever, starving the genuinely
+             -- stale-but-covered tickers this staleness leg exists to reach.
+             order by o.last_date nulls last, coalesce(o.bar_count,0), a.ticker, a.exchange
              {limit_sql}
             """,
             params,
@@ -210,7 +239,7 @@ def main() -> None:
     requested = requested_symbols(args.symbols)
     conn = psycopg2.connect(args.database_url)
     try:
-        assets = load_assets(conn, requested, args.limit, args.min_bars)
+        assets = load_assets(conn, requested, args.limit, args.min_bars, args.stale_days)
         print(f"Synchronizing US OHLCV for {len(assets)} stocks (target {args.min_bars} bars).")
         fetched = 0
         bars_written = 0

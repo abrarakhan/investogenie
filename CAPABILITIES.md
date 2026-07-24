@@ -316,7 +316,10 @@ The wrapper's recurring loop does:
 
 - security listings refresh,
 - market quote refresh (15-minute India market-hours cadence),
-- US quote/fundamental/history sync hooks,
+- US quote/fundamental/history sync hooks — US history via free Yahoo Finance (`yfinance`),
+  150 symbols/hour, prioritized by staleness (oldest-refreshed-first, not lowest-coverage-first)
+  since 2026-07-24, so already-covered symbols keep getting refreshed instead of being
+  permanently skipped once they cross the minimum-bars threshold,
 - FRED macro history sync,
 - swing signal scan trigger,
 - NSE/BSE bhavcopy incremental OHLCV sync + daily catch-up,
@@ -388,5 +391,10 @@ earlier in the same day.
   change, not a CMS edit; no cross-article search yet.
 - Provider rate limits and unsupported/delisted symbols are expected; sync-state tables track
   attempts and keep recurring jobs rotating through the universe.
+- The incremental US history sync backlog (~4,500 symbols >3 days stale as of 2026-07-24) clears
+  over roughly a day at the new 150/hour throughput, not instantly — Data Health's "Swing signal
+  on stale data" count will still show elevated numbers for a short window after this fix ships.
+- Minor pre-existing data-quality nit: ticker `ALUR` (US) has two separate `assets` rows (`OTC`
+  and `OTHER` exchange) — harmless duplicate-fetch, not a functional bug, not yet cleaned up.
 - `ARCHITECTURE.md` should be refreshed in a later pass; `CAPABILITIES.md`, `STATUS.md`, and
   `README.md` are the most current product summaries.

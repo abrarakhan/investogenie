@@ -1,6 +1,6 @@
 # InvestoGenie Status
 
-_Last updated: 2026-07-24 (OTC permanently excluded from US listings -- 94.6% US coverage; Help knowledge base; digest resilience; multi-provider AI)_
+_Last updated: 2026-07-24 (fixed incremental US history sync that never refreshed covered symbols; OTC permanently excluded from US listings -- 94.6% US coverage; Help knowledge base; digest resilience; multi-provider AI)_
 
 This file summarizes what has been built so far, what is currently working, what is partial, and what to build next.
 
@@ -124,7 +124,9 @@ The wrapper currently handles:
 - Security listing refresh (`scripts/ingest-listings.mjs`; excludes US OTC listings from
   ingestion since 2026-07-24 — see US History Coverage → OTC exclusion).
 - Quote refresh.
-- US quote/fundamental/history sync hooks.
+- US quote/fundamental/history sync hooks (`US_HISTORY_LIMIT=150`/hour since 2026-07-24;
+  see US History Coverage → Incremental US History Sync for why it was raised from 50 and
+  why the underlying query's selection/ordering was also fixed).
 - Macro sync hook.
 - Signal scan trigger through cron API.
 - Queued OHLCV repair trigger through a detached local worker script.
@@ -743,6 +745,58 @@ Follow-ups (optional):
 - OTC coverage, if ever wanted for the 946+ names, needs a different provider than Tiingo EOD.
 - Re-run the backfill periodically to catch newly listed NASDAQ/NYSE names.
 - `scripts/backfill-progress.mjs` prints queue + coverage status for future runs.
+- Minor, unrelated data-quality nit spotted in passing: ticker `ALUR` (US) exists as two
+  separate `assets` rows on `OTC` and `OTHER` — a pre-existing duplicate-listing quirk from
+  the listing ingest, not something introduced here. Harmless (just double-fetches the same
+  data into two asset ids) but worth a cleanup pass at some point.
+
+### 4b. Incremental US History Sync — fixed the "keeps going stale" bug (2026-07-24)
+
+**Symptom:** Data Health's Coverage Gaps kept showing hundreds of "Swing signal on stale data"
+critical rows (e.g. AAPG, ABT, ABLV — all with fresh quotes but 15+ day old OHLCV) even after
+the backfill above completed. Investigated and found two separate bugs, not one:
+
+1. **Selection bug (the real blocker).** `pipelines/us_history_sync.py`'s recurring mode
+   (`load_assets()`, no `--symbols`) filtered candidates with `WHERE bar_count < min_bars`
+   (260). Any ticker that ever crossed 260 bars was **excluded from every future run,
+   permanently** — no matter how stale its latest bar got. AAPG (366 bars), ABT (776 bars),
+   etc. could never be selected again by this job, regardless of throughput or frequency.
+2. **Throughput bug.** The wrapper's recurring call (`runUSHistory` in
+   `scripts/run-with-nse-sync.mjs`) capped this job at `US_HISTORY_LIMIT=50` symbols per
+   hourly cycle. With ~8,500 US symbols needing a refresh, 50/hour meant each symbol's turn
+   came back around only every ~7 days — nowhere near the 3-day staleness threshold Data
+   Health checks against.
+
+Both fixed together (fixing only one would not have solved the symptom):
+
+- **`pipelines/us_history_sync.py`**: added `--stale-days` (default 3, matching
+  `lib/dataHealth.ts`'s `historyGap > 3`). The WHERE clause now selects a ticker if it's
+  under `min_bars` **or** its latest bar is older than `stale_days` **or** it has never been
+  fetched — so already-covered symbols are refreshed, not just under-covered ones.
+- Re-ordered the query: `order by last_date nulls last, bar_count, ticker` — oldest-data-first
+  drives selection (not lowest-bar-count-first), so a covered-but-15-days-stale ticker is
+  prioritized over a fully fresh one. `nulls last` (not first) is deliberate: most never-fetched
+  tickers are delisted/no-data junk (verified live — a batch of 20 zero-bar tickers returned
+  0/20 fetchable) that would otherwise monopolize every run forever and starve the real,
+  covered-but-stale backlog this fix exists to reach.
+- **`scripts/run-with-nse-sync.mjs`**: raised `US_HISTORY_LIMIT` default from 50 to **150**.
+  This job uses free/unofficial Yahoo Finance (`yfinance`), NOT Tiingo — the paid, real-free-
+  tier-limited module (`lib/ingest/usHistory.ts`) is unused by this recurring path. 150/hour
+  was chosen empirically: verified via live runs to complete in ~90-120 seconds (leaving ~58
+  minutes of the hourly cycle idle), comfortably under the sustained ~28/min rate the same
+  script ran at during today's backfill, with zero request failures observed.
+
+Verified with live runs against the real database (not just unit-level): a 150-symbol batch
+after the fix correctly surfaced genuinely stale, already-covered tickers (bar_count 1-776,
+last_date up to 15+ days old) instead of dead zero-bar junk, fetched 143/150 successfully, 0
+failures, in 87.55s. Checked the actual queue position improvement: assets at `ABT`'s coverage
+level (776 bars) now have **~1,099 assets ahead of them** (~7 hours to reach) versus **~8,963**
+(~60 hours) under the old bar-count-first ordering. The full backlog of 4,515 stale-by-3-days
+US assets clears in roughly a day at the new throughput, then holds steady state.
+
+Follow-up: no automated test coverage for `us_history_sync.py` (no Python test suite exists in
+this repo); verification was live-database runs. `tsc`/`eslint`/`npm test` all pass for the
+`.mjs` wrapper change.
 
 ### 5. Help Knowledge Base — done, could extend
 

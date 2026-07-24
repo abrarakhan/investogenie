@@ -49,7 +49,15 @@ const usFundamentalsLimit = process.env.US_FUNDAMENTALS_LIMIT ?? "250";
 const usFundamentalsStaleDays = process.env.US_FUNDAMENTALS_STALE_DAYS ?? "7";
 const usFundamentalsDisabled = process.env.US_FUNDAMENTALS_SYNC_DISABLED === "1";
 const usHistoryDisabled = process.env.US_HISTORY_SYNC_DISABLED === "1";
-const usHistoryLimit = process.env.US_HISTORY_LIMIT ?? "50";
+// pipelines/us_history_sync.py pulls from free/unofficial Yahoo Finance (yfinance),
+// NOT the paid Tiingo API — Tiingo's key/module (lib/ingest/usHistory.ts) is unused
+// by this recurring job. Yahoo has no published rate tier; 150/hour is a
+// conservative empirical ceiling (well under the ~28/min sustained rate the same
+// script ran at during the 2026-07-24 backfill) chosen to keep the full ~8,500
+// US-symbol universe cycling roughly every ~2.4 days, comfortably inside the
+// 3-day staleness threshold Data Health checks against. The previous default of
+// 50/hour meant a ~7-day cycle, which could never catch up.
+const usHistoryLimit = process.env.US_HISTORY_LIMIT ?? "150";
 const usHistoryMinBars = process.env.US_HISTORY_MIN_BARS ?? "260";
 const usHistorySleep = process.env.US_HISTORY_SLEEP_SECONDS ?? "0.25";
 const macroSyncDisabled = process.env.MACRO_SYNC_DISABLED === "1";
