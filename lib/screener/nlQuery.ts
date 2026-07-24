@@ -241,34 +241,179 @@ export function sanitizeIntent(raw: ScreenIntent, opts: SanitizeOptions): Screen
   return { ...raw, filters, sort, universe, notes };
 }
 
-// --- Model call -------------------------------------------------------------
+// --- Model call (multi-provider) --------------------------------------------
 
-let client: Anthropic | null = null;
-function getClient(): Anthropic {
-  if (!process.env.ANTHROPIC_API_KEY) {
-    throw new Error("ANTHROPIC_API_KEY is not configured");
-  }
-  client ??= new Anthropic();
-  return client;
+/** The provider/model/key the current request should run against. */
+export interface AiCallConfig {
+  provider: "anthropic" | "openai" | "google";
+  model: string;
+  apiKey: string;
 }
 
-async function callModel(
-  system: Anthropic.TextBlockParam[],
-  messages: Anthropic.MessageParam[],
+/** A conversation turn in provider-neutral form (content is always a string). */
+interface Turn {
+  role: "user" | "assistant";
+  content: string;
+}
+
+// A deliberately permissive schema for third-party providers: JSON-mode output
+// is shaped here, then the SAME validateFilter() repair loop + sanitizeIntent()
+// enforce field/operator/unit correctness — identical to the Anthropic path.
+const LooseIntentSchema = z.object({
+  filters: z
+    .array(
+      z.object({
+        field: z.string(),
+        op: z.string(),
+        value: z.union([z.number(), z.string(), z.array(z.number()), z.array(z.string())]),
+      }),
+    )
+    .default([]),
+  sort: z.object({ field: z.string(), dir: z.string() }).nullable().default(null),
+  universe: z.string().nullable().default(null),
+  valueBelowSectorMedian: z.boolean().default(false),
+  search: z.string().nullable().default(null),
+  notes: z.string().default(""),
+});
+
+/** Parse a raw JSON string from OpenAI/Gemini into a ScreenIntent shape. The
+ *  downstream engine (validateFilter + sanitizeIntent) does the real enforcing. */
+function parseLooseIntent(text: string): ScreenIntent {
+  const cleaned = text.trim().replace(/^```(?:json)?/i, "").replace(/```$/, "").trim();
+  let obj: unknown;
+  try {
+    obj = JSON.parse(cleaned);
+  } catch {
+    throw new Error("The AI model did not return valid JSON");
+  }
+  const parsed = LooseIntentSchema.safeParse(obj);
+  if (!parsed.success) throw new Error("The AI model's output did not match the expected shape");
+  const d = parsed.data;
+  return {
+    filters: d.filters.map((f) => ({
+      field: f.field,
+      op: f.op as Filter["op"],
+      value: f.value,
+    })),
+    sort: d.sort ? { field: d.sort.field, dir: d.sort.dir === "asc" ? "asc" : "desc" } : null,
+    universe: d.universe,
+    valueBelowSectorMedian: d.valueBelowSectorMedian,
+    search: d.search,
+    notes: d.notes,
+  };
+}
+
+/** The system prompt as a single string (for providers without prompt caching). */
+function systemText(market: string, sectors: string[], universes: string[]): string {
+  return `${buildSystemRules()}\n\n${buildMarketContext(market, sectors, universes)}`;
+}
+
+const JSON_ONLY_SUFFIX =
+  '\n\nRespond with ONLY a single JSON object with these keys: filters, sort, universe, valueBelowSectorMedian, search, notes. No prose, no code fences.';
+
+// --- Anthropic (native structured output via the SDK) ---
+async function callAnthropic(
+  ai: AiCallConfig,
+  market: string,
+  sectors: string[],
+  universes: string[],
+  turns: Turn[],
 ): Promise<ScreenIntent> {
-  const message = await getClient().messages.parse({
-    model: MODEL,
+  const client = new Anthropic({ apiKey: ai.apiKey });
+  const system: Anthropic.TextBlockParam[] = [
+    { type: "text", text: buildSystemRules(), cache_control: { type: "ephemeral" } },
+    { type: "text", text: buildMarketContext(market, sectors, universes) },
+  ];
+  const message = await client.messages.parse({
+    model: ai.model,
     max_tokens: 2048,
-    // Adaptive thinking is off on Opus 4.8 unless set explicitly; the unit and
-    // sign reasoning above benefits from a little. `low` effort keeps an
-    // interactive search box responsive.
+    // Adaptive thinking helps the unit/sign reasoning; `low` effort keeps the
+    // interactive search box responsive. (Supported on modern Claude models.)
     thinking: { type: "adaptive" },
     output_config: { effort: "low", format: zodOutputFormat(ScreenIntentSchema) },
     system,
-    messages,
+    messages: turns.map((t) => ({ role: t.role, content: t.content })),
   });
   if (!message.parsed_output) throw new Error("Could not interpret that query");
   return message.parsed_output as ScreenIntent;
+}
+
+// --- OpenAI (Chat Completions, JSON object mode) ---
+async function callOpenAI(
+  ai: AiCallConfig,
+  market: string,
+  sectors: string[],
+  universes: string[],
+  turns: Turn[],
+): Promise<ScreenIntent> {
+  const res = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${ai.apiKey}` },
+    body: JSON.stringify({
+      model: ai.model,
+      temperature: 0,
+      max_tokens: 2048,
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: systemText(market, sectors, universes) + JSON_ONLY_SUFFIX },
+        ...turns,
+      ],
+    }),
+  });
+  if (!res.ok) throw new Error(`OpenAI request failed (${res.status}): ${await res.text()}`);
+  const data = await res.json();
+  const text = data?.choices?.[0]?.message?.content ?? "";
+  return parseLooseIntent(text);
+}
+
+// --- Google Gemini (generateContent, JSON MIME response) ---
+async function callGoogle(
+  ai: AiCallConfig,
+  market: string,
+  sectors: string[],
+  universes: string[],
+  turns: Turn[],
+): Promise<ScreenIntent> {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
+    ai.model,
+  )}:generateContent?key=${encodeURIComponent(ai.apiKey)}`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      systemInstruction: { parts: [{ text: systemText(market, sectors, universes) + JSON_ONLY_SUFFIX }] },
+      contents: turns.map((t) => ({
+        role: t.role === "assistant" ? "model" : "user",
+        parts: [{ text: t.content }],
+      })),
+      generationConfig: { responseMimeType: "application/json", temperature: 0, maxOutputTokens: 2048 },
+    }),
+  });
+  if (!res.ok) throw new Error(`Gemini request failed (${res.status}): ${await res.text()}`);
+  const data = await res.json();
+  const text = (data?.candidates?.[0]?.content?.parts ?? [])
+    .map((p: { text?: string }) => p.text ?? "")
+    .join("");
+  return parseLooseIntent(text);
+}
+
+function callModel(
+  ai: AiCallConfig,
+  market: string,
+  sectors: string[],
+  universes: string[],
+  turns: Turn[],
+): Promise<ScreenIntent> {
+  switch (ai.provider) {
+    case "anthropic":
+      return callAnthropic(ai, market, sectors, universes, turns);
+    case "openai":
+      return callOpenAI(ai, market, sectors, universes, turns);
+    case "google":
+      return callGoogle(ai, market, sectors, universes, turns);
+    default:
+      throw new Error(`Unsupported AI provider: ${ai.provider}`);
+  }
 }
 
 export interface ParseScreenQueryInput {
@@ -276,6 +421,16 @@ export interface ParseScreenQueryInput {
   market: string;
   sectors: string[];
   universes: string[];
+  /** Chosen provider/model/key. Falls back to env Anthropic when omitted. */
+  ai?: AiCallConfig;
+}
+
+function resolveAi(ai?: AiCallConfig): AiCallConfig {
+  if (ai) return ai;
+  if (process.env.ANTHROPIC_API_KEY) {
+    return { provider: "anthropic", model: MODEL, apiKey: process.env.ANTHROPIC_API_KEY };
+  }
+  throw new Error("No AI model is configured. Add one in Settings → AI model.");
 }
 
 /** Turn a plain-English query into a validated ScreenIntent. Throws if the model
@@ -283,14 +438,10 @@ export interface ParseScreenQueryInput {
 export async function parseScreenQuery(input: ParseScreenQueryInput): Promise<ScreenIntent> {
   const query = input.query.trim().slice(0, MAX_QUERY_CHARS);
   if (!query) throw new Error("Enter a query first");
+  const ai = resolveAi(input.ai);
 
-  const system: Anthropic.TextBlockParam[] = [
-    { type: "text", text: buildSystemRules(), cache_control: { type: "ephemeral" } },
-    { type: "text", text: buildMarketContext(input.market, input.sectors, input.universes) },
-  ];
-  const messages: Anthropic.MessageParam[] = [{ role: "user", content: query }];
-
-  let intent = await callModel(system, messages);
+  const turns: Turn[] = [{ role: "user", content: query }];
+  let intent = await callModel(ai, input.market, input.sectors, input.universes, turns);
 
   try {
     intent.filters.forEach(validateFilter);
@@ -298,8 +449,8 @@ export async function parseScreenQuery(input: ParseScreenQueryInput): Promise<Sc
     // validateFilter's messages are already user-quality — hand it back verbatim
     // for exactly one repair attempt. If it fails again, surface the error.
     const reason = err instanceof Error ? err.message : String(err);
-    intent = await callModel(system, [
-      ...messages,
+    intent = await callModel(ai, input.market, input.sectors, input.universes, [
+      ...turns,
       {
         role: "user",
         content: `Your previous answer was rejected by the filter engine.

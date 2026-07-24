@@ -70,7 +70,8 @@ Current database migration stack:
 - `0016_fund_snapshots.sql`: monthly AMC fund holdings snapshots.
 - `0017_fund_mapping.sql`: explicit per-user CAS fund holding to AMC snapshot scheme mappings.
 - `0020_email_preferences.sql`: user email digest opt-in settings (send time, screen toggles, last sent timestamp).
-- `0021_user_credentials.sql`: per-user encrypted credentials (SMTP password, Anthropic/OpenAI API keys) via AES-256-GCM.
+- `0021_user_credentials.sql`: per-user encrypted credentials (SMTP password, AI API keys) via AES-256-GCM.
+- `0022_ai_provider_config.sql`: active AI provider/model/key selection for the NL screener (Anthropic/OpenAI/Google).
 
 ## Current Local Data Coverage
 
@@ -198,15 +199,15 @@ Built:
 - India and US fundamentals sync paths.
 - Latest financial snapshot joins for screener analysis.
 - Screener snapshot rebuild SQL.
-- **Natural Language Query feature (in progress):**
+- **Natural Language Query feature:**
   - `NlQueryBar.tsx` component for plain-English screener queries.
-  - `nlQuery.ts` with Claude Opus 4.8 structured-output integration.
-  - Three-layer validation: Zod schema → validateFilter → sanitizeIntent.
+  - **Multi-provider** dispatch in `nlQuery.ts` — user picks Anthropic (Claude), OpenAI (GPT), or Google (Gemini) with a preset-or-custom model in Settings → AI model; the query runs against the chosen provider/model/key. Anthropic uses the SDK's native structured output; OpenAI uses Chat Completions JSON mode; Google uses Gemini `generateContent` JSON. Provider registry in `lib/ai/providers.ts`; key resolution in `getActiveAIConfig()`.
+  - Three-layer validation applied to EVERY provider's output: Zod shape → validateFilter → sanitizeIntent.
   - Unit conversion handling (Rs. Crore vs USD millions, percents vs ratios).
   - One-turn repair loop for parse failures.
   - Comprehensive test suite covering sanitization, sector/universe validation, bounds swapping.
-  - Prompt caching on system rules (stable 4096+ tokens) for performance.
-  - Structured output with `ScreenIntent` JSON schema including filters, sort, universe, valueBelowSectorMedian, search, and explanatory notes.
+  - Prompt caching on system rules (Anthropic path) for performance.
+  - `ScreenIntent` JSON: filters, sort, universe, valueBelowSectorMedian, search, and explanatory notes.
 
 Current local data:
 
@@ -366,7 +367,7 @@ Built:
   - Swing card: BUY/SELL badge, price + day change, Entry / Target / Stop / Trail, R:R, ~Days, P/E, ROCE, score.
   - Probability card: price + day change, Prob-Up (21d), Expected Return, Volatility, Drawdown Risk, Median (p50) target price.
   - Responsive `@media` rules so cards render cleanly on mobile and desktop.
-- **Encrypted per-user credentials** (`user_credentials` table): SMTP password plus optional Anthropic/OpenAI API keys, encrypted with AES-256-GCM (`lib/crypto/credentials.ts`, master key in `CREDENTIAL_ENCRYPTION_KEY`). Managed in Settings → Secured credentials (`components/settings/CredentialsForm.tsx`). Digest send decrypts the stored SMTP password on demand.
+- **Encrypted per-user credentials** (`user_credentials` table): SMTP password plus the active AI provider/model/key, encrypted with AES-256-GCM (`lib/crypto/credentials.ts`, master key in `CREDENTIAL_ENCRYPTION_KEY`). Managed in Settings → Secured credentials (`components/settings/CredentialsForm.tsx`) with a provider dropdown, a preset-or-custom model dropdown, and a key field. Digest send decrypts the stored SMTP password on demand.
 - Nodemailer SMTP integration via `sendEmailWithConfig()` (per-user DB credentials), supporting Gmail (app password), Outlook, SendGrid, or any SMTP provider.
 - Cron endpoint `/api/cron/send-email-digest`, secured by `CRON_SECRET`. Scheduled **in-app** by the startup wrapper `scripts/run-with-nse-sync.mjs` (07:00 IST daily, same tick that drives the scan/backfill/quote jobs); external schedulers (cron-job.org, Vercel crons) remain an option for bare deploys.
 - Graceful degradation: if one user's email fails, others still send; `last_sent_at` updated per user.

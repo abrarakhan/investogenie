@@ -6,8 +6,15 @@ InvestoGenie now provides encrypted credential storage for sensitive information
 
 **Credentials stored:**
 - 📧 SMTP configuration (host, port, username, password)
-- 🔵 Anthropic/Claude API key
-- 🟢 OpenAI API key
+- 🤖 One active AI model: **provider** (Anthropic / OpenAI / Google), **model** (preset or custom ID), and **API key**
+
+The NL screener sends each query to the chosen provider/model using the stored
+key. Switching provider/model in Settings → AI model takes effect immediately.
+Provider dispatch lives in `lib/screener/nlQuery.ts` (Anthropic via the SDK's
+structured output; OpenAI via Chat Completions JSON mode; Google via Gemini
+`generateContent` JSON) — all funnel through the same `validateFilter` +
+`sanitizeIntent` safety pipeline. Resolution helper: `getActiveAIConfig()` in
+`lib/credentials-actions.ts` (falls back to `ANTHROPIC_API_KEY` env when unset).
 
 **Encryption:**
 - Algorithm: AES-256-GCM (Advanced Encryption Standard with Galois/Counter Mode)
