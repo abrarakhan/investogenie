@@ -1,6 +1,6 @@
 # InvestoGenie Status
 
-_Last updated: 2026-07-24 (US backfill + OTC purge -> 94.3% US coverage; digest resilience; multi-provider AI)_
+_Last updated: 2026-07-24 (Help knowledge base shipped; OTC purge reverted by listing sync -- see note; digest resilience; multi-provider AI)_
 
 This file summarizes what has been built so far, what is currently working, what is partial, and what to build next.
 
@@ -22,7 +22,7 @@ InvestoGenie is now a local-first market terminal and portfolio intelligence app
 ### Public / Orientation
 
 - Landing page: `/`
-- Help page: `/help`
+- Help & knowledge base: `/help` (guided walkthrough + article index), `/help/[slug]` (7 articles)
 - About page: `/about`
 - Login: `/login`
 
@@ -75,25 +75,36 @@ Current database migration stack:
 
 ## Current Local Data Coverage
 
-Latest local Postgres snapshot checked on 2026-07-22:
+Latest local Postgres snapshot checked on 2026-07-24:
 
 | Area | Count / Status |
 |---|---:|
-| Assets | 18,228 stock assets / 18k+ total assets |
-| Latest quotes | 17,505 |
-| OHLCV bars | 6.2M+ |
-| Swing signals | 3,399 |
-| Financial report rows | 113,129 |
-| Macro indicator rows | 8,161 |
+| Assets (all classes/markets) | 18,286 |
+| Latest quotes | 17,432 |
+| OHLCV bars | 7,644,812 |
+| Swing signals | 10,765 |
+| Financial report rows | 123,450 |
+| Macro indicator rows | 8,192 |
+| Cron log rows | 401 |
+| US active stock assets | 10,655 (the 2026-07-24 OTC purge was undone by the next security-listing sync — see US History Coverage → OTC purge) |
+| US assets with OHLCV history | 8,505 / 10,655 (79.8%) |
+| India active stock assets | 7,563 |
+| India assets with OHLCV history | 7,284 / 7,563 (96.3%) |
+| US fundamentals coverage | 5,158 assets with a latest financial report |
+| India fundamentals coverage | 6,507 assets with a latest financial report |
+| US swing scan: scanned / buy candidates | 7,819 / 1,030 |
+| India swing scan: scanned / buy candidates | 2,946 / 450 |
+
+Portfolio/fund figures below are from the 2026-07-22 snapshot and have not been re-measured since:
+
+| Area | Count / Status |
+|---|---:|
 | Fund schemes with snapshots | 12 |
 | Fund snapshot rows | 936 |
 | Explicit user fund mappings | 6 |
 | Forward-test positions | 40 |
 | Imported user mutual funds | 21 CAS fund holdings imported in the current local DB |
 | Imported user fund value | INR 85,32,803.53 from latest CAS inventory |
-| US active stock assets | 8,991 (was 10,712; 1,721 no-history OTC removed 2026-07-24) |
-| US assets with OHLCV history | 8,483 / 8,991 (94.3%) after 2026-07-24 backfill + OTC purge |
-| Quote rows with no OHLCV history | 281 US remain — NASDAQ/NYSE warrants/rights + a few OTHER/CBOE (see US History Coverage) |
 
 ## Data Sync And Workers
 
@@ -170,9 +181,10 @@ Built:
 
 Current limitations:
 
-- US OHLCV coverage is now strong (94.3% of active stocks after the 2026-07-24
-  backfill + OTC purge); the ~281 without bars are NASDAQ/NYSE warrants/rights and
-  a few OTHER/CBOE instruments that have no equity history available.
+- US OHLCV coverage sits at 79.8% of active stocks (10,655 total, 8,505 with history).
+  The 2026-07-24 backfill and OTC purge pushed this to 94.3%, but the recurring
+  security-listing sync re-added the purged OTC tickers the same day (see US History
+  Coverage → OTC purge). India coverage is strong at 96.3% (7,563 total, 7,284 with history).
 - Some data sources can return stale or failed values unless refresh succeeds.
 - Real-time quotes are still best-effort, not institutional-grade streaming.
 
@@ -440,6 +452,45 @@ Current limitations:
 - Needs deeper indicator selection, richer visualizations, and explainable signal narratives.
 - Needs validation against actual strategy outcomes.
 
+## Help & Knowledge Base
+
+Built (2026-07-24):
+
+- Replaced the single-page Help section with a professional, blog-style knowledge base.
+- **`/help`** — a guided, numbered walkthrough of the whole app in the order it's meant to be
+  used (Pick a market → Overview → Screener → Swing Candidates → Probability → Import Holdings
+  → Data Health), each step linking straight into the live app, plus a categorized index of
+  every reference article.
+- **`/help/[slug]`** — 7 statically generated article pages (`generateStaticParams`, 404 on
+  unknown slugs), each with its own metadata:
+  - `swing-engine` — the shared classifier (Bollinger squeeze / Donchian breakout / OI
+    build-up scoring) and the ATR-based entry/target/stop/trailing-stop level engine.
+  - One article per legendary strategy: `qullamaggie-momentum`, `minervini-vcp`,
+    `darvas-box`, `ptj-200-day-trend`, `simons-quant-reversion` — each names the source
+    trader, cites where the method is documented, and reproduces the exact match
+    conditions/entry formula as implemented.
+  - `probability-method` — the full cross-sectional factor model (momentum/snapback/
+    volatility → expected return → P(up) → Student-t price range), including the
+    "calibration pending" caveat already present in the underlying code.
+- Shared component library `components/help/HelpLayout.tsx` (blog chrome, formula blocks,
+  spec tables, callouts, numbered steps, references list) and content registry
+  `lib/help/articles.tsx`.
+- Every formula and threshold was pulled directly from `lib/analytics/swingClassifier.ts`,
+  `lib/analytics/legendaryStrategies.ts`, and `lib/probability-runtime.ts` — not written from
+  general knowledge — and the app's own approximations (e.g. Minervini's RS-rank-70 substituted
+  with a 6-month return proxy) are disclosed rather than glossed over.
+
+Verified: `tsc` clean, `eslint` clean, 76/76 tests, production build generates all 7 static
+article pages, all routes 200 (unknown slug 404s), formula/table rendering spot-checked live
+in-browser.
+
+Current limitations:
+
+- Content is static (compiled into the article registry); updating it requires a code change,
+  not a CMS edit.
+- No search across articles yet — navigation is via the hub's categorized index only.
+- Articles are IN/US-agnostic prose; no per-market worked examples yet.
+
 ## Breeze / Derivatives OI
 
 Built:
@@ -518,27 +569,41 @@ Current branch:
 
 Recent commits:
 
+- `9608c77 Expand Help into a professional blog-style knowledge base`
+- `69774c4 STATUS.md: soften stale US OHLCV coverage limitation`
+- `7038a78 STATUS.md: record US OTC purge (1,721 no-history assets removed)`
+- `cf6dc8f US OHLCV bulk backfill complete (2026-07-24)`
+- `18ca155 Update STATUS.md: digest scheduling resilience`
+- `f37ae84 Make the email digest survive a failed or missed send window`
 - `cdcc449 Fix email digest to use the real Swing & Probability data sources`
 - `1f1be30 Add encrypted credentials storage for SMTP and AI API keys`
 - `ef3c80d Add daily email digest feature with swing candidates and probability picks`
-- `8beea5b Merge claude/vigilant-wu-216d1d: Fix CAS statement import validation`
-- `234dd1f Merge pull request #18 from abrarakhan/feat/startup-robustness`
 
 (Pushed to `origin/main`.)
 
 Committed app work now includes:
 
+- Help & knowledge base: guided site walkthrough plus 7 statically generated, code-accurate
+  articles covering the swing engine, each of the 5 legendary strategies, and the probability
+  method (see Help & Knowledge Base section above).
+- US OHLCV bulk backfill (4,447 → 8,483 assets with history) and an OTC purge experiment —
+  note the purge did not persist against the recurring security-listing sync (see US History
+  Coverage → OTC purge for the full account and unresolved follow-up).
+- Email digest resilience: same-day bounded retry on failure, DB-seeded startup catch-up for a
+  missed send window, `"partial"` responses now treated as failure.
+- Multi-provider AI model selection (Anthropic / OpenAI / Google) for the NL screener, with a
+  provider dropdown, preset-or-custom model picker, and encrypted API key in Settings.
 - Email digest with daily morning sends of top 5 Swing Candidates (`runScreener`) and top 5 Probability forecasts (`getProbabilitySummary`) — same engines as the on-screen views.
 - Encrypted per-user credentials (AES-256-GCM) for SMTP password and AI API keys, managed in Settings.
 - Opt-in email preferences in Settings with configurable send time.
 - Nodemailer SMTP integration for any email provider.
-- Cron scheduling support (external services, Vercel, or local).
+- Cron scheduling support (external services, Vercel, or local — in-app wrapper scheduler is primary).
 - Natural Language Query feature for screener:
-  - Claude Opus 4.8 structured output with adaptive thinking.
-  - Three-layer validation (Zod schema → validateFilter → sanitizeIntent).
+  - Multi-provider structured output (Anthropic native / OpenAI JSON mode / Google Gemini JSON).
+  - Three-layer validation (Zod schema → validateFilter → sanitizeIntent) applied identically regardless of provider.
   - One-turn repair loop for parse failures.
   - 30 comprehensive tests covering all sanitization edge cases.
-  - Prompt caching on system rules for performance.
+  - Prompt caching on system rules for performance (Anthropic path).
 - Startup robustness improvements: retry harness, graceful degradation, sync orchestration.
 - CAS statement import validation fixes.
 - Fund mapping schema and UI.
@@ -579,25 +644,25 @@ when the app runs under `npm run start` / `npm run dev`.
    - Enabled users: `select * from public.email_preferences where enabled = true;`
    - Send logs: `select * from public.cron_logs where job = 'send-email-digest' order by created_at desc;`
 
-### 1. Complete NL Query Feature
+### 1. NL Query Feature — provider selection DONE, polish remains
 
-The Claude-powered Natural Language Query feature for the stock screener is built:
+The Natural Language Query feature for the stock screener is built and now multi-provider:
 
 - ✅ `NlQueryBar.tsx` component rendering in StockScreener
-- ✅ `nlQuery.ts` with Claude Opus 4.8 structured output
-- ✅ `parseScreenIntent()` server action in screener-actions
-- ✅ 30 tests covering sanitization, validation, edge cases
+- ✅ `nlQuery.ts` dispatches to Anthropic / OpenAI / Google based on the user's Settings choice
+- ✅ `parseScreenIntent()` server action resolves the active AI config via `getActiveAIConfig()`
+- ✅ Settings → AI model: provider dropdown, preset-or-custom model, encrypted API key
+- ✅ 30 tests covering sanitization, validation, edge cases (Anthropic-schema path)
 
-To finish and ship:
+Still open:
 
-- Test the full pipeline in dev: plain English query → Claude structured output → validated filters → screener results
-- Add error recovery UI for edge cases (query too long, sectors/universes not loaded, API errors)
-- Add usage telemetry/logging if desired
-- Commit and close the NL query PR
+- No live end-to-end test of the OpenAI and Google dispatch paths against real API keys yet
+  (only the Anthropic path has been exercised with a real send).
+- Add error recovery UI for edge cases (query too long, sectors/universes not loaded, API errors,
+  provider not configured).
+- Add usage telemetry/logging if desired.
 
-This unlocks conversational screener access without manual filter UI navigation.
-
-### 1. Complete Fund Mapping Coverage
+### 2. Complete Fund Mapping Coverage
 
 Use the new `/portfolio/fund-mapping` screen to move Fund X-Ray from 6/21 matched funds toward full coverage.
 
@@ -609,7 +674,7 @@ Next actions:
 - Keep rejected suggestions as signal for parser/matcher cleanup.
 - Once mappings improve, verify Fund X-Ray overlap and shared-stock output again.
 
-### 2. Repair Startup Refresh Robustness
+### 3. Repair Startup Refresh Robustness
 
 Make `scripts/run-with-nse-sync.mjs` and listing/quote ingestors resilient:
 
@@ -619,7 +684,7 @@ Make `scripts/run-with-nse-sync.mjs` and listing/quote ingestors resilient:
 - Persist sync failure details to `cron_logs`.
 - Continue remaining jobs even if one source fails.
 
-### 3. US History Coverage — backfill + OTC purge DONE (2026-07-24)
+### 4. US History Coverage — backfill DONE, OTC purge reverted (2026-07-24)
 
 The NASDAQ/NYSE backfill queue was drained in one pass on 2026-07-24
 (`scripts/local-backfill-worker.mjs`, ~504-day history via `pipelines/us_history_sync.py`).
@@ -653,16 +718,41 @@ remained and delete count matched the backup). **Recoverable** from backup table
 - `public.removed_otc_assets_20260724` (1,721 rows)
 - `public.removed_otc_quotes_20260724` (1,428 rows)
 
-Drop these backups once the removal is confirmed good and no longer needed.
+**⚠️ Purge did not stick — re-verified same day.** The wrapper's recurring security-listing
+refresh re-inserts tickers from the upstream security master on its normal cadence, and it has
+no awareness of the manual deletion — it just upserts the OTC listing again as a new row (new
+`id`, `created_at`). By later on 2026-07-24, ~1,664 OTC no-history assets were back and US
+coverage was measured at **10,655 total / 8,505 with history (79.8%)** — essentially back to
+pre-purge. The backup tables above are stale relative to the current OTC rows (different ids)
+and are kept only as a record of what the first purge removed.
+
+To make an OTC purge stick, either:
+
+- Exclude `exchange = 'OTC'` in the security-listing refresh job so it stops re-adding them, or
+- Re-run the same delete periodically (accepting it is a recurring cleanup, not one-time), or
+- Mark purged OTC tickers `is_active = false` instead of deleting, and have listing refresh
+  respect that flag on conflict instead of reactivating them.
+
+None of these have been implemented — this is flagged as a follow-up, not done.
 
 Follow-ups (optional):
 
-- Surface "no history yet" clearly in charts/candidate screens for the 281 without bars.
+- Decide and implement one of the three options above if a permanent OTC exclusion is wanted.
+- Surface "no history yet" clearly in charts/candidate screens for symbols without bars.
 - OTC coverage, if ever wanted, needs a different provider than Tiingo EOD.
 - Re-run the backfill periodically to catch newly listed NASDAQ/NYSE names.
 - `scripts/backfill-progress.mjs` prints queue + coverage status for future runs.
 
-### 4. Commercial Navigation Pass
+### 5. Help Knowledge Base — done, could extend
+
+`/help` and its 7 articles (see Help & Knowledge Base section above) are shipped and verified.
+If extended further:
+
+- A search box across articles once the count grows past what a single index page can show.
+- Per-market worked examples (an IN and a US ticker walked through each strategy's exact numbers).
+- Move content to a lightweight CMS/MDX if non-engineers need to edit copy without a code change.
+
+### 6. Commercial Navigation Pass
 
 Unify app routes and reduce conceptual duplication.
 
@@ -680,7 +770,7 @@ Recommended final nav:
 - Help
 - About
 
-### 5. Strategy Validation Layer
+### 7. Strategy Validation Layer
 
 Before public launch, every strategy should expose:
 
@@ -693,7 +783,7 @@ Before public launch, every strategy should expose:
 - Drawdown.
 - False-positive count.
 
-### 6. Production Readiness
+### 8. Production Readiness
 
 Needed before additional users:
 
