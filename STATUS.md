@@ -170,7 +170,9 @@ Built:
 
 Current limitations:
 
-- US OHLCV coverage remains incomplete compared with quote coverage.
+- US OHLCV coverage is now strong (94.3% of active stocks after the 2026-07-24
+  backfill + OTC purge); the ~281 without bars are NASDAQ/NYSE warrants/rights and
+  a few OTHER/CBOE instruments that have no equity history available.
 - Some data sources can return stale or failed values unless refresh succeeds.
 - Real-time quotes are still best-effort, not institutional-grade streaming.
 
