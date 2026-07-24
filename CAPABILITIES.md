@@ -41,10 +41,10 @@ Measured from the local `investogenie` PostgreSQL database on 2026-07-24:
 
 | Dataset | Count |
 | --- | ---: |
-| Assets (all markets/classes) | 18,286 |
+| Assets (all markets/classes) | 16,622 (post OTC exclusion, down from 18,286) |
 | Daily OHLCV bars | 7,644,812 |
-| Latest quotes | 17,432 |
-| Swing signals | 10,765 |
+| Latest quotes | 16,125 (down from 17,432 after the OTC quote purge) |
+| Swing signals | 10,782 |
 | Financial reports | 123,450 |
 | Macro indicators | 8,192 |
 | Cron logs | 401 |
@@ -64,21 +64,22 @@ Asset universe:
 | US | NASDAQ | Stock | 4,419 |
 | US | NYSE | Stock | 3,340 |
 | US | NYSE | Bond | 1 |
-| US | OTC | Stock | 2,610 |
+| US | OTC | Stock | 946 |
 | US | OTHER | Stock | 256 |
 
 US/India OHLCV coverage:
 
 | Market | Active stocks | With OHLCV history | Coverage |
 | --- | ---: | ---: | ---: |
-| US | 10,655 | 8,505 | 79.8% |
+| US | 8,991 | 8,505 | 94.6% |
 | India | 7,563 | 7,284 | 96.3% |
 
-> **Note on US coverage:** a bulk backfill on 2026-07-24 raised US coverage to 8,483/8,991 (94.3%)
-> after also removing 1,721 no-history OTC assets. The recurring security-listing sync re-added
-> those OTC tickers the same day (it has no awareness of the manual deletion), returning coverage
-> to the 79.8% figure above. See `STATUS.md` → US History Coverage → OTC purge for the full
-> account and unresolved options to make an OTC exclusion stick.
+> **Note on US OTC:** `scripts/ingest-listings.mjs` permanently excludes OTC from the US listings
+> it ingests (`EXCLUDED_US_EXCHANGES`), fixing an earlier bug where a manual OTC purge was
+> silently reverted by the next listing-sync run. 1,664 no-history OTC assets were removed on
+> 2026-07-24 and verified to stay removed across repeated listing-sync runs; the 946 OTC assets
+> that already had real OHLCV history were left untouched. See `STATUS.md` → US History Coverage
+> → OTC exclusion for the full account.
 
 Fundamentals coverage:
 
@@ -369,10 +370,9 @@ earlier in the same day.
 
 ## Remaining Gaps
 
-- **US OTC coverage does not stay purged.** The security-listing refresh job re-inserts OTC
-  tickers on its normal cadence with no awareness of a manual deletion; a permanent fix needs
-  either an `exchange <> 'OTC'` filter in that job, a periodic re-purge, or an `is_active` flag
-  the listing job respects. Not implemented yet — see `STATUS.md` for the three options.
+- US OTC coverage is intentionally excluded (see the note under Current Local Data Coverage
+  above) — if OTC history is ever wanted, it needs a different provider than Tiingo EOD, since
+  that is the actual reason OTC has no bars, not a bug in the ingestion job.
 - Open-interest validation is wired in the swing classifier, but local OHLCV currently has no
   populated open-interest data, so OI-specific confirmation is not active; cash-equity swing
   scores are capped at 0.70 as a result (documented in `/help/swing-engine`).

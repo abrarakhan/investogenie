@@ -1,6 +1,6 @@
 # InvestoGenie Status
 
-_Last updated: 2026-07-24 (Help knowledge base shipped; OTC purge reverted by listing sync -- see note; digest resilience; multi-provider AI)_
+_Last updated: 2026-07-24 (OTC permanently excluded from US listings -- 94.6% US coverage; Help knowledge base; digest resilience; multi-provider AI)_
 
 This file summarizes what has been built so far, what is currently working, what is partial, and what to build next.
 
@@ -79,15 +79,15 @@ Latest local Postgres snapshot checked on 2026-07-24:
 
 | Area | Count / Status |
 |---|---:|
-| Assets (all classes/markets) | 18,286 |
-| Latest quotes | 17,432 |
+| Assets (all classes/markets) | 16,622 (down from 18,286 after the OTC exclusion) |
+| Latest quotes | 16,125 (down from 17,432 after the OTC quote purge) |
 | OHLCV bars | 7,644,812 |
-| Swing signals | 10,765 |
+| Swing signals | 10,782 |
 | Financial report rows | 123,450 |
 | Macro indicator rows | 8,192 |
 | Cron log rows | 401 |
-| US active stock assets | 10,655 (the 2026-07-24 OTC purge was undone by the next security-listing sync — see US History Coverage → OTC purge) |
-| US assets with OHLCV history | 8,505 / 10,655 (79.8%) |
+| US active stock assets | 8,991 (1,664 no-history OTC permanently excluded 2026-07-24 — see US History Coverage → OTC exclusion) |
+| US assets with OHLCV history | 8,505 / 8,991 (94.6%) |
 | India active stock assets | 7,563 |
 | India assets with OHLCV history | 7,284 / 7,563 (96.3%) |
 | US fundamentals coverage | 5,158 assets with a latest financial report |
@@ -121,7 +121,8 @@ The wrapper currently handles:
   `INDIA_MARKET_QUOTE_REFRESH_INTERVAL_MINUTES` and disabled with
   `INDIA_MARKET_QUOTE_REFRESH_DISABLED=1`.
 - Recurring broader market refresh every configured interval.
-- Security listing refresh.
+- Security listing refresh (`scripts/ingest-listings.mjs`; excludes US OTC listings from
+  ingestion since 2026-07-24 — see US History Coverage → OTC exclusion).
 - Quote refresh.
 - US quote/fundamental/history sync hooks.
 - Macro sync hook.
@@ -181,10 +182,9 @@ Built:
 
 Current limitations:
 
-- US OHLCV coverage sits at 79.8% of active stocks (10,655 total, 8,505 with history).
-  The 2026-07-24 backfill and OTC purge pushed this to 94.3%, but the recurring
-  security-listing sync re-added the purged OTC tickers the same day (see US History
-  Coverage → OTC purge). India coverage is strong at 96.3% (7,563 total, 7,284 with history).
+- US OHLCV coverage is strong at 94.6% of active stocks (8,991 total, 8,505 with history)
+  after the 2026-07-24 backfill and permanent OTC exclusion (see US History Coverage → OTC
+  exclusion). India coverage is strong at 96.3% (7,563 total, 7,284 with history).
 - Some data sources can return stale or failed values unless refresh succeeds.
 - Real-time quotes are still best-effort, not institutional-grade streaming.
 
@@ -586,9 +586,10 @@ Committed app work now includes:
 - Help & knowledge base: guided site walkthrough plus 7 statically generated, code-accurate
   articles covering the swing engine, each of the 5 legendary strategies, and the probability
   method (see Help & Knowledge Base section above).
-- US OHLCV bulk backfill (4,447 → 8,483 assets with history) and an OTC purge experiment —
-  note the purge did not persist against the recurring security-listing sync (see US History
-  Coverage → OTC purge for the full account and unresolved follow-up).
+- US OHLCV bulk backfill (4,447 → 8,483 assets with history) and a **permanent** OTC exclusion:
+  `scripts/ingest-listings.mjs` now filters OTC out of its US listings fetch so purged
+  no-history OTC assets stay purged across repeated listing-sync runs (verified) — see US
+  History Coverage → OTC exclusion.
 - Email digest resilience: same-day bounded retry on failure, DB-seeded startup catch-up for a
   missed send window, `"partial"` responses now treated as failure.
 - Multi-provider AI model selection (Anthropic / OpenAI / Google) for the NL screener, with a
@@ -684,7 +685,7 @@ Make `scripts/run-with-nse-sync.mjs` and listing/quote ingestors resilient:
 - Persist sync failure details to `cron_logs`.
 - Continue remaining jobs even if one source fails.
 
-### 4. US History Coverage — backfill DONE, OTC purge reverted (2026-07-24)
+### 4. US History Coverage — backfill + permanent OTC exclusion DONE (2026-07-24)
 
 The NASDAQ/NYSE backfill queue was drained in one pass on 2026-07-24
 (`scripts/local-backfill-worker.mjs`, ~504-day history via `pipelines/us_history_sync.py`).
@@ -697,49 +698,49 @@ Result (backfill):
 - Queue final: 4,194 done, 235 failed, 2 skipped. Plain-ticker success rate **96.4%**;
   failures were concentrated entirely in the non-equity long tail (warrants/rights/units).
 
-### OTC purge (2026-07-24)
+### OTC exclusion (2026-07-24, made permanent)
 
 After the backfill, the remaining no-history names were dominated by OTC listings that
-Tiingo's EOD equity feed does not cover (and that Google Finance can only quote, not
-provide bars for). All **1,721 US OTC assets with no OHLCV history** were removed
-(1,428 had a live quote, 293 had neither). The 946 OTC assets that *do* have history
-were left untouched.
+Tiingo's EOD equity feed does not cover (and that Google Finance can only quote, not provide
+bars for). A first purge removed all no-history OTC assets, but was **reverted within hours**
+by `scripts/ingest-listings.mjs` — the security-listing refresh job the wrapper runs
+recurringly, which upserts the *entire* SEC universe (including OTC) with no awareness that
+some tickers had been manually deleted, so it simply re-inserted them as new rows.
+
+The root cause is fixed, not just the symptom:
+
+- `scripts/ingest-listings.mjs` now filters `exchange === "OTC"` out of the US listings it
+  fetches from the SEC before upserting — see `EXCLUDED_US_EXCHANGES` in that file. It never
+  deletes existing rows (upsert-only), so this does not touch the 946 OTC assets that already
+  have real OHLCV history; it only stops OTC tickers from being (re-)created.
+- The no-history OTC assets were purged again (1,664 this time — the exact count had drifted
+  slightly since the first attempt because the listing job had already re-added some before
+  the fix landed): 1,310 had a live quote, 354 had neither. The 946 OTC assets with history
+  were left untouched, as before.
+- **Verified durable**: re-ran `ingest-listings.mjs` a second time after the purge — OTC count
+  stayed at 946 (did not bounce back to 2,610), confirming the fix holds across repeated runs.
 
 Effect on coverage:
 
-- US active stock assets: **10,712 → 8,991**.
-- Coverage (with history): **79.2% → 94.3%**.
-- Quote-without-history: **1,709 → 281** (now all real-exchange: 235 NASDAQ/NYSE
-  warrants/rights/units + 46 OTHER/CBOE — no equity bars available anywhere).
+- US active stock assets: **10,655 → 8,991**.
+- Coverage (with history): **79.8% → 94.6%**.
+- Quote-without-history: now 124 NASDAQ + 90 NYSE + 28 OTHER + 17 CBOE — all real-exchange
+  warrants/rights/units or non-standard instruments with no equity bars available anywhere.
 
-Deletion was transactional with a pre-commit guard (verified zero OTC-no-history
-remained and delete count matched the backup). **Recoverable** from backup tables:
+Deletion was transactional with a pre-commit guard (verified zero OTC-no-history remained and
+delete count matched the backup). **Recoverable** from backup tables:
 
-- `public.removed_otc_assets_20260724` (1,721 rows)
-- `public.removed_otc_quotes_20260724` (1,428 rows)
+- `public.removed_otc_assets_20260724_v2` (1,664 rows)
+- `public.removed_otc_quotes_20260724_v2` (1,310 rows)
 
-**⚠️ Purge did not stick — re-verified same day.** The wrapper's recurring security-listing
-refresh re-inserts tickers from the upstream security master on its normal cadence, and it has
-no awareness of the manual deletion — it just upserts the OTC listing again as a new row (new
-`id`, `created_at`). By later on 2026-07-24, ~1,664 OTC no-history assets were back and US
-coverage was measured at **10,655 total / 8,505 with history (79.8%)** — essentially back to
-pre-purge. The backup tables above are stale relative to the current OTC rows (different ids)
-and are kept only as a record of what the first purge removed.
-
-To make an OTC purge stick, either:
-
-- Exclude `exchange = 'OTC'` in the security-listing refresh job so it stops re-adding them, or
-- Re-run the same delete periodically (accepting it is a recurring cleanup, not one-time), or
-- Mark purged OTC tickers `is_active = false` instead of deleting, and have listing refresh
-  respect that flag on conflict instead of reactivating them.
-
-None of these have been implemented — this is flagged as a follow-up, not done.
+(The first attempt's `removed_otc_assets_20260724` / `removed_otc_quotes_20260724` were dropped
+— they held different row ids than what's now in the assets table, since the listing job had
+re-created that batch before it was purged again.)
 
 Follow-ups (optional):
 
-- Decide and implement one of the three options above if a permanent OTC exclusion is wanted.
 - Surface "no history yet" clearly in charts/candidate screens for symbols without bars.
-- OTC coverage, if ever wanted, needs a different provider than Tiingo EOD.
+- OTC coverage, if ever wanted for the 946+ names, needs a different provider than Tiingo EOD.
 - Re-run the backfill periodically to catch newly listed NASDAQ/NYSE names.
 - `scripts/backfill-progress.mjs` prints queue + coverage status for future runs.
 

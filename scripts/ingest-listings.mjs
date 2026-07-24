@@ -36,16 +36,30 @@ function parseCsvLine(line) {
 
 const EXCHANGE_MAP = { Nasdaq: "NASDAQ", NYSE: "NYSE", OTC: "OTC", CBOE: "CBOE" };
 
+// OTC listings are excluded from ingestion: Tiingo's EOD equity feed (our US
+// history provider) does not cover OTC, and Google Finance's OTC quote path
+// only returns a live price, never history. Every no-history OTC asset was
+// removed on 2026-07-24, but this job re-created them on its very next run
+// because it upserts the full SEC universe with no memory of that deletion.
+// Filtering OTC out here (rather than deleting-and-hoping) is what makes the
+// exclusion actually stick. This never touches OTC assets that already have
+// OHLCV history sitting in the table — this job only inserts/updates, never
+// deletes, so those existing rows are simply no longer refreshed by it.
+const EXCLUDED_US_EXCHANGES = new Set(["OTC"]);
+
 async function fetchUS() {
   const res = await fetch(SEC_URL, { headers: { "User-Agent": UA_SEC } });
   if (!res.ok) throw new Error(`SEC ${res.status}`);
   const json = await res.json();
   const rows = [];
+  let excluded = 0;
   for (const [, name, ticker, exchange] of json.data) {
     if (!ticker) continue;
     const ex = EXCHANGE_MAP[exchange] ?? (exchange ? String(exchange).toUpperCase() : "OTHER");
+    if (EXCLUDED_US_EXCHANGES.has(ex)) { excluded++; continue; }
     rows.push({ ticker: String(ticker).toUpperCase(), name, exchange: ex, country: "US", currency: "USD" });
   }
+  if (excluded) console.log(`  (excluded ${excluded} OTC listing(s) from ingestion)`);
   return rows;
 }
 
