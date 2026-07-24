@@ -1,6 +1,6 @@
 # InvestoGenie Status
 
-_Last updated: 2026-07-23 (email digest wired to real Swing/Probability engines; encrypted credentials)_
+_Last updated: 2026-07-24 (digest scheduling resilience; multi-provider AI model selection)_
 
 This file summarizes what has been built so far, what is currently working, what is partial, and what to build next.
 
@@ -116,7 +116,8 @@ The wrapper currently handles:
 - Queued OHLCV repair trigger through a detached local worker script.
 - Daily email digest trigger at 07:00 IST (configurable via `EMAIL_DIGEST_HOUR_IST` /
   `EMAIL_DIGEST_MINUTE_IST`, disabled with `EMAIL_DIGEST_CRON_DISABLED=1`), calling
-  `/api/cron/send-email-digest` with the `CRON_SECRET` bearer.
+  `/api/cron/send-email-digest` with the `CRON_SECRET` bearer. Resilient to a failed
+  or missed window — see Email Digest → Scheduling resilience.
 
 Known issue:
 
@@ -370,6 +371,18 @@ Built:
 - **Encrypted per-user credentials** (`user_credentials` table): SMTP password plus the active AI provider/model/key, encrypted with AES-256-GCM (`lib/crypto/credentials.ts`, master key in `CREDENTIAL_ENCRYPTION_KEY`). Managed in Settings → Secured credentials (`components/settings/CredentialsForm.tsx`) with a provider dropdown, a preset-or-custom model dropdown, and a key field. Digest send decrypts the stored SMTP password on demand.
 - Nodemailer SMTP integration via `sendEmailWithConfig()` (per-user DB credentials), supporting Gmail (app password), Outlook, SendGrid, or any SMTP provider.
 - Cron endpoint `/api/cron/send-email-digest`, secured by `CRON_SECRET`. Scheduled **in-app** by the startup wrapper `scripts/run-with-nse-sync.mjs` (07:00 IST daily, same tick that drives the scan/backfill/quote jobs); external schedulers (cron-job.org, Vercel crons) remain an option for bare deploys.
+- **Scheduling resilience** (added after a real 07:00 miss — the send failed with
+  `getaddrinfo ENOTFOUND smtp.gmail.com` because the machine was waking and DNS was not up):
+  - **Retry on failure.** The "sent today" date is recorded only on a clean success, so a
+    transient error no longer burns the day. Bounded budget: `EMAIL_DIGEST_MAX_ATTEMPTS`
+    (default 5) attempts spaced `EMAIL_DIGEST_RETRY_MINUTES` (default 5) apart.
+  - **Catch-up on startup.** Startup seeds from the DB (`max(last_sent_at)` over enabled
+    users) instead of assuming "past target = already sent". No digest today → send a
+    catch-up immediately; already sent → wait for tomorrow. Covers a machine that was
+    asleep/offline at the target time.
+  - **`"partial"` counts as a failure.** A 200 response where some recipients errored now
+    engages the retry path rather than closing the day.
+  - Verified live: catch-up detected and delivered (`status: success, sent: 1, errors: 0`).
 - Graceful degradation: if one user's email fails, others still send; `last_sent_at` updated per user.
 - Full logging to `cron_logs` (job `send-email-digest`) with send counts and per-recipient errors.
 
@@ -397,7 +410,11 @@ Current limitations:
 
 - Requires external cron service or cloud platform scheduling (Vercel, Render, etc.).
 - Fixed IN market and top-5 count; no per-user custom filters or market selection in the digest yet.
-- No retry queue; failed sends are logged but not re-attempted.
+- Retries are same-day and bounded (5 attempts, 5 min apart) — a provider outage lasting
+  longer than that window still loses the day; there is no persistent retry queue.
+- The in-app scheduler only fires while the app is running. Startup catch-up covers a
+  machine that was asleep at the target time, but a digest that must arrive at 07:00
+  regardless of the laptop needs an always-on host (or the external/Vercel cron option).
 - Styling is inline-CSS card based; some niche email clients may render differently.
 
 ## Macro Lead/Lag
