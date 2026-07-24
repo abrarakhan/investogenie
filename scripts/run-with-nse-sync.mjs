@@ -62,6 +62,10 @@ const backfillUsHour = Number(process.env.BACKFILL_US_HOUR_IST ?? 22);
 const emailDigestDisabled = process.env.EMAIL_DIGEST_CRON_DISABLED === "1";
 const emailDigestHour = Number(process.env.EMAIL_DIGEST_HOUR_IST ?? 7);
 const emailDigestMinute = Number(process.env.EMAIL_DIGEST_MINUTE_IST ?? 0);
+// A transient failure at send time (laptop waking, DNS/Wi-Fi not up yet) must not
+// burn the whole day, so retry a bounded number of times before giving up.
+const emailDigestMaxAttempts = Number(process.env.EMAIL_DIGEST_MAX_ATTEMPTS ?? 5);
+const emailDigestRetryMs = Number(process.env.EMAIL_DIGEST_RETRY_MINUTES ?? 5) * 60 * 1000;
 const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
 
 let syncChild = null;
@@ -82,7 +86,10 @@ let lastBackfillIndiaDate = null;
 let lastBackfillUsDate = null;
 let emailDigestTimer = null;
 let emailDigestPromise = null;
-let lastEmailDigestDate = null;
+let lastEmailDigestDate = null;   // IST date of the last SUCCESSFUL send
+let emailDigestAttemptDate = null; // IST date the current attempt run belongs to
+let emailDigestAttempts = 0;
+let emailDigestNextRetryAt = 0;    // epoch ms; gate for the next retry
 let shuttingDown = false;
 
 import { Client } from "pg";
@@ -424,10 +431,12 @@ function scheduleBackfillCron() {
   }, 60 * 1000);
 }
 
+/** Run the digest. Resolves true only when the endpoint reported success, so the
+ *  caller can decide whether the day is done or a retry is still owed. */
 async function runEmailDigest(label) {
   if (emailDigestDisabled) {
     console.log(`[email-digest] ${label} disabled by EMAIL_DIGEST_CRON_DISABLED=1`);
-    return;
+    return false;
   }
   if (emailDigestPromise) {
     console.log(`[email-digest] skipping ${label}; a send is still running`);
@@ -442,9 +451,21 @@ async function runEmailDigest(label) {
     });
     const body = await response.text();
     if (!response.ok) throw new Error(`email digest failed (${response.status}): ${body}`);
+    // The route returns 200 with status "partial" when some recipients failed
+    // (e.g. SMTP unreachable). Treat anything short of a clean success as a
+    // failure so the retry path engages.
+    let payload = null;
+    try { payload = JSON.parse(body); } catch { /* non-JSON body — treat as failure below */ }
+    if (!payload || payload.status !== "success") {
+      throw new Error(`email digest did not fully succeed: ${body}`);
+    }
     console.log(`[email-digest] ${label} completed: ${body}`);
+    return true;
   })()
-    .catch((error) => console.error(`[email-digest] ${label} failed: ${error.message}`))
+    .catch((error) => {
+      console.error(`[email-digest] ${label} failed: ${error.message}`);
+      return false;
+    })
     .finally(() => {
       emailDigestPromise = null;
     });
@@ -455,27 +476,78 @@ function emailDigestTargetMinutes() {
   return emailDigestHour * 60 + emailDigestMinute;
 }
 
+/** IST date (YYYY-MM-DD) of the most recent successful digest send, or null. */
+async function lastDigestSendDateIst() {
+  const databaseUrl = process.env.DATABASE_URL;
+  if (!databaseUrl) return null;
+  const client = new Client({
+    connectionString: databaseUrl,
+    ssl: /127\.0\.0\.1|localhost/.test(databaseUrl) ? false : { rejectUnauthorized: false },
+  });
+  try {
+    await client.connect();
+    const res = await client.query(
+      `select max(last_sent_at) as last_sent from public.email_preferences where enabled = true`,
+    );
+    const lastSent = res.rows[0]?.last_sent;
+    if (!lastSent) return null;
+    return new Date(new Date(lastSent).getTime() + IST_OFFSET_MS).toISOString().slice(0, 10);
+  } catch (error) {
+    console.error(`[email-digest] could not read last send time: ${error.message}`);
+    return null;
+  } finally {
+    await client.end().catch(() => {});
+  }
+}
+
 function scheduleEmailDigest() {
   if (emailDigestDisabled) {
     console.log("[email-digest] daily digest disabled; set EMAIL_DIGEST_CRON_DISABLED=1 to keep off");
     return;
   }
-  const initialClock = istClock();
-  // If we start up past today's send time, mark today done so a restart doesn't
-  // fire an out-of-schedule digest; the next send is tomorrow at the target time.
-  if (initialClock.hour * 60 + initialClock.minute >= emailDigestTargetMinutes()) {
-    lastEmailDigestDate = initialClock.date;
-  }
   const hh = String(emailDigestHour).padStart(2, "0");
   const mm = String(emailDigestMinute).padStart(2, "0");
   console.log(`[email-digest] daily digest scheduled for ${hh}:${mm} IST`);
+
+  // Seed "already sent today" from the DB rather than assuming it. A machine that
+  // was asleep/offline at the target time still gets its digest on the next start
+  // (catch-up), while a plain restart after a successful send does not re-send.
+  (async () => {
+    const sentDate = await lastDigestSendDateIst();
+    const clock = istClock();
+    if (sentDate === clock.date) {
+      lastEmailDigestDate = clock.date;
+      console.log("[email-digest] already sent today; next send tomorrow");
+    } else if (clock.hour * 60 + clock.minute >= emailDigestTargetMinutes()) {
+      console.log("[email-digest] missed today's window — sending catch-up digest now");
+    }
+  })();
+
   emailDigestTimer = setInterval(() => {
     const clock = istClock();
     const nowMinutes = clock.hour * 60 + clock.minute;
-    if (nowMinutes >= emailDigestTargetMinutes() && lastEmailDigestDate !== clock.date) {
-      lastEmailDigestDate = clock.date;
-      runEmailDigest("daily");
+    if (nowMinutes < emailDigestTargetMinutes()) return; // before the send time
+    if (lastEmailDigestDate === clock.date) return;      // already sent today
+
+    // New day → reset the attempt budget.
+    if (emailDigestAttemptDate !== clock.date) {
+      emailDigestAttemptDate = clock.date;
+      emailDigestAttempts = 0;
+      emailDigestNextRetryAt = 0;
     }
+    if (emailDigestAttempts >= emailDigestMaxAttempts) return; // gave up for today
+    if (Date.now() < emailDigestNextRetryAt) return;           // backing off
+
+    emailDigestAttempts += 1;
+    emailDigestNextRetryAt = Date.now() + emailDigestRetryMs;
+    const label = emailDigestAttempts === 1 ? "daily" : `retry ${emailDigestAttempts}/${emailDigestMaxAttempts}`;
+    runEmailDigest(label).then((ok) => {
+      if (ok) {
+        lastEmailDigestDate = clock.date; // only a clean success closes the day
+      } else if (emailDigestAttempts >= emailDigestMaxAttempts) {
+        console.error(`[email-digest] giving up for ${clock.date} after ${emailDigestAttempts} attempts`);
+      }
+    });
   }, 60 * 1000);
 }
 
