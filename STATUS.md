@@ -91,7 +91,8 @@ Latest local Postgres snapshot checked on 2026-07-22:
 | Forward-test positions | 40 |
 | Imported user mutual funds | 21 CAS fund holdings imported in the current local DB |
 | Imported user fund value | INR 85,32,803.53 from latest CAS inventory |
-| Quote rows with no OHLCV history | Still material, especially long-tail US and some IN symbols |
+| US assets with OHLCV history | 8,483 / 10,712 (79.2%) after 2026-07-24 backfill |
+| Quote rows with no OHLCV history | ~1,709 US remain — OTC/warrants/rights not on Tiingo EOD (see US History Coverage) |
 
 ## Data Sync And Workers
 
@@ -615,16 +616,34 @@ Make `scripts/run-with-nse-sync.mjs` and listing/quote ingestors resilient:
 - Persist sync failure details to `cron_logs`.
 - Continue remaining jobs even if one source fails.
 
-### 3. Complete US History Coverage
+### 3. US History Coverage — bulk backfill DONE (2026-07-24)
 
-US quote coverage is much larger than US OHLCV coverage.
+The NASDAQ/NYSE backfill queue was drained in one pass on 2026-07-24
+(`scripts/local-backfill-worker.mjs`, ~504-day history via `pipelines/us_history_sync.py`).
 
-Next action:
+Result:
 
-- Backfill S&P 500 first.
-- Then NASDAQ 100.
-- Then liquid NYSE/NASDAQ names by volume.
-- Surface “no history yet” clearly in charts and candidate screens.
+- US assets with OHLCV history: **4,447 → 8,483** (79.2% of 10,712 active stocks).
+- Probability-eligible (≥280 bars): **3,742 → 6,956**.
+- Quote-without-history: **5,764 → 1,709**.
+- Queue final: 4,194 done, 235 failed, 2 skipped.
+
+The remaining 1,709 quote-without-history are **not recoverable via this pipeline**, and
+this is expected, not a gap to chase:
+
+- 1,474 were never queued because they are **OTC / OTHER / CBOE** listings (1,428 OTC),
+  which `populateBackfillQueue` intentionally excludes — Tiingo's EOD equity feed does
+  not cover them.
+- 235 were queued and failed with "No OHLCV bars returned" — NASDAQ/NYSE **warrants,
+  rights, and units** (e.g. `JOBY-WT`, `PSQH-WT`, `ILLUW`) that have no equity bars.
+- Plain-ticker success rate was **96.4%**; failures were concentrated entirely in the
+  non-equity long tail.
+
+Follow-ups (optional):
+
+- Surface "no history yet" clearly in charts and candidate screens for the ~1.7k without bars.
+- If OTC coverage is ever wanted, it needs a different provider than Tiingo EOD.
+- Re-run the backfill periodically to catch newly listed NASDAQ/NYSE names.
 
 ### 4. Commercial Navigation Pass
 
