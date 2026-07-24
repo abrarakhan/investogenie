@@ -445,7 +445,7 @@ async function runEmailDigest(label) {
   emailDigestPromise = (async () => {
     await waitForApp();
     if (!process.env.CRON_SECRET) throw new Error("CRON_SECRET is not configured");
-    console.log(`[email-digest] starting ${label} daily digest send`);
+    console.log(`[email-digest] starting digest send (${label})`);
     const response = await fetch("http://127.0.0.1:3000/api/cron/send-email-digest", {
       headers: { authorization: `Bearer ${process.env.CRON_SECRET}` },
     });
