@@ -1,6 +1,6 @@
 # InvestoGenie Status
 
-_Last updated: 2026-07-24 (digest scheduling resilience; multi-provider AI model selection)_
+_Last updated: 2026-07-24 (US backfill + OTC purge -> 94.3% US coverage; digest resilience; multi-provider AI)_
 
 This file summarizes what has been built so far, what is currently working, what is partial, and what to build next.
 
@@ -91,8 +91,9 @@ Latest local Postgres snapshot checked on 2026-07-22:
 | Forward-test positions | 40 |
 | Imported user mutual funds | 21 CAS fund holdings imported in the current local DB |
 | Imported user fund value | INR 85,32,803.53 from latest CAS inventory |
-| US assets with OHLCV history | 8,483 / 10,712 (79.2%) after 2026-07-24 backfill |
-| Quote rows with no OHLCV history | ~1,709 US remain — OTC/warrants/rights not on Tiingo EOD (see US History Coverage) |
+| US active stock assets | 8,991 (was 10,712; 1,721 no-history OTC removed 2026-07-24) |
+| US assets with OHLCV history | 8,483 / 8,991 (94.3%) after 2026-07-24 backfill + OTC purge |
+| Quote rows with no OHLCV history | 281 US remain — NASDAQ/NYSE warrants/rights + a few OTHER/CBOE (see US History Coverage) |
 
 ## Data Sync And Workers
 
@@ -616,34 +617,48 @@ Make `scripts/run-with-nse-sync.mjs` and listing/quote ingestors resilient:
 - Persist sync failure details to `cron_logs`.
 - Continue remaining jobs even if one source fails.
 
-### 3. US History Coverage — bulk backfill DONE (2026-07-24)
+### 3. US History Coverage — backfill + OTC purge DONE (2026-07-24)
 
 The NASDAQ/NYSE backfill queue was drained in one pass on 2026-07-24
 (`scripts/local-backfill-worker.mjs`, ~504-day history via `pipelines/us_history_sync.py`).
 
-Result:
+Result (backfill):
 
-- US assets with OHLCV history: **4,447 → 8,483** (79.2% of 10,712 active stocks).
+- US assets with OHLCV history: **4,447 → 8,483**.
 - Probability-eligible (≥280 bars): **3,742 → 6,956**.
 - Quote-without-history: **5,764 → 1,709**.
-- Queue final: 4,194 done, 235 failed, 2 skipped.
+- Queue final: 4,194 done, 235 failed, 2 skipped. Plain-ticker success rate **96.4%**;
+  failures were concentrated entirely in the non-equity long tail (warrants/rights/units).
 
-The remaining 1,709 quote-without-history are **not recoverable via this pipeline**, and
-this is expected, not a gap to chase:
+### OTC purge (2026-07-24)
 
-- 1,474 were never queued because they are **OTC / OTHER / CBOE** listings (1,428 OTC),
-  which `populateBackfillQueue` intentionally excludes — Tiingo's EOD equity feed does
-  not cover them.
-- 235 were queued and failed with "No OHLCV bars returned" — NASDAQ/NYSE **warrants,
-  rights, and units** (e.g. `JOBY-WT`, `PSQH-WT`, `ILLUW`) that have no equity bars.
-- Plain-ticker success rate was **96.4%**; failures were concentrated entirely in the
-  non-equity long tail.
+After the backfill, the remaining no-history names were dominated by OTC listings that
+Tiingo's EOD equity feed does not cover (and that Google Finance can only quote, not
+provide bars for). All **1,721 US OTC assets with no OHLCV history** were removed
+(1,428 had a live quote, 293 had neither). The 946 OTC assets that *do* have history
+were left untouched.
+
+Effect on coverage:
+
+- US active stock assets: **10,712 → 8,991**.
+- Coverage (with history): **79.2% → 94.3%**.
+- Quote-without-history: **1,709 → 281** (now all real-exchange: 235 NASDAQ/NYSE
+  warrants/rights/units + 46 OTHER/CBOE — no equity bars available anywhere).
+
+Deletion was transactional with a pre-commit guard (verified zero OTC-no-history
+remained and delete count matched the backup). **Recoverable** from backup tables:
+
+- `public.removed_otc_assets_20260724` (1,721 rows)
+- `public.removed_otc_quotes_20260724` (1,428 rows)
+
+Drop these backups once the removal is confirmed good and no longer needed.
 
 Follow-ups (optional):
 
-- Surface "no history yet" clearly in charts and candidate screens for the ~1.7k without bars.
-- If OTC coverage is ever wanted, it needs a different provider than Tiingo EOD.
+- Surface "no history yet" clearly in charts/candidate screens for the 281 without bars.
+- OTC coverage, if ever wanted, needs a different provider than Tiingo EOD.
 - Re-run the backfill periodically to catch newly listed NASDAQ/NYSE names.
+- `scripts/backfill-progress.mjs` prints queue + coverage status for future runs.
 
 ### 4. Commercial Navigation Pass
 
