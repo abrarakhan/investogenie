@@ -1,6 +1,6 @@
 # InvestoGenie Status
 
-_Last updated: 2026-07-24 (fixed incremental US history sync that never refreshed covered symbols; OTC permanently excluded from US listings -- 94.6% US coverage; Help knowledge base; digest resilience; multi-provider AI)_
+_Last updated: 2026-07-25 (reconciled data-coverage numbers against a live DB re-check — fundamentals coverage corrected; full-repo lint surfaced 2 pre-existing landing-page issues; US history sync fix confirmed working, partial 24h progress; OTC exclusion holding at 946; Help knowledge base; digest resilience; multi-provider AI)_
 
 This file summarizes what has been built so far, what is currently working, what is partial, and what to build next.
 
@@ -69,39 +69,46 @@ Current database migration stack:
 - `0015_forward_test_fill.sql`: trigger/fill tracking for forward tests.
 - `0016_fund_snapshots.sql`: monthly AMC fund holdings snapshots.
 - `0017_fund_mapping.sql`: explicit per-user CAS fund holding to AMC snapshot scheme mappings.
+- `0018_backfill_queue.sql`: queued OHLCV/history repair jobs.
+- `0019_cas_holding_details.sql`: CAS holding details such as folio/ISIN metadata.
 - `0020_email_preferences.sql`: user email digest opt-in settings (send time, screen toggles, last sent timestamp).
 - `0021_user_credentials.sql`: per-user encrypted credentials (SMTP password, AI API keys) via AES-256-GCM.
 - `0022_ai_provider_config.sql`: active AI provider/model/key selection for the NL screener (Anthropic/OpenAI/Google).
 
 ## Current Local Data Coverage
 
-Latest local Postgres snapshot checked on 2026-07-24:
+Latest local Postgres snapshot checked on 2026-07-25:
 
 | Area | Count / Status |
 |---|---:|
 | Assets (all classes/markets) | 16,622 (down from 18,286 after the OTC exclusion) |
-| Latest quotes | 16,125 (down from 17,432 after the OTC quote purge) |
-| OHLCV bars | 7,644,812 |
-| Swing signals | 10,782 |
-| Financial report rows | 123,450 |
-| Macro indicator rows | 8,192 |
-| Cron log rows | 401 |
+| Latest quotes | 16,127 |
+| OHLCV bars | 7,664,899 |
+| Swing signals | 10,809 |
+| Financial report rows | 126,390 |
+| Macro indicator rows | 8,195 |
+| Cron log rows | 421 |
 | US active stock assets | 8,991 (1,664 no-history OTC permanently excluded 2026-07-24 — see US History Coverage → OTC exclusion) |
-| US assets with OHLCV history | 8,505 / 8,991 (94.6%) |
+| US assets with OHLCV history | 8,543 / 8,991 (95.0%) |
 | India active stock assets | 7,563 |
 | India assets with OHLCV history | 7,284 / 7,563 (96.3%) |
-| US fundamentals coverage | 5,158 assets with a latest financial report |
+| US fundamentals coverage | 5,449 assets with a latest financial report |
 | India fundamentals coverage | 6,507 assets with a latest financial report |
-| US swing scan: scanned / buy candidates | 7,819 / 1,030 |
+| US swing scan: scanned / buy candidates | 7,863 / 1,071 |
 | India swing scan: scanned / buy candidates | 2,946 / 450 |
 
-Portfolio/fund figures below are from the 2026-07-22 snapshot and have not been re-measured since:
+Fundamentals coverage above is counted via `latest_financials` (one row per asset, its most
+recent report) — the 2026-07-24 snapshot's US/India figures (6,227 / 6,965) were computed
+differently and did not match a same-day re-check; the numbers here are the verified figures
+as of this snapshot.
+
+Portfolio/fund figures below were refreshed on 2026-07-25 where the current DB exposes them; forward-test count remains from the earlier local snapshot:
 
 | Area | Count / Status |
 |---|---:|
 | Fund schemes with snapshots | 12 |
 | Fund snapshot rows | 936 |
-| Explicit user fund mappings | 6 |
+| Explicit user fund mappings | 1 matched mapping |
 | Forward-test positions | 40 |
 | Imported user mutual funds | 21 CAS fund holdings imported in the current local DB |
 | Imported user fund value | INR 85,32,803.53 from latest CAS inventory |
@@ -184,7 +191,7 @@ Built:
 
 Current limitations:
 
-- US OHLCV coverage is strong at 94.6% of active stocks (8,991 total, 8,505 with history)
+- US OHLCV coverage is strong at 95.0% of active stocks (8,991 total, 8,543 with history)
   after the 2026-07-24 backfill and permanent OTC exclusion (see US History Coverage → OTC
   exclusion). India coverage is strong at 96.3% (7,563 total, 7,284 with history).
 - Some data sources can return stale or failed values unless refresh succeeds.
@@ -230,11 +237,10 @@ Built:
 
 Current local data:
 
-- 113,129 financial report rows are present.
+- 126,390 financial report rows are present.
 
 Current limitations:
 
-- NL query feature awaiting final integration into StockScreener UI and API wiring.
 - Data quality varies by source and symbol.
 - Financial statement normalization is still basic.
 - Need better source provenance and freshness badges in the UI.
@@ -287,9 +293,9 @@ Built:
 Current local data:
 
 - 21 user mutual-fund holdings are active from the latest CAS import.
-- 6 funds are currently matched to AMC snapshots.
-- 6 explicit `user_fund_mappings` rows are present after migration backfill.
-- 473 underlying stock rows are available for matched funds.
+- 1 fund is currently matched to AMC snapshots.
+- 1 explicit matched `user_fund_mappings` row is present in the current local DB.
+- Underlying stock rows are available only for the currently mapped fund; full X-Ray power depends on completing more mappings.
 - 12 global fund schemes have snapshots.
 
 Current limitations:
@@ -297,7 +303,7 @@ Current limitations:
 - Not all uploaded funds have matched AMC monthly portfolio disclosures yet; the mapping screen now makes this repairable.
 - Some CAS-extracted fund names are still messy when there is no clean linked scheme snapshot.
 - Matching is intentionally conservative: scheme/fund joining should be by ISIN or explicit mapping, not fuzzy name joins.
-- Current mapping coverage remains 6/21 until more AMC disclosures are imported or manually linked.
+- Current mapping coverage remains 1/21 until more AMC disclosures are imported or manually linked.
 
 ## Data Health
 
@@ -414,7 +420,7 @@ Files:
 - `lib/credentials-actions.ts` + `lib/crypto/credentials.ts` — encrypted credentials.
 - `components/settings/EmailPreferencesForm.tsx`, `components/settings/CredentialsForm.tsx` — Settings UI.
 - `app/api/cron/send-email-digest/route.ts` — daily cron endpoint.
-- Migrations `0020_email_preferences.sql`, `0021_user_credentials.sql`.
+- Migrations `0020_email_preferences.sql`, `0021_user_credentials.sql`, `0022_ai_provider_config.sql`.
 
 Environment / activation:
 
@@ -446,7 +452,7 @@ Built:
 
 Current local data:
 
-- 8,161 macro indicator rows are present.
+- 8,195 macro indicator rows are present.
 
 Current limitations:
 
@@ -548,17 +554,26 @@ Current limitations:
 
 ## Quality Checks Currently Passing
 
-Recent checks after NL Query feature and startup robustness:
+Full-repo check run on 2026-07-25:
 
-- `npm test`: passing, 76/76 tests (including 30 new NL query validation tests).
 - `npx tsc --noEmit`: passing, no type errors.
+- `npm test`: passing, 76/76 tests.
 - `npm run build`: passing cleanly under Turbopack with all routes recognized.
-- `npm run lint`: 4 pre-existing errors in unrelated files (backfill/refresh/scan/syncJobWrapper/syncMonitor).
+- `npx eslint .` (whole repo, not just changed files): **6 errors + 1 warning** —
+  - 4 pre-existing `no-explicit-any` errors, unrelated to recent work:
+    `app/api/cron/backfill-us/route.ts`, `app/api/cron/scan/route.ts`,
+    `lib/ingest/syncJobWrapper.ts`, `lib/ingest/syncMonitor.ts`.
+  - 1 pre-existing unused-import warning: `app/api/cron/refresh-quotes/route.ts` (`logCronRun`).
+  - **2 newly surfaced** (not new bugs — pre-existing since the `feat/commercial-nav` /
+    "Add public help and about navigation" work, just never caught by a full-repo lint
+    before): `components/landing/LandingPage.tsx` uses plain `<a href="/help">` /
+    `<a href="/about">` instead of `next/link`'s `<Link>` (`@next/next/no-html-link-for-pages`).
+    Not fixed here — flagged as a small, easy cleanup for whoever next touches that file.
 
-Recent verified command set on 2026-07-23:
+Earlier verified command set on 2026-07-24 (US history sync + OTC exclusion work):
 
 - `node --check scripts/run-with-nse-sync.mjs`: passing.
-- `node --check scripts/local-backfill-worker.mjs`: passing.
+- `.venv/bin/python -m py_compile pipelines/us_history_sync.py`: passing.
 - `npx tsc --noEmit`: passing, no errors.
 - `npm test`: passing, 76 tests.
 - `npm run build`: passing with all routes generated.
@@ -571,27 +586,32 @@ Current branch:
 
 Recent commits:
 
+- `23d7f5d Update auto-generated session context bookkeeping`
+- `76713b0 Fix incremental US history sync: covered symbols never refreshed, throughput too low`
+- `d3c217d Permanently exclude OTC from US listings; re-purge and update docs`
+- `c401b1d Refresh STATUS.md and CAPABILITIES.md to current state (2026-07-24)`
 - `9608c77 Expand Help into a professional blog-style knowledge base`
 - `69774c4 STATUS.md: soften stale US OHLCV coverage limitation`
 - `7038a78 STATUS.md: record US OTC purge (1,721 no-history assets removed)`
 - `cf6dc8f US OHLCV bulk backfill complete (2026-07-24)`
 - `18ca155 Update STATUS.md: digest scheduling resilience`
-- `f37ae84 Make the email digest survive a failed or missed send window`
-- `cdcc449 Fix email digest to use the real Swing & Probability data sources`
-- `1f1be30 Add encrypted credentials storage for SMTP and AI API keys`
-- `ef3c80d Add daily email digest feature with swing candidates and probability picks`
 
 (Pushed to `origin/main`.)
 
 Committed app work now includes:
 
+- Incremental US history sync fix: the recurring refresh job was permanently excluding any
+  ticker that ever crossed 260 bars (regardless of staleness) and throttled to 50/hour; fixed
+  the selection query (staleness-aware) and raised throughput to 150/hour. Confirmed working
+  (440 → 371 active-swing-signal-on-stale-history rows in 24h) but not fully cleared yet — see
+  US History Coverage → Incremental US History Sync.
+- OTC permanently excluded from US listings: `scripts/ingest-listings.mjs` now filters OTC out
+  of its SEC fetch so a purge of no-history OTC assets stays purged across repeated
+  listing-sync runs (re-verified holding at 946 OTC assets, all with real history).
 - Help & knowledge base: guided site walkthrough plus 7 statically generated, code-accurate
   articles covering the swing engine, each of the 5 legendary strategies, and the probability
   method (see Help & Knowledge Base section above).
-- US OHLCV bulk backfill (4,447 → 8,483 assets with history) and a **permanent** OTC exclusion:
-  `scripts/ingest-listings.mjs` now filters OTC out of its US listings fetch so purged
-  no-history OTC assets stay purged across repeated listing-sync runs (verified) — see US
-  History Coverage → OTC exclusion.
+- US OHLCV bulk backfill (4,447 → 8,483 assets with history at the time; 8,543 now).
 - Email digest resilience: same-day bounded retry on failure, DB-seeded startup catch-up for a
   missed send window, `"partial"` responses now treated as failure.
 - Multi-provider AI model selection (Anthropic / OpenAI / Google) for the NL screener, with a
@@ -615,10 +635,7 @@ Committed app work now includes:
 - TradingView-style charting with `lightweight-charts`.
 - 15-minute market-hours NSE/BSE quote refresh.
 
-Uncommitted non-app files:
-
-- `.claude/context/decisions_history/` (tracking session decisions)
-- Decision notes from previous sessions
+Uncommitted at the time of this snapshot: only this STATUS.md/CAPABILITIES.md refresh itself.
 
 ## Recommended Build Next
 
@@ -637,8 +654,9 @@ when the app runs under `npm run start` / `npm run dev`.
      `EMAIL_DIGEST_CRON_DISABLED=1` to turn it off.
 
 2. **How it fires**: the wrapper's 60-second tick calls `/api/cron/send-email-digest`
-   once per day at/after the target IST time, deduped by date. A restart past the
-   send time waits until the next day (no out-of-schedule send).
+   once per day at/after the target IST time, deduped by date. If the app was asleep
+   past the target and no digest was sent today, startup catch-up sends it immediately;
+   if today was already sent, it waits for tomorrow.
 
 3. **Alternative schedulers** (only if not using the wrapper — e.g. a bare serverless
    deploy): cron-job.org / EasyCron hitting the endpoint, or a `vercel.json` crons entry.
@@ -667,7 +685,7 @@ Still open:
 
 ### 2. Complete Fund Mapping Coverage
 
-Use the new `/portfolio/fund-mapping` screen to move Fund X-Ray from 6/21 matched funds toward full coverage.
+Use the new `/portfolio/fund-mapping` screen to move Fund X-Ray from 1/21 matched funds toward full coverage.
 
 Next actions:
 
@@ -797,6 +815,14 @@ US assets clears in roughly a day at the new throughput, then holds steady state
 Follow-up: no automated test coverage for `us_history_sync.py` (no Python test suite exists in
 this repo); verification was live-database runs. `tsc`/`eslint`/`npm test` all pass for the
 `.mjs` wrapper change.
+
+**24-hour check-in (2026-07-25):** the fix is working but slower than the "~a day" estimate —
+active-swing-signal-on-stale-history rows dropped from 440 to **371** (US assets >3 days stale
+went from ~4,403 to 3,710 of 8,543), a real but partial reduction. The gap between predicted and
+actual pace is most likely intermittent app uptime: the dev server was stopped and restarted
+multiple times over the day for other testing, so the hourly recurring job did not run
+continuously. Under continuous uptime the backlog should keep clearing at ~150/hour; no further
+code change indicated yet — this needs another observation window before concluding otherwise.
 
 ### 5. Help Knowledge Base — done, could extend
 

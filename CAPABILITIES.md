@@ -1,8 +1,10 @@
 # InvestoGenie - Capabilities
 
-> Current capability snapshot after the email digest, encrypted credentials, multi-provider
-> NL query, US OHLCV backfill, and Help knowledge-base work.
-> Current codebase: local PostgreSQL, Next.js 16, Tiingo/Yahoo/Google/NSE/FRED-backed sync.
+> Current capability snapshot (2026-07-25) after the email digest, encrypted credentials,
+> multi-provider NL query, US OHLCV backfill, permanent OTC exclusion, the incremental US
+> history sync fix, and Help knowledge-base work.
+> Current codebase: local PostgreSQL, Next.js 16, Yahoo/Google/NSE/FRED-backed sync (Tiingo is
+> configured via `FINANCIAL_API_KEY` but not wired into the active recurring sync path).
 
 ## In One Line
 
@@ -33,21 +35,21 @@ and recurring data sync jobs.
 | **Help & knowledge base** | `/help` guided walkthrough + 7 code-accurate articles (engine + 5 strategies + probability method) | Working |
 | Sync health | Browser-visible `/admin/sync` and `/data/health` freshness and provider status pages | Working |
 | Recurring sync | Startup, recurring, and daily jobs for quotes, OHLCV, fundamentals, macro, scans, and the email digest | Working |
-| Provider fallback | Tiingo (US history) / Yahoo Finance primary, Google Finance fallback for quotes | Working |
+| Provider fallback | Yahoo Finance (US OHLCV history, free/unofficial), Google Finance fallback for quotes. A Tiingo-based module (`lib/ingest/usHistory.ts`) exists and is configured but is NOT used by the recurring sync path — see Architecture. | Working |
 
 ## Current Local Data Coverage
 
-Measured from the local `investogenie` PostgreSQL database on 2026-07-24:
+Measured from the local `investogenie` PostgreSQL database on 2026-07-25:
 
 | Dataset | Count |
 | --- | ---: |
 | Assets (all markets/classes) | 16,622 (post OTC exclusion, down from 18,286) |
-| Daily OHLCV bars | 7,644,812 |
-| Latest quotes | 16,125 (down from 17,432 after the OTC quote purge) |
-| Swing signals | 10,782 |
-| Financial reports | 123,450 |
-| Macro indicators | 8,192 |
-| Cron logs | 401 |
+| Daily OHLCV bars | 7,664,899 |
+| Latest quotes | 16,127 |
+| Swing signals | 10,809 |
+| Financial reports | 126,390 |
+| Macro indicators | 8,195 |
+| Cron logs | 421 |
 
 Asset universe:
 
@@ -71,7 +73,7 @@ US/India OHLCV coverage:
 
 | Market | Active stocks | With OHLCV history | Coverage |
 | --- | ---: | ---: | ---: |
-| US | 8,991 | 8,505 | 94.6% |
+| US | 8,991 | 8,543 | 95.0% |
 | India | 7,563 | 7,284 | 96.3% |
 
 > **Note on US OTC:** `scripts/ingest-listings.mjs` permanently excludes OTC from the US listings
@@ -86,14 +88,17 @@ Fundamentals coverage:
 | Market | Assets with a latest financial report |
 | --- | ---: |
 | India | 6,507 |
-| US | 5,158 |
+| US | 5,449 |
+
+(Counted via `latest_financials`, one row per asset's most recent report. Corrects the
+2026-07-24 snapshot's figures of 6,965/6,227, which used a different, inconsistent count.)
 
 Swing scan coverage:
 
 | Market | Scanned | Buy candidates (verdict ≠ NO_SETUP) |
 | --- | ---: | ---: |
 | India | 2,946 | 450 |
-| US | 7,819 | 1,030 |
+| US | 7,863 | 1,071 |
 
 Macro coverage:
 
@@ -353,23 +358,29 @@ node scripts/backfill-progress.mjs   # queue + coverage status for the OHLCV bac
 | Credential encryption | AES-256-GCM, scrypt key derivation, master key in `CREDENTIAL_ENCRYPTION_KEY` |
 | Email | Nodemailer, per-user SMTP credentials |
 | AI providers | Anthropic (native structured output), OpenAI (Chat Completions JSON mode), Google Gemini (`generateContent` JSON) |
-| Data providers | Tiingo (US OHLCV history), Yahoo Finance, Google Finance, NSE bhavcopy, FRED |
+| Data providers | Yahoo Finance (US OHLCV history, active), Google Finance, NSE bhavcopy, FRED. Tiingo (`lib/ingest/usHistory.ts`) is configured but currently unused by the recurring sync. |
 | Scheduler | Node wrapper (`scripts/run-with-nse-sync.mjs`) around Next.js plus Python child jobs |
 
 ## Verification Status
 
-Latest checks (2026-07-24, after the Help knowledge-base work):
+Full-repo check run on 2026-07-25:
 
 ```bash
-npx tsc --noEmit
-npx eslint <changed files>
-npm test          # 76/76 passing
-npm run build     # generates all static pages, including 7 /help/[slug] articles
+npx tsc --noEmit    # clean
+npm test            # 76/76 passing
+npm run build       # clean, all static pages generated including 7 /help/[slug] articles
+npx eslint .         # 6 errors + 1 warning — see note below
 ```
 
-All passed. The email digest, AI-credential round-trip, and swing/probability data-source fixes
-were additionally verified against the live local database and a real end-to-end email send
-earlier in the same day.
+The `eslint .` run (whole repo, not just changed files) surfaced 6 pre-existing issues unrelated
+to recent work: 4 `no-explicit-any` errors (`backfill-us`, `scan`, `syncJobWrapper`,
+`syncMonitor` routes), 1 unused-import warning (`refresh-quotes`), and 2 `<a>`-vs-`<Link>`
+errors in `components/landing/LandingPage.tsx` that a file-scoped lint had never caught before.
+None are new regressions; none fixed here.
+
+The email digest, AI-credential round-trip, swing/probability data-source fixes, US history sync
+selection/throughput fix, and OTC exclusion were additionally verified against the live local
+database (not just static analysis) — see `STATUS.md` for the specific queries and results.
 
 ## Remaining Gaps
 
@@ -384,16 +395,20 @@ earlier in the same day.
 - NL query dispatch to OpenAI and Google has not yet been exercised end-to-end with real API
   keys; only the Anthropic path has a verified live send.
 - Fund overlap is implemented, but depends on populated AMC snapshot look-through data and
-  actual user mutual-fund holdings; current match coverage is 6/21 imported funds.
+  actual user mutual-fund holdings; current match coverage is 1/21 imported funds (down from
+  6/21 in an earlier snapshot — worth checking whether a mapping was unlinked or the count
+  methodology changed).
 - The email digest scheduler only runs while the app process is running; guaranteed delivery
   regardless of host uptime needs an always-on deployment or an external/Vercel cron backstop.
 - Help articles are static (compiled into the content registry) — updating copy requires a code
   change, not a CMS edit; no cross-article search yet.
 - Provider rate limits and unsupported/delisted symbols are expected; sync-state tables track
   attempts and keep recurring jobs rotating through the universe.
-- The incremental US history sync backlog (~4,500 symbols >3 days stale as of 2026-07-24) clears
-  over roughly a day at the new 150/hour throughput, not instantly — Data Health's "Swing signal
-  on stale data" count will still show elevated numbers for a short window after this fix ships.
+- The incremental US history sync backlog is clearing but slower than the original "~a day"
+  estimate: active-swing-signal-on-stale-history rows went from 440 (2026-07-24) to 371
+  (2026-07-25) — real progress, not fully resolved. Most likely cause is intermittent app
+  uptime (the dev server was restarted several times for other testing) rather than a flaw in
+  the fix; needs another observation window under continuous uptime to confirm.
 - Minor pre-existing data-quality nit: ticker `ALUR` (US) has two separate `assets` rows (`OTC`
   and `OTHER` exchange) — harmless duplicate-fetch, not a functional bug, not yet cleaned up.
 - `ARCHITECTURE.md` should be refreshed in a later pass; `CAPABILITIES.md`, `STATUS.md`, and
