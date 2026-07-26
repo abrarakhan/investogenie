@@ -122,7 +122,20 @@ export function classifyCoverageGaps(input: CoverageGapInput): CoverageGap[] {
   const staleQuote = input.market === "IN"
     ? !!input.hasQuote && (indianQuoteLagDays === null || indianQuoteLagDays > 3)
     : !!input.hasQuote && (quoteAge === null || quoteAge > 1);
-  const staleHistory = input.hasHistory && (historyGap === null || historyGap > 3);
+  // NSE/BSE are closed Sat/Sun, so Friday's close is the correct, current data
+  // all weekend — a flat "days since now" count would otherwise call it stale
+  // by Saturday and call it failed by Monday. Measure the lag against the most
+  // recently EXPECTED trading session instead (same helper the quote check
+  // uses), so Friday's data stays fresh through the weekend and only becomes
+  // stale once it falls behind Monday's own expected session.
+  const indianHistoryAsOf = input.market === "IN" ? input.latestHistoryDate?.slice(0, 10) ?? null : null;
+  const expectedIndianHistoryAsOf = input.market === "IN" ? expectedIndianBhavcopyDate(asDate(now) ?? new Date()) : null;
+  const indianHistoryLagDays = expectedIndianHistoryAsOf && indianHistoryAsOf
+    ? daysBetween(`${expectedIndianHistoryAsOf}T00:00:00.000Z`, `${indianHistoryAsOf}T00:00:00.000Z`)
+    : null;
+  const staleHistory = input.market === "IN"
+    ? input.hasHistory && (indianHistoryLagDays === null || indianHistoryLagDays > 2)
+    : input.hasHistory && (historyGap === null || historyGap > 3);
 
   if (input.hasQuote && !input.hasHistory) {
     gaps.push({
@@ -225,7 +238,7 @@ export function countSeverities(gaps: CoverageGap[]): SeverityCounts {
 
 const iso = (value: Date | string | null): string | null => value ? new Date(value).toISOString() : null;
 
-interface SourceRow { source: string; last_success_at: Date | string | null; quote_as_of: string | null; record_count: string | number; failed: boolean; cadence_hours: string | number; detail: string }
+export interface SourceRow { source: string; last_success_at: Date | string | null; quote_as_of: string | null; record_count: string | number; failed: boolean; cadence_hours: string | number; detail: string }
 
 function istParts(now: Date) {
   const parts = new Intl.DateTimeFormat("en-CA", {
@@ -265,11 +278,42 @@ function isIndianQuoteSource(source: string): boolean {
   return source === "NSE Quotes" || source === "BSE Quotes";
 }
 
-function classifySourceFreshness(row: SourceRow, now: Date, nowIso: string): FreshnessStatus {
+function isIndianHistorySource(source: string): boolean {
+  return source === "NSE OHLCV History" || source === "BSE OHLCV History";
+}
+
+export function classifySourceFreshness(row: SourceRow, now: Date, nowIso: string): FreshnessStatus {
   if (isIndianQuoteSource(row.source)) {
     const expectedAsOf = expectedIndianBhavcopyDate(now);
     const quoteAsOf = row.quote_as_of?.slice(0, 10) ?? null;
     if (quoteAsOf && quoteAsOf >= expectedAsOf) return "fresh";
+  }
+  if (isIndianHistorySource(row.source)) {
+    // Same weekend-awareness as isIndianQuoteSource above: `last_success_at`
+    // here holds the latest OHLCV bar date, not a sync timestamp, so the
+    // generic hourly-cadence classifyFreshness below would wrongly call
+    // Friday's bar "stale" by Saturday and "failed" by Monday.
+    //
+    // Deliberately read the date from `quote_as_of` (a `::text` SQL cast for
+    // these two rows — see getDataHealthSummary), NOT from `last_success_at`.
+    // last_success_at round-trips through a JS Date, and re-slicing its
+    // ISO string shifts the calendar day by the process's local UTC offset
+    // (verified: a 2026-07-24 IST date came back as "2026-07-23" after that
+    // round-trip) — exactly the kind of off-by-one that would silently
+    // reintroduce this bug on a differently-configured host.
+    const expectedAsOf = expectedIndianBhavcopyDate(now);
+    const barAsOf = row.quote_as_of?.slice(0, 10) ?? null;
+    if (barAsOf) {
+      if (barAsOf >= expectedAsOf) return "fresh";
+      const lagDays = daysBetween(`${expectedAsOf}T00:00:00.000Z`, `${barAsOf}T00:00:00.000Z`);
+      // A lag of 3 is the expected reading right after Monday's own cutoff
+      // passes with no Monday bar posted yet (normal same-evening publication
+      // lag, not a real outage) — matches the >2 threshold classifyCoverageGaps
+      // uses for the per-symbol "History stale" gap. Reserve "failed" for a
+      // clearly stuck pipeline: two-plus full trading sessions missed beyond
+      // what a single evening's delay would explain.
+      return lagDays !== null && lagDays <= 4 ? "stale" : "failed";
+    }
   }
   return classifyFreshness({
     lastSuccessAt: iso(row.last_success_at),
@@ -293,10 +337,10 @@ export async function getDataHealthSummary(now = new Date()): Promise<SourceHeal
        select 'BSE Quotes', max(q.updated_at), max(q.as_of)::text, count(*), 1, 'BSE/inferred Indian quote rows'
          from public.latest_quotes q join public.assets a on a.id=q.asset_id where a.country='IN' and a.exchange='BSE'
        union all
-       select 'NSE OHLCV History', max(o.date)::timestamptz, null::text, count(distinct o.asset_id), 24, 'NSE assets with OHLCV bars'
+       select 'NSE OHLCV History', max(o.date)::timestamptz, max(o.date)::text, count(distinct o.asset_id), 24, 'NSE assets with OHLCV bars'
          from public.daily_ohlcv o join public.assets a on a.id=o.asset_id where a.country='IN' and a.exchange='NSE' and a.asset_class='STOCK'
        union all
-       select 'BSE OHLCV History', max(o.date)::timestamptz, null::text, count(distinct o.asset_id), 24, 'BSE assets with OHLCV bars'
+       select 'BSE OHLCV History', max(o.date)::timestamptz, max(o.date)::text, count(distinct o.asset_id), 24, 'BSE assets with OHLCV bars'
          from public.daily_ohlcv o join public.assets a on a.id=o.asset_id where a.country='IN' and a.exchange='BSE' and a.asset_class='STOCK'
        union all
        select 'US Quotes', max(q.updated_at), null::text, count(*), 1, 'US latest quote rows'
@@ -346,7 +390,7 @@ interface AssetGapRow {
   market: "IN" | "US";
   quote_updated_at: Date | string | null;
   quote_as_of: string | null;
-  latest_history_date: Date | string | null;
+  latest_history_date: string | null;
   latest_fundamentals_date: Date | string | null;
   in_universe: boolean;
   active_swing_signal: boolean;
@@ -376,7 +420,7 @@ function parseDetail(value: Record<string, unknown> | string | null): Record<str
 
 export async function getCoverageGaps(userId: string, now = new Date()): Promise<CoverageGap[]> {
   const rows = await query<AssetGapRow>(
-    `with hist as (select asset_id, max(date) latest_history_date from public.daily_ohlcv group by asset_id),
+    `with hist as (select asset_id, max(date)::text latest_history_date from public.daily_ohlcv group by asset_id),
           fin as (select asset_id, max(period_end_date) latest_fundamentals_date from public.asset_financial_reports group by asset_id),
           uni as (select distinct asset_id from public.universe_members where universe in ('NIFTY_500','SP_500')),
           swing as (select distinct asset_id from public.swing_signals where verdict <> 'NO_SETUP'),
@@ -426,7 +470,13 @@ export async function getCoverageGaps(userId: string, now = new Date()): Promise
     quoteUpdatedAt: iso(row.quote_updated_at),
     quoteAsOf: row.quote_as_of,
     hasHistory: row.latest_history_date !== null,
-    latestHistoryDate: iso(row.latest_history_date),
+    // Already a plain 'YYYY-MM-DD' string (::text cast in the CTE above) — do
+    // NOT route this through iso()/Date: a DATE column round-tripped through a
+    // JS Date and re-serialized shifts by the process's local UTC offset (this
+    // environment showed 2026-07-24 becoming "2026-07-23" after such a
+    // round-trip), which silently breaks the IN weekend-aware staleness check
+    // in classifyCoverageGaps below.
+    latestHistoryDate: row.latest_history_date,
     inUniverse: row.in_universe,
     hasFundamentals: row.latest_fundamentals_date !== null,
     latestFundamentalsDate: iso(row.latest_fundamentals_date),

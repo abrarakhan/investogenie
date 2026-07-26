@@ -1,6 +1,6 @@
 # InvestoGenie Status
 
-_Last updated: 2026-07-25 (reconciled data-coverage numbers against a live DB re-check — fundamentals coverage corrected; full-repo lint surfaced 2 pre-existing landing-page issues; US history sync fix confirmed working, partial 24h progress; OTC exclusion holding at 946; Help knowledge base; digest resilience; multi-provider AI)_
+_Last updated: 2026-07-26 (fixed NSE/BSE weekend false-staleness in Data Health, including a real timezone round-trip bug caught mid-fix; reconciled data-coverage numbers 2026-07-25; US history sync fix confirmed working; OTC exclusion holding at 946; Help knowledge base; digest resilience; multi-provider AI)_
 
 This file summarizes what has been built so far, what is currently working, what is partial, and what to build next.
 
@@ -348,6 +348,46 @@ Current local finding:
 - Quote-without-history remains the biggest data-coverage issue, especially for
   US long-tail names.
 
+### Fixed: NSE/BSE weekend false-staleness (2026-07-26)
+
+**Symptom:** Friday's NSE/BSE close is the correct, current data all weekend (markets are shut
+Sat/Sun) — but two separate places were computing staleness as a flat "days/hours since now"
+count with no awareness that the market was closed, not broken:
+
+1. **Source health cards** — "NSE OHLCV History" / "BSE OHLCV History" used the generic
+   24-hour-cadence `classifyFreshness` (same as any other job). Friday's data would show
+   "stale" by Saturday (>24h old) and **"failed" by Monday** (>72h old) — even though nothing
+   was actually wrong.
+2. **Per-symbol gaps** — `classifyCoverageGaps`'s `staleHistory` used a flat `> 3` raw calendar
+   days for both markets. This happened to *coincidentally* tolerate most of the weekend (3
+   raw days roughly spans Fri→Mon) but wasn't a real rule — it doesn't know about holidays and
+   would flag inconsistently depending on exact check time.
+
+**Fix:** reused the `expectedIndianBhavcopyDate()` helper already built for the IN quote-staleness
+check (weekday + after-18:00-IST-publication-window logic) for OHLCV history too, on both the
+source cards and the per-symbol gap. Friday's data now reads as `fresh` through the whole
+weekend and Monday morning, degrades to `stale` only once Monday's own session has closed with
+no Monday bar yet (normal same-evening provider lag, not a real outage), and only escalates to
+`failed` after a genuinely stuck multi-day gap.
+
+**A real bug was caught mid-fix, not just designed around:** the first implementation attempt
+compared `last_success_at` (a `timestamptz`) after routing it through `new Date(...).toISOString()`
+— that round-trip shifts the calendar day by the host's local UTC offset. Verified live: a
+`2026-07-24` (IST) bar came back as `"2026-07-23"` after the round-trip, which would have
+silently broken the very fix being added. Corrected by casting the bar date to `::text` directly
+in SQL (matching how `quote_as_of` was already handled safely) instead of deriving it from a JS
+`Date`, and added test coverage asserting the correct value specifically to guard against this
+recurring.
+
+Files: `lib/dataHealth.ts` (`classifyCoverageGaps`, `classifySourceFreshness`,
+`getCoverageGaps`, `getDataHealthSummary`), `lib/dataHealth.test.ts` (+5 tests: weekend
+non-staleness, Monday-evening degrade-to-stale-not-failed, multi-day genuine failure).
+
+Verified: 81/81 tests passing (+5 new), `tsc`/`eslint` clean, build clean, and cross-checked
+against the live database at three real timestamps (Sunday now, Monday 10:00 IST, Monday 19:00
+IST) using the actual current Friday bar date — confirmed fresh/fresh/stale respectively, not
+the previous stale/failed/failed.
+
 Current limitations:
 
 - Quick-fix actions are intentionally conservative: heavy syncs are not auto-triggered from the UI yet.
@@ -553,6 +593,14 @@ Current limitations:
   - Help/About
 
 ## Quality Checks Currently Passing
+
+Full-repo check run on 2026-07-26 (NSE/BSE weekend-staleness fix):
+
+- `npx tsc --noEmit`: passing, no type errors.
+- `npm test`: passing, **81/81 tests** (+5 new: weekend non-staleness, Monday-evening
+  degrade-to-stale, multi-day genuine failure, both at the per-symbol-gap and source-card level).
+- `npm run build`: passing cleanly under Turbopack with all routes recognized.
+- `npx eslint lib/dataHealth.ts lib/dataHealth.test.ts`: clean.
 
 Full-repo check run on 2026-07-25:
 

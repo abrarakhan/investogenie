@@ -1,8 +1,8 @@
 # InvestoGenie - Capabilities
 
-> Current capability snapshot (2026-07-25) after the email digest, encrypted credentials,
-> multi-provider NL query, US OHLCV backfill, permanent OTC exclusion, the incremental US
-> history sync fix, and Help knowledge-base work.
+> Current capability snapshot (2026-07-26) after the NSE/BSE weekend-staleness fix, the email
+> digest, encrypted credentials, multi-provider NL query, US OHLCV backfill, permanent OTC
+> exclusion, the incremental US history sync fix, and Help knowledge-base work.
 > Current codebase: local PostgreSQL, Next.js 16, Yahoo/Google/NSE/FRED-backed sync (Tiingo is
 > configured via `FINANCIAL_API_KEY` but not wired into the active recurring sync path).
 
@@ -241,6 +241,13 @@ The pages show:
   inputs),
 - recent cron/sync job history with expandable error detail.
 
+NSE/BSE freshness is trading-calendar-aware, not a flat clock (fixed 2026-07-26): Friday's
+close reads as fresh through the whole weekend and Monday morning, degrades to stale only once
+Monday's own session closes with nothing posted yet, and only reaches failed after a genuinely
+stuck multi-day gap — both for the per-symbol "History stale" gap and the "NSE/BSE OHLCV
+History" source cards. (US markets are also closed weekends; the same fix was not extended
+there — see Remaining Gaps.)
+
 ## Analytics
 
 ### Swing Classifier
@@ -363,6 +370,19 @@ node scripts/backfill-progress.mjs   # queue + coverage status for the OHLCV bac
 
 ## Verification Status
 
+NSE/BSE weekend-staleness fix, 2026-07-26:
+
+```bash
+npx tsc --noEmit                              # clean
+npm test                                      # 81/81 passing (+5 new)
+npm run build                                 # clean
+npx eslint lib/dataHealth.ts lib/dataHealth.test.ts   # clean
+```
+
+Cross-checked against the live database at three real timestamps (Sunday, Monday 10:00 IST,
+Monday 19:00 IST) using the actual current Friday OHLCV bar date — confirmed fresh / fresh /
+stale, matching the fix's intent, not the previous stale / failed / failed.
+
 Full-repo check run on 2026-07-25:
 
 ```bash
@@ -384,6 +404,12 @@ database (not just static analysis) — see `STATUS.md` for the specific queries
 
 ## Remaining Gaps
 
+- The weekend-staleness fix (2026-07-26) covers NSE/BSE only. US markets are also closed
+  Sat/Sun, so "US OHLCV History" / "US Quotes" source cards have the identical flat-cadence
+  flaw and would likewise show false stale/failed statuses over the US weekend — not fixed here,
+  since it needs an equivalent "expected trading day + after-close" helper for US market hours
+  (ET-based) that doesn't exist yet, and the request that prompted this fix was specifically
+  about NSE/BSE.
 - US OTC coverage is intentionally excluded (see the note under Current Local Data Coverage
   above) — if OTC history is ever wanted, it needs a different provider than Tiingo EOD, since
   that is the actual reason OTC has no bars, not a bug in the ingestion job.
