@@ -53,12 +53,22 @@ export default function EngineSection({
   overlap: OverlapReport | null;
   macro: MacroMatrix | null;
 }) {
-  const sharedStocks = new Set(
+  // Stocks that show up in more than one fund — the actual duplication the
+  // X-Ray exists to surface. Kept as a list (not just a Set) so it can be
+  // rendered directly, sorted by how much of the whole portfolio it represents.
+  const multiFundStocks =
     overlap?.stockExposure
       .filter((stock) => stock.contributingFunds.length > 1)
-      .map((stock) => stock.stockTicker) ?? [],
-  );
+      .sort(
+        (a, b) =>
+          b.contributingFunds.length - a.contributingFunds.length ||
+          b.effectiveWeightPct - a.effectiveWeightPct,
+      ) ?? [];
+  const sharedStocks = new Set(multiFundStocks.map((stock) => stock.stockTicker));
   const fundCompositions = overlap?.fundCompositions ?? [];
+  const lookThroughFundCount = (overlap?.fundCompositions ?? []).filter(
+    (fund) => fund.lookThroughAvailable,
+  ).length;
   const fundCompositionMatches = new Map<string, number>();
 
   const nextCompositionFor = (fundTicker: string) => {
@@ -125,7 +135,32 @@ export default function EngineSection({
         {/* ---- Fund overlap ---- */}
         <Panel title="Fund Overlap X-Ray" tag="Your funds · overlaps · underlying stocks">
           {!overlap ? (
-            <p className="text-sm text-white/50">No fund holdings imported yet.</p>
+            <div className="space-y-2">
+              <p className="text-sm text-white/50">
+                No mutual fund holdings imported yet — the X-Ray needs your fund list before it can
+                compare anything.
+              </p>
+              <Link
+                href="/terminal/in/cas"
+                className="inline-block rounded-full border border-[var(--ig-accent)]/30 px-3 py-1 text-[11px] font-semibold text-[var(--ig-accent)] hover:bg-[var(--ig-accent)]/10"
+              >
+                Import a CAS statement
+              </Link>
+            </div>
+          ) : lookThroughFundCount === 0 ? (
+            <div className="space-y-2">
+              <p className="text-sm text-white/50">
+                {overlap.fundValues.length} fund{overlap.fundValues.length === 1 ? "" : "s"} imported,
+                but none are mapped to an AMC portfolio disclosure yet — so there are no underlying
+                stocks to compare. Map a fund (or import its monthly disclosure) to start the X-Ray.
+              </p>
+              <Link
+                href="/portfolio/fund-mapping"
+                className="inline-block rounded-full border border-[var(--ig-accent)]/30 px-3 py-1 text-[11px] font-semibold text-[var(--ig-accent)] hover:bg-[var(--ig-accent)]/10"
+              >
+                Open fund mapping
+              </Link>
+            </div>
           ) : (
             <div className="space-y-5">
               <div className="grid gap-3 md:grid-cols-3">
@@ -195,6 +230,51 @@ export default function EngineSection({
                       </div>
                     ))}
                   </div>
+                )}
+              </div>
+
+              <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-white/38">
+                    Same stock across multiple funds
+                  </p>
+                  <span className="rounded-full border border-white/10 px-2 py-0.5 text-[10px] font-semibold text-white/50">
+                    {multiFundStocks.length} duplicated
+                  </span>
+                </div>
+                {multiFundStocks.length === 0 ? (
+                  <p className="text-sm text-white/45">
+                    No stock appears in more than one of your mapped funds yet.
+                  </p>
+                ) : (
+                  <>
+                    <p className="mb-3 text-[11px] text-white/40">
+                      &quot;Portfolio weight&quot; is the combined effective exposure across every fund
+                      holding this stock — the real concentration you carry, not the weight inside any
+                      single fund.
+                    </p>
+                    <div className="max-h-80 space-y-1.5 overflow-auto pr-1">
+                      {multiFundStocks.map((stock) => (
+                        <div
+                          key={stock.stockTicker}
+                          className="grid grid-cols-[1fr_auto_auto] items-center gap-3 rounded-xl border border-amber-300/20 bg-amber-300/10 px-3 py-2 text-xs"
+                        >
+                          <span className="truncate font-semibold text-amber-100" title={stock.stockTicker}>
+                            {stock.stockTicker}
+                          </span>
+                          <span className="rounded-full border border-amber-300/25 px-2 py-0.5 text-[10px] text-amber-100/90">
+                            {stock.contributingFunds.length} funds
+                          </span>
+                          <span className="font-mono text-white/80">
+                            {stock.effectiveWeightPct.toFixed(2)}%
+                          </span>
+                          <span className="col-span-3 truncate text-[10px] text-amber-100/70">
+                            {stock.contributingFunds.join(" · ")}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </>
                 )}
               </div>
 
