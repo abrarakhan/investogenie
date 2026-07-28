@@ -35,6 +35,17 @@ const syncSleep = process.env.NSE_SYNC_SLEEP_SECONDS ?? "1.2";
 const syncDisabled = process.env.NSE_SYNC_DISABLED === "1";
 const nseSyncProvider = (process.env.NSE_SYNC_PROVIDER ?? "bhavcopy").toLowerCase();
 const nseBhavcopyMaxSessions = process.env.NSE_BHAVCOPY_MAX_SESSIONS ?? "20";
+// The single scheduleDailySync() attempt at syncHour:syncMinute IST treats a
+// 200-response "bhavcopy not available" as a normal, successful run (it's a
+// legitimate outcome on a market holiday) and does not retry — the next
+// attempt is a full 24h later. NSE/BSE bhavcopy publication time can drift by
+// an hour or two on an ordinary trading day, so a single miss otherwise
+// leaves the data a full day stale even though the file lands soon after.
+// This watchdog is additive: it only fires more attempts on a day the file
+// still hasn't shown up, bounded so it can't retry forever.
+const nseCatchupDisabled = process.env.NSE_CATCHUP_DISABLED === "1";
+const nseCatchupRetryMinutes = Number(process.env.NSE_CATCHUP_RETRY_MINUTES ?? 30);
+const nseCatchupMaxAttempts = Number(process.env.NSE_CATCHUP_MAX_ATTEMPTS ?? 6);
 const fundamentalsSleep = process.env.FUNDAMENTALS_SYNC_SLEEP_SECONDS ?? "1.5";
 const fundamentalsDisabled = process.env.FUNDAMENTALS_SYNC_DISABLED === "1";
 const usQuoteDisabled = process.env.US_QUOTE_SYNC_DISABLED === "1";
@@ -89,6 +100,9 @@ let indiaMarketQuoteRefreshTimer = null;
 let indiaMarketQuoteRefreshPromise = null;
 let backfillTimer = null;
 let dailyTimer = null;
+let nseCatchupTimer = null;
+let nseCatchupAttemptDate = null; // IST date the current attempt budget belongs to
+let nseCatchupAttempts = 0;
 let backfillPromise = null;
 let lastBackfillIndiaDate = null;
 let lastBackfillUsDate = null;
@@ -883,6 +897,88 @@ function scheduleDailySync() {
   }, delay);
 }
 
+/** Most recent NSE/BSE trading date expected to be in daily_ohlcv by now:
+ *  today once past the same syncHour:syncMinute IST publication window the
+ *  daily job itself checks at, otherwise the previous weekday. Weekends never
+ *  expect same-day data. Mirrors expectedIndianBhavcopyDate() in
+ *  lib/dataHealth.ts, reimplemented here since this script can't import that
+ *  TS module directly. */
+function expectedNseBseTradingDate() {
+  const clock = istClock();
+  const weekend = clock.day === 0 || clock.day === 6;
+  const afterCutoff = clock.hour * 60 + clock.minute >= syncHour * 60 + syncMinute;
+  if (!weekend && afterCutoff) return clock.date;
+  const d = new Date(`${clock.date}T00:00:00Z`);
+  do {
+    d.setUTCDate(d.getUTCDate() - 1);
+  } while (d.getUTCDay() === 0 || d.getUTCDay() === 6);
+  return d.toISOString().slice(0, 10);
+}
+
+/** Earliest of the NSE/BSE latest OHLCV bar dates, or null if either has no rows. */
+async function latestNseBseBarDate() {
+  const databaseUrl = process.env.DATABASE_URL;
+  if (!databaseUrl) return null;
+  const client = new Client({
+    connectionString: databaseUrl,
+    ssl: /127\.0\.0\.1|localhost/.test(databaseUrl) ? false : { rejectUnauthorized: false },
+  });
+  try {
+    await client.connect();
+    const res = await client.query(`
+      select least(
+        (select max(o.date) from public.daily_ohlcv o join public.assets a on a.id = o.asset_id
+          where a.country = 'IN' and a.exchange = 'NSE' and a.asset_class = 'STOCK'),
+        (select max(o.date) from public.daily_ohlcv o join public.assets a on a.id = o.asset_id
+          where a.country = 'IN' and a.exchange = 'BSE' and a.asset_class = 'STOCK')
+      )::text as latest
+    `);
+    return res.rows[0]?.latest ?? null;
+  } catch (error) {
+    console.error(`[nse-sync] catch-up: could not read latest NSE/BSE bar date: ${error.message}`);
+    return null;
+  } finally {
+    await client.end().catch(() => {});
+  }
+}
+
+/** Bounded retry watchdog for the scheduled daily bhavcopy sync. Ticks every
+ *  nseCatchupRetryMinutes; on a weekday where the DB hasn't caught up to the
+ *  expected trading date, re-runs the sync — up to nseCatchupMaxAttempts per
+ *  day — instead of silently waiting for tomorrow's single scheduled attempt. */
+function scheduleNseCatchup() {
+  if (nseCatchupDisabled) {
+    console.log("[nse-sync] catch-up watchdog disabled by NSE_CATCHUP_DISABLED=1");
+    return;
+  }
+  console.log(
+    `[nse-sync] catch-up watchdog: checks every ${nseCatchupRetryMinutes}min, up to ` +
+      `${nseCatchupMaxAttempts} extra attempt(s)/day if bhavcopy hasn't landed by ` +
+      `${String(syncHour).padStart(2, "0")}:${String(syncMinute).padStart(2, "0")} IST`,
+  );
+  nseCatchupTimer = setInterval(async () => {
+    const clock = istClock();
+    if (clock.day === 0 || clock.day === 6) return; // no bhavcopy expected on weekends
+
+    if (nseCatchupAttemptDate !== clock.date) {
+      nseCatchupAttemptDate = clock.date;
+      nseCatchupAttempts = 0;
+    }
+    if (nseCatchupAttempts >= nseCatchupMaxAttempts) return; // gave up for today
+
+    const expected = expectedNseBseTradingDate();
+    const latest = await latestNseBseBarDate();
+    if (latest && latest >= expected) return; // already caught up
+
+    nseCatchupAttempts += 1;
+    console.log(
+      `[nse-sync] catch-up attempt ${nseCatchupAttempts}/${nseCatchupMaxAttempts}: ` +
+        `latest=${latest ?? "none"} expected=${expected}`,
+    );
+    runSync(`catchup-${nseCatchupAttempts}`);
+  }, nseCatchupRetryMinutes * 60 * 1000);
+}
+
 const nextChild = spawn(
   process.execPath,
   [nextCli, mode, ...process.argv.slice(3)],
@@ -893,6 +989,7 @@ function shutdown(signal) {
   if (shuttingDown) return;
   shuttingDown = true;
   if (dailyTimer) clearTimeout(dailyTimer);
+  if (nseCatchupTimer) clearInterval(nseCatchupTimer);
   if (marketRefreshTimer) clearInterval(marketRefreshTimer);
   if (indiaMarketQuoteRefreshTimer) clearInterval(indiaMarketQuoteRefreshTimer);
   if (backfillTimer) clearInterval(backfillTimer);
@@ -922,6 +1019,7 @@ nextChild.on("error", (error) => {
 });
 nextChild.on("close", (code, signal) => {
   if (dailyTimer) clearTimeout(dailyTimer);
+  if (nseCatchupTimer) clearInterval(nseCatchupTimer);
   if (marketRefreshTimer) clearInterval(marketRefreshTimer);
   if (indiaMarketQuoteRefreshTimer) clearInterval(indiaMarketQuoteRefreshTimer);
   if (backfillTimer) clearInterval(backfillTimer);
@@ -936,6 +1034,7 @@ nextChild.on("close", (code, signal) => {
 });
 
 scheduleDailySync();
+scheduleNseCatchup();
 scheduleRecurringMarketRefresh();
 scheduleIndiaMarketQuoteRefresh();
 scheduleBackfillCron();
