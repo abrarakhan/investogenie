@@ -45,6 +45,16 @@ describe("suggestFundMapping", () => {
     expect(result.candidates).toHaveLength(2);
   });
 
+  it("matches a CAS plan ISIN through the scheme identifier registry", () => {
+    const result = suggestFundMapping(
+      fund({ isin: "INF179K01608" }),
+      [snapshot({ isin: null, identifiers: ["INF179K01BE2", "INF179K01608"] })],
+    );
+
+    expect(result.method).toBe("isin_exact");
+    expect(result.schemeCode).toBe("HDFC_FLEXI_CAP");
+  });
+
   it("suggests high-confidence name similarity within the same AMC", () => {
     const result = suggestFundMapping(
       fund({ isin: null, fundName: "Parag Parikh Flexi Cap Fund Growth", amc: "PPFAS" }),

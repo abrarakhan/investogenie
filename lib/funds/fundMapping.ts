@@ -16,6 +16,7 @@ export interface SnapshotSchemeForMapping {
   schemeCode: string;
   name: string;
   isin: string | null;
+  identifiers?: string[];
   amc: string | null;
   category: string | null;
   snapshotMonth: string | null;
@@ -126,7 +127,13 @@ export function suggestFundMapping(
   const searchSpace = amcSnapshots.length > 0 ? amcSnapshots : snapshots;
 
   if (fund.isin) {
-    const isinMatches = searchSpace.filter((s) => s.isin && s.isin.toUpperCase() === fund.isin!.toUpperCase());
+    const wantedIsin = fund.isin.toUpperCase();
+    const isinMatches = searchSpace.filter((s) => {
+      const identifiers = [s.isin, ...(s.identifiers ?? [])]
+        .filter((value): value is string => Boolean(value))
+        .map((value) => value.toUpperCase());
+      return identifiers.includes(wantedIsin);
+    });
     if (isinMatches.length === 1) {
       return { status: "pending", schemeCode: isinMatches[0].schemeCode, confidence: 1, method: "isin_exact", reason: "ISIN match", candidates: isinMatches };
     }

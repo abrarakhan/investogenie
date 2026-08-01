@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { backfillUsHistory } from "@/lib/ingest/usHistory";
+import type { UsHistorySummary } from "@/lib/ingest/usHistory";
 import { checkCronAuth, logCronRun } from "@/lib/ingest/cronLog";
 import { runSyncJobWithRetry } from "@/lib/ingest/syncJobWrapper";
 
@@ -48,7 +49,7 @@ export async function GET(request: NextRequest) {
   );
 
   if (result.success) {
-    const summary = result.detail as any;
+    const summary = result.detail as UsHistorySummary | undefined;
     return NextResponse.json({
       ok: true,
       tickersRequested: summary?.tickersRequested,

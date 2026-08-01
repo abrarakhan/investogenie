@@ -33,6 +33,12 @@ export interface SyncTrend {
   }>;
 }
 
+function attemptsFromDetail(detail: unknown): number {
+  if (!detail || typeof detail !== "object" || !("attempts" in detail)) return 1;
+  const attempts = (detail as { attempts?: unknown }).attempts;
+  return typeof attempts === "number" && Number.isFinite(attempts) ? attempts : 1;
+}
+
 /**
  * Get the last sync attempt for a job.
  */
@@ -61,7 +67,7 @@ export async function getLastSyncStatus(
       status: row.status,
       detail: row.detail,
       error: row.error ?? undefined,
-      attempts: (row.detail as any)?.attempts ?? 1,
+      attempts: attemptsFromDetail(row.detail),
       durationMs: row.duration_ms,
       createdAt: row.created_at,
     };

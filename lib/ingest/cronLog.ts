@@ -16,6 +16,23 @@ export type CronJob =
   | "refresh-screener"
   | "forward-test"
   | "send-email-digest";
+const CRON_JOBS: ReadonlySet<string> = new Set<CronJob>([
+  "refresh-quotes",
+  "scan",
+  "backfill-us",
+  "backfill-us-expand",
+  "backfill-nse",
+  "backfill-bse",
+  "backfill_ohlcv",
+  "backfill_ohlcv_cron",
+  "refresh-screener",
+  "forward-test",
+  "send-email-digest",
+]);
+
+export function isCronJob(value: string): value is CronJob {
+  return CRON_JOBS.has(value);
+}
 export type CronStatus = "ok" | "error" | "skipped";
 
 export interface CronLogEntry {

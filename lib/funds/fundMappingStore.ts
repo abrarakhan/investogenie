@@ -36,6 +36,7 @@ interface SnapshotRow {
   scheme_code: string;
   name: string;
   isin: string | null;
+  identifiers: string[] | null;
   amc: string | null;
   category: string | null;
   latest_month: Date | string | null;
@@ -53,12 +54,13 @@ export async function getFundMappingData(userId: string): Promise<FundMappingDat
   const [fundRows, snapshotRows] = await Promise.all([
     query<FundRow>(
       `select h.id holding_id, a.id asset_id, a.ticker, a.name,
-              nullif(m.amfi_code_in, '') isin,
+              coalesce(nullif(chd.isin, ''), nullif(m.amfi_code_in, '')) isin,
               h.quantity, h.avg_cost, q.price quote_price, m.category,
               map.scheme_code mapped_scheme_code, map.status mapping_status
          from public.holdings h
          join public.assets a on a.id = h.asset_id
          left join public.mutual_fund_meta m on m.asset_id = a.id
+         left join public.cas_holding_details chd on chd.holding_id = h.id and chd.user_id = h.user_id
          left join public.latest_quotes q on q.asset_id = a.id
          left join public.user_fund_mappings map on map.user_id = h.user_id and map.user_holding_id = h.id
         where h.user_id = $1 and a.asset_class = 'MUTUAL_FUND' and h.quantity > 0
@@ -66,14 +68,25 @@ export async function getFundMappingData(userId: string): Promise<FundMappingDat
       [userId],
     ),
     query<SnapshotRow>(
-      `select fs.scheme_code, fs.name, fs.isin, fs.amc, fs.category, fs.latest_month,
-              count(fhs.instrument_isin)::text holding_count,
+      `select fs.scheme_code, fs.name, coalesce(fs.isin, ids.primary_isin) isin,
+              coalesce(ids.identifiers, '{}'::text[]) identifiers,
+              fs.amc, fs.category, fs.latest_month,
+              coalesce(snapshot.holding_count, 0)::text holding_count,
               mapped.user_holding_id mapped_holding_id,
               mapped.fund_name mapped_fund_name
          from public.fund_schemes fs
-         left join public.fund_holdings_snapshot fhs
-           on fhs.scheme_code = fs.scheme_code
-          and fhs.month = fs.latest_month
+         left join lateral (
+           select count(*) holding_count
+             from public.fund_holdings_snapshot fhs
+            where fhs.scheme_code = fs.scheme_code and fhs.month = fs.latest_month
+         ) snapshot on true
+         left join lateral (
+           select array_agg(distinct fsi.identifier_value order by fsi.identifier_value)
+                    filter (where fsi.identifier_type = 'ISIN') identifiers,
+                  min(fsi.identifier_value) filter (where fsi.identifier_type = 'ISIN') primary_isin
+             from public.fund_scheme_identifiers fsi
+            where fsi.scheme_code = fs.scheme_code
+         ) ids on true
          left join lateral (
            select map.user_holding_id, a.name fund_name
              from public.user_fund_mappings map
@@ -83,7 +96,8 @@ export async function getFundMappingData(userId: string): Promise<FundMappingDat
             order by map.matched_at desc nulls last
             limit 1
          ) mapped on true
-        group by fs.scheme_code, fs.name, fs.isin, fs.amc, fs.category, fs.latest_month, mapped.user_holding_id, mapped.fund_name
+        where fs.latest_month is not null
+          and exists (select 1 from public.fund_holdings_snapshot fhs where fhs.scheme_code = fs.scheme_code)
         order by fs.amc nulls last, fs.name`,
       [userId],
     ),
@@ -93,6 +107,7 @@ export async function getFundMappingData(userId: string): Promise<FundMappingDat
     schemeCode: row.scheme_code,
     name: row.name,
     isin: row.isin,
+    identifiers: row.identifiers ?? [],
     amc: row.amc,
     category: row.category,
     snapshotMonth: dateOnly(row.latest_month),

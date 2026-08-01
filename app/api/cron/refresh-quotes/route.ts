@@ -1,6 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { refreshQuotes } from "@/lib/ingest/quotes";
-import { checkCronAuth, logCronRun } from "@/lib/ingest/cronLog";
+import { checkCronAuth } from "@/lib/ingest/cronLog";
 import { runSyncJobWithRetry } from "@/lib/ingest/syncJobWrapper";
 
 // Scheduled latest-price refresh. Wired to a daily cron (see vercel.json).

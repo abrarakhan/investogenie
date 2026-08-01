@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { computeSignals } from "@/lib/ingest/signals";
+import type { ScanSummary } from "@/lib/ingest/signals";
 import { checkCronAuth, logCronRun } from "@/lib/ingest/cronLog";
 import { runSyncJobWithRetry } from "@/lib/ingest/syncJobWrapper";
 import { getSyncTrend } from "@/lib/ingest/syncMonitor";
@@ -54,7 +55,7 @@ export async function GET(request: NextRequest) {
   );
 
   if (result.success) {
-    const summary = result.detail as any;
+    const summary = result.detail as ScanSummary | undefined;
     return NextResponse.json({
       ok: true,
       scanned: summary?.scanned,

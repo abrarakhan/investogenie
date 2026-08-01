@@ -132,11 +132,15 @@ async function logSyncToDatabase(
   error?: string,
   durationMs?: number
 ): Promise<void> {
-  const { logCronRun } = await import("@/lib/ingest/cronLog");
+  const { isCronJob, logCronRun } = await import("@/lib/ingest/cronLog");
 
   try {
+    if (!isCronJob(jobName)) {
+      console.debug(`[${jobName}] Skipping cron_logs write for unknown job name`);
+      return;
+    }
     await logCronRun(databaseUrl, {
-      job: jobName as any,
+      job: jobName,
       status,
       detail: detail as Record<string, unknown>,
       error: error ?? null,

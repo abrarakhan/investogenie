@@ -1,6 +1,6 @@
 # InvestoGenie Status
 
-_Last updated: 2026-07-26 (fixed NSE/BSE weekend false-staleness in Data Health, including a real timezone round-trip bug caught mid-fix; reconciled data-coverage numbers 2026-07-25; US history sync fix confirmed working; OTC exclusion holding at 946; Help knowledge base; digest resilience; multi-provider AI)_
+_Last updated: 2026-08-01 (automated the official AMFI scheme-master sync at startup and daily; refreshed the AMFI registry and fund-mapping counts; restored a clean full-repo lint/type/test/build gate)_
 
 This file summarizes what has been built so far, what is currently working, what is partial, and what to build next.
 
@@ -74,6 +74,7 @@ Current database migration stack:
 - `0020_email_preferences.sql`: user email digest opt-in settings (send time, screen toggles, last sent timestamp).
 - `0021_user_credentials.sql`: per-user encrypted credentials (SMTP password, AI API keys) via AES-256-GCM.
 - `0022_ai_provider_config.sql`: active AI provider/model/key selection for the NL screener (Anthropic/OpenAI/Google).
+- `0023_amfi_scheme_master.sql`: option-level AMFI scheme registry plus the many-ISIN-to-one-portfolio identifier bridge.
 
 ## Current Local Data Coverage
 
@@ -107,8 +108,11 @@ Portfolio/fund figures below were refreshed on 2026-07-25 where the current DB e
 | Area | Count / Status |
 |---|---:|
 | Fund schemes with snapshots | 12 |
+| AMFI scheme-master rows | 14,222 total / 8,657 active |
+| Fund scheme identifiers | 100 identifiers across all 12 loaded snapshots |
+| CAS holdings with exact snapshot ISIN match | 11 / 21 |
 | Fund snapshot rows | 936 |
-| Explicit user fund mappings | 1 matched mapping |
+| Explicit user fund mappings | 4 matched mappings |
 | Forward-test positions | 40 |
 | Imported user mutual funds | 21 CAS fund holdings imported in the current local DB |
 | Imported user fund value | INR 85,32,803.53 from latest CAS inventory |
@@ -137,6 +141,9 @@ The wrapper currently handles:
 - Macro sync hook.
 - Signal scan trigger through cron API.
 - Queued OHLCV repair trigger through a detached local worker script.
+- Official AMFI scheme-master sync at startup and daily at 06:30 IST. The time is
+  configurable with `AMFI_SCHEME_SYNC_HOUR_IST` / `AMFI_SCHEME_SYNC_MINUTE_IST`;
+  set `AMFI_SCHEME_SYNC_DISABLED=1` to disable it.
 - Daily email digest trigger at 07:00 IST (configurable via `EMAIL_DIGEST_HOUR_IST` /
   `EMAIL_DIGEST_MINUTE_IST`, disabled with `EMAIL_DIGEST_CRON_DISABLED=1`), calling
   `/api/cron/send-email-digest` with the `CRON_SECRET` bearer. Resilient to a failed
@@ -154,6 +161,7 @@ Known issue:
 Available scripts:
 
 - `npm run sync:nse-history`
+- `npm run sync:amfi-schemes`
 - `npm run sync:fundamentals`
 - `npm run sync:us`
 - `npm run sync:us-quotes`
@@ -275,8 +283,10 @@ Built:
 - Dedicated mapping screen: `/portfolio/fund-mapping`.
 - Left panel lists all imported CAS mutual funds from `holdings`, not just funds that already have look-through rows.
 - Right panel lists all loaded AMC snapshots from `fund_schemes` / `fund_holdings_snapshot`.
+- Official AMFI scheme-master sync (`npm run sync:amfi-schemes`) stores every plan/option row, both AMFI ISIN columns, NAV, AMC/category context, and active/stale state.
+- `fund_scheme_identifiers` bridges many plan/option ISINs and AMFI codes to one portfolio-level `fund_schemes` snapshot.
 - Auto-suggest matching logic:
-  - Exact ISIN match.
+  - Exact ISIN match across every bridged plan/option identifier.
   - Ambiguous ISIN detection.
   - Conservative name-similarity suggestions within AMC context.
   - Name-only matches require user confirmation.
@@ -293,17 +303,18 @@ Built:
 Current local data:
 
 - 21 user mutual-fund holdings are active from the latest CAS import.
-- 1 fund is currently matched to AMC snapshots.
-- 1 explicit matched `user_fund_mappings` row is present in the current local DB.
-- Underlying stock rows are available only for the currently mapped fund; full X-Ray power depends on completing more mappings.
-- 12 global fund schemes have snapshots.
+- 4 funds are currently accepted in `user_fund_mappings`.
+- The AMFI bridge produces exact snapshot coverage for 11 of 21 CAS holdings; 7 exact suggestions remain available through the bulk auto-accept action.
+- The other 10 CAS holdings have valid AMFI identities but no corresponding loaded AMC snapshot yet.
+- All 12 loaded snapshot schemes resolved to AMFI families, producing 100 identifiers with zero ownership conflicts.
+- Underlying stock rows are available after an exact suggestion is accepted; full X-Ray power still depends on importing the missing AMC disclosures.
 
 Current limitations:
 
 - Not all uploaded funds have matched AMC monthly portfolio disclosures yet; the mapping screen now makes this repairable.
 - Some CAS-extracted fund names are still messy when there is no clean linked scheme snapshot.
 - Matching is intentionally conservative: scheme/fund joining should be by ISIN or explicit mapping, not fuzzy name joins.
-- Current mapping coverage remains 1/21 until more AMC disclosures are imported or manually linked.
+- Accepted mapping coverage is 4/21; identifier coverage is 11/21. Seven exact suggestions remain actionable, while the other 10 require AMC disclosure snapshots.
 
 ## Data Health
 
@@ -594,6 +605,13 @@ Current limitations:
 
 ## Quality Checks Currently Passing
 
+Full-repo check run on 2026-08-01 (AMFI automation and lint cleanup):
+
+- `npm run lint`: passing with no errors or warnings.
+- `npx tsc --noEmit`: passing.
+- `npm test`: passing, **86/86 tests**.
+- `npm run build`: passing; all 16 static pages generated and all dynamic routes recognized.
+
 Full-repo check run on 2026-07-26 (NSE/BSE weekend-staleness fix):
 
 - `npx tsc --noEmit`: passing, no type errors.
@@ -607,16 +625,9 @@ Full-repo check run on 2026-07-25:
 - `npx tsc --noEmit`: passing, no type errors.
 - `npm test`: passing, 76/76 tests.
 - `npm run build`: passing cleanly under Turbopack with all routes recognized.
-- `npx eslint .` (whole repo, not just changed files): **6 errors + 1 warning** —
-  - 4 pre-existing `no-explicit-any` errors, unrelated to recent work:
-    `app/api/cron/backfill-us/route.ts`, `app/api/cron/scan/route.ts`,
-    `lib/ingest/syncJobWrapper.ts`, `lib/ingest/syncMonitor.ts`.
-  - 1 pre-existing unused-import warning: `app/api/cron/refresh-quotes/route.ts` (`logCronRun`).
-  - **2 newly surfaced** (not new bugs — pre-existing since the `feat/commercial-nav` /
-    "Add public help and about navigation" work, just never caught by a full-repo lint
-    before): `components/landing/LandingPage.tsx` uses plain `<a href="/help">` /
-    `<a href="/about">` instead of `next/link`'s `<Link>` (`@next/next/no-html-link-for-pages`).
-    Not fixed here — flagged as a small, easy cleanup for whoever next touches that file.
+- `npx eslint .` originally found 6 errors and 1 warning. These historical findings
+  were resolved on 2026-08-01 with typed sync summaries, safe cron-detail narrowing,
+  removal of the unused import, and `next/link` for internal landing-page navigation.
 
 Earlier verified command set on 2026-07-24 (US history sync + OTC exclusion work):
 
@@ -733,7 +744,7 @@ Still open:
 
 ### 2. Complete Fund Mapping Coverage
 
-Use the new `/portfolio/fund-mapping` screen to move Fund X-Ray from 1/21 matched funds toward full coverage.
+Use `/portfolio/fund-mapping` to review and bulk-accept the 7 remaining exact AMFI/ISIN suggestions, then import AMC disclosures for the remaining 10 funds.
 
 Next actions:
 

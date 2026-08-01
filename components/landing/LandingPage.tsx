@@ -1,6 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import Link from "next/link";
 import KineticHeadline from "./KineticHeadline";
 import MarketPivotSwitch from "./MarketPivotSwitch";
 import ScrollFeatures from "./ScrollFeatures";
@@ -36,14 +37,14 @@ export default function LandingPage({ quotes }: { quotes: LiveMarketQuotes }) {
           <nav className="hidden items-center gap-6 text-sm text-white/60 md:flex">
             <a href="#features" className="hover:text-white">Features</a>
             <a href="#markets" className="hover:text-white">Markets</a>
-            <a href="/help" className="hover:text-white">Help</a>
-            <a href="/about" className="hover:text-white">About</a>
-            <a
+            <Link href="/help" className="hover:text-white">Help</Link>
+            <Link href="/about" className="hover:text-white">About</Link>
+            <Link
               href={`/terminal/${market.id.toLowerCase()}`}
               className="rounded-full border border-white/15 bg-white/5 px-4 py-2 font-semibold text-white/80 hover:bg-white/10 hover:text-white"
             >
               Open Terminal
-            </a>
+            </Link>
           </nav>
         </header>
 
@@ -112,18 +113,18 @@ export default function LandingPage({ quotes }: { quotes: LiveMarketQuotes }) {
           manage holdings, and monitor data freshness from one workspace.
         </p>
         <div className="mt-10 flex flex-col items-center justify-center gap-3 sm:flex-row">
-          <a
+          <Link
             href={`/terminal/${market.id.toLowerCase()}`}
             className="inline-block rounded-full bg-gradient-to-r from-[var(--ig-primary)] to-[var(--ig-accent)] px-8 py-3 font-semibold text-black transition-transform hover:scale-105"
           >
             Open Terminal
-          </a>
-          <a
+          </Link>
+          <Link
             href="/help"
             className="inline-block rounded-full border border-white/15 bg-white/5 px-8 py-3 font-semibold text-white/75 transition-colors hover:bg-white/10 hover:text-white"
           >
             View Help
-          </a>
+          </Link>
         </div>
       </section>
 

@@ -1,6 +1,6 @@
 # InvestoGenie - Capabilities
 
-> Current capability snapshot (2026-07-26) after the NSE/BSE weekend-staleness fix, the email
+> Current capability snapshot (2026-08-01) after the automated AMFI scheme-master/identifier bridge, the NSE/BSE weekend-staleness fix, the email
 > digest, encrypted credentials, multi-provider NL query, US OHLCV backfill, permanent OTC
 > exclusion, the incremental US history sync fix, and Help knowledge-base work.
 > Current codebase: local PostgreSQL, Next.js 16, Yahoo/Google/NSE/FRED-backed sync (Tiingo is
@@ -35,6 +35,7 @@ and recurring data sync jobs.
 | **Help & knowledge base** | `/help` guided walkthrough + 7 code-accurate articles (engine + 5 strategies + probability method) | Working |
 | Sync health | Browser-visible `/admin/sync` and `/data/health` freshness and provider status pages | Working |
 | Recurring sync | Startup, recurring, and daily jobs for quotes, OHLCV, fundamentals, macro, scans, and the email digest | Working |
+| AMFI scheme identity | Official option-level AMFI registry with AMC/category, NAV, both ISIN columns, AMFI codes, and many-identifiers-to-one-snapshot mapping | Working |
 | Provider fallback | Yahoo Finance (US OHLCV history, free/unofficial), Google Finance fallback for quotes. A Tiingo-based module (`lib/ingest/usHistory.ts`) exists and is configured but is NOT used by the recurring sync path — see Architecture. | Working |
 
 ## Current Local Data Coverage
@@ -50,6 +51,8 @@ Measured from the local `investogenie` PostgreSQL database on 2026-07-25:
 | Financial reports | 126,390 |
 | Macro indicators | 8,195 |
 | Cron logs | 421 |
+| AMFI scheme master | 14,222 rows (8,657 active) |
+| Snapshot identifier bridge | 100 identifiers; all 12 loaded snapshot schemes resolved |
 
 Asset universe:
 
@@ -336,12 +339,15 @@ The wrapper's recurring loop does:
 - swing signal scan trigger,
 - NSE/BSE bhavcopy incremental OHLCV sync + daily catch-up,
 - queued OHLCV backfill-repair trigger (detached worker),
+- official AMFI scheme-master sync on every app startup and daily at 06:30 IST
+  (configurable with `AMFI_SCHEME_SYNC_HOUR_IST` / `AMFI_SCHEME_SYNC_MINUTE_IST`),
 - **daily email digest send** at a configurable IST time, with same-day retry on failure and
   startup catch-up if the window was missed.
 
 Manual sync / ops commands:
 
 ```bash
+npm run sync:amfi-schemes
 npm run sync:nse-history
 npm run sync:fundamentals
 npm run sync:us
@@ -389,14 +395,13 @@ Full-repo check run on 2026-07-25:
 npx tsc --noEmit    # clean
 npm test            # 76/76 passing
 npm run build       # clean, all static pages generated including 7 /help/[slug] articles
-npx eslint .         # 6 errors + 1 warning — see note below
+npx eslint .         # historical lint findings, resolved 2026-08-01
 ```
 
-The `eslint .` run (whole repo, not just changed files) surfaced 6 pre-existing issues unrelated
-to recent work: 4 `no-explicit-any` errors (`backfill-us`, `scan`, `syncJobWrapper`,
-`syncMonitor` routes), 1 unused-import warning (`refresh-quotes`), and 2 `<a>`-vs-`<Link>`
-errors in `components/landing/LandingPage.tsx` that a file-scoped lint had never caught before.
-None are new regressions; none fixed here.
+Full-repo verification on 2026-08-01 is clean: `npm run lint`, `npx tsc --noEmit`,
+all 86 Vitest tests, and the Next.js production build pass. The AMFI sync was also run
+against the official feed and persisted 14,222 rows, resolving all 12 snapshot schemes
+with zero identifier conflicts.
 
 The email digest, AI-credential round-trip, swing/probability data-source fixes, US history sync
 selection/throughput fix, and OTC exclusion were additionally verified against the live local
@@ -420,10 +425,7 @@ database (not just static analysis) — see `STATUS.md` for the specific queries
   forecast row is flagged "calibration pending" (documented in `/help/probability-method`).
 - NL query dispatch to OpenAI and Google has not yet been exercised end-to-end with real API
   keys; only the Anthropic path has a verified live send.
-- Fund overlap is implemented, but depends on populated AMC snapshot look-through data and
-  actual user mutual-fund holdings; current match coverage is 1/21 imported funds (down from
-  6/21 in an earlier snapshot — worth checking whether a mapping was unlinked or the count
-  methodology changed).
+- Fund overlap has an official AMFI identity layer: 14,222 option rows and 100 identifiers resolve all 12 loaded snapshot schemes. Eleven of 21 CAS holdings have exact snapshot ISIN coverage; 4/21 are accepted in `user_fund_mappings`, 7 exact suggestions remain actionable, and 10 funds still need AMC disclosure snapshots.
 - The email digest scheduler only runs while the app process is running; guaranteed delivery
   regardless of host uptime needs an always-on deployment or an external/Vercel cron backstop.
 - Help articles are static (compiled into the content registry) — updating copy requires a code

@@ -17,6 +17,7 @@ const pipeline = resolve(root, "pipelines/nse_yfinance_sync.py");
 const usPipeline = resolve(root, "pipelines/us_market_sync.py");
 const usHistoryPipeline = resolve(root, "pipelines/us_history_sync.py");
 const macroPipeline = resolve(root, "pipelines/macro_sync.py");
+const amfiSchemeMasterScript = resolve(root, "scripts/sync-amfi-scheme-master.mjs");
 const pythonCandidates = [
   process.env.PYTHON_BIN,
   resolve(root, ".venv/bin/python"),
@@ -73,6 +74,9 @@ const usHistoryMinBars = process.env.US_HISTORY_MIN_BARS ?? "260";
 const usHistorySleep = process.env.US_HISTORY_SLEEP_SECONDS ?? "0.25";
 const macroSyncDisabled = process.env.MACRO_SYNC_DISABLED === "1";
 const macroSyncYears = process.env.MACRO_SYNC_YEARS ?? "5";
+const amfiSyncDisabled = process.env.AMFI_SCHEME_SYNC_DISABLED === "1";
+const amfiSyncHour = Number(process.env.AMFI_SCHEME_SYNC_HOUR_IST ?? 6);
+const amfiSyncMinute = Number(process.env.AMFI_SCHEME_SYNC_MINUTE_IST ?? 30);
 const backfillDisabled =
   process.env.BACKFILL_CRON_ENABLED !== "1" ||
   process.env.BACKFILL_CRON_DISABLED === "1";
@@ -93,6 +97,9 @@ let fundamentalsChild = null;
 let usFundamentalsChild = null;
 let usHistoryChild = null;
 let macroChild = null;
+let amfiChild = null;
+let amfiPromise = null;
+let amfiDailyTimer = null;
 let marketRefreshChild = null;
 let marketRefreshPromise = null;
 let marketRefreshTimer = null;
@@ -271,6 +278,51 @@ async function runMacroSync(trigger) {
       resolveRun();
     });
   });
+}
+
+function runAmfiSchemeMasterSync(trigger) {
+  if (amfiSyncDisabled) {
+    console.log(`[amfi-master] ${trigger} sync disabled by AMFI_SCHEME_SYNC_DISABLED=1`);
+    return Promise.resolve();
+  }
+  if (amfiPromise) {
+    console.log(`[amfi-master] skipping ${trigger}; sync still running`);
+    return amfiPromise;
+  }
+
+  const startedAt = Date.now();
+  amfiPromise = new Promise((resolveRun) => {
+    console.log(`[amfi-master] starting ${trigger} scheme-master update`);
+    amfiChild = spawn(
+      process.execPath,
+      [amfiSchemeMasterScript],
+      { cwd: root, env: process.env, stdio: "inherit" },
+    );
+    amfiChild.once("error", (error) => {
+      amfiChild = null;
+      recordSyncJob(`amfi-master/${trigger}`, "error", error.message, 1, Date.now() - startedAt);
+      console.error(`[amfi-master] unable to start: ${error.message}`);
+      resolveRun();
+    });
+    amfiChild.once("close", (code, signal) => {
+      amfiChild = null;
+      const durationMs = Date.now() - startedAt;
+      if (signal) {
+        recordSyncJob(`amfi-master/${trigger}`, "error", `stopped by ${signal}`, 1, durationMs);
+        console.log(`[amfi-master] stopped by ${signal}`);
+      } else if (code === 0) {
+        recordSyncJob(`amfi-master/${trigger}`, "ok", null, 1, durationMs);
+        console.log(`[amfi-master] ${trigger} update completed`);
+      } else {
+        recordSyncJob(`amfi-master/${trigger}`, "error", `exit code ${code}`, 1, durationMs);
+        console.error(`[amfi-master] ${trigger} update failed with exit code ${code}`);
+      }
+      resolveRun();
+    });
+  }).finally(() => {
+    amfiPromise = null;
+  });
+  return amfiPromise;
 }
 
 function runMarketRefresh(trigger) {
@@ -871,18 +923,42 @@ async function runUSFundamentals(trigger) {
 }
 
 function millisecondsUntilNextIstRun() {
+  return millisecondsUntilNextIstTime(syncHour, syncMinute);
+}
+
+function millisecondsUntilNextIstTime(hour, minute) {
   const now = new Date();
   const istNow = new Date(now.getTime() + IST_OFFSET_MS);
   const targetAsUtc = Date.UTC(
     istNow.getUTCFullYear(),
     istNow.getUTCMonth(),
     istNow.getUTCDate(),
-    syncHour,
-    syncMinute,
+    hour,
+    minute,
   );
   let target = targetAsUtc - IST_OFFSET_MS;
   if (target <= now.getTime()) target += 24 * 60 * 60 * 1000;
   return target - now.getTime();
+}
+
+function scheduleDailyAmfiSync() {
+  if (amfiSyncDisabled) {
+    console.log("[amfi-master] daily sync disabled");
+    return;
+  }
+  if (!Number.isFinite(amfiSyncHour) || !Number.isFinite(amfiSyncMinute)) {
+    console.error("[amfi-master] daily sync disabled; invalid AMFI_SCHEME_SYNC_HOUR_IST or AMFI_SCHEME_SYNC_MINUTE_IST");
+    return;
+  }
+  const delay = millisecondsUntilNextIstTime(amfiSyncHour, amfiSyncMinute);
+  const nextRun = new Date(Date.now() + delay);
+  console.log(
+    `[amfi-master] next daily update: ${nextRun.toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })} IST`,
+  );
+  amfiDailyTimer = setTimeout(() => {
+    runAmfiSchemeMasterSync("daily");
+    scheduleDailyAmfiSync();
+  }, delay);
 }
 
 function scheduleDailySync() {
@@ -989,6 +1065,7 @@ function shutdown(signal) {
   if (shuttingDown) return;
   shuttingDown = true;
   if (dailyTimer) clearTimeout(dailyTimer);
+  if (amfiDailyTimer) clearTimeout(amfiDailyTimer);
   if (nseCatchupTimer) clearInterval(nseCatchupTimer);
   if (marketRefreshTimer) clearInterval(marketRefreshTimer);
   if (indiaMarketQuoteRefreshTimer) clearInterval(indiaMarketQuoteRefreshTimer);
@@ -999,6 +1076,7 @@ function shutdown(signal) {
   if (usFundamentalsChild) usFundamentalsChild.kill(signal);
   if (usHistoryChild) usHistoryChild.kill(signal);
   if (macroChild) macroChild.kill(signal);
+  if (amfiChild) amfiChild.kill(signal);
   if (marketRefreshChild) marketRefreshChild.kill(signal);
 
   // Print startup summary before killing Next.js
@@ -1019,6 +1097,7 @@ nextChild.on("error", (error) => {
 });
 nextChild.on("close", (code, signal) => {
   if (dailyTimer) clearTimeout(dailyTimer);
+  if (amfiDailyTimer) clearTimeout(amfiDailyTimer);
   if (nseCatchupTimer) clearInterval(nseCatchupTimer);
   if (marketRefreshTimer) clearInterval(marketRefreshTimer);
   if (indiaMarketQuoteRefreshTimer) clearInterval(indiaMarketQuoteRefreshTimer);
@@ -1029,17 +1108,20 @@ nextChild.on("close", (code, signal) => {
   if (usFundamentalsChild) usFundamentalsChild.kill("SIGTERM");
   if (usHistoryChild) usHistoryChild.kill("SIGTERM");
   if (macroChild) macroChild.kill("SIGTERM");
+  if (amfiChild) amfiChild.kill("SIGTERM");
   if (marketRefreshChild) marketRefreshChild.kill("SIGTERM");
   process.exitCode = signal ? 1 : (code ?? 1);
 });
 
 scheduleDailySync();
+scheduleDailyAmfiSync();
 scheduleNseCatchup();
 scheduleRecurringMarketRefresh();
 scheduleIndiaMarketQuoteRefresh();
 scheduleBackfillCron();
 scheduleEmailDigest();
 setTimeout(() => {
+  runAmfiSchemeMasterSync("startup");
   if (syncDisabled) {
     runMarketRefresh("startup");
     runFundamentals("startup");
