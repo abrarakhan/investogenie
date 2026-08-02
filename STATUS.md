@@ -1,6 +1,6 @@
 # InvestoGenie Status
 
-_Last updated: 2026-08-02 (fixed a starvation regression that had stalled the US history sync entirely — 53/8,703 assets fresh; added the 'same stock across multiple funds' X-Ray view; automated AMFI scheme-master sync; full-repo lint/type/test/build gate clean)_
+_Last updated: 2026-08-02 (surfaced fund-vs-fund overlap on the Fund Mapping screen; fixed a starvation regression that had stalled the US history sync entirely; added the 'same stock across multiple funds' X-Ray view; automated AMFI scheme-master sync; full-repo lint/type/test/build gate clean)_
 
 This file summarizes what has been built so far, what is currently working, what is partial, and what to build next.
 
@@ -319,12 +319,24 @@ Built:
 - CSV export: `/portfolio/fund-mapping/export`.
 - Reusable match vocabulary: Matched, Pending, Ambiguous, No Snapshot, Rejected.
 - Reusable component: `components/ui/MatchStatusBadge.tsx`.
+- **"Fund vs fund overlap" block (2026-08-02).** Pairwise overlap previously existed only on
+  the terminal X-Ray, but Fund Mapping is where mapping decisions are actually made — so the
+  payoff for accepting a mapping, and the reason to go find the next AMC disclosure, was
+  invisible on the screen that matters. There is now a block directly under the summary tiles:
+  one row per pair with both fund names, the overlap percentage, and the shared-stock count,
+  expanding to the full stock list. Pairs ≥30% are flagged "heavy duplication" and coloured,
+  matching the X-Ray threshold; the top pair is expanded by default so the block is useful
+  without a click. It calls `getFundOverlap()` rather than recomputing locally — mapping and
+  the X-Ray must never disagree about the same numbers. The empty state separates the two real
+  cases: fewer than two mapped funds explains that overlap needs a pair and says how many are
+  mapped; two-or-more with nothing shared says so plainly.
 
 Current local data:
 
 - 21 user mutual-fund holdings are active from the latest CAS import.
-- 4 funds are currently accepted in `user_fund_mappings`.
-- The AMFI bridge produces exact snapshot coverage for 11 of 21 CAS holdings; 7 exact suggestions remain available through the bulk auto-accept action.
+- 5 funds are currently accepted in `user_fund_mappings`.
+- The AMFI bridge produces exact snapshot coverage for 11 of 21 CAS holdings; 6 exact suggestions remain available through the bulk auto-accept action.
+- With 5 funds mapped, the overlap engine produces **10 fund pairs**, led by ICICI Prudential Large Cap ↔ HDFC Flexi Cap at **47.1% (32 shared stocks)** — visible on both the Fund Mapping screen and the terminal X-Ray.
 - The other 10 CAS holdings have valid AMFI identities but no corresponding loaded AMC snapshot yet.
 - All 12 loaded snapshot schemes resolved to AMFI families, producing 100 identifiers with zero ownership conflicts.
 - Underlying stock rows are available after an exact suggestion is accepted; full X-Ray power still depends on importing the missing AMC disclosures.
@@ -334,7 +346,7 @@ Current limitations:
 - Not all uploaded funds have matched AMC monthly portfolio disclosures yet; the mapping screen now makes this repairable.
 - Some CAS-extracted fund names are still messy when there is no clean linked scheme snapshot.
 - Matching is intentionally conservative: scheme/fund joining should be by ISIN or explicit mapping, not fuzzy name joins.
-- Accepted mapping coverage is 4/21; identifier coverage is 11/21. Seven exact suggestions remain actionable, while the other 10 require AMC disclosure snapshots.
+- Accepted mapping coverage is 5/21; identifier coverage is 11/21. Six exact suggestions remain actionable, while the other 10 require AMC disclosure snapshots.
 
 ## Data Health
 
@@ -624,6 +636,16 @@ Current limitations:
   - Help/About
 
 ## Quality Checks Currently Passing
+
+Full-repo check run on 2026-08-02 (fund-vs-fund overlap on Fund Mapping):
+
+- `npx tsc --noEmit`: passing.
+- `npx eslint .` (whole repo): passing, no errors or warnings.
+- `npm test`: passing, **86/86 tests**.
+- `npm run build`: passing.
+- Live-database render check: the new block resolves to 10 pairs from 5 mapped funds
+  (top pair 47.1%, 32 shared stocks). Not visually confirmed in a browser — the page requires
+  sign-in and entering credentials is out of scope, so verification is data- and build-level.
 
 Full-repo check run on 2026-08-02 (US history starvation fix):
 

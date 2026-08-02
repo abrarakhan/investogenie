@@ -1,6 +1,6 @@
 # InvestoGenie - Capabilities
 
-> Current capability snapshot (2026-08-02) after the US history sync starvation fix, the cross-fund overlap view, the automated AMFI scheme-master/identifier bridge, the NSE/BSE weekend-staleness fix, the email
+> Current capability snapshot (2026-08-02) after surfacing fund-vs-fund overlap on the Fund Mapping screen, the US history sync starvation fix, the cross-fund overlap view, the automated AMFI scheme-master/identifier bridge, the NSE/BSE weekend-staleness fix, the email
 > digest, encrypted credentials, multi-provider NL query, US OHLCV backfill, permanent OTC
 > exclusion, the incremental US history sync fix, and Help knowledge-base work.
 > Current codebase: local PostgreSQL, Next.js 16, Yahoo/Google/NSE/FRED-backed sync (Tiingo is
@@ -297,6 +297,13 @@ unit-scaled before applying volatility. Full formulas: `/help/probability-method
   weight, with the stock, how many funds hold it, its effective portfolio-level weight, and which
   funds. The weight is true combined concentration across funds, not the within-fund weight.
   Current data: 57 duplicated stocks across 5 mapped funds.
+- **"Fund vs fund overlap" block** (on `/portfolio/fund-mapping`): one row per fund pair with
+  both names, the overlap percentage and shared-stock count, expanding to the full stock list;
+  pairs ≥30% flagged as heavy duplication. Placed on the mapping screen because that is where
+  mapping decisions are made — it shows what a mapping bought you and what the next disclosure
+  would unlock. Backed by the same `getFundOverlap()` engine as the terminal X-Ray, so the two
+  screens cannot disagree. Current data: 10 pairs from 5 mapped funds, led by ICICI Prudential
+  Large Cap ↔ HDFC Flexi Cap at 47.1% (32 shared stocks).
 
 ### Macro Lead/Lag
 
@@ -384,6 +391,19 @@ node scripts/backfill-progress.mjs   # queue + coverage status for the OHLCV bac
 
 ## Verification Status
 
+Fund-vs-fund overlap on Fund Mapping, 2026-08-02:
+
+```bash
+npx tsc --noEmit    # clean
+npx eslint .        # clean, whole repo
+npm test            # 86/86 passing
+npm run build       # clean
+```
+
+Resolved against the live database to 10 pairs from 5 mapped funds (top pair 47.1%, 32 shared
+stocks). Not visually confirmed in a browser: the page requires sign-in and entering credentials
+is out of scope, so verification is data- and build-level.
+
 US history sync starvation fix, 2026-08-02:
 
 ```bash
@@ -457,7 +477,7 @@ database (not just static analysis) — see `STATUS.md` for the specific queries
   forecast row is flagged "calibration pending" (documented in `/help/probability-method`).
 - NL query dispatch to OpenAI and Google has not yet been exercised end-to-end with real API
   keys; only the Anthropic path has a verified live send.
-- Fund overlap has an official AMFI identity layer: 14,222 option rows and 100 identifiers resolve all 12 loaded snapshot schemes. Eleven of 21 CAS holdings have exact snapshot ISIN coverage; 4/21 are accepted in `user_fund_mappings`, 7 exact suggestions remain actionable, and 10 funds still need AMC disclosure snapshots.
+- Fund overlap has an official AMFI identity layer: 14,222 option rows and 100 identifiers resolve all 12 loaded snapshot schemes. Eleven of 21 CAS holdings have exact snapshot ISIN coverage; 5/21 are accepted in `user_fund_mappings`, 6 exact suggestions remain actionable, and 10 funds still need AMC disclosure snapshots.
 - The email digest scheduler only runs while the app process is running; guaranteed delivery
   regardless of host uptime needs an always-on deployment or an external/Vercel cron backstop.
 - Help articles are static (compiled into the content registry) — updating copy requires a code
