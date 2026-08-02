@@ -1,6 +1,6 @@
 # InvestoGenie Status
 
-_Last updated: 2026-08-01 (automated the official AMFI scheme-master sync at startup and daily; refreshed the AMFI registry and fund-mapping counts; restored a clean full-repo lint/type/test/build gate)_
+_Last updated: 2026-08-02 (fixed a starvation regression that had stalled the US history sync entirely — 53/8,703 assets fresh; added the 'same stock across multiple funds' X-Ray view; automated AMFI scheme-master sync; full-repo lint/type/test/build gate clean)_
 
 This file summarizes what has been built so far, what is currently working, what is partial, and what to build next.
 
@@ -75,22 +75,25 @@ Current database migration stack:
 - `0021_user_credentials.sql`: per-user encrypted credentials (SMTP password, AI API keys) via AES-256-GCM.
 - `0022_ai_provider_config.sql`: active AI provider/model/key selection for the NL screener (Anthropic/OpenAI/Google).
 - `0023_amfi_scheme_master.sql`: option-level AMFI scheme registry plus the many-ISIN-to-one-portfolio identifier bridge.
+- `0024_us_history_sync_state.sql`: per-symbol attempt tracking for the US history sync, so batch selection rotates by attempt time instead of data staleness (see US History Coverage → 4c).
 
 ## Current Local Data Coverage
 
-Latest local Postgres snapshot checked on 2026-07-25:
+Latest local Postgres snapshot checked on 2026-08-02:
 
 | Area | Count / Status |
 |---|---:|
-| Assets (all classes/markets) | 16,622 (down from 18,286 after the OTC exclusion) |
-| Latest quotes | 16,127 |
-| OHLCV bars | 7,664,899 |
-| Swing signals | 10,809 |
+| Assets (all classes/markets) | 16,689 |
+| Latest quotes | 16,218 |
+| OHLCV bars | 7,730,751 |
+| Swing signals | 10,923 |
 | Financial report rows | 126,390 |
 | Macro indicator rows | 8,195 |
-| Cron log rows | 421 |
-| US active stock assets | 8,991 (1,664 no-history OTC permanently excluded 2026-07-24 — see US History Coverage → OTC exclusion) |
-| US assets with OHLCV history | 8,543 / 8,991 (95.0%) |
+| Cron log rows | 689 |
+| US active stock assets | 9,044 (no-history OTC permanently excluded 2026-07-24 — see US History Coverage → OTC exclusion) |
+| US assets with OHLCV history | 8,703 / 9,044 (96.2%) |
+| **US assets with *fresh* history (≤3 days)** | **355 / 8,703 — mid-recovery from the 4c starvation regression (was 53; ~2.4 days to full drain)** |
+| US history sync rotation state rows | 323 and climbing (new in 0024; one per symbol attempted) |
 | India active stock assets | 7,563 |
 | India assets with OHLCV history | 7,284 / 7,563 (96.3%) |
 | US fundamentals coverage | 5,449 assets with a latest financial report |
@@ -112,7 +115,7 @@ Portfolio/fund figures below were refreshed on 2026-07-25 where the current DB e
 | Fund scheme identifiers | 100 identifiers across all 12 loaded snapshots |
 | CAS holdings with exact snapshot ISIN match | 11 / 21 |
 | Fund snapshot rows | 936 |
-| Explicit user fund mappings | 4 matched mappings |
+| Explicit user fund mappings | 5 matched mappings |
 | Forward-test positions | 40 |
 | Imported user mutual funds | 21 CAS fund holdings imported in the current local DB |
 | Imported user fund value | INR 85,32,803.53 from latest CAS inventory |
@@ -135,9 +138,10 @@ The wrapper currently handles:
 - Security listing refresh (`scripts/ingest-listings.mjs`; excludes US OTC listings from
   ingestion since 2026-07-24 — see US History Coverage → OTC exclusion).
 - Quote refresh.
-- US quote/fundamental/history sync hooks (`US_HISTORY_LIMIT=150`/hour since 2026-07-24;
-  see US History Coverage → Incremental US History Sync for why it was raised from 50 and
-  why the underlying query's selection/ordering was also fixed).
+- US quote/fundamental/history sync hooks (`US_HISTORY_LIMIT=150`/hour since 2026-07-24).
+  Batch selection rotates by `last_attempt_at` via `us_history_sync_state`, not by data
+  staleness — see US History Coverage → 4c for the starvation regression that made this
+  necessary.
 - Macro sync hook.
 - Signal scan trigger through cron API.
 - Queued OHLCV repair trigger through a detached local worker script.
@@ -275,6 +279,22 @@ Built:
   - Pending marker for unmatched funds.
 - Fund X-Ray now reads AMC snapshot look-through through explicit `user_fund_mappings` instead of relying on implicit `fund_schemes.asset_id` joins.
 - X-Ray includes a “Fix mapping” path into the dedicated mapping screen.
+- **"Same stock across multiple funds" panel (2026-08-02).** The engine had always computed
+  cross-fund duplication (`stockExposure[].contributingFunds`), but only used it to amber-tint
+  rows inside each fund's own card — so answering "which stocks do I hold through more than one
+  fund, and what do they add up to" meant reading every fund card and cross-referencing by eye.
+  There is now a dedicated panel listing every duplicated holding, sorted by fund count then
+  combined weight, showing the stock, how many funds hold it, its effective portfolio-level
+  weight, and which funds. Live data: **57 duplicated stocks**, three held by all 4 mapped funds
+  (United Spirits, Godrej Consumer, Eternal), ICICI Bank the largest combined exposure at 2.04%.
+  The weight shown is effective portfolio exposure (true combined concentration), not the
+  within-fund weight — labelled inline so the number is unambiguous.
+- **Empty state corrected (2026-08-02).** It previously said "No fund holdings imported yet."
+  for two different situations, since the page redirects when signed out: genuinely nothing
+  imported, and — misleadingly — funds imported but none mapped to an AMC disclosure. These are
+  now distinct: no holdings links to CAS import; holdings-but-no-mappings states how many funds
+  are imported, explains unmapped funds have no underlying stocks to compare, and links to fund
+  mapping.
 
 ### Fund Mapping
 
@@ -605,6 +625,17 @@ Current limitations:
 
 ## Quality Checks Currently Passing
 
+Full-repo check run on 2026-08-02 (US history starvation fix):
+
+- `.venv/bin/python -m py_compile pipelines/us_history_sync.py`: passing.
+- `npx tsc --noEmit`: passing.
+- `npx eslint .` (whole repo): passing, no errors or warnings.
+- `npm test`: passing, **86/86 tests**.
+- `npm run build`: passing; 16/16 static pages.
+- Live-database behavioural checks (the part unit tests cannot cover here): three consecutive
+  runs processed disjoint symbol sets; two production-size runs wrote 1,671 and 1,715 bars;
+  backoff verified eligible/excluded across a 5-case matrix including the 14-day cap.
+
 Full-repo check run on 2026-08-01 (AMFI automation and lint cleanup):
 
 - `npm run lint`: passing with no errors or warnings.
@@ -882,6 +913,70 @@ actual pace is most likely intermittent app uptime: the dev server was stopped a
 multiple times over the day for other testing, so the hourly recurring job did not run
 continuously. Under continuous uptime the backlog should keep clearing at ~150/hour; no further
 code change indicated yet — this needs another observation window before concluding otherwise.
+
+> ⚠️ **That conclusion was wrong.** The slow pace was not intermittent uptime — the ordering
+> introduced here had a latent starvation bug that stopped progress entirely once the queue
+> head filled with dead tickers. See 4c below. Recorded rather than rewritten, because the
+> mistake was diagnostic: a partial improvement was read as "working, just slow", and the
+> proposed next step was to wait and observe rather than to re-examine the mechanism.
+
+### 4c. Incremental US History Sync — fixed the starvation regression (2026-08-02)
+
+**Symptom:** US OHLCV coverage had collapsed to **53 of 8,703 assets fresh** (from ~4,000 on
+2026-07-24), with 8,513 sitting 8–30 days stale. The job itself looked healthy: it had run 87
+consecutive hourly cycles with zero errors. But every run emitted *byte-identical* output —
+`stocks=150 fetched=144 bars_written=257 no_data=6 failed=0` — i.e. it was reprocessing the
+same 150 symbols forever and never advancing.
+
+**Root cause — a regression introduced by 4b's own fix.** Ordering the batch by `last_date`
+(data staleness) silently assumes that fetching a symbol advances its `last_date`. That does
+not hold for delisted/dead tickers: Yahoo returns nothing new, `last_date` never moves, so they
+remain the most-stale rows and win the `ORDER BY` again on the next run, and the next,
+indefinitely. About 150 dead tickers (`AKPPS`, last traded 2023-12-04; `ADZCF`; `CBRGF`; mostly
+1-bar warrants) monopolised every run while ~8,500 healthy symbols were never selected at all.
+
+This is the *same* head-of-line blocking 4b explicitly anticipated for never-fetched symbols and
+guarded against with `nulls last`. What was missed: a symbol that *has* a `last_date` can be
+permanently stuck in exactly the same way. 4b's verification passed because it only checked a
+single batch's composition — one run cannot reveal a loop.
+
+**Fix — order by attempt time, never by data staleness.** Attempting a symbol now always
+rotates it to the back of the queue, whether or not it returned bars. Starvation becomes
+*structurally impossible* rather than merely unlikely, which is the property 4b lacked:
+
+- **`db/migrations/0024_us_history_sync_state.sql`**: new `us_history_sync_state` table
+  following the existing `quote_sync_state` / `fundamentals_sync_state` convention —
+  `(asset_id, provider)` key, `last_attempt_at`, `last_success_at`, `consecutive_empty`,
+  `last_error`.
+- **`pipelines/us_history_sync.py`**: `record_attempt()` stamps *every* attempt — success,
+  empty, and error alike — wrapped so bookkeeping failure can never abort the sync; dry runs
+  deliberately do not mutate rotation state. Selection now orders by
+  `last_attempt_at nulls first` (new listings picked up promptly) and backs off
+  repeatedly-empty symbols by `consecutive_empty` days, capped at 14 — dead tickers consume
+  progressively fewer slots but are never abandoned, so one that resumes trading is retried
+  within a fortnight at worst.
+
+**Verified against the live database over multiple cycles** (not a single batch, which is
+precisely what let 4b's bug through):
+
+- Three consecutive runs processed three *disjoint* symbol sets (`A/AA/AAAU…` →
+  `AACG/AACI/AACIU…` → `AACPR/AACPU/AACPW…`), where previously they were identical.
+- Two production-size runs wrote **1,671** and **1,715** bars, against the stuck loop's
+  constant 257.
+- Backoff exercised across the matrix: 0 empties always eligible; 5 empties excluded at 2 days
+  and eligible at 6; 30 empties (capped to 14) excluded at 10 days and eligible at 15 —
+  confirming nothing is permanently abandoned.
+- 8,766 candidates eligible; at 150/hour the universe cycles in **~2.4 days**, inside the
+  3-day staleness threshold Data Health checks against.
+
+**Expected drain:** the backlog needs ~2.4 days of continuous uptime to clear, so Data Health
+will keep showing elevated US staleness until roughly **2026-08-05**. That is drain time, not a
+stall — worth a spot-check then to confirm the fresh count is actually climbing rather than
+flat.
+
+Follow-up: still no Python test suite in this repo, so `us_history_sync.py` has no automated
+regression test. Given this file has now had two ordering bugs in nine days, a small pytest
+around `load_assets()`'s selection/rotation would be the highest-value next addition.
 
 ### 5. Help Knowledge Base — done, could extend
 

@@ -1,6 +1,6 @@
 # InvestoGenie - Capabilities
 
-> Current capability snapshot (2026-08-01) after the automated AMFI scheme-master/identifier bridge, the NSE/BSE weekend-staleness fix, the email
+> Current capability snapshot (2026-08-02) after the US history sync starvation fix, the cross-fund overlap view, the automated AMFI scheme-master/identifier bridge, the NSE/BSE weekend-staleness fix, the email
 > digest, encrypted credentials, multi-provider NL query, US OHLCV backfill, permanent OTC
 > exclusion, the incremental US history sync fix, and Help knowledge-base work.
 > Current codebase: local PostgreSQL, Next.js 16, Yahoo/Google/NSE/FRED-backed sync (Tiingo is
@@ -292,6 +292,11 @@ unit-scaled before applying volatility. Full formulas: `/help/probability-method
   `user_fund_mappings`.
 - It can flag overlap concentration and DIRECT-plan optimization suggestions when holding data
   exists.
+- **"Same stock across multiple funds" panel** (on `/terminal/in`, in the Fund Overlap X-Ray):
+  lists every holding appearing in more than one mapped fund, sorted by fund count then combined
+  weight, with the stock, how many funds hold it, its effective portfolio-level weight, and which
+  funds. The weight is true combined concentration across funds, not the within-fund weight.
+  Current data: 57 duplicated stocks across 5 mapped funds.
 
 ### Macro Lead/Lag
 
@@ -332,9 +337,12 @@ The wrapper's recurring loop does:
 - security listings refresh,
 - market quote refresh (15-minute India market-hours cadence),
 - US quote/fundamental/history sync hooks — US history via free Yahoo Finance (`yfinance`),
-  150 symbols/hour, prioritized by staleness (oldest-refreshed-first, not lowest-coverage-first)
-  since 2026-07-24, so already-covered symbols keep getting refreshed instead of being
-  permanently skipped once they cross the minimum-bars threshold,
+  150 symbols/hour. Batch selection rotates by **attempt time** (`us_history_sync_state.last_attempt_at`),
+  not by data staleness: attempting a symbol always moves it to the back of the queue, so no
+  symbol can monopolise the queue. Repeatedly-empty symbols back off by day, capped at 14, so
+  dead tickers cost progressively fewer slots without ever being abandoned. Full universe cycles
+  in ~2.4 days. (Staleness-based ordering was tried 2026-07-24 and caused total starvation —
+  see `STATUS.md` → US History Coverage → 4c.),
 - FRED macro history sync,
 - swing signal scan trigger,
 - NSE/BSE bhavcopy incremental OHLCV sync + daily catch-up,
@@ -376,6 +384,22 @@ node scripts/backfill-progress.mjs   # queue + coverage status for the OHLCV bac
 
 ## Verification Status
 
+US history sync starvation fix, 2026-08-02:
+
+```bash
+.venv/bin/python -m py_compile pipelines/us_history_sync.py   # clean
+npx tsc --noEmit                                              # clean
+npx eslint .                                                  # clean, whole repo
+npm test                                                      # 86/86 passing
+npm run build                                                 # clean, 16/16 static pages
+```
+
+Behavioural verification against the live database, over multiple cycles rather than a single
+batch — a single batch is exactly what let the previous ordering bug through: three consecutive
+runs processed disjoint symbol sets (previously byte-identical); two production-size runs wrote
+1,671 and 1,715 bars against the stuck loop's constant 257; backoff confirmed
+eligible/excluded across a 5-case matrix including the 14-day never-abandoned cap.
+
 NSE/BSE weekend-staleness fix, 2026-07-26:
 
 ```bash
@@ -409,6 +433,14 @@ database (not just static analysis) — see `STATUS.md` for the specific queries
 
 ## Remaining Gaps
 
+- `pipelines/us_history_sync.py` has **no automated test coverage** — there is no Python test
+  suite in this repo, so both of its ordering bugs (2026-07-24 and 2026-08-02) were caught only
+  by live observation, the second after it had silently stalled for 87 runs. A small pytest
+  around `load_assets()`'s selection and rotation is the highest-value next addition.
+- US history coverage is **mid-recovery** from the 2026-08-02 starvation fix: 355 of 8,703 US
+  assets fresh at time of writing, draining at ~150/hour toward full coverage in ~2.4 days of
+  continuous uptime. Data Health will keep reporting elevated US staleness until roughly
+  2026-08-05; worth confirming then that the fresh count is climbing rather than flat.
 - The weekend-staleness fix (2026-07-26) covers NSE/BSE only. US markets are also closed
   Sat/Sun, so "US OHLCV History" / "US Quotes" source cards have the identical flat-cadence
   flaw and would likewise show false stale/failed statuses over the US weekend — not fixed here,
