@@ -103,6 +103,18 @@ def load_assets(
         )
         params.extend([min_bars, stale_days])
 
+    if not requested:
+        # Backoff for symbols that keep coming back empty (delisted, warrants,
+        # tickers with no Yahoo coverage). Wait consecutive_empty days before
+        # retrying, capped at 14 — so dead tickers consume progressively fewer
+        # slots but are never abandoned: one that resumes trading is retried
+        # within a fortnight at worst.
+        filters.append(
+            "(s.last_attempt_at is null"
+            " or s.last_attempt_at < now() -"
+            " (least(coalesce(s.consecutive_empty, 0), 14) * interval '1 day'))"
+        )
+
     limit_sql = ""
     if limit is not None and not requested:
         params.append(max(1, limit))
@@ -119,19 +131,51 @@ def load_assets(
                   from public.daily_ohlcv
                  group by asset_id
               ) o on o.asset_id=a.id
+              left join public.us_history_sync_state s
+                on s.asset_id = a.id and s.provider = 'yahoo'
              where {' and '.join(filters)}
-             -- Oldest last_date first, so an already-covered ticker whose data
-             -- is aging gets refreshed ahead of a fully fresh one. Never-fetched
-             -- (null) sorts LAST, not first: most are delisted/no-data tickers
-             -- that will never gain a last_date, and putting them first would
-             -- let them monopolize every run forever, starving the genuinely
-             -- stale-but-covered tickers this staleness leg exists to reach.
-             order by o.last_date nulls last, coalesce(o.bar_count,0), a.ticker, a.exchange
+             -- Order by ATTEMPT time, never by data staleness. A dead ticker's
+             -- last_date never advances, so staleness ordering re-picked the
+             -- same ~150 symbols on every run and starved the other ~8,500
+             -- (see db/migrations/0024_us_history_sync_state.sql). Ordering by
+             -- last_attempt_at makes that structurally impossible: attempting a
+             -- symbol always moves it to the back of the queue, whether or not
+             -- it returned any bars. Never-attempted (null) goes first so a
+             -- newly listed symbol is picked up promptly.
+             order by s.last_attempt_at nulls first, a.ticker, a.exchange
              {limit_sql}
             """,
             params,
         )
         return [AssetState(row[0], row[1], row[2], int(row[3]), row[4]) for row in cur.fetchall()]
+
+
+def record_attempt(conn, asset_id: str, bars_written: int, error: str | None) -> None:
+    """Stamp this symbol's attempt so it rotates to the back of the queue.
+
+    Called for EVERY attempt — success, empty, or failure. That unconditional
+    stamp is what prevents any symbol from monopolising the selection query.
+    consecutive_empty resets on bars, increments when a fetch yields nothing.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            insert into public.us_history_sync_state
+                   (asset_id, provider, last_attempt_at, last_success_at,
+                    consecutive_empty, last_error)
+            values (%s, 'yahoo', now(), case when %s > 0 then now() end,
+                    case when %s > 0 then 0 else 1 end, %s)
+            on conflict (asset_id, provider) do update set
+                last_attempt_at = now(),
+                last_success_at = case when %s > 0 then now()
+                                       else public.us_history_sync_state.last_success_at end,
+                consecutive_empty = case when %s > 0 then 0
+                                         else public.us_history_sync_state.consecutive_empty + 1 end,
+                last_error = %s
+            """,
+            [asset_id, bars_written, bars_written, error,
+             bars_written, bars_written, error],
+        )
 
 
 def normalize_download(frame: pd.DataFrame) -> pd.DataFrame:
@@ -247,20 +291,34 @@ def main() -> None:
         failed = 0
         for index, state in enumerate(assets, 1):
             print(f"[{index}/{len(assets)}] {state.ticker} bars={state.bar_count} last={state.last_date or '-'}")
+            written = 0
+            attempt_error: str | None = None
             try:
                 frame = download(state, args)
                 if frame.empty:
                     no_data += 1
+                    attempt_error = "no bars returned"
                     print("   no bars returned")
                 else:
                     fetched += 1
-                    count = 0 if args.dry_run else upsert_bars(conn, state.asset_id, frame)
-                    bars_written += count
-                    print(f"   upserted {count} bars ({frame['date'].min()}..{frame['date'].max()})")
+                    written = 0 if args.dry_run else upsert_bars(conn, state.asset_id, frame)
+                    bars_written += written
+                    print(f"   upserted {written} bars ({frame['date'].min()}..{frame['date'].max()})")
             except Exception as exc:
                 conn.rollback()
                 failed += 1
+                attempt_error = str(exc)[:500]
                 print(f"   ERROR: {exc}")
+            # Stamp the attempt unconditionally — including on empty/error — so
+            # this symbol rotates to the back of the queue and cannot starve the
+            # rest of the universe. A dry run must not mutate the rotation.
+            if not args.dry_run:
+                try:
+                    record_attempt(conn, state.asset_id, written, attempt_error)
+                    conn.commit()
+                except Exception as exc:  # never let bookkeeping abort the sync
+                    conn.rollback()
+                    print(f"   WARN: could not record attempt: {exc}")
             if index < len(assets) and args.sleep > 0:
                 time.sleep(args.sleep)
         print(
