@@ -4,6 +4,7 @@ import { useMemo, useState, useTransition } from "react";
 import Link from "next/link";
 import MatchStatusBadge from "@/components/ui/MatchStatusBadge";
 import type { FundMappingData, SnapshotWithMapping, UserFundMappingRow } from "@/lib/funds/fundMappingStore";
+import type { PairwiseOverlap } from "@/lib/analytics/fundOverlap";
 import { acceptFundSuggestion, autoAcceptIsinMatches, rejectFundSuggestion, unlinkFundMapping } from "./actions";
 
 function money(value: number) {
@@ -93,7 +94,94 @@ function SnapshotCard({ snapshot, selectedFund }: { snapshot: SnapshotWithMappin
   );
 }
 
-export default function FundMappingClient({ data, linkedStocks }: { data: FundMappingData; linkedStocks?: string | null }) {
+/** Fund-pair overlap: "Fund A ↔ Fund B — X% — these exact stocks".
+ *  Lives here as well as on the terminal X-Ray because this is the screen where
+ *  mapping decisions are made — seeing the overlap a mapping produced is the
+ *  payoff for accepting it, and the reason to go find the next disclosure. */
+function OverlapPairs({ pairs, matched }: { pairs: PairwiseOverlap[]; matched: number }) {
+  const [expanded, setExpanded] = useState<string | null>(pairs[0] ? `${pairs[0].fundA}|${pairs[0].fundB}` : null);
+
+  return (
+    <div className="rounded-lg border border-white/10 bg-white/[0.03] p-4">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-white/45">Fund vs fund overlap</p>
+          <p className="mt-1 text-[11px] text-white/40">
+            How much of each pair&apos;s holdings are the same stocks, and exactly which ones.
+          </p>
+        </div>
+        {pairs.length > 0 && (
+          <span className="rounded-full border border-white/10 px-2 py-0.5 text-[10px] font-semibold text-white/50">
+            {pairs.length} pair{pairs.length === 1 ? "" : "s"} from {matched} mapped fund{matched === 1 ? "" : "s"}
+          </span>
+        )}
+      </div>
+
+      {pairs.length === 0 ? (
+        <p className="text-sm text-white/45">
+          {matched < 2
+            ? `Overlap needs at least two mapped funds to compare — ${matched} mapped so far. Accept a suggestion below (or import that fund's AMC disclosure) to unlock this.`
+            : "No shared stocks between the mapped funds yet."}
+        </p>
+      ) : (
+        <div className="space-y-2">
+          {pairs.map((pair) => {
+            const key = `${pair.fundA}|${pair.fundB}`;
+            const isOpen = expanded === key;
+            const heavy = pair.overlapPct >= 30;
+            return (
+              <div key={key} className="rounded-lg border border-white/5 bg-black/20">
+                <button
+                  type="button"
+                  onClick={() => setExpanded(isOpen ? null : key)}
+                  className="flex w-full items-center justify-between gap-3 px-3 py-2.5 text-left"
+                >
+                  <span className="min-w-0 flex-1 text-xs">
+                    <span className="block truncate text-white/80" title={`${pair.fundA} ↔ ${pair.fundB}`}>
+                      {pair.fundA} <span className="text-white/35">↔</span> {pair.fundB}
+                    </span>
+                    <span className="mt-0.5 block text-[10px] text-white/38">
+                      {pair.sharedStocks.length} shared stock{pair.sharedStocks.length === 1 ? "" : "s"}
+                      {heavy && " · heavy duplication"}
+                    </span>
+                  </span>
+                  <span className={heavy ? "font-mono text-sm font-bold text-rose-300" : "font-mono text-sm text-cyan-200"}>
+                    {pair.overlapPct.toFixed(1)}%
+                  </span>
+                  <span className="text-[10px] text-white/30">{isOpen ? "▲" : "▼"}</span>
+                </button>
+                {isOpen && (
+                  <div className="border-t border-white/5 px-3 py-2.5">
+                    <div className="flex flex-wrap gap-1.5">
+                      {pair.sharedStocks.map((stock) => (
+                        <span
+                          key={stock}
+                          className="rounded-full border border-amber-300/20 bg-amber-300/10 px-2 py-0.5 text-[10px] text-amber-100"
+                        >
+                          {stock}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default function FundMappingClient({
+  data,
+  linkedStocks,
+  pairwiseOverlaps = [],
+}: {
+  data: FundMappingData;
+  linkedStocks?: string | null;
+  pairwiseOverlaps?: PairwiseOverlap[];
+}) {
   const [selectedId, setSelectedId] = useState(data.funds.find((fund) => fund.displayStatus !== "matched")?.holdingId ?? data.funds[0]?.holdingId ?? null);
   const [query, setQuery] = useState("");
   const [amcFilter, setAmcFilter] = useState("all");
@@ -125,6 +213,8 @@ export default function FundMappingClient({ data, linkedStocks }: { data: FundMa
         <div className="rounded-lg border border-white/10 bg-white/[0.03] p-4"><p className="text-[10px] uppercase tracking-[0.16em] text-white/35">Pending</p><p className="mt-1 text-2xl font-black text-amber-300">{data.summary.pending}</p></div>
         <div className="rounded-lg border border-white/10 bg-white/[0.03] p-4"><p className="text-[10px] uppercase tracking-[0.16em] text-white/35">Rejected</p><p className="mt-1 text-2xl font-black text-rose-300">{data.summary.rejected}</p></div>
       </div>
+
+      <OverlapPairs pairs={pairwiseOverlaps} matched={data.summary.matched} />
 
       <div className="flex flex-wrap items-center gap-3">
         <button
