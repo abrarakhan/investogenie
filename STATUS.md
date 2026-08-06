@@ -1,6 +1,6 @@
 # InvestoGenie Status
 
-_Last updated: 2026-08-02 (surfaced fund-vs-fund overlap on the Fund Mapping screen; fixed a starvation regression that had stalled the US history sync entirely; added the 'same stock across multiple funds' X-Ray view; automated AMFI scheme-master sync; full-repo lint/type/test/build gate clean)_
+_Last updated: 2026-08-06 (added Long-Term Investment Candidates under Market Workspace — six investors' fundamentals screens scored against every stock; surfaced fund-vs-fund overlap on the Fund Mapping screen; fixed a starvation regression that had stalled the US history sync entirely; added the 'same stock across multiple funds' X-Ray view; automated AMFI scheme-master sync; full-repo lint/type/test/build gate clean)_
 
 This file summarizes what has been built so far, what is currently working, what is partial, and what to build next.
 
@@ -10,6 +10,7 @@ InvestoGenie is now a local-first market terminal and portfolio intelligence app
 
 - Market overview and charting for India and US.
 - Buy candidate discovery for swing trading.
+- Long-horizon fundamentals screening against six well-known investors' published criteria.
 - Rule-based and probability-style strategy screens.
 - Local Postgres as the system of record.
 - Recurring quote/history/fundamental/macro sync jobs.
@@ -22,7 +23,7 @@ InvestoGenie is now a local-first market terminal and portfolio intelligence app
 ### Public / Orientation
 
 - Landing page: `/`
-- Help & knowledge base: `/help` (guided walkthrough + article index), `/help/[slug]` (7 articles)
+- Help & knowledge base: `/help` (guided walkthrough + article index), `/help/[slug]` (13 articles)
 - About page: `/about`
 - Login: `/login`
 
@@ -34,6 +35,7 @@ InvestoGenie is now a local-first market terminal and portfolio intelligence app
 - Market overview route: `/markets/[market]`
 - Stocks route: `/terminal/[market]/stocks`
 - Screener route: `/terminal/[market]/screener` (with NL query support)
+- Long-Term Candidates route: `/terminal/[market]/long-term`
 - Probability route: `/terminal/[market]/probability`
 - Forward-test route: `/terminal/[market]/forward-test`
 - Import holdings / CAS route: `/terminal/in/cas`
@@ -224,6 +226,55 @@ Current limitations:
 - Candidate quality depends on latest OHLCV and quote freshness.
 - Derivatives/OI confirmation is architecturally present, but live Breeze OI feed is not fully operational because Breeze static IP requirements block local-only usage.
 - Needs more backtesting/forward-testing feedback loops before commercialization.
+
+## Long-Term Investment Candidates
+
+Built (2026-08-06):
+
+- New route `/terminal/[market]/long-term`, in the sidebar under Market Workspace directly
+  after Swing Candidates.
+- Scores every stock in the screener universe (reuses `getScreenerResults`, up to 500 rows per
+  market) against six long-horizon investors' published fundamentals criteria: Lynch GARP,
+  Buffett moat, Graham defensive, Fisher growth, Templeton contrarian, Greenblatt magic formula.
+- `lib/analytics/longTermStrategies.ts` — declarative criteria per strategy (gte/lte/gt/lt/exists
+  operators over `LongTermFundamentals`), market-cap floors branched by market (India Rs. Crore /
+  US USD millions, matching the existing screener convention), synthetic fields computed fresh
+  each time (`peg_ratio`, `earnings_yield_proxy`).
+- `lib/long-term-actions.ts` — `getLongTermCandidates()` server action: scores, filters by
+  strategy/min-score, sorts by best match score, no auth gate (matches the Stock Screener's own
+  anonymous-read pattern).
+- `components/long-term/StrategyBadge.tsx`, `components/long-term/LongTermCandidatesClient.tsx`
+  — strategy filter chips, min-score slider, expandable per-stock criteria breakdown showing
+  each pass/fail/no-data row.
+- 7 new help articles (`lib/help/articles.tsx`): an engine overview plus one per strategy,
+  each disclosing where the app's fundamentals data forced an adaptation of the investor's
+  original published test. **Graham's Net-Current-Asset-Value screen is dropped entirely** —
+  no current-assets/current-liabilities data exists anywhere in the schema, so it would have
+  had to be silently faked; every other adaptation (PEG proxy, moat proxy, etc.) is disclosed
+  inline via a `Callout tone="warn"` rather than presented as the literal original test.
+- Reused, not rewritten: the user supplied 5 reference files from an unrelated codebase as
+  design inspiration (shadcn/ui components, a `pb_ratio` field, raw `db.connect()` calls) —
+  none of those conventions matched this app, so the feature was built against this repo's
+  actual patterns (screener field registry, `"use server"` + `query()`, Tailwind terminal
+  styling) instead of adapted from the reference code.
+
+Explicit constraint honored: this feature does not modify any swing-candidate or probability
+code. Verified via `git diff --stat` against every swing/probability file before commit — zero
+changes.
+
+Verified: `tsc`/`eslint` clean, 86/86 tests pass, production build clean (new route + 7 new
+`/help/[slug]` static pages generated), live-rendered in-browser with real data (e.g. APOLLOTYRE
+scoring 100% GARP / 67% Defensive / 54% Moat), expand/collapse criteria interaction confirmed
+working.
+
+Current limitations:
+
+- No India/US worked-example prose in the help articles yet (same gap as the existing swing
+  strategy articles).
+- Approximated criteria (PEG ratio, moat proxy, contrarian proxy) are disclosed but not
+  separately backtested against the investor's original historical hit rate.
+- No forward-testing hook yet — unlike Swing Candidates, there is no scorecard tracking whether
+  a high-scoring Long-Term candidate actually outperforms.
 
 ## Screener And Fundamentals
 
@@ -637,6 +688,19 @@ Current limitations:
 
 ## Quality Checks Currently Passing
 
+Full-repo check run on 2026-08-06 (Long-Term Investment Candidates):
+
+- `npx tsc --noEmit`: passing.
+- `npx eslint .` on the new/modified files: passing, no errors or warnings.
+- `npm test`: passing, **86/86 tests**.
+- `npm run build`: passing; new `/terminal/[market]/long-term` dynamic route and 7 new
+  `/help/[slug]` static article pages generated.
+- Live-database render check: `/terminal/in/long-term` confirmed in-browser — nav placement
+  under Market Workspace, real scored candidates, working strategy filter chips and min-score
+  slider, expandable criteria breakdown rendering pass/fail rows correctly.
+- `git diff --stat` confirmed zero changes to any swing-candidate or probability file, per the
+  explicit constraint on this task.
+
 Full-repo check run on 2026-08-02 (fund-vs-fund overlap on Fund Mapping):
 
 - `npx tsc --noEmit`: passing.
@@ -698,6 +762,7 @@ Current branch:
 
 Recent commits:
 
+- `6545628 Add Long-Term Investment Candidates under Market Workspace`
 - `23d7f5d Update auto-generated session context bookkeeping`
 - `76713b0 Fix incremental US history sync: covered symbols never refreshed, throughput too low`
 - `d3c217d Permanently exclude OTC from US listings; re-purge and update docs`

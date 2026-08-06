@@ -1,6 +1,9 @@
 # InvestoGenie - Capabilities
 
-> Current capability snapshot (2026-08-02) after surfacing fund-vs-fund overlap on the Fund Mapping screen, the US history sync starvation fix, the cross-fund overlap view, the automated AMFI scheme-master/identifier bridge, the NSE/BSE weekend-staleness fix, the email
+> Current capability snapshot (2026-08-06) after adding Long-Term Investment Candidates (six
+> investors' fundamentals screens scored against every stock), surfacing fund-vs-fund overlap on
+> the Fund Mapping screen, the US history sync starvation fix, the cross-fund overlap view, the
+> automated AMFI scheme-master/identifier bridge, the NSE/BSE weekend-staleness fix, the email
 > digest, encrypted credentials, multi-provider NL query, US OHLCV backfill, permanent OTC
 > exclusion, the incremental US history sync fix, and Help knowledge-base work.
 > Current codebase: local PostgreSQL, Next.js 16, Yahoo/Google/NSE/FRED-backed sync (Tiingo is
@@ -9,10 +12,11 @@
 ## In One Line
 
 InvestoGenie is a local-first US and India market terminal with portfolio tracking, live quote
-refreshes, OHLCV history, legendary-strategy swing screening, a probability forecast engine,
-company fundamentals, macro lead/lag analytics, a daily email digest, encrypted per-user
-credentials, a multi-provider natural-language screener, a professional help/knowledge base,
-and recurring data sync jobs.
+refreshes, OHLCV history, legendary-strategy swing screening, long-horizon fundamentals
+screening against six named investors' criteria, a probability forecast engine, company
+fundamentals, macro lead/lag analytics, a daily email digest, encrypted per-user credentials, a
+multi-provider natural-language screener, a professional help/knowledge base, and recurring data
+sync jobs.
 
 ## Capabilities At A Glance
 
@@ -27,12 +31,13 @@ and recurring data sync jobs.
 | Stock Screener | US+India fundamental/price-action screener: filter engine, presets, saved screens, universes, CSV/Excel export | Working |
 | **NL Query (screener)** | Plain-English → filters, dispatched to a **user-chosen AI provider** (Anthropic/OpenAI/Google), validated through the same filter-engine guard regardless of provider | Working |
 | Legendary strategies | Qullamaggie, Minervini, Darvas, PTJ, Simons tags and filters | Working |
+| **Long-Term Candidates** | Six investors' fundamentals screens (Lynch, Buffett, Graham, Fisher, Templeton, Greenblatt) scored against every stock, strategy filters + min-score threshold | Working |
 | Probability engine | 21-trading-day return distribution per stock: expected return, P(up), drawdown risk, Student-t price range | Working |
 | Fundamentals | P/E, market cap, ROCE, YoY profit/sales growth in screener | Working |
 | Macro lead/lag | FRED-backed cross-asset rolling correlation and lead/lag matrix | Working |
 | **Email digest** | Daily 07:00 IST email with top Swing Candidates + Probability forecasts, same engines as the screens | Working |
 | **Encrypted credentials** | AES-256-GCM storage for SMTP password and the active AI provider/model/key, editable in Settings | Working |
-| **Help & knowledge base** | `/help` guided walkthrough + 7 code-accurate articles (engine + 5 strategies + probability method) | Working |
+| **Help & knowledge base** | `/help` guided walkthrough + 13 code-accurate articles (swing engine + 5 swing strategies + probability method + Long-Term engine + 6 investor strategies) | Working |
 | Sync health | Browser-visible `/admin/sync` and `/data/health` freshness and provider status pages | Working |
 | Recurring sync | Startup, recurring, and daily jobs for quotes, OHLCV, fundamentals, macro, scans, and the email digest | Working |
 | AMFI scheme identity | Official option-level AMFI registry with AMC/category, NAV, both ISIN columns, AMFI codes, and many-identifiers-to-one-snapshot mapping | Working |
@@ -221,12 +226,15 @@ never in the database.
 Routes:
 
 - `/help` — guided, numbered walkthrough of the whole app plus a categorized article index
-- `/help/[slug]` — 7 statically generated articles
+- `/help/[slug]` — 13 statically generated articles
 
 Articles: the shared swing engine (classifier + ATR level derivation), one per legendary
 strategy (Qullamaggie, Minervini, Darvas, PTJ, Simons) with named-trader attribution and
-literature references, and the probability method. Every formula and threshold quoted was
-pulled directly from the implementing source file, not written from general knowledge.
+literature references, the probability method, a Long-Term Candidates engine overview, and one
+per investor strategy (Lynch, Buffett, Graham, Fisher, Templeton, Greenblatt). Every formula and
+threshold quoted was pulled directly from the implementing source file, not written from general
+knowledge; where a criterion had to be adapted or dropped for missing data, that is disclosed in
+the article rather than presented as the investor's literal original test.
 
 ### Data Health
 
@@ -276,6 +284,27 @@ avoiding stale entries below the current quote. Full formulas: `/help/swing-engi
 | Darvas | Confirmed box top/bottom, buy-stop one tick above the top | `/help/darvas-box` |
 | Paul Tudor Jones | 200-day moving-average regime filter, entry near the mean | `/help/ptj-200-day-trend` |
 | Simons | 20-day rolling z-score mean reversion at ±2.5σ | `/help/simons-quant-reversion` |
+
+### Long-Term Investment Candidates
+
+Six published fundamentals screens, scored against every stock in the screener universe:
+
+| Strategy | Core idea | Reference |
+| --- | --- | --- |
+| Lynch GARP | Growth at a reasonable price — PEG-style ratio, manageable debt | `/help/lynch-garp` |
+| Buffett moat | Consistent ROE/ROCE, low debt, durable profitability proxy | `/help/buffett-moat` |
+| Graham defensive | Conservative valuation and size floor; NCAV test omitted (no data) | `/help/graham-defensive` |
+| Fisher growth | Sustained revenue/profit growth ("scuttlebutt" proxy) | `/help/fisher-growth` |
+| Templeton contrarian | Deep value near lows, out-of-favor proxy | `/help/templeton-contrarian` |
+| Greenblatt magic formula | Earnings yield + return on capital, liquidity floor | `/help/greenblatt-magic` |
+
+Each stock gets a 0-100 match score per strategy (matched criteria / total criteria) plus a
+per-criterion breakdown (pass / fail / no-data — missing fundamentals always fail a criterion,
+never silently pass). Route: `/terminal/[market]/long-term`, filterable by strategy and minimum
+score. Every adaptation forced by this app's actual fundamentals data (vs. each investor's
+original published test) is disclosed in the corresponding help article rather than presented as
+a literal match — most notably, Graham's Net-Current-Asset-Value screen is dropped entirely since
+no current-assets/current-liabilities data exists in the schema.
 
 ### Probability Model
 
@@ -391,6 +420,21 @@ node scripts/backfill-progress.mjs   # queue + coverage status for the OHLCV bac
 
 ## Verification Status
 
+Long-Term Investment Candidates, 2026-08-06:
+
+```bash
+npx tsc --noEmit    # clean
+npx eslint .        # clean, on new/modified files
+npm test            # 86/86 passing
+npm run build       # clean, new dynamic route + 7 new /help/[slug] static pages
+```
+
+Live-rendered in-browser at `/terminal/in/long-term`: nav item correctly placed under Market
+Workspace directly after Swing Candidates, real scored candidates from the live database (e.g.
+APOLLOTYRE at 100% GARP / 67% Defensive / 54% Moat), strategy filter chips and min-score slider
+interactive, expandable per-criterion breakdown confirmed rendering pass/fail/no-data rows.
+`git diff --stat` confirmed zero changes to any swing-candidate or probability file.
+
 Fund-vs-fund overlap on Fund Mapping, 2026-08-02:
 
 ```bash
@@ -453,6 +497,10 @@ database (not just static analysis) — see `STATUS.md` for the specific queries
 
 ## Remaining Gaps
 
+- Long-Term Candidates has no forward-testing hook — unlike Swing Candidates, there is no
+  scorecard yet tracking whether a high-scoring candidate actually outperforms, and the
+  approximated criteria (PEG proxy, moat proxy, contrarian proxy) are disclosed but not
+  separately backtested against each investor's historical hit rate.
 - `pipelines/us_history_sync.py` has **no automated test coverage** — there is no Python test
   suite in this repo, so both of its ordering bugs (2026-07-24 and 2026-08-02) were caught only
   by live observation, the second after it had silently stalled for 87 runs. A small pytest
