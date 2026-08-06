@@ -47,7 +47,7 @@ function MarketSwitch({ market, activeArea }: { market: MarketId; activeArea: st
       {(["US", "IN"] as MarketId[]).map((m) => (
         <Link
           key={m}
-          href={`${target}/${marketPath(m)}${activeArea === "stock-screener" ? "/stocks" : activeArea === "swing" ? "/screener" : activeArea === "probability" ? "/probability" : ""}`}
+          href={`${target}/${marketPath(m)}${activeArea === "stock-screener" ? "/stocks" : activeArea === "swing" ? "/screener" : activeArea === "long-term" ? "/long-term" : activeArea === "probability" ? "/probability" : ""}`}
           className={cx(
             "rounded-md px-3 py-1.5 text-center transition-colors",
             m.toLowerCase() === currentPath
@@ -75,7 +75,7 @@ export default function AppShell({
   children: React.ReactNode;
   email?: string;
   market: MarketId;
-  active: "overview" | "terminal" | "stock-screener" | "swing" | "probability" | "forward-test" | "import-holdings" | "fund-mapping" | "data" | "settings";
+  active: "overview" | "terminal" | "stock-screener" | "swing" | "long-term" | "probability" | "forward-test" | "import-holdings" | "fund-mapping" | "data" | "settings";
   title: string;
   subtitle?: string;
   actions?: React.ReactNode;
@@ -91,6 +91,7 @@ export default function AppShell({
         { label: "Terminal", href: `/terminal/${m}`, active: active === "terminal" },
         { label: "Stock Screener", href: `/terminal/${m}/stocks`, active: active === "stock-screener" },
         { label: "Swing Candidates", href: `/terminal/${m}/screener`, active: active === "swing", badge: "Buy" },
+        { label: "Long-Term Candidates", href: `/terminal/${m}/long-term`, active: active === "long-term" },
       ],
     },
     {

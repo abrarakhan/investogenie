@@ -3,7 +3,7 @@ import {
   H2, H3, P, UL, LI, Formula, Callout, SpecTable, References,
 } from "@/components/help/HelpLayout";
 
-export type HelpCategory = "swing" | "probability" | "engine";
+export type HelpCategory = "swing" | "probability" | "engine" | "long-term";
 
 export interface HelpArticle {
   slug: string;
@@ -550,6 +550,465 @@ priceAt(p)    = lastPrice × (1 + returnAt(p) / 100)   for p in {5,25,50,75,95}`
 };
 
 // ---------------------------------------------------------------------------
+// Long-Term Investment (LTI) Candidates — how the engine is built, and the six
+// strategies it scores. See lib/analytics/longTermStrategies.ts for the code
+// these articles describe.
+// ---------------------------------------------------------------------------
+
+const longTermEngine: HelpArticle = {
+  slug: "long-term-engine",
+  category: "long-term",
+  title: "How Long-Term Candidates are built",
+  subtitle: "One fundamentals snapshot, six investors' published criteria, and an honest account of what had to be adapted.",
+  readMins: 6,
+  summary:
+    "Every stock is scored against six long-horizon investors' criteria using the same stock_snapshot data the Stock Screener reads. Several criteria are adapted from the investors' original tests because this dataset lacks multi-year history and balance-sheet detail — every adaptation is disclosed here and on each strategy's own page.",
+  Body: () => (
+    <>
+      <P>
+        Long-Term Candidates scores every stock against six well-known investors&apos; published
+        fundamentals criteria and ranks the best matches. It reads exactly the same data as the
+        Stock Screener — P/E, ROE, ROCE, Debt/Equity, dividend yield, market cap, and YoY revenue
+        and profit growth — nothing is fetched or computed separately, so a number here always
+        agrees with the same stock&apos;s row in the Screener.
+      </P>
+
+      <H2>What the data can and cannot do</H2>
+      <P>
+        These six investors wrote their tests decades apart, for different markets, often assuming
+        data this app does not have: multi-year earnings history, a full balance sheet (current
+        assets, total liabilities), EBIT, or enterprise value. Rather than fabricate those numbers
+        from unrelated fields, every strategy below either drops the unavailable criterion or
+        substitutes the closest real proxy — always named plainly, both in the code&apos;s own
+        comments and on each strategy&apos;s page here.
+      </P>
+      <SpecTable
+        rows={[
+          { k: "Not available anywhere", v: "Price-to-book, multi-year (5/10-yr) history, current ratio, current assets/liabilities, EBIT, enterprise value, R&D spend." },
+          { k: "Available", v: "P/E, ROE, ROCE, Debt/Equity, dividend yield, market cap, YoY revenue growth, YoY profit growth, free cash flow, % from 52-week high." },
+        ]}
+      />
+
+      <H2>One strategy is not implemented at all</H2>
+      <P>
+        Benjamin Graham&apos;s <strong>Net Current Asset Value</strong> (&ldquo;net-net&rdquo;)
+        screen is not offered here. It requires current assets minus total liabilities on the
+        balance sheet — there is no equivalent anywhere in this schema, and no combination of the
+        available ratios approximates it honestly. Faking Graham&apos;s own arithmetic would
+        misrepresent a rule that is, in his own writing, a literal balance-sheet calculation. It is
+        left out rather than approximated.
+      </P>
+
+      <H2>How scoring works</H2>
+      <P>
+        Each strategy is a short list of weighted criteria. A stock either passes or fails each one
+        against a threshold from the investor&apos;s own writing (or the closest available proxy);
+        the match score is the weighted share of criteria passed, 0–100. A missing data point
+        always counts as a fail — it is never treated as a pass by default — and is shown
+        separately in the breakdown as &ldquo;no data&rdquo; rather than a silent zero.
+      </P>
+      <Formula>{`matchScore = 100 × (Σ weight of passed criteria) / (Σ weight of all criteria)`}</Formula>
+
+      <H2>How to read it in the app</H2>
+      <P>
+        Toggle one or more strategies to filter the list, or leave none selected to rank every
+        stock by its single best strategy match. Expand a candidate&apos;s criteria breakdown to
+        see exactly which conditions passed, failed, or had no data — the same transparency the
+        Swing Candidates screen gives for its own scores.
+      </P>
+
+      <Callout tone="warn">
+        A high match score means a stock satisfies the <em>adapted</em> version of that
+        investor&apos;s test implemented here — not necessarily the investor&apos;s original,
+        literal criteria. Read the strategy&apos;s own page (linked from every candidate) before
+        treating a match as equivalent to what Lynch, Buffett, Graham, Fisher, Templeton or
+        Greenblatt would themselves have bought.
+      </Callout>
+
+      <References
+        items={[
+          { text: "Graham, Benjamin & Dodd, David. Security Analysis. McGraw-Hill, 1934 — the Net Current Asset Value method this app does not implement." },
+        ]}
+      />
+    </>
+  ),
+};
+
+const lynchGarp: HelpArticle = {
+  slug: "lynch-garp",
+  category: "long-term",
+  title: "Peter Lynch — Growth At a Reasonable Price",
+  subtitle: "A PEG ratio under 1, modest debt, and real earnings growth — Lynch's simplest rule, applied literally.",
+  trader: "Peter Lynch",
+  readMins: 5,
+  summary:
+    "Lynch ran Fidelity Magellan at 29% annually from 1977–1990 hunting for 'fast growers' at a PEG below 1. Every criterion here maps directly onto available data — this is the one strategy needing no material adaptation.",
+  Body: () => (
+    <>
+      <P>
+        Peter Lynch ran the Fidelity Magellan Fund from 1977 to 1990, averaging a 29.2% annual
+        return. His method: buy growing companies at a reasonable price, understand what they do,
+        and hold until the story changes. Of the six strategies here, this one needs the least
+        adaptation — every input Lynch&apos;s core test needs is in this dataset.
+      </P>
+
+      <H2>The PEG ratio</H2>
+      <P>Lynch&apos;s signature metric divides the P/E by the earnings growth rate:</P>
+      <Formula>{`PEG = P/E ÷ profit growth (YoY, as a plain percentage)`}</Formula>
+      <P>
+        A PEG of <strong>1.0</strong> means you are paying a fair price for the growth. Lynch
+        hunted for PEGs <strong>below 1.0</strong>. His original test used a 5-year growth rate;
+        this app has only a single year (YoY) of profit growth, so the PEG here is a one-year
+        snapshot, not Lynch&apos;s smoothed multi-year figure. It is skipped entirely (not scored
+        as a fail) when profit growth is zero or negative — PEG is meaningless for a shrinking or
+        break-even business.
+      </P>
+
+      <H2>What the app checks</H2>
+      <SpecTable
+        rows={[
+          { k: "PEG ratio", v: "≤ 1.0× — the core valuation anchor." },
+          { k: "Debt-to-Equity", v: "≤ 0.5× — Lynch avoided heavily leveraged growers." },
+          { k: "Profit growth (YoY)", v: "15–50% — fast-grower territory; above 50% risks being unsustainable." },
+          { k: "P/E ratio", v: "≤ 25× — Lynch rarely paid a higher multiple for growth." },
+          { k: "Revenue growth (YoY)", v: "≥ 10% — top-line growth should confirm the bottom-line growth." },
+        ]}
+      />
+
+      <H2>What&apos;s missing from Lynch&apos;s full method</H2>
+      <P>
+        Lynch&apos;s &ldquo;buy what you know&rdquo; scuttlebutt — visiting stores, using products,
+        reading reviews — and his six-category classification (slow growers, stalwarts, fast
+        growers, cyclicals, turnarounds, asset plays) are both qualitative and cannot be
+        screened. The quantitative test above finds candidates; that judgment remains the
+        investor&apos;s own.
+      </P>
+
+      <Callout tone="info">
+        This strategy needs no proxy substitutions — every criterion above is Lynch&apos;s own
+        threshold, applied to the closest available figure (YoY growth standing in for his 5-year
+        rate).
+      </Callout>
+
+      <References
+        items={[
+          { text: "Lynch, Peter. One Up On Wall Street. Simon & Schuster, 1989." },
+          { text: "Lynch, Peter. Beating the Street. Simon & Schuster, 1993." },
+        ]}
+      />
+    </>
+  ),
+};
+
+const buffettMoat: HelpArticle = {
+  slug: "buffett-moat",
+  category: "long-term",
+  title: "Warren Buffett — Economic Moat",
+  subtitle: "High returns on capital, low debt, and real free cash flow — adapted from Buffett's own decade-long test.",
+  trader: "Warren Buffett",
+  readMins: 6,
+  summary:
+    "Buffett buys durable competitive advantage: businesses that sustain high returns without much capital or debt. This app substitutes a single year of data for his usual decade of evidence — clearly marked below.",
+  Body: () => (
+    <>
+      <P>
+        Warren Buffett&apos;s approach is not strictly value or growth — it is quality at a fair
+        price. He buys businesses with a durable <strong>moat</strong> (brand power, network
+        effects, cost advantages, or switching costs) and holds them, provided the advantage stays
+        intact.
+      </P>
+
+      <H2>What the app checks</H2>
+      <SpecTable
+        rows={[
+          { k: "ROE", v: "≥ 15% — Buffett wants a moat to show up as a superior return on equity." },
+          { k: "ROCE", v: "≥ 15% — capital efficiency, without relying on leverage to get there." },
+          { k: "Debt-to-Equity", v: "≤ 0.5× — Buffett dislikes leverage; his best holdings often carry little debt." },
+          { k: "Free cash flow", v: "positive — a stand-in for Buffett's own “owner earnings” (net income adjusted for capex and working capital)." },
+          { k: "Profit growth (YoY)", v: "≥ 10% — a one-year proxy for consistent compounding." },
+        ]}
+      />
+
+      <H2>What had to be adapted</H2>
+      <P>
+        Buffett&apos;s own test looks for these figures sustained over <strong>5–10 years</strong>,
+        plus gross margin (pricing-power evidence) and a current-ratio liquidity check. This
+        dataset carries only the latest reported quarter and has no gross-margin or current-ratio
+        field at all, so those two are dropped rather than approximated, and every threshold above
+        is checked against a single period, not a decade of consistency.
+      </P>
+
+      <Callout tone="warn">
+        A high score here means the latest reported quarter looks like a moat business — it says
+        nothing about whether that quality has actually persisted for years, which is the heart of
+        Buffett&apos;s own test. Cross-check a candidate&apos;s own filing history before assuming
+        durability.
+      </Callout>
+
+      <H2>The circle of competence</H2>
+      <P>
+        Buffett only invests in businesses he can understand, and asks whether the moat will still
+        exist in ten years. Nothing in a fundamentals screen can answer that — it narrows the list;
+        the judgment about durability is the investor&apos;s own.
+      </P>
+
+      <References
+        items={[
+          { text: "Buffett, Warren. Berkshire Hathaway Letters to Shareholders, 1965–present." },
+          { text: "Graham, Benjamin. The Intelligent Investor (preface by Buffett). Harper, 1973." },
+        ]}
+      />
+    </>
+  ),
+};
+
+const grahamDefensive: HelpArticle = {
+  slug: "graham-defensive",
+  category: "long-term",
+  title: "Benjamin Graham — Defensive Investor",
+  subtitle: "Graham's 7-point safety screen, reduced to the four criteria this dataset can actually check.",
+  trader: "Benjamin Graham",
+  readMins: 6,
+  summary:
+    "Graham's Chapter 14 defensive-investor test wants adequate size, a strong balance sheet, decades of earnings and dividend history, and a moderate price. Most of that history isn't in this dataset; what remains is a reduced, single-period safety check.",
+  Body: () => (
+    <>
+      <P>
+        Benjamin Graham&apos;s <em>Intelligent Investor</em> Chapter 14 lists seven criteria for
+        the &ldquo;defensive investor&rdquo; — someone who wants safety and simplicity, not
+        excitement. Most of Graham&apos;s seven need either a full balance sheet or 10–20 years of
+        reported history, neither of which exists in this dataset. What survives is a reduced,
+        honestly weaker safety check.
+      </P>
+
+      <H2>Graham&apos;s original seven, and what happened to each</H2>
+      <SpecTable
+        rows={[
+          { k: "1. Adequate size", v: "Kept — market cap ≥ ₹2,000 Cr / $200M, scaled to a modern small-cap floor." },
+          { k: "2. Strong financial condition (current ratio ≥ 2×)", v: "Replaced — no balance-sheet current-ratio data exists; Debt-to-Equity ≤ 0.5× stands in as a related, weaker signal." },
+          { k: "3. Earnings stability (no loss in 10 years)", v: "Dropped — no multi-year earnings history is stored." },
+          { k: "4. Dividend record (20 uninterrupted years)", v: "Replaced — only the current dividend yield is available; “pays a dividend now” stands in for a two-decade record." },
+          { k: "5. Earnings growth (33% over 10 years)", v: "Dropped — same reason as #3." },
+          { k: "6. Moderate P/E (≤ 15× 3-yr avg earnings)", v: "Kept, using the current P/E instead of a 3-year average." },
+          { k: "7. Moderate price-to-book (≤ 1.5×, or P/E × P/B ≤ 22.5)", v: "Dropped — price-to-book does not exist anywhere in this schema." },
+        ]}
+      />
+
+      <H2>What the app actually checks</H2>
+      <SpecTable
+        rows={[
+          { k: "Market cap", v: "≥ ₹2,000 Cr (India) or $200M (US)." },
+          { k: "P/E ratio", v: "≤ 15×." },
+          { k: "Debt-to-Equity", v: "≤ 0.5× (proxy for the current-ratio test)." },
+          { k: "Dividend yield", v: "> 0% (proxy for the 20-year record)." },
+        ]}
+      />
+
+      <Callout tone="warn">
+        Three of Graham&apos;s seven original criteria — earnings stability, the 10-year growth
+        test, and price-to-book — are simply not checked, because the data does not exist. Treat a
+        match here as &ldquo;passes a reduced, single-period version of Graham&apos;s size, price
+        and leverage tests,&rdquo; not as satisfying his full defensive-investor bar.
+      </Callout>
+
+      <References
+        items={[
+          { text: "Graham, Benjamin. The Intelligent Investor, Chapter 14. Harper, 1973." },
+        ]}
+      />
+    </>
+  ),
+};
+
+const fisherGrowth: HelpArticle = {
+  slug: "fisher-growth",
+  category: "long-term",
+  title: "Philip Fisher — Growth & Scuttlebutt",
+  subtitle: "Sustained growth financed without leverage — the quantifiable slice of Fisher's fifteen points.",
+  trader: "Philip Fisher",
+  readMins: 5,
+  summary:
+    "Fisher's 1958 classic holds mostly qualitative criteria (management quality, labour relations) that cannot be screened at all. The few points with numerical signatures — growth, margins, leverage — are adapted here to one year of data.",
+  Body: () => (
+    <>
+      <P>
+        Philip Fisher&apos;s <em>Common Stocks and Uncommon Profits</em> (1958) introduced buying
+        great growth companies and holding for years, even decades. Most of his fifteen points —
+        management integrity, labour relations, R&D culture — are judgment calls that no
+        fundamentals screen can make. Only a handful have a clean numerical signature.
+      </P>
+
+      <H2>What the app checks</H2>
+      <SpecTable
+        rows={[
+          { k: "Revenue growth (YoY)", v: "≥ 15% — Fisher wanted substantial market growth ahead. His test used a 5-year trend; only one year (YoY) is available here." },
+          { k: "Debt-to-Equity", v: "≤ 0.4× — Fisher preferred growth financed internally, not through leverage." },
+          { k: "ROE", v: "≥ 15% — high returns without excessive leverage." },
+          { k: "P/E ratio", v: "≤ 40× — Fisher paid up for quality, but not without limit." },
+        ]}
+      />
+
+      <H2>What&apos;s dropped entirely</H2>
+      <P>
+        Net margin expansion (Fisher wanted margins stable or improving over 5 years) and R&D
+        spend as a share of revenue — a proxy for his &ldquo;determined product-development
+        commitment&rdquo; point — are both absent from this schema and are not checked at all,
+        rather than faked from unrelated figures.
+      </P>
+
+      <H2>Scuttlebutt</H2>
+      <P>
+        Fisher&apos;s most famous idea is gathering information from customers, competitors,
+        suppliers and former employees to verify the growth is real and sustainable. No screen can
+        do this; it finds candidates, scuttlebutt separates the genuinely great from the merely
+        good.
+      </P>
+
+      <Callout tone="warn">
+        This is the most heavily reduced of the six strategies — four surviving criteria out of
+        Fisher&apos;s original fifteen points, two of them (revenue growth, and implicitly the
+        margin/R&D points that are dropped) meaningfully weaker than his own multi-year tests.
+      </Callout>
+
+      <References
+        items={[
+          { text: "Fisher, Philip. Common Stocks and Uncommon Profits. Harper, 1958." },
+        ]}
+      />
+    </>
+  ),
+};
+
+const templetonContrarian: HelpArticle = {
+  slug: "templeton-contrarian",
+  category: "long-term",
+  title: "John Templeton — Global Contrarian",
+  subtitle: "Cheap, paying a dividend, and well off its 52-week high — one of the two strategies needing almost no adaptation.",
+  trader: "John Templeton",
+  readMins: 5,
+  summary:
+    "Templeton bought at the point of maximum pessimism using low P/E, low price-to-book, and high dividend yield. This app swaps price-to-book (unavailable) for the exact 52-week-high distance this dataset already has — arguably a better direct read of pessimism than the original.",
+  Body: () => (
+    <>
+      <P>
+        Sir John Templeton pioneered global investing by buying when pessimism was highest. In
+        1939 he borrowed money to buy 100 shares of every NYSE stock trading below $1 — 34 were
+        bankrupt. Four years later he sold for a 400% gain. His toolkit was classic value, applied
+        with a global, forward-looking lens.
+      </P>
+
+      <H2>What the app checks</H2>
+      <SpecTable
+        rows={[
+          { k: "P/E ratio", v: "≤ 12× — low expectations already baked into the price." },
+          { k: "Dividend yield", v: "≥ 3% — income while waiting for the market to change its mind." },
+          { k: "Debt-to-Equity", v: "≤ 0.5× — survivability matters when buying into a downturn." },
+          { k: "% from 52-week high", v: "≤ -30% — at least 30% below the high, a direct read of pessimism." },
+        ]}
+      />
+
+      <H2>The one substitution — and why it&apos;s arguably an improvement</H2>
+      <P>
+        Templeton&apos;s original test used price-to-book (≤ 1.2×) as an asset floor under the
+        price. This schema has no price-to-book anywhere, so the screen uses{" "}
+        <code>pct_from_52w_high</code> instead — the stock&apos;s exact distance below its own
+        52-week high. This is a direct, literal measurement of the pessimism Templeton was
+        actually trying to detect, rather than book value acting as an indirect proxy for it — one
+        of the few places in this feature where the substitute is arguably closer to the
+        investor&apos;s real intent than a missing original field would have been.
+      </P>
+
+      <H2>The forward look</H2>
+      <P>
+        Templeton did not just buy cheap stocks — he bought stocks cheap relative to their
+        earnings five years out. The screen only has trailing data; the investor must supply the
+        forward judgment: will earnings be higher in five years? If yes, the pessimism the screen
+        detected is likely overdone.
+      </P>
+
+      <References
+        items={[
+          { text: "Templeton, John. The Templeton Touch. Doubleday, 1983." },
+          { text: "Templeton, Lauren. Investing the Templeton Way. McGraw-Hill, 2007." },
+        ]}
+      />
+    </>
+  ),
+};
+
+const greenblattMagic: HelpArticle = {
+  slug: "greenblatt-magic",
+  category: "long-term",
+  title: "Joel Greenblatt — Magic Formula (approximated)",
+  subtitle: "Rank by quality and cheapness together — using ROCE and a P/E-based proxy in place of EBIT and enterprise value.",
+  trader: "Joel Greenblatt",
+  readMins: 6,
+  summary:
+    "Greenblatt's formula ranks stocks by Return on Capital (EBIT ÷ operating assets) and Earnings Yield (EBIT ÷ Enterprise Value). Neither EBIT nor enterprise value exists in this dataset, so both are approximated — the most heavily adapted strategy of the six, and labelled as such everywhere it appears.",
+  Body: () => (
+    <>
+      <P>
+        Joel Greenblatt&apos;s <em>The Little Book That Beats the Market</em> (2006) distilled
+        value investing into two numbers: <strong>Return on Capital</strong> (how good is the
+        business?) and <strong>Earnings Yield</strong> (how cheap is it?). Rank by both, buy the
+        intersection, hold a year, rebalance.
+      </P>
+
+      <H2>Greenblatt&apos;s actual formula</H2>
+      <Formula>{`Return on Capital (ROC) = EBIT ÷ (Net Working Capital + Net Fixed Assets)
+Earnings Yield         = EBIT ÷ Enterprise Value`}</Formula>
+      <P>
+        Neither <strong>EBIT</strong> (earnings before interest and tax) nor{" "}
+        <strong>Enterprise Value</strong> (market cap plus debt, minus cash) exists anywhere in
+        this schema — there is no working-capital/fixed-asset breakdown and no debt/cash figure to
+        build an enterprise value from.
+      </P>
+
+      <H2>What the app approximates instead</H2>
+      <SpecTable
+        rows={[
+          { k: "ROCE, in place of Return on Capital", v: "ROCE is a related but different ratio to Greenblatt's own EBIT ÷ (NWC + Fixed Assets) — it uses total capital employed, not just operating assets, and isn't restricted to EBIT." },
+          { k: "100 ÷ P/E, in place of Earnings Yield", v: "This ignores debt and cash entirely, which the real EBIT ÷ Enterprise Value formula exists specifically to account for. A P/E-based proxy, not his formula." },
+        ]}
+      />
+      <Formula>{`earnings yield proxy (%) = 100 / P-E ratio`}</Formula>
+
+      <H2>What the app checks</H2>
+      <SpecTable
+        rows={[
+          { k: "ROCE (Return-on-Capital proxy)", v: "≥ 25%" },
+          { k: "Earnings yield (100/P-E proxy)", v: "≥ 10%" },
+          { k: "Market cap", v: "≥ ₹500 Cr (India) or $50M (US) — Greenblatt's own liquidity floor, excluding tiny illiquid names." },
+          { k: "P/E ratio", v: "positive — earnings only, no speculative losses." },
+        ]}
+      />
+
+      <Callout tone="warn">
+        This is the most heavily adapted of the six strategies. A high score means a stock has high
+        ROCE and a low P/E — a reasonable quality-and-cheapness signal on its own terms, but it is{" "}
+        <strong>not</strong> Greenblatt&apos;s literal EBIT/Enterprise-Value ranking, and stocks
+        with meaningful debt or large cash balances are exactly where the two measures diverge
+        most.
+      </Callout>
+
+      <H2>Mechanical discipline</H2>
+      <P>
+        Greenblatt&apos;s formula is deliberately mechanical because judgment often erodes the
+        edge: rank, buy the top names, rebalance annually, and otherwise leave it alone. That
+        discipline still applies here — but it is being applied to an approximation of his ranking,
+        not the ranking itself.
+      </P>
+
+      <References
+        items={[
+          { text: "Greenblatt, Joel. The Little Book That Beats the Market. Wiley, 2006." },
+        ]}
+      />
+    </>
+  ),
+};
+
+// ---------------------------------------------------------------------------
 
 export const HELP_ARTICLES: HelpArticle[] = [
   swingEngine,
@@ -559,6 +1018,13 @@ export const HELP_ARTICLES: HelpArticle[] = [
   ptj,
   simons,
   probability,
+  longTermEngine,
+  lynchGarp,
+  buffettMoat,
+  grahamDefensive,
+  fisherGrowth,
+  templetonContrarian,
+  greenblattMagic,
 ];
 
 export const HELP_BY_SLUG: Record<string, HelpArticle> = Object.fromEntries(
@@ -567,4 +1033,5 @@ export const HELP_BY_SLUG: Record<string, HelpArticle> = Object.fromEntries(
 
 export const SWING_ARTICLES = HELP_ARTICLES.filter((a) => a.category === "swing");
 export const ENGINE_ARTICLES = HELP_ARTICLES.filter((a) => a.category === "engine");
+export const LONG_TERM_ARTICLES = HELP_ARTICLES.filter((a) => a.category === "long-term");
 export const PROBABILITY_ARTICLES = HELP_ARTICLES.filter((a) => a.category === "probability");

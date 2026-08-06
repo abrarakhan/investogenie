@@ -9,6 +9,7 @@ const CATEGORY_LABEL: Record<string, string> = {
   swing: "Swing Strategy",
   probability: "Probability",
   engine: "How it works",
+  "long-term": "Long-Term Strategy",
 };
 
 export function generateStaticParams() {

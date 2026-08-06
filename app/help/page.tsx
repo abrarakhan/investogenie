@@ -1,7 +1,7 @@
 import Link from "next/link";
 import type { Metadata } from "next";
 import {
-  HELP_ARTICLES, SWING_ARTICLES, ENGINE_ARTICLES, PROBABILITY_ARTICLES,
+  HELP_ARTICLES, SWING_ARTICLES, ENGINE_ARTICLES, PROBABILITY_ARTICLES, LONG_TERM_ARTICLES,
   type HelpArticle,
 } from "@/lib/help/articles";
 import { HelpShell, Article, Eyebrow, Title, Lede, H2, P } from "@/components/help/HelpLayout";
@@ -40,18 +40,24 @@ const JOURNEY: { step: string; title: string; href: string; body: string }[] = [
   },
   {
     step: "5",
+    title: "Think longer horizon — Long-Term Candidates",
+    href: "/terminal/in/long-term",
+    body: "Six well-known investors' published fundamentals criteria (Lynch, Buffett, Graham, Fisher, Templeton, Greenblatt), scored against every stock and ranked — adapted honestly where the data doesn't fully match their original tests.",
+  },
+  {
+    step: "6",
     title: "Weigh the odds — Probability",
     href: "/terminal/in/probability",
     body: "A 21-trading-day forecast per stock: expected return, probability of an up move, drawdown risk and a projected price range. Research context, not a buy/sell call.",
   },
   {
-    step: "6",
+    step: "7",
     title: "Bring in your holdings — Import",
     href: "/terminal/in/cas",
     body: "For India, upload CAS statements and AMC disclosures to power local holdings and the Fund Overlap X-Ray.",
   },
   {
-    step: "7",
+    step: "8",
     title: "Trust the data — Data Health",
     href: "/data/health",
     body: "Inspect quote and OHLCV coverage, fundamentals freshness, provider state and sync-job history so you know how current the numbers are.",
@@ -125,6 +131,16 @@ export default function HelpPage() {
         </P>
         <div className="mt-6 grid gap-4 sm:grid-cols-2">
           {SWING_ARTICLES.map((a) => <ArticleCard key={a.slug} a={a} />)}
+        </div>
+
+        <H2>Long-Term Candidates</H2>
+        <P>
+          Six long-horizon investors&apos; published fundamentals criteria, scored against every
+          stock. Start with the engine overview — it explains what had to be adapted and which
+          screen was left out entirely, and why.
+        </P>
+        <div className="mt-6 grid gap-4 sm:grid-cols-2">
+          {LONG_TERM_ARTICLES.map((a) => <ArticleCard key={a.slug} a={a} />)}
         </div>
 
         <H2>The Probability model</H2>
