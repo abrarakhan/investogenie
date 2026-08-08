@@ -1,6 +1,6 @@
 # InvestoGenie Status
 
-_Last updated: 2026-08-06 (added Long-Term Investment Candidates under Market Workspace — six investors' fundamentals screens scored against every stock; surfaced fund-vs-fund overlap on the Fund Mapping screen; fixed a starvation regression that had stalled the US history sync entirely; added the 'same stock across multiple funds' X-Ray view; automated AMFI scheme-master sync; full-repo lint/type/test/build gate clean)_
+_Last updated: 2026-08-08 (added normalized annual company statements and an Oracle Cloud Always Free production deployment package; 96 tests, lint, typecheck and production build clean)_
 
 This file summarizes what has been built so far, what is currently working, what is partial, and what to build next.
 
@@ -17,6 +17,19 @@ InvestoGenie is now a local-first market terminal and portfolio intelligence app
 - Portfolio import and Fund Overlap X-Ray using CAS and AMC disclosures.
 - Forward-testing infrastructure to judge strategies out of sample.
 - Data coverage visibility and repair workflows for fund mappings, source freshness, and stale strategy inputs.
+
+### Local and Oracle deployment readiness
+
+- `deploy/local/` documents the existing macOS one-click/development deployment, while
+  `deploy/oracle/` provides Ubuntu bootstrap, systemd, Nginx, production environment template,
+  release update, PostgreSQL backup, HTTPS and local-database transfer instructions.
+- `scripts/check-deployment.mjs` validates secrets, runtime, build artifact and database isolation;
+  the live Mac passes 10/10 local checks and a production-profile simulation passes 12/12.
+- Recommended target is one home-region `VM.Standard.A1.Flex` ARM VM with 2 OCPUs, 12 GB RAM,
+  a 100 GB boot volume and a reserved public IP. PostgreSQL and Next.js remain private behind Nginx.
+- Current local sizing is approximately 1.9 GB for PostgreSQL and 2.4 GB for the development
+  workspace, so the target has substantial initial storage headroom. Cloud deployment still
+  requires the intended revision to be committed/pushed and an OCI VM/domain to be provisioned.
 
 ## Current App Surfaces
 
@@ -229,52 +242,70 @@ Current limitations:
 
 ## Long-Term Investment Candidates
 
-Built (2026-08-06):
+Built and strengthened (2026-08-08):
 
 - New route `/terminal/[market]/long-term`, in the sidebar under Market Workspace directly
   after Swing Candidates.
-- Scores every stock in the screener universe (reuses `getScreenerResults`, up to 500 rows per
-  market) against six long-horizon investors' published fundamentals criteria: Lynch GARP,
+- Scores the full fundamentals-covered stock universe directly, without importing or changing
+  the Stock Screener, Swing Candidates or Probability flows. Live coverage is 4,356 India and
+  6,722 US stocks. Six long-horizon investor-inspired rankings are available: Lynch GARP,
   Buffett moat, Graham defensive, Fisher growth, Templeton contrarian, Greenblatt magic formula.
-- `lib/analytics/longTermStrategies.ts` — declarative criteria per strategy (gte/lte/gt/lt/exists
-  operators over `LongTermFundamentals`), market-cap floors branched by market (India Rs. Crore /
-  US USD millions, matching the existing screener convention), synthetic fields computed fresh
-  each time (`peg_ratio`, `earnings_yield_proxy`).
+- `lib/long-term-data.ts` reads annual and quarterly financial reports, normalized annual balance
+  sheets/cash flows, latest quotes and OHLCV; derives 3/5-year revenue/profit CAGR, observed median
+  ROCE, profit consistency, cash conversion, FCF margin, liquidity, leverage, interest coverage,
+  price-to-book and EBIT/enterprise-value yield. Currency-sensitive valuation is suppressed when
+  the report and quote currencies do not match (notably ADRs).
+- `lib/analytics/longTermStrategies.ts` uses smooth weighted criterion scores rather than binary
+  pass-count saturation. Evidence confidence incorporates data completeness, report age and
+  annual-history depth. Financials/insurers/REITs are excluded until sector-correct ratios exist,
+  and INR 500 Cr / USD 50M investability floors remove tiny names.
 - `lib/long-term-actions.ts` — `getLongTermCandidates()` server action: scores, filters by
-  strategy/min-score, sorts by best match score, no auth gate (matches the Stock Screener's own
-  anonymous-read pattern).
+  one selected strategy, minimum score and minimum evidence, then ranks by score/confidence.
+  A five-minute server cache reduces repeated filter/strategy requests from 7–8 seconds to
+  26–88 ms in live checks.
 - `components/long-term/StrategyBadge.tsx`, `components/long-term/LongTermCandidatesClient.tsx`
-  — strategy filter chips, min-score slider, expandable per-stock criteria breakdown showing
-  each pass/fail/no-data row.
-- 7 new help articles (`lib/help/articles.tsx`): an engine overview plus one per strategy,
-  each disclosing where the app's fundamentals data forced an adaptation of the investor's
-  original published test. **Graham's Net-Current-Asset-Value screen is dropped entirely** —
-  no current-assets/current-liabilities data exists anywhere in the schema, so it would have
-  had to be silently faked; every other adaptation (PEG proxy, moat proxy, etc.) is disclosed
-  inline via a `Callout tone="warn"` rather than presented as the literal original test.
+  — single-strategy selector, score/evidence sliders, true report/quote dates, history depth and
+  expandable per-criterion values and smooth scores.
+- `0025_long_term_score_snapshots.sql` stores an atomic daily top-200 strategy ranking and exposes
+  `long_term_forward_performance`, establishing a point-in-time measurement trail. Current live
+  capture verified at exactly ranks 1–50 for India and US under Buffett Moat.
+- 7 help articles (`lib/help/articles.tsx`): an engine overview plus one per strategy, each
+  disclosing adaptations. Graham now uses real current ratio, price-to-book and interest coverage;
+  Greenblatt uses EBIT/current enterprise value; Buffett/Fisher/Lynch use cash conversion evidence.
+- `0026_company_statement_details.sql` adds `asset_balance_sheets`,
+  `asset_cash_flow_statements`, richer income-statement columns and an auditable latest-health view.
+  The India and US Yahoo pipelines now upsert these statements by asset, period and report type.
+  Yahoo supplied five annual periods for the live TCS/AAPL samples; the schema supports retaining
+  more when a provider exposes it, but the app does not claim a ten-year balance-sheet history.
+- Recurring statement expansion is incremental: India and US default to 250 companies per run,
+  with environment overrides available. Until that backfill completes, missing statement evidence
+  lowers confidence rather than being fabricated.
 - Reused, not rewritten: the user supplied 5 reference files from an unrelated codebase as
   design inspiration (shadcn/ui components, a `pb_ratio` field, raw `db.connect()` calls) —
   none of those conventions matched this app, so the feature was built against this repo's
   actual patterns (screener field registry, `"use server"` + `query()`, Tailwind terminal
   styling) instead of adapted from the reference code.
 
-Explicit constraint honored: this feature does not modify any swing-candidate or probability
-code. Verified via `git diff --stat` against every swing/probability file before commit — zero
-changes.
+Explicit constraint honored: this repair does not modify Stock Screener, Swing Candidates or
+Probability code. The working-tree diff contains only Long-Term files, its migration/help copy,
+and documentation, apart from pre-existing `.claude` bookkeeping changes.
 
-Verified: `tsc`/`eslint` clean, 86/86 tests pass, production build clean (new route + 7 new
-`/help/[slug]` static pages generated), live-rendered in-browser with real data (e.g. APOLLOTYRE
-scoring 100% GARP / 67% Defensive / 54% Moat), expand/collapse criteria interaction confirmed
-working.
+Verified: `tsc`/`eslint` clean, 94/94 tests pass, production build clean, migration applied, and
+both markets queried against local PostgreSQL. Buffett live leaders included GARUDA/TCS/
+HEROMOTOCO for India and INFY/DLO/ITRN for US with realistic current P/E values. The server action
+also returned the distinct Lynch ranking IRIS/OSWALPUMPS/JINDRILL.
 
 Current limitations:
 
 - No India/US worked-example prose in the help articles yet (same gap as the existing swing
   strategy articles).
-- Approximated criteria (PEG ratio, moat proxy, contrarian proxy) are disclosed but not
-  separately backtested against the investor's original historical hit rate.
-- No forward-testing hook yet — unlike Swing Candidates, there is no scorecard tracking whether
-  a high-scoring Long-Term candidate actually outperforms.
+- Approximated criteria (PEG, moat, contrarian and Magic Formula proxies) are disclosed but not
+  yet validated against each investor's historical hit rate.
+- Daily score/price snapshots now exist, but a benchmark-relative 1/3/6/12-month scorecard and
+  survivorship-safe historical backtest UI still need to be built.
+- Full-market balance-sheet/cash-flow coverage is still backfilling. Live validation currently
+  covers TCS on NSE/BSE and AAPL; this verifies the ingestion and calculations, not universe-wide
+  completeness.
 
 ## Screener And Fundamentals
 

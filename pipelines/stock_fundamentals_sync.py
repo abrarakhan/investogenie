@@ -23,6 +23,8 @@ import yfinance as yf
 
 DEFAULT_DATABASE_URL = "postgresql://localhost:5432/investogenie"
 CRORE = 10_000_000
+PROVIDER = "YAHOO"
+ERROR_RETRY_DAYS = 7
 
 
 @dataclass(frozen=True)
@@ -64,10 +66,15 @@ def load_companies(
         params.append(sorted(requested))
 
     stale_before = datetime.now(timezone.utc) - timedelta(days=max(0, stale_days))
+    retry_before = datetime.now(timezone.utc) - timedelta(days=ERROR_RETRY_DAYS)
     freshness = ""
     if not force:
+        params.append(retry_before)
+        filters.append("(s.last_error is null or s.last_attempt_at < %s)")
         params.append(stale_before)
-        freshness = "having not bool_and(f.asset_id is not null) or min(f.last_updated) < %s"
+        freshness = """having not bool_and(
+          f.asset_id is not null and f.balance_covered and f.cashflow_covered
+        ) or min(f.last_updated) < %s"""
     limit_sql = ""
     if limit is not None:
         params.append(max(1, limit))
@@ -77,21 +84,29 @@ def load_companies(
         cur.execute(
             f"""
             with coverage as (
-              select asset_id, max(updated_at) last_updated
-                from public.asset_financial_reports
-               group by asset_id
+              select f.asset_id, max(f.updated_at) last_updated,
+                     exists(select 1 from public.asset_balance_sheets b where b.asset_id=f.asset_id) balance_covered,
+                     exists(select 1 from public.asset_cash_flow_statements c where c.asset_id=f.asset_id) cashflow_covered
+                from public.asset_financial_reports f
+               group by f.asset_id
             )
             select a.ticker,
                    array_agg(a.id::text order by case when a.exchange='NSE' then 0 else 1 end),
                    bool_or(a.exchange='NSE') has_nse,
                    min(f.last_updated) last_updated,
-                   bool_and(f.asset_id is not null) fully_covered
+                   bool_and(f.asset_id is not null and f.balance_covered and f.cashflow_covered) fully_covered
               from public.assets a
               left join coverage f on f.asset_id=a.id
+              left join public.fundamentals_sync_state s
+                on s.country='IN' and s.ticker=a.ticker and s.provider='YAHOO'
              where {' and '.join(filters)}
              group by a.ticker
              {freshness}
-             order by coalesce(min(f.last_updated), timestamptz '1900-01-01'), a.ticker
+             -- Drain known companies before probing never-covered catalog rows.
+             -- BSE includes funds/debt instruments that were historically typed STOCK;
+             -- unsupported probes are then kept out of the next batch by sync state.
+             order by bool_or(a.exchange='NSE') desc,
+                      (min(f.last_updated) is null), min(f.last_updated), a.ticker
              {limit_sql}
             """,
             params,
@@ -106,6 +121,26 @@ def load_companies(
             )
             for row in cur.fetchall()
         ]
+
+
+def record_sync_state(conn, ticker: str, error: str | None) -> None:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            insert into public.fundamentals_sync_state
+              (country, ticker, provider, last_attempt_at, last_success_at, last_error)
+            values ('IN', %s, %s, now(), case when %s is null then now() end, %s)
+            on conflict (country, ticker, provider) do update set
+              last_attempt_at=excluded.last_attempt_at,
+              last_success_at=case
+                when excluded.last_error is null then excluded.last_success_at
+                else public.fundamentals_sync_state.last_success_at
+              end,
+              last_error=excluded.last_error
+            """,
+            (ticker, PROVIDER, error, error),
+        )
+    conn.commit()
 
 
 def finite(value) -> float | None:
@@ -160,6 +195,19 @@ def build_reports(
         )
         operating_profit = statement_value(income, column, ("Operating Income",))
         ebit = statement_value(income, column, ("EBIT", "Operating Income"))
+        gross_profit = statement_value(income, column, ("Gross Profit",))
+        ebitda = statement_value(income, column, ("EBITDA", "Normalized EBITDA"))
+        interest_expense = statement_value(
+            income,
+            column,
+            ("Interest Expense", "Interest Expense Non Operating"),
+        )
+        income_tax_expense = statement_value(income, column, ("Tax Provision",))
+        diluted_average_shares = statement_value(
+            income,
+            column,
+            ("Diluted Average Shares", "Basic Average Shares"),
+        )
         eps = statement_value(income, column, ("Diluted EPS", "Basic EPS"))
 
         total_assets = (
@@ -196,6 +244,11 @@ def build_reports(
                 "net_profit": net_profit / monetary_divisor if net_profit is not None else None,
                 "operating_profit": operating_profit / monetary_divisor if operating_profit is not None else None,
                 "ebit": ebit / monetary_divisor if ebit is not None else None,
+                "gross_profit": gross_profit / monetary_divisor if gross_profit is not None else None,
+                "ebitda": ebitda / monetary_divisor if ebitda is not None else None,
+                "interest_expense": interest_expense / monetary_divisor if interest_expense is not None else None,
+                "income_tax_expense": income_tax_expense / monetary_divisor if income_tax_expense is not None else None,
+                "diluted_average_shares": diluted_average_shares,
                 "capital_employed": capital_employed / monetary_divisor if capital_employed is not None else None,
                 "eps": eps,
                 "roce": roce,
@@ -221,31 +274,118 @@ def build_reports(
     return reports
 
 
+def build_balance_sheets(
+    frame: pd.DataFrame,
+    report_type: str,
+    monetary_divisor: float = CRORE,
+) -> list[dict]:
+    fields = {
+        "total_assets": ("Total Assets",),
+        "current_assets": ("Current Assets",),
+        "cash_and_equivalents": (
+            "Cash Cash Equivalents And Short Term Investments",
+            "Cash And Cash Equivalents",
+        ),
+        "inventory": ("Inventory",),
+        "receivables": ("Receivables", "Accounts Receivable", "Gross Accounts Receivable"),
+        "total_liabilities": ("Total Liabilities Net Minority Interest",),
+        "current_liabilities": ("Current Liabilities",),
+        "accounts_payable": ("Payables And Accrued Expenses", "Payables", "Accounts Payable"),
+        "total_debt": ("Total Debt",),
+        "short_term_debt": ("Current Debt And Capital Lease Obligation", "Current Debt"),
+        "long_term_debt": ("Long Term Debt And Capital Lease Obligation", "Long Term Debt"),
+        "shareholders_equity": ("Stockholders Equity", "Common Stock Equity"),
+        "retained_earnings": ("Retained Earnings",),
+        "goodwill": ("Goodwill",),
+        "intangible_assets": ("Other Intangible Assets", "Goodwill And Other Intangible Assets"),
+        "net_tangible_assets": ("Net Tangible Assets",),
+    }
+    rows: list[dict] = []
+    for column in frame.columns:
+        row = {
+            "period_end_date": pd.Timestamp(column).date(),
+            "report_type": report_type,
+        }
+        for key, names in fields.items():
+            value = statement_value(frame, column, names)
+            row[key] = value / monetary_divisor if value is not None else None
+        if any(row[key] is not None for key in fields):
+            rows.append(row)
+    return rows
+
+
+def build_cash_flows(
+    frame: pd.DataFrame,
+    report_type: str,
+    monetary_divisor: float = CRORE,
+) -> list[dict]:
+    fields = {
+        "operating_cash_flow": ("Operating Cash Flow", "Cash Flow From Continuing Operating Activities"),
+        "capital_expenditure": ("Capital Expenditure",),
+        "free_cash_flow": ("Free Cash Flow",),
+        "dividends_paid": ("Cash Dividends Paid", "Common Stock Dividend Paid"),
+        "share_repurchase": ("Repurchase Of Capital Stock",),
+        "share_issuance": ("Issuance Of Capital Stock", "Common Stock Issuance"),
+        "debt_issuance": ("Issuance Of Debt", "Long Term Debt Issuance"),
+        "debt_repayment": ("Repayment Of Debt", "Long Term Debt Payments"),
+        "investing_cash_flow": ("Investing Cash Flow", "Cash Flow From Continuing Investing Activities"),
+        "financing_cash_flow": ("Financing Cash Flow", "Cash Flow From Continuing Financing Activities"),
+    }
+    rows: list[dict] = []
+    for column in frame.columns:
+        row = {
+            "period_end_date": pd.Timestamp(column).date(),
+            "report_type": report_type,
+        }
+        for key, names in fields.items():
+            value = statement_value(frame, column, names)
+            row[key] = value / monetary_divisor if value is not None else None
+        if any(row[key] is not None for key in fields):
+            rows.append(row)
+    return rows
+
+
 def fetch_company(
     state: CompanyState,
     retries: int,
     monetary_divisor: float = CRORE,
-) -> tuple[list[dict], dict]:
+) -> tuple[list[dict], list[dict], list[dict], dict]:
     last_error: Exception | None = None
     for attempt in range(1, retries + 1):
         try:
             ticker = yf.Ticker(state.yahoo_symbol)
+            quarterly_income = ticker.quarterly_income_stmt
+            quarterly_balance = ticker.quarterly_balance_sheet
+            quarterly_cash_flow = ticker.quarterly_cashflow
+            annual_income = ticker.income_stmt
+            annual_balance = ticker.balance_sheet
+            annual_cash_flow = ticker.cashflow
             quarterly = build_reports(
-                ticker.quarterly_income_stmt,
-                ticker.quarterly_balance_sheet,
+                quarterly_income,
+                quarterly_balance,
                 "QUARTERLY",
                 monetary_divisor,
             )
             annual = build_reports(
-                ticker.income_stmt,
-                ticker.balance_sheet,
+                annual_income,
+                annual_balance,
                 "ANNUAL",
                 monetary_divisor,
             )
+            balance_sheets = build_balance_sheets(
+                quarterly_balance,
+                "QUARTERLY",
+                monetary_divisor,
+            ) + build_balance_sheets(annual_balance, "ANNUAL", monetary_divisor)
+            cash_flows = build_cash_flows(
+                quarterly_cash_flow,
+                "QUARTERLY",
+                monetary_divisor,
+            ) + build_cash_flows(annual_cash_flow, "ANNUAL", monetary_divisor)
             info = ticker.get_info()
             if not quarterly and not annual:
                 raise ValueError("no financial statements returned")
-            return quarterly + annual, info
+            return quarterly + annual, balance_sheets, cash_flows, info
         except Exception as exc:
             last_error = exc
             if attempt < retries:
@@ -266,11 +406,13 @@ def upsert_reports(
     conn,
     state: CompanyState,
     reports: list[dict],
+    balance_sheets: list[dict],
+    cash_flows: list[dict],
     info: dict,
     monetary_divisor: float = CRORE,
     default_currency: str = "INR",
     source: str = "YAHOO_FINANCE",
-) -> int:
+) -> tuple[int, int, int]:
     quotes = load_quotes(conn, state.asset_ids)
     newest_quarter = max(
         (report["period_end_date"] for report in reports if report["report_type"] == "QUARTERLY"),
@@ -313,6 +455,11 @@ def upsert_reports(
                     report["net_profit"],
                     report["operating_profit"],
                     report["ebit"],
+                    report["gross_profit"],
+                    report["ebitda"],
+                    report["interest_expense"],
+                    report["income_tax_expense"],
+                    report["diluted_average_shares"],
                     report["capital_employed"],
                     report["eps"],
                     cmp if latest else None,
@@ -335,7 +482,8 @@ def upsert_reports(
             """
             insert into public.asset_financial_reports
               (asset_id,period_end_date,report_type,fiscal_period,currency,
-               revenue,net_profit,operating_profit,ebit,capital_employed,
+               revenue,net_profit,operating_profit,ebit,gross_profit,ebitda,
+               interest_expense,income_tax_expense,diluted_average_shares,capital_employed,
                eps,cmp,pe_ratio,market_cap,roce,
                roe,debt_to_equity,dividend_yield,free_cash_flow,
                profit_variance_yoy,sales_variance_yoy,source)
@@ -347,6 +495,11 @@ def upsert_reports(
               net_profit=excluded.net_profit,
               operating_profit=excluded.operating_profit,
               ebit=excluded.ebit,
+              gross_profit=excluded.gross_profit,
+              ebitda=excluded.ebitda,
+              interest_expense=excluded.interest_expense,
+              income_tax_expense=excluded.income_tax_expense,
+              diluted_average_shares=excluded.diluted_average_shares,
               capital_employed=excluded.capital_employed,
               eps=excluded.eps,
               cmp=excluded.cmp,
@@ -365,6 +518,75 @@ def upsert_reports(
             rows,
             page_size=500,
         )
+        balance_rows = [
+            (
+                asset_id, row["period_end_date"], row["report_type"], currency,
+                row["total_assets"], row["current_assets"], row["cash_and_equivalents"],
+                row["inventory"], row["receivables"], row["total_liabilities"],
+                row["current_liabilities"], row["accounts_payable"], row["total_debt"],
+                row["short_term_debt"], row["long_term_debt"], row["shareholders_equity"],
+                row["retained_earnings"], row["goodwill"], row["intangible_assets"],
+                row["net_tangible_assets"], source,
+            )
+            for asset_id in state.asset_ids
+            for row in balance_sheets
+        ]
+        if balance_rows:
+            execute_values(
+                cur,
+                """
+                insert into public.asset_balance_sheets
+                  (asset_id,period_end_date,report_type,currency,total_assets,current_assets,
+                   cash_and_equivalents,inventory,receivables,total_liabilities,current_liabilities,
+                   accounts_payable,total_debt,short_term_debt,long_term_debt,shareholders_equity,
+                   retained_earnings,goodwill,intangible_assets,net_tangible_assets,source)
+                values %s
+                on conflict (asset_id,period_end_date,report_type) do update set
+                  currency=excluded.currency,total_assets=excluded.total_assets,
+                  current_assets=excluded.current_assets,cash_and_equivalents=excluded.cash_and_equivalents,
+                  inventory=excluded.inventory,receivables=excluded.receivables,
+                  total_liabilities=excluded.total_liabilities,current_liabilities=excluded.current_liabilities,
+                  accounts_payable=excluded.accounts_payable,total_debt=excluded.total_debt,
+                  short_term_debt=excluded.short_term_debt,long_term_debt=excluded.long_term_debt,
+                  shareholders_equity=excluded.shareholders_equity,retained_earnings=excluded.retained_earnings,
+                  goodwill=excluded.goodwill,intangible_assets=excluded.intangible_assets,
+                  net_tangible_assets=excluded.net_tangible_assets,source=excluded.source,updated_at=now()
+                """,
+                balance_rows,
+                page_size=500,
+            )
+        cash_rows = [
+            (
+                asset_id, row["period_end_date"], row["report_type"], currency,
+                row["operating_cash_flow"], row["capital_expenditure"], row["free_cash_flow"],
+                row["dividends_paid"], row["share_repurchase"], row["share_issuance"],
+                row["debt_issuance"], row["debt_repayment"], row["investing_cash_flow"],
+                row["financing_cash_flow"], source,
+            )
+            for asset_id in state.asset_ids
+            for row in cash_flows
+        ]
+        if cash_rows:
+            execute_values(
+                cur,
+                """
+                insert into public.asset_cash_flow_statements
+                  (asset_id,period_end_date,report_type,currency,operating_cash_flow,
+                   capital_expenditure,free_cash_flow,dividends_paid,share_repurchase,
+                   share_issuance,debt_issuance,debt_repayment,investing_cash_flow,
+                   financing_cash_flow,source)
+                values %s
+                on conflict (asset_id,period_end_date,report_type) do update set
+                  currency=excluded.currency,operating_cash_flow=excluded.operating_cash_flow,
+                  capital_expenditure=excluded.capital_expenditure,free_cash_flow=excluded.free_cash_flow,
+                  dividends_paid=excluded.dividends_paid,share_repurchase=excluded.share_repurchase,
+                  share_issuance=excluded.share_issuance,debt_issuance=excluded.debt_issuance,
+                  debt_repayment=excluded.debt_repayment,investing_cash_flow=excluded.investing_cash_flow,
+                  financing_cash_flow=excluded.financing_cash_flow,source=excluded.source,updated_at=now()
+                """,
+                cash_rows,
+                page_size=500,
+            )
         # Sector lives on the instrument, not the periodic report; update once.
         if sector:
             cur.execute(
@@ -372,7 +594,7 @@ def upsert_reports(
                 (sector, list(state.asset_ids)),
             )
     conn.commit()
-    return len(rows)
+    return len(rows), len(balance_rows), len(cash_rows)
 
 
 def main() -> None:
@@ -394,21 +616,32 @@ def main() -> None:
         print(f"Identified {len(companies)} Indian companies requiring fundamentals.")
         covered = 0
         reports_written = 0
+        balance_rows_written = 0
+        cash_flow_rows_written = 0
         failed = 0
         for index, state in enumerate(companies, 1):
             print(f"[{index}/{len(companies)}] {state.ticker} ({state.yahoo_symbol})")
             try:
-                reports, info = fetch_company(state, max(1, args.retries))
-                count = 0 if args.dry_run else upsert_reports(conn, state, reports, info)
-                reports_written += count
+                reports, balance_sheets, cash_flows, info = fetch_company(state, max(1, args.retries))
+                counts = (0, 0, 0) if args.dry_run else upsert_reports(
+                    conn, state, reports, balance_sheets, cash_flows, info
+                )
+                if not args.dry_run:
+                    record_sync_state(conn, state.ticker, None)
+                reports_written += counts[0]
+                balance_rows_written += counts[1]
+                cash_flow_rows_written += counts[2]
                 covered += 1
                 print(
                     f"   {'validated' if args.dry_run else 'upserted'} "
-                    f"{len(reports)} reports across {len(state.asset_ids)} listing(s)"
+                    f"{len(reports)} reports, {len(balance_sheets)} balance sheets and "
+                    f"{len(cash_flows)} cash flows across {len(state.asset_ids)} listing(s)"
                 )
             except Exception as exc:
                 conn.rollback()
                 failed += 1
+                if not args.dry_run:
+                    record_sync_state(conn, state.ticker, str(exc)[:2000])
                 print(f"   ERROR: {exc}")
             if index < len(companies) and args.sleep > 0:
                 time.sleep(args.sleep)
@@ -416,7 +649,8 @@ def main() -> None:
         print(
             "Fundamentals sync complete: "
             f"companies={len(companies)} covered={covered} "
-            f"reports_written={reports_written} failed={failed}"
+            f"reports_written={reports_written} balance_rows={balance_rows_written} "
+            f"cash_flow_rows={cash_flow_rows_written} failed={failed}"
         )
         if failed:
             raise SystemExit(1)

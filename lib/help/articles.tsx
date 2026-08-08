@@ -559,62 +559,62 @@ const longTermEngine: HelpArticle = {
   slug: "long-term-engine",
   category: "long-term",
   title: "How Long-Term Candidates are built",
-  subtitle: "One fundamentals snapshot, six investors' published criteria, and an honest account of what had to be adapted.",
+  subtitle: "Multi-year evidence, six investor-inspired rankings, and an honest account of what remains approximate.",
   readMins: 6,
   summary:
-    "Every stock is scored against six long-horizon investors' criteria using the same stock_snapshot data the Stock Screener reads. Several criteria are adapted from the investors' original tests because this dataset lacks multi-year history and balance-sheet detail — every adaptation is disclosed here and on each strategy's own page.",
+    "Every fundamentals-covered stock is scored against one selected long-horizon strategy using annual history, the latest quarterly report, current price and explicit evidence confidence.",
   Body: () => (
     <>
       <P>
         Long-Term Candidates scores every stock against six well-known investors&apos; published
-        fundamentals criteria and ranks the best matches. It reads exactly the same data as the
-        Stock Screener — P/E, ROE, ROCE, Debt/Equity, dividend yield, market cap, and YoY revenue
-        and profit growth — nothing is fetched or computed separately, so a number here always
-        agrees with the same stock&apos;s row in the Screener.
+        fundamentals criteria and ranks the best matches. This is a separate research path from
+        the Stock Screener: it reads the full fundamentals-covered universe directly, derives
+        three- and five-year growth and median ROCE from annual reports, and combines those with
+        the latest quarterly ratios and current quote.
       </P>
 
       <H2>What the data can and cannot do</H2>
       <P>
         These six investors wrote their tests decades apart, for different markets, often assuming
-        data this app does not have: multi-year earnings history, a full balance sheet (current
-        assets, total liabilities), EBIT, or enterprise value. Rather than fabricate those numbers
-        from unrelated fields, every strategy below either drops the unavailable criterion or
-        substitutes the closest real proxy — always named plainly, both in the code&apos;s own
-        comments and on each strategy&apos;s page here.
+        data depth this app cannot always obtain from a free provider: decade-spanning statements,
+        uninterrupted dividend records, R&amp;D detail and qualitative moat or management evidence.
+        The app now stores normalized income statements, balance sheets and cash flows and uses
+        only matching annual periods. Missing rows reduce evidence confidence instead of being
+        fabricated from unrelated fields.
       </P>
       <SpecTable
         rows={[
-          { k: "Not available anywhere", v: "Price-to-book, multi-year (5/10-yr) history, current ratio, current assets/liabilities, EBIT, enterprise value, R&D spend." },
-          { k: "Available", v: "P/E, ROE, ROCE, Debt/Equity, dividend yield, market cap, YoY revenue growth, YoY profit growth, free cash flow, % from 52-week high." },
+          { k: "Available when synced", v: "Annual revenue/profit history, balance-sheet liquidity and debt, operating/free cash flow, cash conversion, interest coverage, price-to-book and EBIT/enterprise-value yield." },
+          { k: "Still unavailable", v: "Reliable 10–20 year history, uninterrupted dividend records, R&D detail and qualitative moat/management evidence. Yahoo currently exposes about five annual periods for tested names." },
         ]}
       />
 
-      <H2>One strategy is not implemented at all</H2>
+      <H2>NCAV remains separate</H2>
       <P>
         Benjamin Graham&apos;s <strong>Net Current Asset Value</strong> (&ldquo;net-net&rdquo;)
-        screen is not offered here. It requires current assets minus total liabilities on the
-        balance sheet — there is no equivalent anywhere in this schema, and no combination of the
-        available ratios approximates it honestly. Faking Graham&apos;s own arithmetic would
-        misrepresent a rule that is, in his own writing, a literal balance-sheet calculation. It is
-        left out rather than approximated.
+        screen is not offered as one of these six rankings. The normalized schema now has the core
+        balance-sheet fields, but a strict net-net workflow needs broader statement coverage,
+        security adjustments and a dedicated implementation. Graham Defensive instead uses real
+        current ratio, price-to-book, leverage and interest coverage when those statements exist.
       </P>
 
       <H2>How scoring works</H2>
       <P>
-        Each strategy is a short list of weighted criteria. A stock either passes or fails each one
-        against a threshold from the investor&apos;s own writing (or the closest available proxy);
-        the match score is the weighted share of criteria passed, 0–100. A missing data point
-        always counts as a fail — it is never treated as a pass by default — and is shown
-        separately in the breakdown as &ldquo;no data&rdquo; rather than a silent zero.
+        Each criterion receives a smooth 0–100 score around its target, so a barely adequate
+        number is not treated the same as an exceptional one. The weighted raw score is moderated
+        by evidence confidence, which reflects available criteria, report age and annual-history
+        depth. Missing values reduce confidence rather than quietly passing. Financial companies,
+        insurers and REITs are excluded until sector-correct ratios are available; tiny companies
+        below the market-specific investability floor are excluded too.
       </P>
-      <Formula>{`matchScore = 100 × (Σ weight of passed criteria) / (Σ weight of all criteria)`}</Formula>
+      <Formula>{`raw score = Σ(criterion score × weight) ÷ Σ(available weights)
+match score = raw score × (0.70 + 0.30 × evidence confidence)`}</Formula>
 
       <H2>How to read it in the app</H2>
       <P>
-        Toggle one or more strategies to filter the list, or leave none selected to rank every
-        stock by its single best strategy match. Expand a candidate&apos;s criteria breakdown to
-        see exactly which conditions passed, failed, or had no data — the same transparency the
-        Swing Candidates screen gives for its own scores.
+        Choose one strategy at a time, then set minimum score and minimum evidence. Expand a
+        candidate to see the source value, criterion score, pass/fail state and missing evidence.
+        Report period, quote date, source and annual-history depth remain visible on every row.
       </P>
 
       <Callout tone="warn">
@@ -654,14 +654,12 @@ const lynchGarp: HelpArticle = {
 
       <H2>The PEG ratio</H2>
       <P>Lynch&apos;s signature metric divides the P/E by the earnings growth rate:</P>
-      <Formula>{`PEG = P/E ÷ profit growth (YoY, as a plain percentage)`}</Formula>
+      <Formula>{`PEG = current P/E ÷ capped 3-year profit CAGR`}</Formula>
       <P>
         A PEG of <strong>1.0</strong> means you are paying a fair price for the growth. Lynch
-        hunted for PEGs <strong>below 1.0</strong>. His original test used a 5-year growth rate;
-        this app has only a single year (YoY) of profit growth, so the PEG here is a one-year
-        snapshot, not Lynch&apos;s smoothed multi-year figure. It is skipped entirely (not scored
-        as a fail) when profit growth is zero or negative — PEG is meaningless for a shrinking or
-        break-even business.
+        hunted for PEGs <strong>below 1.0</strong>. The app uses three-year profit CAGR where
+        available and falls back to capped YoY growth only when history is incomplete. Growth is
+        capped at 50% inside PEG to prevent a one-off base effect from manufacturing a tiny ratio.
       </P>
 
       <H2>What the app checks</H2>
@@ -669,9 +667,9 @@ const lynchGarp: HelpArticle = {
         rows={[
           { k: "PEG ratio", v: "≤ 1.0× — the core valuation anchor." },
           { k: "Debt-to-Equity", v: "≤ 0.5× — Lynch avoided heavily leveraged growers." },
-          { k: "Profit growth (YoY)", v: "15–50% — fast-grower territory; above 50% risks being unsustainable." },
+          { k: "Profit CAGR", v: "3-year CAGR ≥ 15%; capped YoY is only a fallback." },
           { k: "P/E ratio", v: "≤ 25× — Lynch rarely paid a higher multiple for growth." },
-          { k: "Revenue growth (YoY)", v: "≥ 10% — top-line growth should confirm the bottom-line growth." },
+          { k: "Revenue CAGR", v: "3-year CAGR ≥ 10% — top-line durability should confirm earnings growth." },
         ]}
       />
 
@@ -722,10 +720,10 @@ const buffettMoat: HelpArticle = {
       <SpecTable
         rows={[
           { k: "ROE", v: "≥ 15% — Buffett wants a moat to show up as a superior return on equity." },
-          { k: "ROCE", v: "≥ 15% — capital efficiency, without relying on leverage to get there." },
+          { k: "Median ROCE", v: "5-year observed median ≥ 15% — reduces single-period distortion." },
           { k: "Debt-to-Equity", v: "≤ 0.5× — Buffett dislikes leverage; his best holdings often carry little debt." },
-          { k: "Free cash flow", v: "positive — a stand-in for Buffett's own “owner earnings” (net income adjusted for capex and working capital)." },
-          { k: "Profit growth (YoY)", v: "≥ 10% — a one-year proxy for consistent compounding." },
+          { k: "Free-cash-flow yield", v: "≥ 3% of current market value — a stand-in for owner earnings." },
+          { k: "Positive-profit history", v: "At least 80% of observed annual periods are profitable." },
         ]}
       />
 
@@ -733,16 +731,15 @@ const buffettMoat: HelpArticle = {
       <P>
         Buffett&apos;s own test looks for these figures sustained over <strong>5–10 years</strong>,
         plus gross margin (pricing-power evidence) and a current-ratio liquidity check. This
-        dataset carries only the latest reported quarter and has no gross-margin or current-ratio
-        field at all, so those two are dropped rather than approximated, and every threshold above
-        is checked against a single period, not a decade of consistency.
+        dataset still lacks gross-margin and current-ratio history, so those are dropped rather
+        than approximated. Annual profit and ROCE history now replace the earlier single-period
+        proxy, but the observed window is generally three to five years rather than a decade.
       </P>
 
       <Callout tone="warn">
-        A high score here means the latest reported quarter looks like a moat business — it says
-        nothing about whether that quality has actually persisted for years, which is the heart of
-        Buffett&apos;s own test. Cross-check a candidate&apos;s own filing history before assuming
-        durability.
+        A high score now requires multi-year profitability and capital efficiency, but cannot
+        prove brand strength, pricing power or management quality. Cross-check filings and the
+        competitive position before assuming the moat is durable.
       </Callout>
 
       <H2>The circle of competence</H2>
@@ -766,31 +763,31 @@ const grahamDefensive: HelpArticle = {
   slug: "graham-defensive",
   category: "long-term",
   title: "Benjamin Graham — Defensive Investor",
-  subtitle: "Graham's 7-point safety screen, reduced to the four criteria this dataset can actually check.",
+  subtitle: "A modernized defensive screen using real liquidity, book-value, leverage and coverage evidence.",
   trader: "Benjamin Graham",
   readMins: 6,
   summary:
-    "Graham's Chapter 14 defensive-investor test wants adequate size, a strong balance sheet, decades of earnings and dividend history, and a moderate price. Most of that history isn't in this dataset; what remains is a reduced, single-period safety check.",
+    "Graham's Chapter 14 defensive-investor test wants adequate size, a strong balance sheet, decades of earnings and dividend history, and a moderate price. The app now checks the balance-sheet portion directly, while clearly shortening the historical tests.",
   Body: () => (
     <>
       <P>
         Benjamin Graham&apos;s <em>Intelligent Investor</em> Chapter 14 lists seven criteria for
         the &ldquo;defensive investor&rdquo; — someone who wants safety and simplicity, not
-        excitement. Most of Graham&apos;s seven need either a full balance sheet or 10–20 years of
-        reported history, neither of which exists in this dataset. What survives is a reduced,
-        honestly weaker safety check.
+        excitement. The app now has normalized annual balance sheets and cash flows, but the free
+        provider generally exposes about five annual periods rather than Graham&apos;s 10–20 year
+        window. The balance-sheet tests are direct; the historical tests remain shortened.
       </P>
 
       <H2>Graham&apos;s original seven, and what happened to each</H2>
       <SpecTable
         rows={[
           { k: "1. Adequate size", v: "Kept — market cap ≥ ₹2,000 Cr / $200M, scaled to a modern small-cap floor." },
-          { k: "2. Strong financial condition (current ratio ≥ 2×)", v: "Replaced — no balance-sheet current-ratio data exists; Debt-to-Equity ≤ 0.5× stands in as a related, weaker signal." },
-          { k: "3. Earnings stability (no loss in 10 years)", v: "Dropped — no multi-year earnings history is stored." },
+          { k: "2. Strong financial condition (current ratio ≥ 2×)", v: "Implemented from current assets and current liabilities; the continuous scoring target is 1.5×." },
+          { k: "3. Earnings stability (no loss in 10 years)", v: "Approximated — all observed annual periods should be profitable; the stored window is shorter than 10 years." },
           { k: "4. Dividend record (20 uninterrupted years)", v: "Replaced — only the current dividend yield is available; “pays a dividend now” stands in for a two-decade record." },
           { k: "5. Earnings growth (33% over 10 years)", v: "Dropped — same reason as #3." },
           { k: "6. Moderate P/E (≤ 15× 3-yr avg earnings)", v: "Kept, using the current P/E instead of a 3-year average." },
-          { k: "7. Moderate price-to-book (≤ 1.5×, or P/E × P/B ≤ 22.5)", v: "Dropped — price-to-book does not exist anywhere in this schema." },
+          { k: "7. Moderate price-to-book (≤ 1.5×, or P/E × P/B ≤ 22.5)", v: "Price-to-book is implemented; the combined Graham number is not yet a separate criterion." },
         ]}
       />
 
@@ -798,8 +795,12 @@ const grahamDefensive: HelpArticle = {
       <SpecTable
         rows={[
           { k: "Market cap", v: "≥ ₹2,000 Cr (India) or $200M (US)." },
-          { k: "P/E ratio", v: "≤ 15×." },
-          { k: "Debt-to-Equity", v: "≤ 0.5× (proxy for the current-ratio test)." },
+          { k: "P/E ratio", v: "Target ≤ 15×, scored continuously." },
+          { k: "Positive-profit history", v: "All observed annual periods profitable." },
+          { k: "Debt-to-Equity", v: "≤ 0.5×." },
+          { k: "Current ratio", v: "Target 1.5×, using matching-period current assets and liabilities." },
+          { k: "Price-to-book", v: "Target ≤ 1.5×; suppressed when report and quote currencies differ." },
+          { k: "Interest coverage", v: "Target ≥ 3× EBIT/interest expense." },
           { k: "Dividend yield", v: "> 0% (proxy for the 20-year record)." },
         ]}
       />
@@ -841,10 +842,11 @@ const fisherGrowth: HelpArticle = {
       <H2>What the app checks</H2>
       <SpecTable
         rows={[
-          { k: "Revenue growth (YoY)", v: "≥ 15% — Fisher wanted substantial market growth ahead. His test used a 5-year trend; only one year (YoY) is available here." },
+          { k: "Revenue CAGR", v: "3-year CAGR ≥ 15% — sustained top-line expansion." },
+          { k: "Profit CAGR", v: "3-year CAGR ≥ 15% — sustained earnings expansion." },
           { k: "Debt-to-Equity", v: "≤ 0.4× — Fisher preferred growth financed internally, not through leverage." },
           { k: "ROE", v: "≥ 15% — high returns without excessive leverage." },
-          { k: "P/E ratio", v: "≤ 40× — Fisher paid up for quality, but not without limit." },
+          { k: "Median ROCE", v: "Observed 5-year median ≥ 15% — capital-allocation efficiency." },
         ]}
       />
 
@@ -904,6 +906,7 @@ const templetonContrarian: HelpArticle = {
           { k: "Dividend yield", v: "≥ 3% — income while waiting for the market to change its mind." },
           { k: "Debt-to-Equity", v: "≤ 0.5× — survivability matters when buying into a downturn." },
           { k: "% from 52-week high", v: "≤ -30% — at least 30% below the high, a direct read of pessimism." },
+          { k: "Positive-profit history", v: "At least 80% of observed annual periods profitable, avoiding structural loss-makers." },
         ]}
       />
 
@@ -976,10 +979,10 @@ Earnings Yield         = EBIT ÷ Enterprise Value`}</Formula>
       <H2>What the app checks</H2>
       <SpecTable
         rows={[
-          { k: "ROCE (Return-on-Capital proxy)", v: "≥ 25%" },
+          { k: "Median ROCE (Return-on-Capital proxy)", v: "Observed 5-year median ≥ 25%" },
           { k: "Earnings yield (100/P-E proxy)", v: "≥ 10%" },
           { k: "Market cap", v: "≥ ₹500 Cr (India) or $50M (US) — Greenblatt's own liquidity floor, excluding tiny illiquid names." },
-          { k: "P/E ratio", v: "positive — earnings only, no speculative losses." },
+          { k: "Positive-profit history", v: "At least 80% of observed annual periods profitable." },
         ]}
       />
 

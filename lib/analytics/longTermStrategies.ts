@@ -1,29 +1,4 @@
-// =============================================================================
-// Long-Term Investment (LTI) Strategy Module
-// -----------------------------------------------------------------------------
-// Pure, deterministic scorers that encode the published fundamentals criteria
-// of six well-known long-horizon investors, evaluated against one row of
-// public.stock_snapshot (the same read model the Stock Screener and NL query
-// use — see lib/screener/fields.ts, lib/screener/service.ts).
-//
-// Shaped after lib/analytics/legendaryStrategies.ts's registry pattern
-// (Key -> Meta -> Result), but scores fundamentals rows instead of OHLCV bars.
-// This file does not import from, call, or modify anything in
-// legendaryStrategies.ts, swingClassifier.ts, or the probability engine.
-//
-// IMPORTANT — what is exact vs. approximated. This schema does not carry every
-// figure each investor's original criteria need (no P/B, no balance-sheet
-// current-assets/liabilities, no EBIT, no enterprise value, no multi-year
-// history). Rather than fabricate those from unrelated columns, each strategy
-// below either omits the unavailable criterion or substitutes the closest real
-// proxy — always disclosed in that criterion's `description` and in the
-// matching /help article. One classic screen, Graham's Net Current Asset
-// Value ("net-net"), is not implemented at all: it fundamentally requires
-// current assets minus total liabilities, which has no equivalent anywhere in
-// this schema, and there is no honest proxy for it.
-// =============================================================================
-
-import type { Market } from "@/lib/screener/service";
+export type LongTermMarket = "US" | "IN";
 
 export type LongTermStrategyKey =
   | "LYNCH_GARP"
@@ -41,303 +16,346 @@ export interface LongTermStrategyMeta {
   reference: string;
 }
 
-/** Display metadata — safe to import into client components (pure data). */
 export const LONG_TERM_STRATEGY_META: LongTermStrategyMeta[] = [
-  {
-    key: "LYNCH_GARP",
-    label: "Growth At A Reasonable Price",
-    investor: "Peter Lynch",
-    tagline: "Buy what you know. A PEG under 1 is a bargain.",
-    reference: "One Up On Wall Street (1989); Beating the Street (1993)",
-  },
-  {
-    key: "BUFFETT_MOAT",
-    label: "Economic Moat",
-    investor: "Warren Buffett",
-    tagline: "A wonderful company at a fair price beats a fair company at a wonderful price.",
-    reference: "Berkshire Hathaway Letters to Shareholders (1965–present)",
-  },
-  {
-    key: "GRAHAM_DEFENSIVE",
-    label: "Defensive Investor",
-    investor: "Benjamin Graham",
-    tagline: "Safety and simplicity over excitement.",
-    reference: "The Intelligent Investor, Chapter 14 (1973 rev. ed.)",
-  },
-  {
-    key: "FISHER_GROWTH",
-    label: "Growth & Scuttlebutt",
-    investor: "Philip Fisher",
-    tagline: "Buy to own the business, not to watch the stock.",
-    reference: "Common Stocks and Uncommon Profits (1958)",
-  },
-  {
-    key: "TEMPLETON_CONTRARIAN",
-    label: "Global Contrarian",
-    investor: "John Templeton",
-    tagline: "Buy at the point of maximum pessimism.",
-    reference: "The Templeton Touch (1983)",
-  },
-  {
-    key: "GREENBLATT_MAGIC",
-    label: "Magic Formula (approximated)",
-    investor: "Joel Greenblatt",
-    tagline: "Rank by quality and cheapness; buy the intersection.",
-    reference: "The Little Book That Beats the Market (2006)",
-  },
+  { key: "LYNCH_GARP", label: "Growth At A Reasonable Price", investor: "Peter Lynch", tagline: "Durable growth bought at a sensible multiple.", reference: "One Up On Wall Street (1989); Beating the Street (1993)" },
+  { key: "BUFFETT_MOAT", label: "Economic Moat", investor: "Warren Buffett", tagline: "Consistent returns, cash generation and restrained leverage.", reference: "Berkshire Hathaway Letters to Shareholders" },
+  { key: "GRAHAM_DEFENSIVE", label: "Defensive Investor", investor: "Benjamin Graham", tagline: "Earnings stability, valuation and financial resilience.", reference: "The Intelligent Investor, Chapter 14" },
+  { key: "FISHER_GROWTH", label: "Growth & Scuttlebutt", investor: "Philip Fisher", tagline: "Sustained business growth with efficient capital allocation.", reference: "Common Stocks and Uncommon Profits (1958)" },
+  { key: "TEMPLETON_CONTRARIAN", label: "Global Contrarian", investor: "John Templeton", tagline: "Sound businesses priced for pessimism.", reference: "The Templeton Touch (1983)" },
+  { key: "GREENBLATT_MAGIC", label: "Magic Formula (approximated)", investor: "Joel Greenblatt", tagline: "High returns on capital combined with earnings yield.", reference: "The Little Book That Beats the Market (2006)" },
 ];
 
-export const LONG_TERM_STRATEGY_KEYS: LongTermStrategyKey[] = LONG_TERM_STRATEGY_META.map((m) => m.key);
-export const LONG_TERM_STRATEGY_BY_KEY: Record<LongTermStrategyKey, LongTermStrategyMeta> =
-  Object.fromEntries(LONG_TERM_STRATEGY_META.map((m) => [m.key, m])) as Record<LongTermStrategyKey, LongTermStrategyMeta>;
+export const LONG_TERM_STRATEGY_KEYS = LONG_TERM_STRATEGY_META.map((item) => item.key);
+export const LONG_TERM_STRATEGY_BY_KEY = Object.fromEntries(
+  LONG_TERM_STRATEGY_META.map((item) => [item.key, item]),
+) as Record<LongTermStrategyKey, LongTermStrategyMeta>;
 
-export type CriterionOp = "gte" | "lte" | "gt" | "lt" | "exists";
-
-export interface LongTermCriterion {
-  label: string;
-  /** Field this criterion reads. Always a real stock_snapshot column, or one
-   *  of the synthetic keys computed in fundamentalsForScoring() below. */
-  field: string;
-  op: CriterionOp;
-  /** Threshold; ignored for "exists". Percent fields are percentage POINTS
-   *  (15 means 15%), matching lib/screener/fields.ts's convention. */
-  value?: number;
-  unit?: string;
-  description: string;
-  /** 0..1 — how central this criterion is to the strategy. */
-  weight: number;
+export interface AnnualFundamentalPoint {
+  period: string;
+  revenue: number | null;
+  netProfit: number | null;
+  roce: number | null;
+  operatingCashFlow?: number | null;
+  freeCashFlow?: number | null;
 }
 
-/** Per-criterion outcome for one stock against one strategy. */
+export interface HistoricalFundamentalMetrics {
+  revenueCagr3y: number | null;
+  revenueCagr5y: number | null;
+  profitCagr3y: number | null;
+  profitCagr5y: number | null;
+  medianRoce5y: number | null;
+  medianCashConversion5y: number | null;
+  medianFcfMargin5y: number | null;
+  positiveProfitYearsRatio: number | null;
+  historyYears: number;
+  statementPeriods: number;
+}
+
+const finite = (value: unknown): number | null => {
+  if (value === null || value === undefined || value === "") return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+};
+
+function cagr(latest: number | null, oldest: number | null, years: number): number | null {
+  if (latest === null || oldest === null || latest <= 0 || oldest <= 0 || years < 2) return null;
+  return (Math.pow(latest / oldest, 1 / years) - 1) * 100;
+}
+
+function pointAtLeastYearsBack(points: AnnualFundamentalPoint[], years: number): AnnualFundamentalPoint | null {
+  if (points.length < 2) return null;
+  const latest = new Date(`${points[0].period}T00:00:00Z`);
+  const target = new Date(latest);
+  target.setUTCFullYear(target.getUTCFullYear() - years);
+  const candidates = points
+    .slice(1)
+    .map((point) => ({ point, distance: Math.abs(new Date(`${point.period}T00:00:00Z`).getTime() - target.getTime()) }))
+    .sort((a, b) => a.distance - b.distance);
+  const chosen = candidates[0];
+  return chosen && chosen.distance <= 540 * 24 * 60 * 60 * 1000 ? chosen.point : null;
+}
+
+export function deriveHistoricalMetrics(rawPoints: AnnualFundamentalPoint[]): HistoricalFundamentalMetrics {
+  const points = rawPoints
+    .filter((point) => /^\d{4}-\d{2}-\d{2}$/.test(point.period))
+    .map((point) => ({
+      period: point.period,
+      revenue: finite(point.revenue),
+      netProfit: finite(point.netProfit),
+      roce: finite(point.roce),
+      operatingCashFlow: finite(point.operatingCashFlow),
+      freeCashFlow: finite(point.freeCashFlow),
+    }))
+    .sort((a, b) => b.period.localeCompare(a.period));
+  if (points.length === 0) {
+    return { revenueCagr3y: null, revenueCagr5y: null, profitCagr3y: null, profitCagr5y: null, medianRoce5y: null, medianCashConversion5y: null, medianFcfMargin5y: null, positiveProfitYearsRatio: null, historyYears: 0, statementPeriods: 0 };
+  }
+
+  const latest = points[0];
+  const point3 = pointAtLeastYearsBack(points, 3);
+  const point5 = pointAtLeastYearsBack(points, 5);
+  const observed = points.slice(0, 6);
+  const roce = observed.map((point) => point.roce).filter((value): value is number => value !== null).sort((a, b) => a - b);
+  const profits = observed.map((point) => point.netProfit).filter((value): value is number => value !== null);
+  const cashConversion = observed
+    .map((point) => point.netProfit && point.netProfit > 0 && point.operatingCashFlow != null
+      ? point.operatingCashFlow / point.netProfit
+      : null)
+    .filter((value): value is number => value !== null && Number.isFinite(value))
+    .sort((a, b) => a - b);
+  const fcfMargins = observed
+    .map((point) => point.revenue && point.revenue > 0 && point.freeCashFlow != null
+      ? point.freeCashFlow / point.revenue * 100
+      : null)
+    .filter((value): value is number => value !== null && Number.isFinite(value))
+    .sort((a, b) => a - b);
+  const median = (values: number[]): number | null => values.length === 0
+    ? null
+    : values.length % 2 === 1
+      ? values[Math.floor(values.length / 2)]
+      : (values[values.length / 2 - 1] + values[values.length / 2]) / 2;
+
+  return {
+    revenueCagr3y: point3 ? cagr(latest.revenue, point3.revenue, 3) : null,
+    revenueCagr5y: point5 ? cagr(latest.revenue, point5.revenue, 5) : null,
+    profitCagr3y: point3 ? cagr(latest.netProfit, point3.netProfit, 3) : null,
+    profitCagr5y: point5 ? cagr(latest.netProfit, point5.netProfit, 5) : null,
+    medianRoce5y: median(roce),
+    medianCashConversion5y: median(cashConversion),
+    medianFcfMargin5y: median(fcfMargins),
+    positiveProfitYearsRatio: profits.length >= 3 ? profits.filter((value) => value > 0).length / profits.length : null,
+    historyYears: points.length > 1
+      ? Math.max(0, new Date(`${points[0].period}T00:00:00Z`).getUTCFullYear() - new Date(`${points[points.length - 1].period}T00:00:00Z`).getUTCFullYear())
+      : 0,
+    statementPeriods: Math.max(cashConversion.length, fcfMargins.length),
+  };
+}
+
+export interface LongTermFundamentals extends HistoricalFundamentalMetrics {
+  peRatio: number | null;
+  roe: number | null;
+  debtToEquity: number | null;
+  dividendYield: number | null;
+  marketCap: number | null;
+  freeCashFlowYield: number | null;
+  currentRatio: number | null;
+  quickRatio: number | null;
+  netDebtToEbitda: number | null;
+  interestCoverage: number | null;
+  priceToBook: number | null;
+  ebitEnterpriseValueYield: number | null;
+  accrualRatioPct: number | null;
+  revenueGrowthYoY: number | null;
+  profitGrowthYoY: number | null;
+  pctFrom52wHigh: number | null;
+  reportAgeDays: number | null;
+  sector: string | null;
+}
+
+type CriterionDirection = "higher" | "lower";
+
+interface Criterion {
+  label: string;
+  field: keyof LongTermFundamentals | "pegRatio" | "earningsYield";
+  target: number;
+  direction: CriterionDirection;
+  weight: number;
+  description: string;
+}
+
 export interface CriterionOutcome {
   label: string;
   passed: boolean;
-  /** True when the underlying field was null — shown distinctly from a clean fail. */
   dataMissing: boolean;
   description: string;
+  value: number | null;
+  score: number;
 }
 
 export interface LongTermScore {
   key: LongTermStrategyKey;
-  /** 0..100 weighted match. */
   matchScore: number;
+  rawScore: number;
+  confidence: number;
   matchedCriteria: number;
+  availableCriteria: number;
   totalCriteria: number;
+  eligible: boolean;
+  eligibilityReason: string | null;
   outcomes: CriterionOutcome[];
 }
 
-// --- Fundamentals input --------------------------------------------------
+const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 
-/** The subset of ScreenerStock a strategy can see, plus synthetic fields
- *  derived here (PEG, earnings yield, ROC proxy) — never persisted, computed
- *  fresh from the real columns each time a stock is scored. */
-export interface LongTermFundamentals {
-  pe_ratio: number | null;
-  roe: number | null;
-  roce: number | null;
-  debt_to_equity: number | null;
-  dividend_yield: number | null;
-  market_cap: number | null;
-  free_cash_flow: number | null;
-  revenue_growth_yoy: number | null;
-  profit_growth_yoy: number | null;
-  pct_from_52w_high: number | null;
+function normalizedGrowth(primary: number | null, fallback: number | null): number | null {
+  const value = primary ?? fallback;
+  return value === null ? null : clamp(value, -100, 100);
 }
 
-interface Synthetic {
-  /** PEG = P/E ÷ profit growth (%). Undefined when growth isn't positive —
-   *  PEG is meaningless (or infinite) for a shrinking or break-even business. */
-  peg_ratio: number | null;
-  /** 100 / P/E, as percentage points — a P/E of 10 gives 10. Crude proxy for
-   *  Greenblatt's EBIT/Enterprise-Value earnings yield: it ignores debt and
-   *  cash entirely, so it is a real approximation, not the formula itself. */
-  earnings_yield_proxy: number | null;
-}
-
-function computeSynthetic(f: LongTermFundamentals): Synthetic {
-  const peg =
-    f.pe_ratio !== null && f.pe_ratio > 0 && f.profit_growth_yoy !== null && f.profit_growth_yoy > 0
-      ? f.pe_ratio / f.profit_growth_yoy
+function syntheticValue(f: LongTermFundamentals, field: Criterion["field"]): number | null {
+  if (field === "earningsYield") return f.peRatio !== null && f.peRatio > 0 ? 100 / f.peRatio : null;
+  if (field === "pegRatio") {
+    const growth = normalizedGrowth(f.profitCagr3y, f.profitGrowthYoY);
+    return f.peRatio !== null && f.peRatio > 0 && growth !== null && growth > 0
+      ? f.peRatio / Math.min(growth, 50)
       : null;
-  const ey = f.pe_ratio !== null && f.pe_ratio > 0 ? 100 / f.pe_ratio : null;
-  return { peg_ratio: peg, earnings_yield_proxy: ey };
+  }
+  if (field === "revenueCagr3y") return normalizedGrowth(f.revenueCagr3y, f.revenueGrowthYoY);
+  if (field === "profitCagr3y") return normalizedGrowth(f.profitCagr3y, f.profitGrowthYoY);
+  return f[field] as number | null;
 }
 
-function fieldValue(f: LongTermFundamentals, synth: Synthetic, key: string): number | null {
-  if (key === "peg_ratio") return synth.peg_ratio;
-  if (key === "earnings_yield_proxy") return synth.earnings_yield_proxy;
-  const v = (f as unknown as Record<string, number | null>)[key];
-  return v === undefined ? null : v;
+function smoothCriterionScore(value: number, target: number, direction: CriterionDirection): number {
+  if (target === 0) return direction === "higher" ? (value > 0 ? 100 : 0) : (value <= 0 ? 100 : 0);
+  const signedDistance = direction === "higher" ? value / target - 1 : 1 - value / target;
+  return clamp(100 / (1 + Math.exp(-3.2 * signedDistance)), 0, 100);
 }
 
-// --- Strategy definitions --------------------------------------------------
-// Market-cap floors are in the row's own unit (Rs. Crore for IN, USD millions
-// for US — see lib/screener/fields.ts's note on market_cap/free_cash_flow),
-// so callers must branch by market rather than share one raw number.
-
-function grahamMarketCapFloor(market: Market): number {
-  return market === "IN" ? 2000 : 200; // Rs. 2,000 Cr, or $200M
-}
-function greenblattLiquidityFloor(market: Market): number {
-  return market === "IN" ? 500 : 50; // Rs. 500 Cr, or $50M
+function marketCapFloor(market: LongTermMarket, strategy: LongTermStrategyKey): number {
+  if (strategy === "GRAHAM_DEFENSIVE") return market === "IN" ? 2000 : 200;
+  return market === "IN" ? 500 : 50;
 }
 
-function criteriaFor(key: LongTermStrategyKey, market: Market): LongTermCriterion[] {
+function criteriaFor(key: LongTermStrategyKey, market: LongTermMarket): Criterion[] {
   switch (key) {
     case "LYNCH_GARP":
       return [
-        { label: "PEG Ratio", field: "peg_ratio", op: "lte", value: 1.0, unit: "×",
-          description: "P/E ÷ profit growth (YoY). Lynch's sweet spot is under 1.0. Not scored when profit growth isn't positive — PEG is meaningless for a shrinking business.",
-          weight: 1.0 },
-        { label: "Debt-to-Equity", field: "debt_to_equity", op: "lte", value: 0.5, unit: "×",
-          description: "Lynch avoided heavily indebted growers. Under 0.5× is comfortable.",
-          weight: 0.8 },
-        { label: "Profit Growth (YoY)", field: "profit_growth_yoy", op: "gte", value: 15, unit: "%",
-          description: "Fast-grower territory. Lynch's original test used 5-year growth; only a single year (YoY) is available here.",
-          weight: 0.9 },
-        { label: "P/E Ratio", field: "pe_ratio", op: "lte", value: 25, unit: "×",
-          description: "Lynch rarely paid more than a mid-20s multiple for a grower.",
-          weight: 0.6 },
-        { label: "Revenue Growth (YoY)", field: "revenue_growth_yoy", op: "gte", value: 10, unit: "%",
-          description: "Top-line growth should confirm the bottom-line growth.",
-          weight: 0.5 },
+        { label: "PEG ratio", field: "pegRatio", target: 1, direction: "lower", weight: 1, description: "Current P/E divided by capped three-year profit CAGR; YoY is only a fallback." },
+        { label: "Three-year profit CAGR", field: "profitCagr3y", target: 15, direction: "higher", weight: 0.9, description: "Uses multi-year growth where available and caps base-effect outliers." },
+        { label: "Three-year revenue CAGR", field: "revenueCagr3y", target: 10, direction: "higher", weight: 0.7, description: "Top-line durability should confirm earnings growth." },
+        { label: "Debt-to-equity", field: "debtToEquity", target: 0.5, direction: "lower", weight: 0.8, description: "Lower leverage improves resilience." },
+        { label: "P/E ratio", field: "peRatio", target: 25, direction: "lower", weight: 0.6, description: "Valuation discipline for a growth company." },
+        { label: "Cash conversion", field: "medianCashConversion5y", target: 0.8, direction: "higher", weight: 0.6, description: "Median annual operating cash flow divided by net profit." },
       ];
     case "BUFFETT_MOAT":
       return [
-        { label: "ROE", field: "roe", op: "gte", value: 15, unit: "%",
-          description: "Buffett wants 15%+ return on equity. His own test looks for this sustained 5–10 years; only the latest reported figure is available here.",
-          weight: 1.0 },
-        { label: "ROCE", field: "roce", op: "gte", value: 15, unit: "%",
-          description: "Return on capital employed — businesses that don't need much capital to grow.",
-          weight: 0.9 },
-        { label: "Debt-to-Equity", field: "debt_to_equity", op: "lte", value: 0.5, unit: "×",
-          description: "Buffett dislikes leverage. Many of his best holdings carry little or no debt.",
-          weight: 0.8 },
-        { label: "Free Cash Flow", field: "free_cash_flow", op: "gt", value: 0,
-          description: "Positive free cash flow — a stand-in for Buffett's \"owner earnings\" (net income adjusted for capex and working capital). Gross margin and a literal 10-year earnings CAGR aren't in this dataset.",
-          weight: 0.8 },
-        { label: "Profit Growth (YoY)", field: "profit_growth_yoy", op: "gte", value: 10, unit: "%",
-          description: "A one-year proxy for Buffett's decade-long consistent-compounding test.",
-          weight: 0.6 },
+        { label: "ROE", field: "roe", target: 15, direction: "higher", weight: 1, description: "Latest ROE, supported by multi-year return-on-capital evidence." },
+        { label: "Five-year median ROCE", field: "medianRoce5y", target: 15, direction: "higher", weight: 1, description: "Median annual ROCE reduces single-period distortion." },
+        { label: "Positive-profit history", field: "positiveProfitYearsRatio", target: 0.8, direction: "higher", weight: 0.9, description: "Share of observed annual periods with positive net profit." },
+        { label: "Free-cash-flow yield", field: "freeCashFlowYield", target: 3, direction: "higher", weight: 0.8, description: "Latest free cash flow relative to current adjusted market value." },
+        { label: "Debt-to-equity", field: "debtToEquity", target: 0.5, direction: "lower", weight: 0.8, description: "Restrained leverage." },
+        { label: "Cash conversion", field: "medianCashConversion5y", target: 1, direction: "higher", weight: 0.9, description: "Median annual operating cash flow should support reported profit." },
+        { label: "Net debt / EBITDA", field: "netDebtToEbitda", target: 2, direction: "lower", weight: 0.8, description: "Balance-sheet debt after cash relative to operating earnings." },
+        { label: "Interest coverage", field: "interestCoverage", target: 5, direction: "higher", weight: 0.6, description: "EBIT should comfortably cover annual interest expense." },
       ];
     case "GRAHAM_DEFENSIVE":
       return [
-        { label: "Adequate Size", field: "market_cap", op: "gte", value: grahamMarketCapFloor(market),
-          unit: market === "IN" ? "₹ Cr" : "$ Mn",
-          description: `Graham's size floor, scaled to a modern small-cap cutoff (${market === "IN" ? "₹2,000 Cr" : "$200M"}).`,
-          weight: 0.6 },
-        { label: "Moderate P/E", field: "pe_ratio", op: "lte", value: 15, unit: "×",
-          description: "No more than 15× earnings. Graham's original test averaged 3 years of earnings; only the current P/E is available here.",
-          weight: 0.9 },
-        { label: "Debt-to-Equity", field: "debt_to_equity", op: "lte", value: 0.5, unit: "×",
-          description: "Proxy for Graham's literal \"current ratio ≥ 2×\" test, which needs a balance sheet this dataset doesn't carry.",
-          weight: 0.7 },
-        { label: "Pays a Dividend", field: "dividend_yield", op: "gt", value: 0, unit: "%",
-          description: "Proxy for Graham's \"uninterrupted dividends for 20 years\" — only the current yield is available, not a payment history.",
-          weight: 0.5 },
+        { label: "Adequate size", field: "marketCap", target: marketCapFloor(market, key), direction: "higher", weight: 0.5, description: "Modern liquidity and size floor." },
+        { label: "P/E ratio", field: "peRatio", target: 15, direction: "lower", weight: 1, description: "Current price relative to TTM profit." },
+        { label: "Positive-profit history", field: "positiveProfitYearsRatio", target: 1, direction: "higher", weight: 1, description: "Observed annual earnings should remain positive." },
+        { label: "Debt-to-equity", field: "debtToEquity", target: 0.5, direction: "lower", weight: 0.8, description: "Conservative balance-sheet leverage." },
+        { label: "Current ratio", field: "currentRatio", target: 1.5, direction: "higher", weight: 1, description: "Current assets should cover short-term liabilities with a margin of safety." },
+        { label: "Price-to-book", field: "priceToBook", target: 1.5, direction: "lower", weight: 0.8, description: "Current market value relative to shareholders' equity." },
+        { label: "Interest coverage", field: "interestCoverage", target: 3, direction: "higher", weight: 0.7, description: "Operating earnings should cover interest expense." },
+        { label: "Dividend yield", field: "dividendYield", target: 1, direction: "higher", weight: 0.5, description: "Current yield; uninterrupted dividend history is not yet available." },
       ];
     case "FISHER_GROWTH":
       return [
-        { label: "Revenue Growth (YoY)", field: "revenue_growth_yoy", op: "gte", value: 15, unit: "%",
-          description: "Fisher wanted substantial growth potential for years ahead. His test used a 5-year trend; only YoY is available here.",
-          weight: 1.0 },
-        { label: "Debt-to-Equity", field: "debt_to_equity", op: "lte", value: 0.4, unit: "×",
-          description: "Fisher preferred growth financed internally, not through leverage.",
-          weight: 0.7 },
-        { label: "ROE", field: "roe", op: "gte", value: 15, unit: "%",
-          description: "High returns without excessive leverage.",
-          weight: 0.8 },
-        { label: "P/E Ratio", field: "pe_ratio", op: "lte", value: 40, unit: "×",
-          description: "Fisher paid up for quality, but not without limit. Margin trend and R&D/revenue aren't in this dataset.",
-          weight: 0.4 },
+        { label: "Three-year revenue CAGR", field: "revenueCagr3y", target: 15, direction: "higher", weight: 1, description: "Sustained top-line expansion." },
+        { label: "Three-year profit CAGR", field: "profitCagr3y", target: 15, direction: "higher", weight: 0.9, description: "Sustained earnings expansion, not a single-quarter jump." },
+        { label: "Five-year median ROCE", field: "medianRoce5y", target: 15, direction: "higher", weight: 0.9, description: "Capital efficiency across several annual periods." },
+        { label: "ROE", field: "roe", target: 15, direction: "higher", weight: 0.7, description: "Current shareholder return." },
+        { label: "Debt-to-equity", field: "debtToEquity", target: 0.4, direction: "lower", weight: 0.6, description: "Growth preferably financed internally." },
+        { label: "Cash conversion", field: "medianCashConversion5y", target: 0.8, direction: "higher", weight: 0.7, description: "Growth in accounting profit should convert into operating cash." },
+        { label: "FCF margin", field: "medianFcfMargin5y", target: 5, direction: "higher", weight: 0.6, description: "Median annual free cash flow as a share of revenue." },
       ];
     case "TEMPLETON_CONTRARIAN":
       return [
-        { label: "P/E Ratio", field: "pe_ratio", op: "lte", value: 12, unit: "×",
-          description: "Low multiples, especially bought during panics.",
-          weight: 1.0 },
-        { label: "Dividend Yield", field: "dividend_yield", op: "gte", value: 3, unit: "%",
-          description: "Income while waiting for mean reversion.",
-          weight: 0.7 },
-        { label: "Debt-to-Equity", field: "debt_to_equity", op: "lte", value: 0.5, unit: "×",
-          description: "Survivability matters when buying into trouble.",
-          weight: 0.6 },
-        { label: "Below 52-Week High", field: "pct_from_52w_high", op: "lte", value: -30, unit: "%",
-          description: "At least 30% below its 52-week high — a direct read of pessimism (price-to-book isn't in this dataset, so this replaces it).",
-          weight: 0.8 },
+        { label: "P/E ratio", field: "peRatio", target: 12, direction: "lower", weight: 1, description: "Low current earnings multiple." },
+        { label: "Below 52-week high", field: "pctFrom52wHigh", target: -30, direction: "lower", weight: 0.8, description: "Price pessimism, used only alongside financial resilience." },
+        { label: "Positive-profit history", field: "positiveProfitYearsRatio", target: 0.8, direction: "higher", weight: 0.8, description: "Avoids treating structurally loss-making names as bargains." },
+        { label: "Dividend yield", field: "dividendYield", target: 3, direction: "higher", weight: 0.6, description: "Income while waiting for normalization." },
+        { label: "Debt-to-equity", field: "debtToEquity", target: 0.5, direction: "lower", weight: 0.7, description: "Survivability during distress." },
+        { label: "Price-to-book", field: "priceToBook", target: 1.2, direction: "lower", weight: 0.8, description: "Asset-value support for a contrarian purchase." },
+        { label: "Current ratio", field: "currentRatio", target: 1.2, direction: "higher", weight: 0.5, description: "Near-term liquidity while waiting for normalization." },
       ];
     case "GREENBLATT_MAGIC":
       return [
-        { label: "Return on Capital (proxy)", field: "roce", op: "gte", value: 25, unit: "%",
-          description: "ROCE stands in for Greenblatt's literal Return on Capital, EBIT ÷ (Net Working Capital + Net Fixed Assets) — a related but different ratio; this dataset has no NWC/fixed-asset breakdown.",
-          weight: 1.0 },
-        { label: "Earnings Yield (proxy)", field: "earnings_yield_proxy", op: "gte", value: 10, unit: "%",
-          description: "100 ÷ P/E stands in for Greenblatt's EBIT ÷ Enterprise Value. This ignores debt and cash entirely, so it is a real approximation, not his formula.",
-          weight: 1.0 },
-        { label: "Market Cap", field: "market_cap", op: "gte", value: greenblattLiquidityFloor(market),
-          unit: market === "IN" ? "₹ Cr" : "$ Mn",
-          description: "Liquidity floor — Greenblatt excluded tiny, illiquid names.",
-          weight: 0.3 },
-        { label: "Positive P/E", field: "pe_ratio", op: "gt", value: 0,
-          description: "Positive earnings only.",
-          weight: 0.3 },
+        { label: "Five-year median ROCE", field: "medianRoce5y", target: 25, direction: "higher", weight: 1, description: "Multi-year ROCE remains an approximation for Greenblatt return on capital." },
+        { label: "EBIT / enterprise value", field: "ebitEnterpriseValueYield", target: 10, direction: "higher", weight: 1, description: "Annual EBIT divided by current market cap plus debt minus cash." },
+        { label: "Positive-profit history", field: "positiveProfitYearsRatio", target: 0.8, direction: "higher", weight: 0.6, description: "Rejects transient or persistently loss-making businesses." },
+        { label: "Market cap", field: "marketCap", target: marketCapFloor(market, key), direction: "higher", weight: 0.3, description: "Minimum liquidity floor." },
       ];
   }
 }
 
-function evaluateCriterion(value: number | null, c: LongTermCriterion): CriterionOutcome {
-  if (value === null) {
-    return { label: c.label, passed: false, dataMissing: true, description: c.description };
+function sectorEligibility(sector: string | null): string | null {
+  const normalized = String(sector ?? "").toLowerCase();
+  if (/financial|bank|insurance|reit|real estate/.test(normalized)) {
+    return "Current ratios are not sector-correct for banks, insurers, financial companies, or REITs.";
   }
-  let passed: boolean;
-  switch (c.op) {
-    case "exists": passed = true; break;
-    case "gte": passed = value >= (c.value as number); break;
-    case "lte": passed = value <= (c.value as number); break;
-    case "gt": passed = value > (c.value as number); break;
-    case "lt": passed = value < (c.value as number); break;
-  }
-  return { label: c.label, passed, dataMissing: false, description: c.description };
+  return null;
 }
 
-/** Score one stock's fundamentals against one long-term strategy. */
+function investabilityEligibility(fundamentals: LongTermFundamentals, market: LongTermMarket): string | null {
+  const floor = marketCapFloor(market, "BUFFETT_MOAT");
+  if (fundamentals.marketCap === null) return "Market capitalization is missing.";
+  if (fundamentals.marketCap < floor) {
+    return `Market capitalization is below the ${market === "IN" ? "INR 500 crore" : "USD 50 million"} investability floor.`;
+  }
+  return null;
+}
+
 export function scoreAgainstLongTermStrategy(
   fundamentals: LongTermFundamentals,
   key: LongTermStrategyKey,
-  market: Market,
+  market: LongTermMarket,
 ): LongTermScore {
-  const synth = computeSynthetic(fundamentals);
   const criteria = criteriaFor(key, market);
-
+  const ineligibleReason = sectorEligibility(fundamentals.sector) ?? investabilityEligibility(fundamentals, market);
+  let weightedScore = 0;
+  let availableWeight = 0;
   let totalWeight = 0;
-  let matchedWeight = 0;
-  let matched = 0;
-  const outcomes: CriterionOutcome[] = [];
+  let matchedCriteria = 0;
+  let availableCriteria = 0;
 
-  for (const c of criteria) {
-    const value = fieldValue(fundamentals, synth, c.field);
-    const outcome = evaluateCriterion(value, c);
-    outcomes.push(outcome);
-    totalWeight += c.weight;
-    if (outcome.passed) {
-      matched++;
-      matchedWeight += c.weight;
+  const outcomes = criteria.map((criterion): CriterionOutcome => {
+    totalWeight += criterion.weight;
+    const value = syntheticValue(fundamentals, criterion.field);
+    if (value === null || !Number.isFinite(value)) {
+      return { label: criterion.label, passed: false, dataMissing: true, description: criterion.description, value: null, score: 0 };
     }
-  }
+    const score = smoothCriterionScore(value, criterion.target, criterion.direction);
+    const passed = criterion.direction === "higher" ? value >= criterion.target : value <= criterion.target;
+    availableWeight += criterion.weight;
+    availableCriteria += 1;
+    weightedScore += score * criterion.weight;
+    if (passed) matchedCriteria += 1;
+    return { label: criterion.label, passed, dataMissing: false, description: criterion.description, value, score: Math.round(score) };
+  });
+
+  const rawScore = availableWeight > 0 ? weightedScore / availableWeight : 0;
+  const completeness = totalWeight > 0 ? availableWeight / totalWeight : 0;
+  const ageFactor = fundamentals.reportAgeDays === null
+    ? 0
+    : fundamentals.reportAgeDays <= 180
+      ? 1
+      : fundamentals.reportAgeDays <= 365
+        ? 0.75
+        : 0.4;
+  const historyFactor = fundamentals.historyYears >= 4 ? 1 : fundamentals.historyYears >= 2 ? 0.85 : 0.65;
+  const confidence = Math.round(completeness * ageFactor * historyFactor * 100);
+  const eligible = !ineligibleReason && confidence >= 60;
+  const matchScore = eligible ? Math.round(rawScore * (0.7 + 0.3 * confidence / 100)) : 0;
 
   return {
     key,
-    matchScore: totalWeight > 0 ? Math.round((matchedWeight / totalWeight) * 100) : 0,
-    matchedCriteria: matched,
+    matchScore,
+    rawScore: Math.round(rawScore),
+    confidence,
+    matchedCriteria,
+    availableCriteria,
     totalCriteria: criteria.length,
+    eligible,
+    eligibilityReason: ineligibleReason ?? (confidence < 60 ? "Insufficient or stale evidence for this strategy." : null),
     outcomes,
   };
 }
 
-/** Score one stock against every long-term strategy. */
 export function scoreAllLongTermStrategies(
   fundamentals: LongTermFundamentals,
-  market: Market,
+  market: LongTermMarket,
 ): LongTermScore[] {
   return LONG_TERM_STRATEGY_KEYS.map((key) => scoreAgainstLongTermStrategy(fundamentals, key, market));
 }

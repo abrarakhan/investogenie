@@ -24,6 +24,18 @@ Current local database coverage from the development machine:
 | Financial reports | 83,443 |
 | Cron logs | 91 |
 
+## Deployment
+
+The same revision supports two isolated deployment targets:
+
+- macOS local: `Launch InvestoGenie.command` or `npm run dev`, using `.env.local`
+  and Mac-local PostgreSQL.
+- Oracle Cloud: production build under systemd/Nginx, using a root-owned
+  environment file and PostgreSQL on the VM loopback interface.
+
+See [`DEPLOYMENT.md`](DEPLOYMENT.md) for the target matrix, promotion workflow,
+environment checks, and links to the complete local and Oracle instructions.
+
 ## Main Routes
 
 | Route | Purpose |

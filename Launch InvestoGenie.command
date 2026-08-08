@@ -28,6 +28,16 @@ if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
   pause_on_error
 fi
 
+if ! node -e 'const [major] = process.versions.node.split(".").map(Number); process.exit(major >= 20 ? 0 : 1)'; then
+  echo "InvestoGenie requires Node.js 20 or newer. Current version: $(node --version)"
+  pause_on_error
+fi
+
+if [ ! -f "$APP_DIR/.env.local" ]; then
+  echo "Missing .env.local. Copy .env.example to .env.local and configure its secrets first."
+  pause_on_error
+fi
+
 if command -v pg_isready >/dev/null 2>&1; then
   if ! pg_isready -q -d investogenie; then
     echo "Local PostgreSQL is not ready."

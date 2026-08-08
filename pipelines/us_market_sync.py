@@ -341,7 +341,9 @@ def load_companies(
     freshness = ""
     if not force:
         params.append(datetime.now(timezone.utc) - timedelta(days=max(0, stale_days)))
-        freshness = "having not bool_and(f.asset_id is not null) or min(f.last_updated) < %s"
+        freshness = """having not bool_and(
+          f.asset_id is not null and f.balance_covered and f.cashflow_covered
+        ) or min(f.last_updated) < %s"""
     limit_sql = ""
     if limit is not None:
         params.append(max(1, limit))
@@ -350,12 +352,14 @@ def load_companies(
         cur.execute(
             f"""
             with coverage as (
-              select asset_id,max(updated_at) last_updated
-                from public.asset_financial_reports
-               group by asset_id
+              select f.asset_id,max(f.updated_at) last_updated,
+                     exists(select 1 from public.asset_balance_sheets b where b.asset_id=f.asset_id) balance_covered,
+                     exists(select 1 from public.asset_cash_flow_statements c where c.asset_id=f.asset_id) cashflow_covered
+                from public.asset_financial_reports f
+               group by f.asset_id
             )
             select a.ticker,array_agg(a.id::text),min(f.last_updated),
-                   bool_and(f.asset_id is not null) fully_covered
+                   bool_and(f.asset_id is not null and f.balance_covered and f.cashflow_covered) fully_covered
               from public.assets a
               left join coverage f on f.asset_id=a.id
               left join public.fundamentals_sync_state s
@@ -418,29 +422,38 @@ def sync_fundamentals(conn, args: argparse.Namespace, requested: set[str] | None
     print(f"Synchronizing fundamentals for {len(companies)} US companies.")
     covered = 0
     reports_written = 0
+    balance_rows_written = 0
+    cash_flow_rows_written = 0
     failed = 0
     for index, state in enumerate(companies, 1):
         print(f"[{index}/{len(companies)}] {state.ticker} ({state.yahoo_symbol})")
         try:
-            reports, info = fetch_company(
+            reports, balance_sheets, cash_flows, info = fetch_company(
                 state,
                 max(1, args.retries),
                 monetary_divisor=USD_MILLION,
             )
-            count = 0 if args.dry_run else upsert_reports(
+            counts = (0, 0, 0) if args.dry_run else upsert_reports(
                 conn,
                 state,
                 reports,
+                balance_sheets,
+                cash_flows,
                 info,
                 monetary_divisor=USD_MILLION,
                 default_currency="USD",
                 source="YAHOO_FINANCE_US",
             )
             covered += 1
-            reports_written += count
+            reports_written += counts[0]
+            balance_rows_written += counts[1]
+            cash_flow_rows_written += counts[2]
             if not args.dry_run:
                 record_fundamentals_attempt(conn, state.ticker, True)
-            print(f"   upserted {len(reports)} reports")
+            print(
+                f"   {'validated' if args.dry_run else 'upserted'} {len(reports)} reports, "
+                f"{len(balance_sheets)} balance sheets and {len(cash_flows)} cash flows"
+            )
         except Exception as exc:
             conn.rollback()
             failed += 1
@@ -452,7 +465,8 @@ def sync_fundamentals(conn, args: argparse.Namespace, requested: set[str] | None
     print(
         "US fundamentals sync complete: "
         f"companies={len(companies)} covered={covered} "
-        f"reports_written={reports_written} failed={failed}"
+        f"reports_written={reports_written} balance_rows={balance_rows_written} "
+        f"cash_flow_rows={cash_flow_rows_written} failed={failed}"
     )
 
 

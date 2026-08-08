@@ -1,0 +1,28 @@
+[Unit]
+Description=InvestoGenie web application and market-data scheduler
+After=network-online.target postgresql.service
+Wants=network-online.target
+Requires=postgresql.service
+
+[Service]
+Type=simple
+User=investogenie
+Group=investogenie
+WorkingDirectory=/opt/investogenie/app
+EnvironmentFile=/etc/investogenie/investogenie.env
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/npm start
+Restart=on-failure
+RestartSec=10
+TimeoutStartSec=180
+TimeoutStopSec=90
+KillSignal=SIGTERM
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/opt/investogenie /var/log/investogenie
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

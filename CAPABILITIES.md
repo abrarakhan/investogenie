@@ -1,7 +1,7 @@
 # InvestoGenie - Capabilities
 
-> Current capability snapshot (2026-08-06) after adding Long-Term Investment Candidates (six
-> investors' fundamentals screens scored against every stock), surfacing fund-vs-fund overlap on
+> Current capability snapshot (2026-08-08) after rebuilding Long-Term Investment Candidates around
+> multi-year evidence, confidence gates and daily forward measurement, surfacing fund-vs-fund overlap on
 > the Fund Mapping screen, the US history sync starvation fix, the cross-fund overlap view, the
 > automated AMFI scheme-master/identifier bridge, the NSE/BSE weekend-staleness fix, the email
 > digest, encrypted credentials, multi-provider NL query, US OHLCV backfill, permanent OTC
@@ -31,7 +31,7 @@ sync jobs.
 | Stock Screener | US+India fundamental/price-action screener: filter engine, presets, saved screens, universes, CSV/Excel export | Working |
 | **NL Query (screener)** | Plain-English → filters, dispatched to a **user-chosen AI provider** (Anthropic/OpenAI/Google), validated through the same filter-engine guard regardless of provider | Working |
 | Legendary strategies | Qullamaggie, Minervini, Darvas, PTJ, Simons tags and filters | Working |
-| **Long-Term Candidates** | Six investors' fundamentals screens (Lynch, Buffett, Graham, Fisher, Templeton, Greenblatt) scored against every stock, strategy filters + min-score threshold | Working |
+| **Long-Term Candidates** | Six investor-inspired rankings with normalized income, balance-sheet and cash-flow evidence, multi-year CAGR/ROCE, confidence, sector/investability gates and daily score snapshots | Working; statement coverage backfilling |
 | Probability engine | 21-trading-day return distribution per stock: expected return, P(up), drawdown risk, Student-t price range | Working |
 | Fundamentals | P/E, market cap, ROCE, YoY profit/sales growth in screener | Working |
 | Macro lead/lag | FRED-backed cross-asset rolling correlation and lead/lag matrix | Working |
@@ -40,6 +40,7 @@ sync jobs.
 | **Help & knowledge base** | `/help` guided walkthrough + 13 code-accurate articles (swing engine + 5 swing strategies + probability method + Long-Term engine + 6 investor strategies) | Working |
 | Sync health | Browser-visible `/admin/sync` and `/data/health` freshness and provider status pages | Working |
 | Recurring sync | Startup, recurring, and daily jobs for quotes, OHLCV, fundamentals, macro, scans, and the email digest | Working |
+| Local + Oracle deployment | macOS one-click/dev/production rehearsal plus native Ubuntu ARM systemd/Nginx deployment, isolated environments, checks, backups and release automation | Ready to provision |
 | AMFI scheme identity | Official option-level AMFI registry with AMC/category, NAV, both ISIN columns, AMFI codes, and many-identifiers-to-one-snapshot mapping | Working |
 | Provider fallback | Yahoo Finance (US OHLCV history, free/unofficial), Google Finance fallback for quotes. A Tiingo-based module (`lib/ingest/usHistory.ts`) exists and is configured but is NOT used by the recurring sync path — see Architecture. | Working |
 
@@ -287,24 +288,34 @@ avoiding stale entries below the current quote. Full formulas: `/help/swing-engi
 
 ### Long-Term Investment Candidates
 
-Six published fundamentals screens, scored against every stock in the screener universe:
+Six investor-inspired fundamentals rankings, scored independently across the full fundamentals-covered universe:
 
 | Strategy | Core idea | Reference |
 | --- | --- | --- |
 | Lynch GARP | Growth at a reasonable price — PEG-style ratio, manageable debt | `/help/lynch-garp` |
 | Buffett moat | Consistent ROE/ROCE, low debt, durable profitability proxy | `/help/buffett-moat` |
-| Graham defensive | Conservative valuation and size floor; NCAV test omitted (no data) | `/help/graham-defensive` |
+| Graham defensive | Conservative valuation, liquidity, book value, interest coverage and size floor | `/help/graham-defensive` |
 | Fisher growth | Sustained revenue/profit growth ("scuttlebutt" proxy) | `/help/fisher-growth` |
 | Templeton contrarian | Deep value near lows, out-of-favor proxy | `/help/templeton-contrarian` |
 | Greenblatt magic formula | Earnings yield + return on capital, liquidity floor | `/help/greenblatt-magic` |
 
-Each stock gets a 0-100 match score per strategy (matched criteria / total criteria) plus a
-per-criterion breakdown (pass / fail / no-data — missing fundamentals always fail a criterion,
-never silently pass). Route: `/terminal/[market]/long-term`, filterable by strategy and minimum
-score. Every adaptation forced by this app's actual fundamentals data (vs. each investor's
+Each stock gets a continuous weighted 0-100 criterion score, an evidence confidence score based
+on completeness/report age/history depth, and a per-criterion value/score breakdown. Users choose
+one strategy and filter by minimum match score and evidence. Financial/insurance/REIT sectors are
+excluded until sector-correct ratios exist; tiny companies below INR 500 Cr / USD 50M are excluded.
+Route: `/terminal/[market]/long-term`. Every adaptation forced by this app's actual data (vs. each investor's
 original published test) is disclosed in the corresponding help article rather than presented as
-a literal match — most notably, Graham's Net-Current-Asset-Value screen is dropped entirely since
-no current-assets/current-liabilities data exists in the schema.
+a literal match. Graham now uses real current assets/liabilities and price-to-book, although the
+strict NCAV variant remains outside this six-strategy screen.
+
+Normalized annual income, balance-sheet and cash-flow rows supply 3/5-year revenue and profit CAGR,
+observed median ROCE, profit consistency, cash conversion, FCF margin, liquidity, leverage,
+interest coverage, price-to-book and EBIT/enterprise-value yield. Valuation uses the provider P/E
+adjusted to current price; calculations that would mix an ADR's reporting currency with USD market
+value are suppressed. Yahoo currently exposes roughly five annual periods for tested names, so the
+schema can retain longer history but the free-provider depth is not advertised as ten years.
+`long_term_score_snapshots` atomically captures each day's ranking for future benchmark-relative
+validation.
 
 ### Probability Model
 
@@ -420,20 +431,33 @@ node scripts/backfill-progress.mjs   # queue + coverage status for the OHLCV bac
 
 ## Verification Status
 
-Long-Term Investment Candidates, 2026-08-06:
+Long-Term Investment Candidates, 2026-08-08:
 
 ```bash
 npx tsc --noEmit    # clean
 npx eslint .        # clean, on new/modified files
-npm test            # 86/86 passing
+npm test            # 96/96 passing
 npm run build       # clean, new dynamic route + 7 new /help/[slug] static pages
+npm run test:fundamentals  # 3/3 Python statement-ingestion tests passing
 ```
 
-Live-rendered in-browser at `/terminal/in/long-term`: nav item correctly placed under Market
-Workspace directly after Swing Candidates, real scored candidates from the live database (e.g.
-APOLLOTYRE at 100% GARP / 67% Defensive / 54% Moat), strategy filter chips and min-score slider
-interactive, expandable per-criterion breakdown confirmed rendering pass/fail/no-data rows.
-`git diff --stat` confirmed zero changes to any swing-candidate or probability file.
+Live database checks scanned 4,356 India and 6,722 US stocks. First query took 7–8 seconds; cached
+strategy/filter refreshes took 26–88 ms. India Buffett leaders included GARUDA, TCS and HEROMOTOCO;
+US leaders included INFY, DLO and ITRN. Daily snapshot ranks were verified as exactly 1–50 in each
+market. The protected Stock Screener, Swing Candidates and Probability files remain unchanged.
+
+Normalized company statements, 2026-08-08:
+
+- `0026_company_statement_details.sql` adds annual balance sheets, cash-flow statements and the
+  income-statement fields needed for quality/leverage analysis.
+- India and US Yahoo pipelines now upsert matching annual periods and progressively prioritize
+  assets missing either statement type. The recurring India job is capped at 250 assets per run
+  by default (`FUNDAMENTALS_SYNC_LIMIT` overrides it); US already uses a 250-asset default.
+- Live sample verification wrote TCS (NSE+BSE) and AAPL statements. Derived TCS values included
+  current ratio 2.23, interest coverage 54.37x, cash conversion 1.06x and FCF margin 17.96%; AAPL
+  produced current ratio 0.89, cash conversion 1.00x and FCF margin 23.73%.
+- Coverage is intentionally at sample/backfill stage, not complete-market yet. Missing values lower
+  evidence confidence rather than being inferred or silently passed.
 
 Fund-vs-fund overlap on Fund Mapping, 2026-08-02:
 
@@ -497,10 +521,14 @@ database (not just static analysis) — see `STATUS.md` for the specific queries
 
 ## Remaining Gaps
 
-- Long-Term Candidates has no forward-testing hook — unlike Swing Candidates, there is no
-  scorecard yet tracking whether a high-scoring candidate actually outperforms, and the
-  approximated criteria (PEG proxy, moat proxy, contrarian proxy) are disclosed but not
-  separately backtested against each investor's historical hit rate.
+- Normalized balance-sheet and cash-flow coverage is in progressive backfill. The new calculations
+  are usable for synced companies, but should not be interpreted as complete-market coverage until
+  Data Health reports the statement queues have drained.
+
+- Long-Term Candidates now captures daily point-in-time score/price snapshots, but still needs a
+  benchmark-relative 1/3/6/12-month scorecard and survivorship-safe historical backtest. The
+  approximated criteria (PEG, moat, contrarian and Magic Formula proxies) are disclosed but not
+  separately validated against each investor's historical hit rate.
 - `pipelines/us_history_sync.py` has **no automated test coverage** — there is no Python test
   suite in this repo, so both of its ordering bugs (2026-07-24 and 2026-08-02) were caught only
   by live observation, the second after it had silently stalled for 87 runs. A small pytest

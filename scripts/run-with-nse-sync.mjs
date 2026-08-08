@@ -48,6 +48,9 @@ const nseCatchupDisabled = process.env.NSE_CATCHUP_DISABLED === "1";
 const nseCatchupRetryMinutes = Number(process.env.NSE_CATCHUP_RETRY_MINUTES ?? 30);
 const nseCatchupMaxAttempts = Number(process.env.NSE_CATCHUP_MAX_ATTEMPTS ?? 6);
 const fundamentalsSleep = process.env.FUNDAMENTALS_SYNC_SLEEP_SECONDS ?? "1.5";
+// Statement backfill is deliberately incremental. Without a default cap, the
+// first run after adding a new statement type would attempt the full market.
+const fundamentalsLimit = process.env.FUNDAMENTALS_SYNC_LIMIT ?? "250";
 const fundamentalsDisabled = process.env.FUNDAMENTALS_SYNC_DISABLED === "1";
 const usQuoteDisabled = process.env.US_QUOTE_SYNC_DISABLED === "1";
 const usQuoteLimit = process.env.US_QUOTE_LIMIT ?? "1500";
@@ -786,9 +789,7 @@ async function runFundamentals(trigger) {
   if (process.env.FUNDAMENTALS_SYNC_SYMBOLS) {
     args.push("--symbols", process.env.FUNDAMENTALS_SYNC_SYMBOLS);
   }
-  if (process.env.FUNDAMENTALS_SYNC_LIMIT) {
-    args.push("--limit", process.env.FUNDAMENTALS_SYNC_LIMIT);
-  }
+  args.push("--limit", fundamentalsLimit);
   if (process.env.FUNDAMENTALS_SYNC_DRY_RUN === "1") args.push("--dry-run");
 
   console.log(`[fundamentals] starting ${trigger} incremental update`);
