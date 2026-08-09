@@ -237,7 +237,13 @@ export async function getLongTermCandidates(q: LongTermQuery): Promise<LongTermR
     .slice(0, limit)
     .map((entry) => withScore(entry.record, entry.score));
 
-  const captureKey = `${q.market}:${activeStrategy}:${new Date().toISOString().slice(0, 10)}`;
+  // Local date, not UTC. The row is stored with `captured_on = current_date`, which Postgres
+  // evaluates in the server's timezone, so a UTC key disagreed with it between midnight and
+  // 05:30 IST — the guard still held yesterday's key and suppressed the new day's capture
+  // until the offset caught up.
+  const today = new Date();
+  const captureKey = `${q.market}:${activeStrategy}:${today.getFullYear()}-`
+    + `${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
   if (!capturedToday.has(captureKey)) {
     capturedToday.add(captureKey);
     // Deliberately not awaited: the daily snapshot is bookkeeping, and no user request should

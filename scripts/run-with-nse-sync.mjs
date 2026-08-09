@@ -194,12 +194,12 @@ function printSyncSummary() {
   console.log("============================\n");
 }
 
-function runNodeScript(label, script) {
+function runNodeScript(label, script, nodeArgs = []) {
   return new Promise((resolveRun, rejectRun) => {
     console.log(`[market-refresh] ${label}`);
     marketRefreshChild = spawn(
       process.execPath,
-      [resolve(root, script)],
+      [...nodeArgs, resolve(root, script)],
       { cwd: root, env: process.env, stdio: "inherit" },
     );
     marketRefreshChild.once("error", rejectRun);
@@ -356,14 +356,16 @@ function runMarketRefresh(trigger) {
       }
       await runUSHistory(trigger);
       await runMacroSync(trigger);
-      await waitForApp();
-      if (!process.env.CRON_SECRET) throw new Error("CRON_SECRET is not configured");
-      const response = await fetch("http://127.0.0.1:3000/api/cron/scan", {
-        headers: { authorization: `Bearer ${process.env.CRON_SECRET}` },
-      });
-      const body = await response.text();
-      if (!response.ok) throw new Error(`signal scan failed (${response.status}): ${body}`);
-      console.log(`[market-refresh] ${trigger} completed: ${body}`);
+      // The scan runs as its own process rather than through /api/cron/scan. Measured against
+      // the same database and the same background sync load, the identical function takes ~17s
+      // standalone and 90-112s inside the Next.js server — a penalty that repeatedly pushed it
+      // past its timeout and left swing_signals stale. This also drops the dependency on the
+      // app being up and on CRON_SECRET; the route stays available for manual triggers.
+      await runNodeScript("swing signal scan", "scripts/run-scan.mjs", [
+        "--import", resolve(root, "scripts/ts-alias-hook.mjs"),
+        "--disable-warning=MODULE_TYPELESS_PACKAGE_JSON",
+      ]);
+      console.log(`[market-refresh] ${trigger} completed`);
 
       const durationMs = Date.now() - t0;
       recordSyncJob(`market-refresh/${trigger}`, "ok", null, 1, durationMs);

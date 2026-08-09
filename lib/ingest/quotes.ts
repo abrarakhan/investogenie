@@ -207,7 +207,17 @@ function buildBSE(text: string) {
   return { quotes, asOf };
 }
 
-export async function refreshQuotes(databaseUrl: string, startISO = new Date().toISOString().slice(0, 10)): Promise<RefreshSummary> {
+// Local date, not UTC. startISO seeds the NSE/BSE bhavcopy walk-back, and the archives are
+// published against IST trading days — a UTC "today" pointed at the previous day for the
+// first 5h30m of every IST day.
+function localToday(): string {
+  const now = new Date();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${now.getFullYear()}-${month}-${day}`;
+}
+
+export async function refreshQuotes(databaseUrl: string, startISO = localToday()): Promise<RefreshSummary> {
   const t0 = Date.now();
   const [usQuotes, nseIndices, directBenchmarks, nse, bse] = await Promise.all([
     fetchUS(),
