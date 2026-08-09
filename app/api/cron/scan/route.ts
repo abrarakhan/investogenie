@@ -11,7 +11,7 @@ import { getSyncTrend } from "@/lib/ingest/syncMonitor";
 // Gracefully degrades if upstream (quotes/OHLCV) is stale: skips with "skipped" status.
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 120;
+export const maxDuration = 360;
 
 export async function GET(request: NextRequest) {
   const t0 = Date.now();
@@ -47,9 +47,17 @@ export async function GET(request: NextRequest) {
     "scan",
     () => computeSignals(databaseUrl),
     {
-      maxRetries: 1,
+      // A full scan is ~30s on an idle database, but it runs inside the same process as the
+      // sync scheduler and routinely overlaps a Python sync job, which stretches it well past
+      // two minutes. The previous 110s budget failed every daytime run for that reason.
+      timeoutMs: 300000,
+      // No retry. runSyncJobWithRetry races the job against a timer and cannot cancel the
+      // loser, so a timed-out scan keeps running; retrying started a second full scan on top
+      // of the first, doubling database load and guaranteeing the retry timed out too. That
+      // is what turned a slow scan into a permanent 222s failure. A missed scan is picked up
+      // by the next hourly run instead.
+      maxRetries: 0,
       backoffMs: 2000,
-      timeoutMs: 110000, // 110s timeout for signal scan
       databaseUrl,
     }
   );
