@@ -1,6 +1,7 @@
 # InvestoGenie - Capabilities
 
-> Current capability snapshot (2026-08-09) after activating a private, always-on macOS personal
+> Current capability snapshot (2026-08-09) after fixing the Long-Term Candidates page load
+> (~82s to 0.87s), activating a private, always-on macOS personal
 > deployment through `launchd` and Tailscale Serve HTTPS, adding physical-host-authorized password
 > recovery, and rebuilding Long-Term Investment Candidates around
 > multi-year evidence, confidence gates and daily forward measurement, surfacing fund-vs-fund overlap on
@@ -33,7 +34,7 @@ sync jobs.
 | Stock Screener | US+India fundamental/price-action screener: filter engine, presets, saved screens, universes, CSV/Excel export | Working |
 | **NL Query (screener)** | Plain-English → filters, dispatched to a **user-chosen AI provider** (Anthropic/OpenAI/Google), validated through the same filter-engine guard regardless of provider | Working |
 | Legendary strategies | Qullamaggie, Minervini, Darvas, PTJ, Simons tags and filters | Working |
-| **Long-Term Candidates** | Six investor-inspired rankings with normalized income, balance-sheet and cash-flow evidence, multi-year CAGR/ROCE, confidence, sector/investability gates and daily score snapshots | Working; statement coverage backfilling |
+| **Long-Term Candidates** | Six investor-inspired rankings with normalized income, balance-sheet and cash-flow evidence, multi-year CAGR/ROCE, confidence, sector/investability gates and daily score snapshots | Working (0.87s page load since the 2026-08-09 query fix); statement coverage backfilling |
 | Probability engine | 21-trading-day return distribution per stock: expected return, P(up), drawdown risk, Student-t price range | Working |
 | Fundamentals | P/E, market cap, ROCE, YoY profit/sales growth in screener | Working |
 | Macro lead/lag | FRED-backed cross-asset rolling correlation and lead/lag matrix | Working |
@@ -318,7 +319,18 @@ adjusted to current price; calculations that would mix an ADR's reporting curren
 value are suppressed. Yahoo currently exposes roughly five annual periods for tested names, so the
 schema can retain longer history but the free-provider depth is not advertised as ten years.
 `long_term_score_snapshots` atomically captures each day's ranking for future benchmark-relative
-validation.
+validation, written once per market/strategy/day rather than on every request.
+
+**Performance.** The page loaded in ~82s until 2026-08-09. Three compounding causes were fixed:
+Postgres estimated the query's CTEs at 1–33 rows against ~4,800 actual and therefore chose a
+nested loop that rescanned the annual CTE per universe row (20.8M rows discarded by the join
+filter, ~73s); a `distinct on` over `daily_ohlcv` sorted 4.5M rows and spilled 180MB to disk
+(~6s); and every strategy click or slider step re-scored the whole universe and wrote 200
+snapshot rows before responding. CTEs are now explicitly materialized with the annual series and
+health scalars derived in one grouped pass, latest-bar/52-week-high use per-asset lateral index
+lookups, scoring is cached per market, and the sliders are debounced. Live page load is now
+**0.87s** (India) and **0.70s** (US) warm, ~8s cold while caches fill. See `STATUS.md` →
+Long-Term Investment Candidates → Fixed: page took ~82 seconds to load.
 
 ### Probability Model
 
@@ -442,6 +454,28 @@ node scripts/backfill-progress.mjs   # queue + coverage status for the OHLCV bac
 
 ## Verification Status
 
+Long-Term Candidates page-load fix, 2026-08-09:
+
+```bash
+npx tsc --noEmit    # clean
+npx eslint .        # clean, whole repo
+npm test            # 96/96 passing
+npm run build       # clean
+```
+
+Correctness was established before shipping rather than inferred from the timings. Old and new
+SQL produce **byte-identical output for both markets** when executed inside a single
+`repeatable read` transaction (4,356 India rows, 6,725 US rows) — snapshot isolation was
+necessary because a naive back-to-back comparison showed 42 US rows differing, which proved to be
+the fundamentals sync backfilling statements between the two runs, not a query defect. A
+temporary vitest harness then compared the cached request path against a faithful copy of the
+previous per-request scoring across all six strategies in both markets plus a non-default
+threshold case: 13/13 matched on candidate order, match scores, ranked strategy lists and the
+eligible/scanned/excluded counts. That harness queried the live database and was removed rather
+than committed. After `launchctl kickstart`, the live service returned HTTP 200 with 50 rendered
+candidate rows in 0.87s (India) and 0.70s (US), and the daily snapshot capture was confirmed
+still writing 200 rows per market under the new once-per-day guard.
+
 Private personal deployment, 2026-08-09:
 
 - `com.investogenie.app` is loaded and running under the signed-in user's `launchd` domain.
@@ -541,6 +575,14 @@ database (not just static analysis) — see `STATUS.md` for the specific queries
 
 ## Remaining Gaps
 
+- **Page-load timings are only measured for the two anonymously reachable pages.** The
+  2026-08-09 fix was verified on `/terminal/[market]/long-term`; `/terminal/in/stocks` also
+  renders without sign-in (0.7–1.3s). Every other route — Markets, Terminal, Screener,
+  Probability, Data Health, Fund Mapping — returns a 307 to `/login` for an unauthenticated
+  client, so the fast numbers recorded for them measure the redirect, not the render. Their real
+  performance is currently **unknown**. The CTE-misestimation pattern that cost 73s on Long-Term
+  can occur in any query joining several materialized CTEs by `asset_id`, so an authenticated
+  timing pass over those routes is worth doing before assuming they are healthy.
 - Normalized balance-sheet and cash-flow coverage is in progressive backfill. The new calculations
   are usable for synced companies, but should not be interpreted as complete-market coverage until
   Data Health reports the statement queues have drained.

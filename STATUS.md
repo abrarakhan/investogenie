@@ -1,6 +1,6 @@
 # InvestoGenie Status
 
-_Last updated: 2026-08-09 (activated the Mac as an always-on personal server with private Tailscale HTTPS and host-authorized password recovery; 96 tests, lint, typecheck and production build clean)_
+_Last updated: 2026-08-09 (fixed the Long-Term Candidates page taking ~82s to load — 82s to 0.87s warm; activated the Mac as an always-on personal server with private Tailscale HTTPS and host-authorized password recovery; 96 tests, lint, typecheck and production build clean)_
 
 This file summarizes what has been built so far, what is currently working, what is partial, and what to build next.
 
@@ -277,8 +277,8 @@ Built and strengthened (2026-08-08):
   and INR 500 Cr / USD 50M investability floors remove tiny names.
 - `lib/long-term-actions.ts` — `getLongTermCandidates()` server action: scores, filters by
   one selected strategy, minimum score and minimum evidence, then ranks by score/confidence.
-  A five-minute server cache reduces repeated filter/strategy requests from 7–8 seconds to
-  26–88 ms in live checks.
+  Scoring is cached per market (see Performance below), so filter and strategy changes do not
+  re-score the universe.
 - `components/long-term/StrategyBadge.tsx`, `components/long-term/LongTermCandidatesClient.tsx`
   — single-strategy selector, score/evidence sliders, true report/quote dates, history depth and
   expandable per-criterion values and smooth scores.
@@ -310,6 +310,55 @@ Verified: `tsc`/`eslint` clean, 94/94 tests pass, production build clean, migrat
 both markets queried against local PostgreSQL. Buffett live leaders included GARUDA/TCS/
 HEROMOTOCO for India and INFY/DLO/ITRN for US with realistic current P/E values. The server action
 also returned the distinct Lynch ranking IRIS/OSWALPUMPS/JINDRILL.
+
+### Fixed: page took ~82 seconds to load (2026-08-09)
+
+**Symptom:** the Long-Term Candidates page was reported as slow, and measured at **82s** for
+`/terminal/in/long-term` on the live service. The underlying query took 78s (India) and 81s
+(US). Three compounding causes, not one:
+
+1. **CTE row misestimation driving a nested-loop blowup (~73s, the dominant cost).** Postgres
+   keeps no statistics for CTE output and estimated the `universe` / `annual` CTEs at 1–33 rows
+   against ~4,800 actual. On that estimate it chose a nested loop for the annual-health join and,
+   because a CTE cannot be indexed into, rescanned the annual CTE once per universe row:
+   **20.8M rows discarded by the join filter and 145M buffer hits**. Every CTE is now explicitly
+   `materialized`, and the 10-year series plus the latest-period health scalars come from a
+   single grouped pass instead of two CTEs that each re-walked `annual_ranked`.
+2. **A 180MB disk sort over OHLCV (~6s).** `last_bar` used
+   `distinct on (asset_id) ... order by asset_id, date desc` across `daily_ohlcv`, sorting
+   **4.5M rows** and spilling 180MB to temp files. Replaced with per-asset lateral lookups that
+   use the existing `daily_ohlcv_asset_date_idx` directly.
+3. **Re-scoring and a database write on every interaction.** Each strategy click *and each
+   slider step* re-scored all ~4,400 stocks against all six strategies and then performed a
+   200-row delete-plus-insert snapshot write, awaited before the response. Scoring depends only
+   on the record and the market, never on the filters, so it is now cached per market; the daily
+   snapshot writes once per market/strategy/day and is off the request path; and the sliders are
+   debounced so a drag no longer fires one server action per step.
+
+**Result:** India query 78s → 0.7s warm, US query 81s → 3.8s, live page **82s → 0.87s** (India)
+and **0.70s** (US). First load after a restart is ~8s while the Postgres and data caches fill.
+
+**Correctness was verified before shipping, not assumed.** The old and new queries return
+**byte-identical output for both markets** when run inside a single `repeatable read` snapshot.
+An initial naive comparison showed 42 US rows differing; that turned out to be the fundamentals
+sync backfilling US statements *between* the two runs, not a query defect — which is why the
+snapshot-isolated re-check was necessary. A temporary equivalence harness additionally confirmed
+the cached path returns the same candidates, ordering, scores and counts as the previous
+per-request scoring, for all six strategies in both markets plus a non-default-threshold case.
+
+Files: `lib/long-term-data.ts` (SQL), `lib/long-term-actions.ts` (score cache, snapshot guard),
+`components/long-term/LongTermCandidatesClient.tsx` (slider debounce).
+
+> Note for future work: the same CTE-misestimation pattern can appear in any query that joins
+> several materialized CTEs by `asset_id`. When a plan shows a nested loop with a large
+> "Rows Removed by Join Filter", check the CTE row estimates before assuming the indexes are wrong.
+
+**Not yet measured:** only `/terminal/[market]/long-term` and `/terminal/[market]/stocks` render
+for an unauthenticated client. A timing sweep of the other routes returned tens of milliseconds,
+but those were **307 redirects to `/login`**, not renders — so Markets, Terminal, Screener,
+Probability, Data Health and Fund Mapping have no real page-load measurement yet. If slowness is
+reported elsewhere, profile them against a signed-in session rather than assuming this fix
+covered them.
 
 Current limitations:
 
@@ -738,6 +787,24 @@ Current limitations:
 
 ## Quality Checks Currently Passing
 
+Full-repo check run on 2026-08-09 (Long-Term Candidates 82s load fix):
+
+- `npx tsc --noEmit`: passing.
+- `npx eslint .` (whole repo): passing, no errors or warnings.
+- `npm test`: passing, **96/96 tests**.
+- `npm run build`: passing.
+- Query-equivalence check: old and new SQL byte-identical for both markets inside one
+  `repeatable read` transaction (6,725 US rows, 4,356 India rows).
+- Logic-equivalence check: a temporary vitest harness compared the cached request path against
+  a faithful copy of the previous per-request scoring for all six strategies in both markets
+  plus a non-default-threshold case — 13/13 matched on candidate order, scores, ranked strategy
+  lists, eligible/scanned/excluded counts. Harness removed after use; it hit the live database
+  and does not belong in the committed suite.
+- Live service verified after `launchctl kickstart`: `/terminal/in/long-term` returns HTTP 200
+  in **0.87s** warm with 50 candidate rows rendered, US in **0.70s**.
+- Daily snapshot capture confirmed still writing (IN and US, 200 rows each, today's date) after
+  the once-per-day guard was added.
+
 Full-repo check run on 2026-08-06 (Long-Term Investment Candidates):
 
 - `npx tsc --noEmit`: passing.
@@ -812,6 +879,11 @@ Current branch:
 
 Recent commits:
 
+- `513ebe2 Fix Long-Term Candidates page taking 80s to load`
+- `c66739b Update personal deployment status and capabilities`
+- `19c3b53 Add private macOS service and account recovery`
+- `de62a8f Add company statements and dual-target deployment`
+- `bb6662f Update STATUS.md / CAPABILITIES.md for Long-Term Investment Candidates`
 - `6545628 Add Long-Term Investment Candidates under Market Workspace`
 - `23d7f5d Update auto-generated session context bookkeeping`
 - `76713b0 Fix incremental US history sync: covered symbols never refreshed, throughput too low`
