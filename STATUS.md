@@ -1,6 +1,6 @@
 # InvestoGenie Status
 
-_Last updated: 2026-08-08 (added normalized annual company statements and an Oracle Cloud Always Free production deployment package; 96 tests, lint, typecheck and production build clean)_
+_Last updated: 2026-08-09 (activated the Mac as an always-on personal server with private Tailscale HTTPS and host-authorized password recovery; 96 tests, lint, typecheck and production build clean)_
 
 This file summarizes what has been built so far, what is currently working, what is partial, and what to build next.
 
@@ -18,18 +18,34 @@ InvestoGenie is now a local-first market terminal and portfolio intelligence app
 - Forward-testing infrastructure to judge strategies out of sample.
 - Data coverage visibility and repair workflows for fund mappings, source freshness, and stale strategy inputs.
 
-### Local and Oracle deployment readiness
+### Active personal deployment and cloud readiness
 
-- `deploy/local/` documents the existing macOS one-click/development deployment, while
+- The active personal deployment is the local Mac: `com.investogenie.app` runs the production
+  build through a user-level `launchd` service, starts after login, restarts after failures and
+  keeps the existing market-data scheduler in the same supervised process.
+- Next.js listens only on `127.0.0.1:3000`. Tailscale Serve supplies a certificate-backed HTTPS
+  address that is reachable only by devices in the owner's tailnet; no router forwarding or
+  publicly exposed PostgreSQL port is used. The private HTTPS `/login` endpoint was verified
+  with HTTP 200 on 2026-08-09.
+- `caffeinate` prevents idle sleep while the Mac is connected to AC power. Closing the laptop,
+  logging out, losing power or losing internet still pauses the app and its recurring jobs.
+- `deploy/local/` documents one-click development, production service install/uninstall, logs,
+  Tailscale access and local password recovery, while
   `deploy/oracle/` provides Ubuntu bootstrap, systemd, Nginx, production environment template,
   release update, PostgreSQL backup, HTTPS and local-database transfer instructions.
+- `Install Tailscale.command` handles the interactive macOS client installation. Tailscale Serve
+  is private inbound access only and does not provide the fixed public outbound IP required by
+  broker allowlisting.
+- `Reset InvestoGenie Password.command` performs physical-host-authorized password recovery. It
+  hides password input and updates only the bcrypt hash for an existing user, preserving that
+  user's portfolio, CAS holdings, mappings and settings. No unauthenticated reset endpoint is
+  exposed over Tailscale.
 - `scripts/check-deployment.mjs` validates secrets, runtime, build artifact and database isolation;
   the live Mac passes 10/10 local checks and a production-profile simulation passes 12/12.
-- Recommended target is one home-region `VM.Standard.A1.Flex` ARM VM with 2 OCPUs, 12 GB RAM,
-  a 100 GB boot volume and a reserved public IP. PostgreSQL and Next.js remain private behind Nginx.
+- The Oracle deployment package remains available as a future option, but no OCI production VM is
+  currently provisioned. The personal deployment has no cloud-compute bill.
 - Current local sizing is approximately 1.9 GB for PostgreSQL and 2.4 GB for the development
-  workspace, so the target has substantial initial storage headroom. Cloud deployment still
-  requires the intended revision to be committed/pushed and an OCI VM/domain to be provisioned.
+  workspace. Cloud deployment remains optional and would require a VM/domain to be provisioned.
 
 ## Current App Surfaces
 
@@ -684,9 +700,12 @@ Built:
 
 - Local auth backed by Postgres.
 - Signup/login paths.
+- Host-authorized password recovery through `Reset InvestoGenie Password.command`; existing
+  portfolio ownership is retained because the user row is updated rather than replaced.
 - Safe redirect handling.
 - Scaffold creation for local user portfolio.
 - Local Postgres connection defaults to `postgresql://localhost:5432/investogenie`.
+- Private remote login through Tailscale Serve HTTPS; Next.js and PostgreSQL remain local-only.
 
 Current limitations:
 
@@ -1169,6 +1188,19 @@ Start production build:
 
 ```bash
 npm run start
+```
+
+Install/rebuild the always-on personal service:
+
+```bash
+npm run service:install
+npm run service:logs
+```
+
+Local password recovery:
+
+```bash
+open "Reset InvestoGenie Password.command"
 ```
 
 Checks:

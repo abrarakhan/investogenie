@@ -1,6 +1,8 @@
 # InvestoGenie - Capabilities
 
-> Current capability snapshot (2026-08-08) after rebuilding Long-Term Investment Candidates around
+> Current capability snapshot (2026-08-09) after activating a private, always-on macOS personal
+> deployment through `launchd` and Tailscale Serve HTTPS, adding physical-host-authorized password
+> recovery, and rebuilding Long-Term Investment Candidates around
 > multi-year evidence, confidence gates and daily forward measurement, surfacing fund-vs-fund overlap on
 > the Fund Mapping screen, the US history sync starvation fix, the cross-fund overlap view, the
 > automated AMFI scheme-master/identifier bridge, the NSE/BSE weekend-staleness fix, the email
@@ -25,7 +27,7 @@ sync jobs.
 | Local Postgres backend | Users, assets, quotes, OHLCV, signals, reports, macro, portfolio, credentials data | Working |
 | Landing experience | WebGL hero, market pivot, ticker tape, animated content | Working |
 | Market overviews | Separate US and India dashboards with quotes, breadth, charts, candidates | Working |
-| Auth | Local email/password with signed HTTP-only session cookie | Working |
+| Auth | Local email/password, signed HTTP-only session cookie, signup, and host-authorized password recovery that preserves portfolio ownership | Working |
 | Portfolio terminal | Holdings, watchlist, trade ledger, benchmark cards | Working |
 | Swing candidates | Buy-candidate screener with entry, target, stop, trail, score, days | Working |
 | Stock Screener | US+India fundamental/price-action screener: filter engine, presets, saved screens, universes, CSV/Excel export | Working |
@@ -40,7 +42,8 @@ sync jobs.
 | **Help & knowledge base** | `/help` guided walkthrough + 13 code-accurate articles (swing engine + 5 swing strategies + probability method + Long-Term engine + 6 investor strategies) | Working |
 | Sync health | Browser-visible `/admin/sync` and `/data/health` freshness and provider status pages | Working |
 | Recurring sync | Startup, recurring, and daily jobs for quotes, OHLCV, fundamentals, macro, scans, and the email digest | Working |
-| Local + Oracle deployment | macOS one-click/dev/production rehearsal plus native Ubuntu ARM systemd/Nginx deployment, isolated environments, checks, backups and release automation | Ready to provision |
+| **Private personal deployment** | Production Next.js + schedulers supervised by macOS `launchd`, localhost-only listener, AC-power sleep prevention and tailnet-only Tailscale Serve HTTPS | Active and verified |
+| Oracle deployment package | Native Ubuntu ARM systemd/Nginx deployment, isolated environment, checks, backups and release automation | Available; not provisioned |
 | AMFI scheme identity | Official option-level AMFI registry with AMC/category, NAV, both ISIN columns, AMFI codes, and many-identifiers-to-one-snapshot mapping | Working |
 | Provider fallback | Yahoo Finance (US OHLCV history, free/unofficial), Google Finance fallback for quotes. A Tiingo-based module (`lib/ingest/usHistory.ts`) exists and is configured but is NOT used by the recurring sync path — see Architecture. | Working |
 
@@ -379,6 +382,12 @@ npm run dev
 That command starts Next.js through `scripts/run-with-nse-sync.mjs`, which also drives the
 in-app sync/scheduler loop — no external cron service is required for local/single-host use.
 
+The active personal server runs the same wrapper in production mode through
+`com.investogenie.app`. `launchd` starts it after macOS login and restarts unexpected failures;
+Tailscale Serve proxies private HTTPS to `127.0.0.1:3000`. PostgreSQL remains local and port 5432
+is not exposed. `npm run service:install` rebuilds/reinstalls the service after code updates, and
+`npm run service:logs` follows its output.
+
 The wrapper's recurring loop does:
 
 - security listings refresh,
@@ -423,13 +432,24 @@ node scripts/backfill-progress.mjs   # queue + coverage status for the OHLCV bac
 | Database | Local PostgreSQL |
 | DB access | `pg` for app code, `psycopg2` for Python pipelines |
 | Auth | Local users table + signed HTTP-only cookies |
+| Password recovery | Physical-host `.command` helper; hidden input and bcrypt hash update without replacing the user |
 | Credential encryption | AES-256-GCM, scrypt key derivation, master key in `CREDENTIAL_ENCRYPTION_KEY` |
 | Email | Nodemailer, per-user SMTP credentials |
 | AI providers | Anthropic (native structured output), OpenAI (Chat Completions JSON mode), Google Gemini (`generateContent` JSON) |
 | Data providers | Yahoo Finance (US OHLCV history, active), Google Finance, NSE bhavcopy, FRED. Tiingo (`lib/ingest/usHistory.ts`) is configured but currently unused by the recurring sync. |
 | Scheduler | Node wrapper (`scripts/run-with-nse-sync.mjs`) around Next.js plus Python child jobs |
+| Personal hosting | macOS `launchd` + `caffeinate`; Tailscale Serve tailnet-only HTTPS to localhost |
 
 ## Verification Status
+
+Private personal deployment, 2026-08-09:
+
+- `com.investogenie.app` is loaded and running under the signed-in user's `launchd` domain.
+- The production Next.js listener is restricted to `127.0.0.1:3000`; PostgreSQL remains local.
+- Tailscale 1.102.2 is connected with MagicDNS enabled. Tailscale Serve reports the HTTPS proxy
+  as tailnet-only, and `/login` returned HTTP 200 through the private certificate-backed hostname.
+- The host-authorized password-reset helper passed Node syntax, shell syntax and repository lint.
+- Full application verification remained clean: 96/96 Vitest tests, lint and production build.
 
 Long-Term Investment Candidates, 2026-08-08:
 
@@ -554,8 +574,9 @@ database (not just static analysis) — see `STATUS.md` for the specific queries
 - NL query dispatch to OpenAI and Google has not yet been exercised end-to-end with real API
   keys; only the Anthropic path has a verified live send.
 - Fund overlap has an official AMFI identity layer: 14,222 option rows and 100 identifiers resolve all 12 loaded snapshot schemes. Eleven of 21 CAS holdings have exact snapshot ISIN coverage; 5/21 are accepted in `user_fund_mappings`, 6 exact suggestions remain actionable, and 10 funds still need AMC disclosure snapshots.
-- The email digest scheduler only runs while the app process is running; guaranteed delivery
-  regardless of host uptime needs an always-on deployment or an external/Vercel cron backstop.
+- The email digest scheduler now runs under the supervised macOS personal service. Delivery still
+  depends on the Mac remaining logged in, powered and online; closed-lid sleep, logout and outages
+  need catch-up on the next start or a future external cron backstop.
 - Help articles are static (compiled into the content registry) — updating copy requires a code
   change, not a CMS edit; no cross-article search yet.
 - Provider rate limits and unsupported/delisted symbols are expected; sync-state tables track
