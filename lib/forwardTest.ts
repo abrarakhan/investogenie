@@ -12,6 +12,17 @@ import type { MarketId } from "@/lib/types";
 const PER_METHOD = 2;
 const FILL_WINDOW_DAYS = 10;
 
+// node-postgres returns a DATE column as a JS Date at *local* midnight, so toISOString()
+// moves it into the previous UTC day anywhere east of Greenwich. Format from the local parts
+// instead so the calendar day survives. This matters beyond display here: enrolled_on is fed
+// back into `where date > $2`, so a day-early value pulled in one extra bar per position.
+const dateOnly = (value: string | Date): string => {
+  if (!(value instanceof Date)) return String(value).slice(0, 10);
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+  const day = String(value.getDate()).padStart(2, "0");
+  return `${value.getFullYear()}-${month}-${day}`;
+};
+
 /** Keep forward tests on instruments a person could actually trade. The US
  *  screener universe includes preferreds, units and OTC lines (AILLM, AIIA-UN,
  *  BANC-PF, APTOF all got enrolled on the first run), and grading a strategy on
@@ -200,9 +211,7 @@ export async function evaluateOpenPositions(): Promise<EvaluateSummary> {
   const n = (v: string | number | null) => (v === null ? null : Number(v));
 
   for (const p of positions) {
-    const enrolledOn = p.enrolled_on instanceof Date
-      ? p.enrolled_on.toISOString().slice(0, 10)
-      : String(p.enrolled_on).slice(0, 10);
+    const enrolledOn = dateOnly(p.enrolled_on);
 
     const bars = await query<{ date: string | Date; high: string | number; low: string | number; close: string | number }>(
       `select date, high, low, close from public.daily_ohlcv
@@ -219,9 +228,7 @@ export async function evaluateOpenPositions(): Promise<EvaluateSummary> {
 
     const trigger = n(p.trigger_price);
     let pending = p.status === "PENDING" && trigger !== null;
-    let filledOn: string | null = p.filled_on
-      ? (p.filled_on instanceof Date ? p.filled_on.toISOString().slice(0, 10) : String(p.filled_on).slice(0, 10))
-      : null;
+    let filledOn: string | null = p.filled_on ? dateOnly(p.filled_on) : null;
     let sincePending = 0;
     let maxFav = 0;
     let maxAdv = 0;
@@ -233,7 +240,7 @@ export async function evaluateOpenPositions(): Promise<EvaluateSummary> {
     for (const bar of bars) {
       const high = Number(bar.high);
       const low = Number(bar.low);
-      const date = bar.date instanceof Date ? bar.date.toISOString().slice(0, 10) : String(bar.date).slice(0, 10);
+      const date = dateOnly(bar.date);
 
       if (pending) {
         sincePending++;
@@ -257,9 +264,7 @@ export async function evaluateOpenPositions(): Promise<EvaluateSummary> {
     }
 
     const lastBar = bars[bars.length - 1];
-    const lastDate = lastBar.date instanceof Date
-      ? lastBar.date.toISOString().slice(0, 10)
-      : String(lastBar.date).slice(0, 10);
+    const lastDate = dateOnly(lastBar.date);
 
     if (!status) {
       // Still running: record path stats so drawdown is visible before close.

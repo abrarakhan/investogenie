@@ -39,8 +39,15 @@ interface FeatureRow {
 const T5 = { p5: -2.015, p25: -0.727, p50: 0, p75: 0.727, p95: 2.015 } as const;
 const tUnitScale = (df: number) => (df > 2 ? Math.sqrt(df / (df - 2)) : 1);
 
-const dateOnly = (value: string | Date): string =>
-  value instanceof Date ? value.toISOString().slice(0, 10) : String(value).slice(0, 10);
+// node-postgres returns a DATE column as a JS Date at *local* midnight, so toISOString()
+// moves it into the previous UTC day anywhere east of Greenwich (under IST a Friday bar
+// reads as Thursday). Format from the local parts instead so the calendar day survives.
+const dateOnly = (value: string | Date): string => {
+  if (!(value instanceof Date)) return String(value).slice(0, 10);
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+  const day = String(value.getDate()).padStart(2, "0");
+  return `${value.getFullYear()}-${month}-${day}`;
+};
 
 const mean = (xs: number[]) => xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0;
 

@@ -33,10 +33,18 @@ export interface TopSetup {
 }
 
 const num = (v: unknown) => (v === null || v === undefined ? 0 : Number(v));
+// node-postgres returns a DATE column as a JS Date at *local* midnight, so toISOString()
+// moves it into the previous UTC day anywhere east of Greenwich (under IST a Friday bar
+// reads as Thursday). Format from the local parts instead so the calendar day survives.
+const formatLocalDate = (value: Date) => {
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+  const day = String(value.getDate()).padStart(2, "0");
+  return `${value.getFullYear()}-${month}-${day}`;
+};
 const dateOnly = (value: string | Date) => {
-  if (value instanceof Date) return value.toISOString().slice(0, 10);
+  if (value instanceof Date) return formatLocalDate(value);
   const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? String(value).slice(0, 10) : parsed.toISOString().slice(0, 10);
+  return Number.isNaN(parsed.getTime()) ? String(value).slice(0, 10) : formatLocalDate(parsed);
 };
 
 /** Top active swing setups for a market, with per-user levels applied. */

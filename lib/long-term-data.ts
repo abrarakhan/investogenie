@@ -72,10 +72,16 @@ const numberOrNull = (value: unknown): number | null => {
   return Number.isFinite(number) ? number : null;
 };
 
+// node-postgres returns a DATE column as a JS Date at *local* midnight, so toISOString()
+// moves it into the previous UTC day anywhere east of Greenwich. Format from the local
+// parts instead so the calendar day survives — this feeds reportAgeDays, whose 180/365-day
+// bands drive the evidence confidence score.
 const dateOnly = (value: Date | string | null): string | null => {
   if (!value) return null;
-  if (value instanceof Date) return value.toISOString().slice(0, 10);
-  return String(value).slice(0, 10);
+  if (!(value instanceof Date)) return String(value).slice(0, 10);
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+  const day = String(value.getDate()).padStart(2, "0");
+  return `${value.getFullYear()}-${month}-${day}`;
 };
 
 const iso = (value: Date | string): string =>

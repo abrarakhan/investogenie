@@ -19,9 +19,15 @@ interface Row {
 const n = (v: string | number | null): number | null =>
   v === null || v === undefined ? null : Number(v);
 
+// node-postgres returns a DATE column as a JS Date at *local* midnight, so toISOString()
+// moves it into the previous UTC day anywhere east of Greenwich. Format from the local
+// parts instead so the calendar day survives.
 const isoDate = (value: string | Date | null): string => {
   if (!value) return "";
-  return value instanceof Date ? value.toISOString().slice(0, 10) : value;
+  if (!(value instanceof Date)) return value;
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+  const day = String(value.getDate()).padStart(2, "0");
+  return `${value.getFullYear()}-${month}-${day}`;
 };
 
 export async function getFundamentalsByAssetIds(
