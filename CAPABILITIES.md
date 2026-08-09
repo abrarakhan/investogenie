@@ -1,6 +1,8 @@
 # InvestoGenie - Capabilities
 
-> Current capability snapshot (2026-08-09) after fixing the Long-Term Candidates page load
+> Current capability snapshot (2026-08-09) after repairing the hourly swing scan (failing every
+> daytime run and periodically saturating the database), correcting a one-day date shift across
+> six modules, fixing the Long-Term Candidates page load
 > (~82s to 0.87s), activating a private, always-on macOS personal
 > deployment through `launchd` and Tailscale Serve HTTPS, adding physical-host-authorized password
 > recovery, and rebuilding Long-Term Investment Candidates around
@@ -30,7 +32,7 @@ sync jobs.
 | Market overviews | Separate US and India dashboards with quotes, breadth, charts, candidates | Working |
 | Auth | Local email/password, signed HTTP-only session cookie, signup, and host-authorized password recovery that preserves portfolio ownership | Working |
 | Portfolio terminal | Holdings, watchlist, trade ledger, benchmark cards | Working |
-| Swing candidates | Buy-candidate screener with entry, target, stop, trail, score, days | Working |
+| Swing candidates | Buy-candidate screener with entry, target, stop, trail, score, days | Working; hourly scan repaired 2026-08-09 |
 | Stock Screener | US+India fundamental/price-action screener: filter engine, presets, saved screens, universes, CSV/Excel export | Working |
 | **NL Query (screener)** | Plain-English → filters, dispatched to a **user-chosen AI provider** (Anthropic/OpenAI/Google), validated through the same filter-engine guard regardless of provider | Working |
 | Legendary strategies | Qullamaggie, Minervini, Darvas, PTJ, Simons tags and filters | Working |
@@ -280,6 +282,17 @@ The classifier uses:
 Buy entries are rebased to the latest available market price once a trigger has already traded,
 avoiding stale entries below the current quote. Full formulas: `/help/swing-engine`.
 
+**Scan job.** The hourly scan classifies every asset that has bars (~11,000 signals from 7.9M
+OHLCV rows) and upserts `swing_signals`. Each asset is scored from its **complete** bar history,
+which is load-bearing rather than incidental: the squeeze test percentile-ranks the current
+Bollinger bandwidth against every prior bandwidth value in that series, so shortening the window
+would silently change `is_squeeze`, `score` and `verdict`. Bar fetching is ~70% of wall clock and
+I/O-bound, so batches overlap 4 at a time (~29s on an idle database). The job shares a process
+with the sync scheduler and can take 130–210s when it overlaps a Python sync, so its budget is
+300s with retries disabled — the retry mechanism cannot cancel a timed-out run, so retrying used
+to stack a second full scan on top of the first. See `STATUS.md` → Swing Candidates → Fixed: the
+scan failed every daytime run.
+
 ### Legendary Strategy Tags
 
 | Strategy | Core idea | Reference |
@@ -454,6 +467,28 @@ node scripts/backfill-progress.mjs   # queue + coverage status for the OHLCV bac
 
 ## Verification Status
 
+Swing scan repair and six-module date fix, 2026-08-09:
+
+```bash
+npx tsc --noEmit    # clean
+npx eslint .        # clean, whole repo
+npm test            # 96/96 passing
+npm run build       # clean
+```
+
+Both changes were held to "no calculation may change", and that was demonstrated rather than
+asserted. For the scan concurrency change, all 11,044 signal rows were dumped before and after
+and diffed: byte-identical. For the date fix, all 11,045 rows were re-dumped and every non-date
+column was byte-identical while `as_of` moved by exactly +1 day on 11,045 of 11,045 rows. The
+one module where a date genuinely feeds scoring — `long-term-data.ts`, whose `reportAgeDays`
+drives 180/365-day confidence bands — was cleared two ways: no report period in the table
+crosses a band under a one-day shift, and all 50 ranked scores match the snapshot captured
+before the fix. Forward test is the one surface whose numbers did move, because a day-early
+`enrolled_on` had been pulling an extra bar into `where date > $2`; re-evaluating all 86
+positions changed only `evaluated_through`, `max_favorable_pct` and `max_adverse_pct`, leaving
+every `status`, `exit_price` and `realized_return_pct` intact. Live service confirms the scan
+returning HTTP 200 with `attempts: 1` and the Long-Term page rendering `Quote 2026-08-07`.
+
 Long-Term Candidates page-load fix, 2026-08-09:
 
 ```bash
@@ -575,14 +610,19 @@ database (not just static analysis) — see `STATUS.md` for the specific queries
 
 ## Remaining Gaps
 
-- **Page-load timings are only measured for the two anonymously reachable pages.** The
-  2026-08-09 fix was verified on `/terminal/[market]/long-term`; `/terminal/in/stocks` also
-  renders without sign-in (0.7–1.3s). Every other route — Markets, Terminal, Screener,
-  Probability, Data Health, Fund Mapping — returns a 307 to `/login` for an unauthenticated
-  client, so the fast numbers recorded for them measure the redirect, not the render. Their real
-  performance is currently **unknown**. The CTE-misestimation pattern that cost 73s on Long-Term
-  can occur in any query joining several materialized CTEs by `asset_id`, so an authenticated
-  timing pass over those routes is worth doing before assuming they are healthy.
+- Page-load performance is now measured for every route (see Verification Status): the data
+  loaders behind the sign-in-only pages were timed directly against the live database, since
+  those routes 307 to `/login` for an unauthenticated client and curl would otherwise measure
+  the redirect. Nothing outside Long-Term Candidates showed a structural problem — worst warm
+  case is `getMarketOverview` at 0.93s. What that pass did **not** cover is render cost above
+  the data layer, or behaviour under a signed-in session with real user state.
+- The swing scan's 300s budget is sized against observed contention, not enforced isolation. It
+  still shares a process with the sync scheduler, so a heavier future sync job could push it
+  over again. Moving the scan out of the Next.js process is the durable fix.
+- `new Date().toISOString().slice(0, 10)` is still used for "today" in `lib/long-term-actions.ts`
+  (snapshot capture key) and `lib/ingest/quotes.ts` (default `startISO`). This is a milder
+  variant of the date bug fixed on 2026-08-09 — UTC-today rather than IST-today, so it rolls
+  over at 05:30 IST instead of midnight. Not addressed.
 - Normalized balance-sheet and cash-flow coverage is in progressive backfill. The new calculations
   are usable for synced companies, but should not be interpreted as complete-market coverage until
   Data Health reports the statement queues have drained.

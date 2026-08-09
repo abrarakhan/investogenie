@@ -1,6 +1,6 @@
 # InvestoGenie Status
 
-_Last updated: 2026-08-09 (fixed the Long-Term Candidates page taking ~82s to load — 82s to 0.87s warm; activated the Mac as an always-on personal server with private Tailscale HTTPS and host-authorized password recovery; 96 tests, lint, typecheck and production build clean)_
+_Last updated: 2026-08-09 (repaired the swing scan, which had failed every daytime run since 09:35 and was periodically saturating the database; fixed a one-day date shift across six modules; fixed the Long-Term Candidates page taking ~82s to load — 82s to 0.87s warm; activated the Mac as an always-on personal server with private Tailscale HTTPS and host-authorized password recovery; 96 tests, lint, typecheck and production build clean)_
 
 This file summarizes what has been built so far, what is currently working, what is partial, and what to build next.
 
@@ -250,11 +250,52 @@ Built:
 - Integrates per-user risk/settings behavior.
 - Probability/strategy engine option has been added into the terminal flow.
 
+### Fixed: the scan failed every daytime run (2026-08-09)
+
+**Symptom:** the hourly swing scan had failed **15 times** on 2026-08-09, every run since
+09:35, each taking a near-constant 222s. `swing_signals` went stale (stuck three days back),
+and because each failure hammered the database for ~4 minutes on an hourly cycle, unrelated
+pages slowed down inside those windows — Data Health measured 1.1s normally and **11.6s**
+during one. That intermittent slowness was the user-visible symptom that prompted the
+investigation.
+
+**Two causes, and the second is why it never recovered:**
+
+1. **The 110s timeout was simply too small.** A full scan is ~54s against an idle database,
+   but it runs in the same process as the sync scheduler and routinely overlaps a Python sync
+   job. Measured end-to-end through the route under real contention it needs **128–211s**. That
+   is why it passed all night at 47–56s and began failing at 09:35 once daytime jobs started.
+   Raised to 300s (route `maxDuration` 360).
+2. **The retry made failure permanent.** `runSyncJobWithRetry` races the job against a timer
+   and **cannot cancel the loser**, so the timed-out scan kept running while the retry started a
+   *second* full scan on top of it. That doubled database load and guaranteed the retry timed
+   out too — which is exactly why every failure was a near-constant 222s rather than varying.
+   Retries are now disabled for this job; a missed scan is picked up by the next hourly run.
+
+**Also made the scan itself faster:** the batch loop was strictly serial, and fetching bars is
+~70% of wall clock and I/O-bound, so batches now overlap 4 at a time — **53.9s → 29.3s**.
+Batches hold disjoint asset ids, so their upserts never contend for a row.
+
+**No calculation changed, and the obvious fix would have changed one.** Adding a date window to
+cut the 7.9M-row read was rejected after reading the classifier: `classifySwingSetup`
+percentile-ranks the current Bollinger bandwidth against *every prior bandwidth value in the
+series* (`swingClassifier.ts` — `bwHistory` / `percentRank`), so a shorter window would have
+silently altered `is_squeeze`, and through it `score` and `verdict`. Each asset is still
+classified from its complete history; only the concurrency changed. Verified by dumping all
+11,044 signal rows before and after and diffing: **byte-identical**.
+
+Verified live: the endpoint returns HTTP 200 with `attempts: 1` (103s and 128s on two runs).
+
+Files: `lib/ingest/signals.ts`, `app/api/cron/scan/route.ts`.
+
 Current limitations:
 
 - Candidate quality depends on latest OHLCV and quote freshness.
 - Derivatives/OI confirmation is architecturally present, but live Breeze OI feed is not fully operational because Breeze static IP requirements block local-only usage.
 - Needs more backtesting/forward-testing feedback loops before commercialization.
+- The scan's 300s budget is sized against observed contention, not enforced isolation. It still
+  shares a process with the sync scheduler, so a heavier future sync could push it over again.
+  Moving the scan out of the Next.js process is the durable fix.
 
 ## Long-Term Investment Candidates
 
@@ -587,6 +628,58 @@ Current limitations:
 - `cron_logs` only stores `created_at` and `duration_ms`, not separate started/finished timestamps.
 - Health status is source-level and asset-level, but not yet tied into every candidate/screener row visually.
 
+## Fixed: every date was a day early outside UTC (2026-08-09)
+
+**Symptom:** Swing Candidates showed `as_of` 2026-08-06 while `daily_ohlcv` held bars through
+Friday 2026-08-07. Not a stale scan — a timezone bug.
+
+**Cause.** node-postgres returns a `DATE` column as a JS `Date` at *local* midnight, so
+`toISOString()` moves it into the previous UTC day anywhere east of Greenwich. Under IST:
+
+```
+raw value     Fri Aug 07 2026 00:00:00 GMT+0530
+toISOString   2026-08-06T18:30:00.000Z
+slice(0,10)   2026-08-06        ← Friday labelled Thursday
+```
+
+This is the same class of bug already fixed in `dataHealth.ts` on 2026-07-26. It was still live
+in six more places, found by grepping `toISOString().slice(0, 10)` across `lib/`.
+
+**Fixed in `lib/ingest/signals.ts`** by casting the date to text in SQL so no JS `Date` is
+constructed, then narrowing the row type to `string` and deleting the now-dead `instanceof`
+branch — so removing the cast later fails at the type level instead of silently reintroducing
+the shift. Ordering still uses the underlying date column, not the text alias.
+
+**Fixed in five further modules** by formatting from local parts: `probability-runtime.ts`,
+`engines-runtime.ts`, `fundamentals.ts`, `long-term-data.ts`, `forwardTest.ts`.
+
+**Each surface was verified separately rather than assumed cosmetic:**
+
+| Module | Calculation impact | Evidence |
+|---|---|---|
+| `signals.ts` | None | All 11,045 rows: every non-date column byte-identical, `as_of` +1 day on exactly 11,045 of 11,045 |
+| `probability-runtime.ts` | None — dates feed only `asOf`, math runs on `closes` | Newest `asOf` now 2026-08-07, matching the true latest NSE bar |
+| `long-term-data.ts` | None, **though it could have** | `reportPeriod` feeds `reportAgeDays`, whose 180/365-day bands drive confidence. No report period in the table crosses a band under a one-day shift, and all 50 ranked scores match the pre-fix snapshot. Displayed period corrected 2026-06-29 → 2026-06-30 |
+| `engines-runtime.ts` | None | The macro correlator aligns two series by matching date strings; both sides are `DATE` columns through the same helper, so a uniform shift matches the same pairs. 24 pairs before and after |
+| `fundamentals.ts` | None — display only | `periodEndDate` |
+| `forwardTest.ts` | **Yes — and that is the bug** | See below |
+
+**Forward test genuinely changed.** `enrolled_on` was fed back into `where date > $2`, so a
+day-early value pulled in one extra bar: every position was credited with price movement from
+its own enrolment day, before the signal existed. Re-evaluating all 86 positions corrected
+`evaluated_through` on 38, `max_favorable_pct` on 7 and `max_adverse_pct` on 3 (e.g. 10.58 →
+6.67). **No `status`, `exit_price` or `realized_return_pct` changed**, so no position's outcome
+was affected — only path statistics, and only where the enrolment-day bar had inflated them.
+
+**Deliberately not changed:** `dataHealth.ts`'s `previousWeekday` matches the grep pattern but
+is not the same bug — it builds the date as `...T00:00:00Z` and uses `setUTCDate`/`getUTCDay`
+throughout, so it is internally consistent UTC arithmetic on a date-only string.
+
+Still open: `new Date().toISOString().slice(0, 10)` is used for "today" in
+`lib/long-term-actions.ts` (snapshot capture key) and `lib/ingest/quotes.ts` (default
+`startISO`). That is a milder variant — UTC-today rather than IST-today, so it rolls over at
+05:30 IST instead of midnight. Not addressed.
+
 ## Forward Testing
 
 Built:
@@ -787,6 +880,40 @@ Current limitations:
 
 ## Quality Checks Currently Passing
 
+Full-repo check run on 2026-08-09 (swing scan repair + six-module date fix):
+
+- `npx tsc --noEmit`: passing.
+- `npx eslint .` (whole repo): passing, no errors or warnings.
+- `npm test`: passing, **96/96 tests**.
+- `npm run build`: passing.
+- Scan equivalence: all 11,044 signal rows dumped before and after the concurrency change and
+  diffed — byte-identical.
+- Date-fix equivalence: all 11,045 rows re-dumped — every non-date column byte-identical, and
+  `as_of` moved by exactly +1 day on 11,045 of 11,045 rows (no row moved by any other amount).
+- Long-term score safety: proven by band analysis (no report period crosses the 180/365-day
+  confidence boundary under a one-day shift) and confirmed against the pre-fix snapshot —
+  0 of 50 ranked scores differ.
+- Forward test: all 86 positions re-evaluated; changes confined to `evaluated_through` (38),
+  `max_favorable_pct` (7) and `max_adverse_pct` (3), with no `status`, `exit_price` or
+  `realized_return_pct` altered.
+- Live service after `launchctl kickstart`: scan returns HTTP 200 with `attempts: 1`; the
+  Long-Term page renders `Quote 2026-08-07` (was 2026-08-06) and true quarter-end report periods.
+
+Authenticated page-load profiling on 2026-08-09 (data loaders timed directly against the live
+database, since most routes 307 to `/login` for an unauthenticated client):
+
+| Page | Loader | Cold | Warm |
+|---|---|---:|---:|
+| `/markets/in` | `getMarketOverview` | 2.94s | 0.93s |
+| `/data/health` | `getDataHealthPageData` | 2.46s | 0.97s |
+| `/terminal/*/probability` | `getProbabilitySummary` | 0.67s | 0.62s |
+| `/terminal/*/screener` | `runScreener` | 0.05s | 0.01s |
+| `/terminal/in/stocks`, fund-mapping, forward-test | all loaders | ≤0.05s | ~0s |
+
+No structural problem outside Long-Term Candidates. An initial 11.6s reading for Data Health
+was contention from a concurrently failing scan, not a page defect — chasing it is what
+surfaced the scan bug above.
+
 Full-repo check run on 2026-08-09 (Long-Term Candidates 82s load fix):
 
 - `npx tsc --noEmit`: passing.
@@ -879,6 +1006,10 @@ Current branch:
 
 Recent commits:
 
+- `45592be Fix the same one-day date shift in five more modules`
+- `b9bc32d Fix swing signal as_of being a day early in non-UTC timezones`
+- `2810b3b Fix swing scan failing every daytime run since 09:35`
+- `8247683 Document the Long-Term Candidates 82s page-load fix`
 - `513ebe2 Fix Long-Term Candidates page taking 80s to load`
 - `c66739b Update personal deployment status and capabilities`
 - `19c3b53 Add private macOS service and account recovery`
