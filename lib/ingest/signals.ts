@@ -31,7 +31,8 @@ interface AssetMeta {
 
 interface BarRow {
   asset_id: string;
-  date: string | Date;
+  /** Always a 'YYYY-MM-DD' string — the query casts it, so no JS Date is ever involved. */
+  date: string;
   open: string | number;
   high: string | number;
   low: string | number;
@@ -103,11 +104,16 @@ export async function computeSignals(databaseUrl: string): Promise<ScanSummary> 
         const metaById = new Map(slice.map((a) => [a.id, a]));
         const ids = slice.map((a) => a.id);
 
+        // date is cast to text in SQL rather than being read as a JS Date. node-postgres
+        // hands back a Date at *local* midnight, so toISOString() shifts it into the previous
+        // UTC day everywhere east of Greenwich — under IST a Friday bar was being labelled
+        // Thursday, making every as_of a day early. Ordering still uses the real date column.
         const { rows } = await client.query<BarRow>(
-          `select asset_id, date, open, high, low, close, volume, open_interest
-             from public.daily_ohlcv
-            where asset_id = any($1)
-            order by asset_id, date asc`,
+          `select o.asset_id, o.date::text as date, o.open, o.high, o.low,
+                  o.close, o.volume, o.open_interest
+             from public.daily_ohlcv o
+            where o.asset_id = any($1)
+            order by o.asset_id, o.date asc`,
           [ids],
         );
 
@@ -117,7 +123,7 @@ export async function computeSignals(databaseUrl: string): Promise<ScanSummary> 
           let arr = bars.get(r.asset_id);
           if (!arr) { arr = []; bars.set(r.asset_id, arr); }
           arr.push({
-            date: r.date instanceof Date ? r.date.toISOString().slice(0, 10) : String(r.date).slice(0, 10),
+            date: r.date.slice(0, 10),
             open: Number(r.open), high: Number(r.high), low: Number(r.low),
             close: Number(r.close), volume: Number(r.volume),
             openInterest: r.open_interest === null ? null : Number(r.open_interest),
