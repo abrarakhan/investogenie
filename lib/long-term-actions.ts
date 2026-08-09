@@ -11,6 +11,17 @@ import {
   type LongTermStrategyKey,
 } from "@/lib/analytics/longTermStrategies";
 
+/**
+ * A candidate with every strategy already scored. Scoring depends only on the record and the
+ * market — never on the strategy/score/confidence filters — so it is computed once per market
+ * and reused across filter changes instead of re-running for all ~4,400 stocks per request.
+ */
+interface ScoredRecord {
+  base: Omit<LongTermCandidate, "selectedScore" | "scores">;
+  scoresByKey: Map<LongTermStrategyKey, LongTermScore>;
+  scoresRanked: LongTermScore[];
+}
+
 export interface LongTermCandidate extends HistoricalFundamentalMetrics {
   assetId: string;
   symbol: string;
@@ -64,6 +75,18 @@ export interface LongTermQuery {
 function validStrategy(value: LongTermStrategyKey | undefined): LongTermStrategyKey {
   return value && LONG_TERM_STRATEGY_KEYS.includes(value) ? value : "BUFFETT_MOAT";
 }
+
+const SCORE_CACHE_TTL_MS = 5 * 60 * 1000;
+const globalForLongTermScores = globalThis as unknown as {
+  __igLongTermScores?: Map<LongTermMarket, { expiresAt: number; scored: ScoredRecord[] }>;
+  __igLongTermCaptured?: Set<string>;
+};
+const scoreCache = globalForLongTermScores.__igLongTermScores ?? new Map();
+globalForLongTermScores.__igLongTermScores = scoreCache;
+
+/** Guards the daily snapshot so it writes once per market/strategy/day, not once per request. */
+const capturedToday = globalForLongTermScores.__igLongTermCaptured ?? new Set<string>();
+globalForLongTermScores.__igLongTermCaptured = capturedToday;
 
 async function persistDailySnapshot(
   market: LongTermMarket,
@@ -128,17 +151,16 @@ async function persistDailySnapshot(
   }
 }
 
-export async function getLongTermCandidates(q: LongTermQuery): Promise<LongTermResult> {
-  const activeStrategy = validStrategy(q.strategy);
-  const minScore = Math.min(100, Math.max(0, q.minScore ?? 50));
-  const minConfidence = Math.min(100, Math.max(0, q.minConfidence ?? 60));
-  const limit = Math.min(200, Math.max(1, q.limit ?? 50));
-  const records = await getLongTermData(q.market);
+/** Scores every record against every strategy once per market, then caches the result. */
+async function getScoredRecords(market: LongTermMarket): Promise<ScoredRecord[]> {
+  const cached = scoreCache.get(market);
+  if (cached && cached.expiresAt > Date.now()) return cached.scored;
 
-  const allCandidates = records.map((record): LongTermCandidate => {
-    const scores = scoreAllLongTermStrategies(record.fundamentals, q.market);
-    const selectedScore = scores.find((score) => score.key === activeStrategy) as LongTermScore;
+  const records = await getLongTermData(market);
+  const scored = records.map((record): ScoredRecord => {
+    const scores = scoreAllLongTermStrategies(record.fundamentals, market);
     return {
+      base: {
       assetId: record.assetId,
       symbol: record.symbol,
       name: record.name,
@@ -175,33 +197,65 @@ export async function getLongTermCandidates(q: LongTermQuery): Promise<LongTermR
       positiveProfitYearsRatio: record.fundamentals.positiveProfitYearsRatio,
       historyYears: record.fundamentals.historyYears,
       statementPeriods: record.fundamentals.statementPeriods,
-      selectedScore,
-      scores: [...scores].sort((a, b) => b.matchScore - a.matchScore),
+      },
+      scoresByKey: new Map(scores.map((score) => [score.key, score])),
+      scoresRanked: [...scores].sort((a, b) => b.matchScore - a.matchScore),
     };
   });
 
-  const canonicalEligible = allCandidates.filter((candidate) => candidate.selectedScore.eligible);
-  canonicalEligible.sort((a, b) =>
-    b.selectedScore.matchScore - a.selectedScore.matchScore
-    || b.selectedScore.confidence - a.selectedScore.confidence
-    || (b.marketCap ?? 0) - (a.marketCap ?? 0)
-    || a.symbol.localeCompare(b.symbol),
-  );
-  const eligible = canonicalEligible.filter(
-    (candidate) => candidate.selectedScore.confidence >= minConfidence,
-  );
-  const candidates = eligible
-    .filter((candidate) => candidate.selectedScore.matchScore >= minScore)
-    .slice(0, limit);
+  scoreCache.set(market, { expiresAt: Date.now() + SCORE_CACHE_TTL_MS, scored });
+  return scored;
+}
 
-  await persistDailySnapshot(q.market, activeStrategy, canonicalEligible);
-  const periods = records.map((record) => record.reportPeriod).filter(Boolean).sort();
+const withScore = (record: ScoredRecord, selectedScore: LongTermScore): LongTermCandidate => ({
+  ...record.base,
+  selectedScore,
+  scores: record.scoresRanked,
+});
+
+export async function getLongTermCandidates(q: LongTermQuery): Promise<LongTermResult> {
+  const activeStrategy = validStrategy(q.strategy);
+  const minScore = Math.min(100, Math.max(0, q.minScore ?? 50));
+  const minConfidence = Math.min(100, Math.max(0, q.minConfidence ?? 60));
+  const limit = Math.min(200, Math.max(1, q.limit ?? 50));
+  const scored = await getScoredRecords(q.market);
+
+  // Filtering and ranking work off the cached scores, so only the returned page is
+  // materialised into candidate objects rather than all ~4,400 rows.
+  const canonicalEligible = scored
+    .map((record) => ({ record, score: record.scoresByKey.get(activeStrategy) as LongTermScore }))
+    .filter((entry) => entry.score.eligible)
+    .sort((a, b) =>
+      b.score.matchScore - a.score.matchScore
+      || b.score.confidence - a.score.confidence
+      || (b.record.base.marketCap ?? 0) - (a.record.base.marketCap ?? 0)
+      || a.record.base.symbol.localeCompare(b.record.base.symbol),
+    );
+  const eligible = canonicalEligible.filter((entry) => entry.score.confidence >= minConfidence);
+  const candidates = eligible
+    .filter((entry) => entry.score.matchScore >= minScore)
+    .slice(0, limit)
+    .map((entry) => withScore(entry.record, entry.score));
+
+  const captureKey = `${q.market}:${activeStrategy}:${new Date().toISOString().slice(0, 10)}`;
+  if (!capturedToday.has(captureKey)) {
+    capturedToday.add(captureKey);
+    // Deliberately not awaited: the daily snapshot is bookkeeping, and no user request should
+    // pay for a 200-row write. persistDailySnapshot swallows its own errors.
+    void persistDailySnapshot(
+      q.market,
+      activeStrategy,
+      canonicalEligible.slice(0, 200).map((entry) => withScore(entry.record, entry.score)),
+    ).catch(() => capturedToday.delete(captureKey));
+  }
+
+  const periods = scored.map((record) => record.base.reportPeriod).filter(Boolean).sort();
 
   return {
     candidates,
-    scanned: records.length,
+    scanned: scored.length,
     eligible: eligible.length,
-    excludedForEvidence: allCandidates.length - eligible.length,
+    excludedForEvidence: scored.length - eligible.length,
     activeStrategy,
     fundamentalsLatestPeriod: periods.at(-1) ?? null,
     fundamentalsOldestPeriod: periods[0] ?? null,

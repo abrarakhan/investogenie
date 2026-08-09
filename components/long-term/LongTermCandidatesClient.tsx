@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import type { LongTermCandidate, LongTermResult } from "@/lib/long-term-actions";
 import { getLongTermCandidates } from "@/lib/long-term-actions";
@@ -124,6 +124,16 @@ export default function LongTermCandidatesClient({ market, initial }: { market: 
     refresh(strategy, minScore, minConfidence);
   };
 
+  // Dragging a range input emits a change per step. Without this, sliding 50 → 100 fires ten
+  // server round trips; only the value the user settles on is actually worth fetching.
+  const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (debounce.current) clearTimeout(debounce.current); }, []);
+
+  const refreshDebounced = (strategy: LongTermStrategyKey, score: number, confidence: number) => {
+    if (debounce.current) clearTimeout(debounce.current);
+    debounce.current = setTimeout(() => refresh(strategy, score, confidence), 250);
+  };
+
   return (
     <div className="space-y-5">
       <section className="rounded-lg border border-white/10 bg-white/[0.03] p-5">
@@ -169,11 +179,11 @@ export default function LongTermCandidatesClient({ market, initial }: { market: 
         <div className="mt-4 grid gap-4 sm:grid-cols-2">
           <label className="text-xs text-white/45">
             <span className="mb-1 flex justify-between"><b>Minimum score</b><span>{minScore}%</span></span>
-            <input type="range" min={0} max={100} step={5} value={minScore} onChange={(event) => { const value = Number(event.target.value); setMinScore(value); refresh(activeStrategy, value, minConfidence); }} className="w-full" />
+            <input type="range" min={0} max={100} step={5} value={minScore} onChange={(event) => { const value = Number(event.target.value); setMinScore(value); refreshDebounced(activeStrategy, value, minConfidence); }} className="w-full" />
           </label>
           <label className="text-xs text-white/45">
             <span className="mb-1 flex justify-between"><b>Minimum evidence</b><span>{minConfidence}%</span></span>
-            <input type="range" min={60} max={100} step={5} value={minConfidence} onChange={(event) => { const value = Number(event.target.value); setMinConfidence(value); refresh(activeStrategy, minScore, value); }} className="w-full" />
+            <input type="range" min={60} max={100} step={5} value={minConfidence} onChange={(event) => { const value = Number(event.target.value); setMinConfidence(value); refreshDebounced(activeStrategy, minScore, value); }} className="w-full" />
           </label>
         </div>
       </section>

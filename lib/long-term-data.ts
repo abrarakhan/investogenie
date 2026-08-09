@@ -108,8 +108,12 @@ function daysOld(period: string): number {
   return Math.max(0, Math.floor(milliseconds / 86_400_000));
 }
 
+// Every CTE is explicitly `materialized`. Postgres has no statistics for CTE output and
+// estimates these at 1-33 rows when they actually return ~4,800 — which previously made it
+// choose a nested loop for the annual-health join and rescan the annual CTE once per
+// universe row (20.8M rows discarded by the join filter, ~73s of the query's 78s).
 const SQL = `
-with ranked_assets as (
+with ranked_assets as materialized (
   select a.id, a.ticker symbol, a.name, a.sector, a.exchange, a.currency,
          q.price, q.change_pct, q.as_of quote_as_of,
          row_number() over (
@@ -125,89 +129,106 @@ with ranked_assets as (
      and a.is_active
      and exists (select 1 from public.asset_financial_reports f where f.asset_id = a.id)
 ),
-universe as (
+universe as materialized (
   select * from ranked_assets where listing_rank = 1
 ),
-quarterly_ranked as (
+quarterly_ranked as materialized (
   select f.*,
          row_number() over (partition by f.asset_id order by f.period_end_date desc) report_rank
     from public.asset_financial_reports f
     join universe u on u.id = f.asset_id
    where f.report_type = 'QUARTERLY'
 ),
-latest_quarter as (
+latest_quarter as materialized (
   select * from quarterly_ranked where report_rank = 1
 ),
-ttm as (
+ttm as materialized (
   select asset_id,
          sum(net_profit) filter (where report_rank <= 4) ttm_net_profit,
          count(*) filter (where report_rank <= 4) ttm_quarters
     from quarterly_ranked
    group by asset_id
 ),
-annual_ranked as (
+annual_ranked as materialized (
   select f.*,
          row_number() over (partition by f.asset_id order by f.period_end_date desc) report_rank
     from public.asset_financial_reports f
     join universe u on u.id = f.asset_id
    where f.report_type = 'ANNUAL'
 ),
-annual as (
-  select ar.asset_id,
-         jsonb_agg(
-           jsonb_build_object(
-             'period', ar.period_end_date,
-             'revenue', ar.revenue,
-             'net_profit', ar.net_profit,
-             'roce', ar.roce,
-             'operating_cash_flow', cf.operating_cash_flow,
-             'free_cash_flow', cf.free_cash_flow
-           )
-           order by ar.period_end_date desc
-         ) filter (where ar.report_rank <= 10) annual_series
+-- Balance sheet and cash flow are joined once here, then both the 10-year series and the
+-- latest-period health scalars are derived in a single grouped pass below. Previously these
+-- were two separate CTEs that each re-walked annual_ranked.
+annual_joined as materialized (
+  select ar.asset_id, ar.report_rank, ar.period_end_date,
+         ar.revenue, ar.roce, ar.ebit, ar.ebitda, ar.interest_expense, ar.net_profit,
+         cf.operating_cash_flow, cf.free_cash_flow,
+         bs.total_assets, bs.current_assets, bs.cash_and_equivalents,
+         bs.receivables, bs.current_liabilities, bs.total_debt, bs.shareholders_equity,
+         (bs.asset_id is not null or cf.asset_id is not null) has_statement
     from annual_ranked ar
     left join public.asset_cash_flow_statements cf
       on cf.asset_id=ar.asset_id and cf.period_end_date=ar.period_end_date
      and cf.report_type=ar.report_type
-   group by ar.asset_id
-),
-latest_annual_health as (
-  select ar.asset_id,
-         case when bs.asset_id is not null or cf.asset_id is not null
-              then ar.period_end_date end statement_period,
-         ar.ebit annual_ebit, ar.ebitda annual_ebitda,
-         ar.interest_expense annual_interest_expense,
-         ar.net_profit annual_net_profit,
-         bs.total_assets, bs.current_assets, bs.cash_and_equivalents,
-         bs.receivables, bs.current_liabilities, bs.total_debt,
-         bs.shareholders_equity, cf.operating_cash_flow annual_operating_cash_flow
-    from annual_ranked ar
     left join public.asset_balance_sheets bs
       on bs.asset_id=ar.asset_id and bs.period_end_date=ar.period_end_date
      and bs.report_type=ar.report_type
-    left join public.asset_cash_flow_statements cf
-      on cf.asset_id=ar.asset_id and cf.period_end_date=ar.period_end_date
-     and cf.report_type=ar.report_type
-   where ar.report_rank=1
+   where ar.report_rank <= 10
 ),
-last_bar as (
-  select distinct on (o.asset_id) o.asset_id, o.close, o.date
-    from public.daily_ohlcv o
-    join universe u on u.id = o.asset_id
-   order by o.asset_id, o.date desc
+annual as materialized (
+  select aj.asset_id,
+         jsonb_agg(
+           jsonb_build_object(
+             'period', aj.period_end_date,
+             'revenue', aj.revenue,
+             'net_profit', aj.net_profit,
+             'roce', aj.roce,
+             'operating_cash_flow', aj.operating_cash_flow,
+             'free_cash_flow', aj.free_cash_flow
+           )
+           order by aj.period_end_date desc
+         ) annual_series,
+         max(case when aj.report_rank=1 and aj.has_statement then aj.period_end_date end) statement_period,
+         max(aj.ebit)                 filter (where aj.report_rank=1) annual_ebit,
+         max(aj.ebitda)               filter (where aj.report_rank=1) annual_ebitda,
+         max(aj.interest_expense)     filter (where aj.report_rank=1) annual_interest_expense,
+         max(aj.net_profit)           filter (where aj.report_rank=1) annual_net_profit,
+         max(aj.total_assets)         filter (where aj.report_rank=1) total_assets,
+         max(aj.current_assets)       filter (where aj.report_rank=1) current_assets,
+         max(aj.cash_and_equivalents) filter (where aj.report_rank=1) cash_and_equivalents,
+         max(aj.receivables)          filter (where aj.report_rank=1) receivables,
+         max(aj.current_liabilities)  filter (where aj.report_rank=1) current_liabilities,
+         max(aj.total_debt)           filter (where aj.report_rank=1) total_debt,
+         max(aj.shareholders_equity)  filter (where aj.report_rank=1) shareholders_equity,
+         max(aj.operating_cash_flow)  filter (where aj.report_rank=1) annual_operating_cash_flow
+    from annual_joined aj
+   group by aj.asset_id
 ),
-year_high as (
-  select o.asset_id, max(o.high) high_52w
-    from public.daily_ohlcv o
-    join universe u on u.id = o.asset_id
-   where o.date >= current_date - interval '1 year'
-   group by o.asset_id
+-- Lateral per-asset lookups hit daily_ohlcv_asset_date_idx directly. The previous
+-- \`distinct on (asset_id) ... order by asset_id, date desc\` sorted all 4.5M bars for the
+-- universe and spilled 180MB to disk.
+bars as materialized (
+  select u.id asset_id, lb.close, lb.date, yh.high_52w
+    from universe u
+    left join lateral (
+      select o.close, o.date
+        from public.daily_ohlcv o
+       where o.asset_id = u.id
+       order by o.date desc
+       limit 1
+    ) lb on true
+    left join lateral (
+      select max(o.high) high_52w
+        from public.daily_ohlcv o
+       where o.asset_id = u.id
+         and o.date >= current_date - interval '1 year'
+    ) yh on true
 )
 select u.id asset_id, u.symbol, u.name, u.sector, u.exchange, u.currency,
        coalesce(u.price, b.close) ltp, u.change_pct change_pct_1d,
        coalesce(u.quote_as_of, b.date) quote_as_of,
-       case when yh.high_52w > 0
-            then (coalesce(u.price, b.close) - yh.high_52w) / yh.high_52w * 100 end pct_from_52w_high,
+       case when b.high_52w > 0
+            then (coalesce(u.price, b.close) - b.high_52w) / b.high_52w * 100 end pct_from_52w_high,
        lq.period_end_date report_period, lq.updated_at fundamentals_updated_at, lq.source,
        lq.currency report_currency,
        lq.cmp, lq.market_cap provider_market_cap, lq.pe_ratio provider_pe,
@@ -215,19 +236,17 @@ select u.id asset_id, u.symbol, u.name, u.sector, u.exchange, u.currency,
        lq.sales_variance_yoy revenue_growth_yoy,
        lq.profit_variance_yoy profit_growth_yoy,
        t.ttm_net_profit, t.ttm_quarters,
-       ah.statement_period, ah.annual_ebit, ah.annual_ebitda,
-       ah.annual_interest_expense, ah.annual_net_profit,
-       ah.total_assets, ah.current_assets, ah.cash_and_equivalents,
-       ah.receivables, ah.current_liabilities, ah.total_debt,
-       ah.shareholders_equity, ah.annual_operating_cash_flow,
+       an.statement_period, an.annual_ebit, an.annual_ebitda,
+       an.annual_interest_expense, an.annual_net_profit,
+       an.total_assets, an.current_assets, an.cash_and_equivalents,
+       an.receivables, an.current_liabilities, an.total_debt,
+       an.shareholders_equity, an.annual_operating_cash_flow,
        coalesce(an.annual_series, '[]'::jsonb) annual_series
   from universe u
   join latest_quarter lq on lq.asset_id = u.id
   left join ttm t on t.asset_id = u.id
   left join annual an on an.asset_id = u.id
-  left join latest_annual_health ah on ah.asset_id = u.id
-  left join last_bar b on b.asset_id = u.id
-  left join year_high yh on yh.asset_id = u.id
+  left join bars b on b.asset_id = u.id
  order by u.symbol
 `;
 
