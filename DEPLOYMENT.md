@@ -6,6 +6,7 @@ InvestoGenie supports two first-class targets from the same Git revision.
 | --- | --- | --- | --- | --- |
 | macOS local | `Launch InvestoGenie.command` or `npm run dev` | `.env.local` | Mac-local PostgreSQL | Development, manual research, local testing |
 | macOS production rehearsal | `npm run build && npm start` | `.env.local` | Mac-local PostgreSQL | Verify the production build locally |
+| macOS personal server | `npm run service:install` | `.env.local` | Mac-local PostgreSQL | Always-on private access through Tailscale |
 | Oracle Cloud | systemd `investogenie.service` | `/etc/investogenie/investogenie.env` | VM-local PostgreSQL | Always-on production and scheduled ingestion |
 
 Detailed instructions:
