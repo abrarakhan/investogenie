@@ -2,10 +2,14 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getSessionUser } from "@/lib/auth";
 import LoginForm from "./LoginForm";
+import { isPasswordResetEnabled } from "./actions";
 
 // If already authenticated, skip straight to the terminal.
 export default async function LoginPage() {
   if (await getSessionUser()) redirect("/terminal/us");
+  // Resolved on the server so the reset option is absent, not merely hidden, when no
+  // recovery key is configured.
+  const resetEnabled = await isPasswordResetEnabled();
 
   return (
     <main className="relative flex min-h-screen flex-col items-center justify-center bg-[#05070d] px-6 text-white">
@@ -27,7 +31,7 @@ export default async function LoginPage() {
         <p className="mb-6 text-sm text-white/50">
           Multi-asset portfolios across the US &amp; Indian markets.
         </p>
-        <LoginForm />
+        <LoginForm resetEnabled={resetEnabled} />
       </div>
       <Link
         href="/"
