@@ -2,8 +2,15 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { query } from "@/lib/db";
+import { query, queryOne } from "@/lib/db";
 import { isResetKeyConfigured, resetKeyMatches } from "@/lib/passwordReset";
+import {
+  issueResetToken,
+  redeemResetToken,
+  TOKEN_TTL_MINUTES,
+} from "@/lib/passwordResetTokens";
+import { sendEmailWithConfig } from "@/lib/email/nodemailer-service";
+import { passwordResetEmail } from "@/lib/email/password-reset-template";
 import {
   createSession,
   destroySession,
@@ -100,6 +107,99 @@ export async function resetPassword(_prev: AuthState, formData: FormData): Promi
 
   // No session is created — the new password has to work on the next sign-in, which proves
   // the reset actually took.
+  return { message: "Password updated. Sign in with your new password." };
+}
+
+/** Resolves the account's own stored SMTP credentials — the same ones the daily digest uses. */
+async function smtpConfigFor(userId: string) {
+  const creds = await queryOne<{
+    smtp_host: string | null;
+    smtp_port: number | null;
+    smtp_user: string | null;
+    smtp_password_encrypted: string | null;
+  }>(
+    `select smtp_host, smtp_port, smtp_user, smtp_password_encrypted
+       from public.user_credentials where user_id = $1`,
+    [userId],
+  );
+  if (!creds?.smtp_host || !creds.smtp_user || !creds.smtp_password_encrypted) return null;
+  const { decryptCredential } = await import("@/lib/crypto/credentials");
+  return {
+    host: creds.smtp_host,
+    port: creds.smtp_port || 587,
+    user: creds.smtp_user,
+    password: decryptCredential(creds.smtp_password_encrypted),
+  };
+}
+
+/**
+ * Emails a one-time reset link.
+ *
+ * The reply is identical whether or not the address has an account, and whether or not the
+ * hourly cap was hit — otherwise this form becomes a way to test which emails are registered.
+ * Failures are logged server-side rather than surfaced for the same reason.
+ */
+export async function requestPasswordResetEmail(
+  _prev: AuthState,
+  formData: FormData,
+): Promise<AuthState> {
+  const email = String(formData.get("email") ?? "").trim();
+  if (!email) return { error: "Enter the email address on your account." };
+
+  const neutral: AuthState = {
+    message: `If that address has an account, a reset link is on its way. It expires in ${TOKEN_TTL_MINUTES} minutes.`,
+  };
+
+  try {
+    const user = await findUserByEmail(email);
+    if (!user) return neutral;
+
+    const issued = await issueResetToken(user.id);
+    if (!issued) return neutral; // hourly cap reached
+
+    const smtp = await smtpConfigFor(user.id);
+    if (!smtp) {
+      console.warn("[password-reset] no SMTP credentials configured; cannot send reset email");
+      return neutral;
+    }
+
+    const baseUrl = (process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000").replace(/\/+$/, "");
+    const resetUrl = `${baseUrl}/login/reset?token=${issued.token}`;
+    await sendEmailWithConfig(smtp, {
+      to: user.email,
+      subject: "Reset your InvestoGenie password",
+      html: passwordResetEmail(resetUrl, TOKEN_TTL_MINUTES),
+    });
+  } catch (error) {
+    console.error("[password-reset] could not send reset email:", error);
+  }
+
+  return neutral;
+}
+
+/** Completes a reset from an emailed link. The token is consumed whether or not it is valid. */
+export async function completePasswordReset(
+  _prev: AuthState,
+  formData: FormData,
+): Promise<AuthState> {
+  const token = String(formData.get("token") ?? "");
+  const password = String(formData.get("password") ?? "");
+  const confirm = String(formData.get("confirmPassword") ?? "");
+
+  if (!password) return { error: "Enter a new password." };
+  if (password.length < 6) return { error: "Password must be at least 6 characters." };
+  if (password !== confirm) return { error: "The two passwords do not match." };
+
+  const redeemed = await redeemResetToken(token);
+  if (!redeemed) {
+    return { error: "That reset link is invalid, already used, or has expired. Request a new one." };
+  }
+
+  await query(`update public.users set password_hash = $2 where id = $1`, [
+    redeemed.userId,
+    await hashPassword(password),
+  ]);
+
   return { message: "Password updated. Sign in with your new password." };
 }
 
