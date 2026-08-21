@@ -29,7 +29,7 @@ const JOURNEY: { step: string; title: string; href: string; body: string }[] = [
   {
     step: "3",
     title: "Narrow the universe — Stock Screener",
-    href: "/terminal/in/screener",
+    href: "/terminal/in/stocks",
     body: "Filter thousands of stocks by price action, valuation, profitability and growth. Type a plain-English query (\"profitable smallcaps under 30 P/E\") and it builds the filters for you.",
   },
   {
@@ -99,9 +99,9 @@ export default function HelpPage() {
         <ol className="mt-6 space-y-3">
           {JOURNEY.map((j) => (
             <li key={j.step}>
-              <Link
+              <a
                 href={j.href}
-                className="group flex gap-4 rounded-xl border border-white/10 bg-white/[0.03] p-4 transition hover:border-cyan-300/40 hover:bg-white/[0.06]"
+                className="group flex min-h-11 touch-manipulation gap-4 rounded-xl border border-white/10 bg-white/[0.03] p-4 transition hover:border-cyan-300/40 hover:bg-white/[0.06]"
               >
                 <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-cyan-300/15 text-sm font-bold text-cyan-300">
                   {j.step}
@@ -110,7 +110,7 @@ export default function HelpPage() {
                   <div className="font-semibold text-white group-hover:text-cyan-100">{j.title}</div>
                   <div className="mt-1 text-sm leading-relaxed text-white/55">{j.body}</div>
                 </div>
-              </Link>
+              </a>
             </li>
           ))}
         </ol>

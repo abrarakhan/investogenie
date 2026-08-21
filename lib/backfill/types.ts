@@ -62,6 +62,7 @@ export interface BackfillStatusSummary {
   done: number;
   failed: number;
   skipped: number;
+  retired: number;
   active: Array<{
     symbol: string;
     market: BackfillMarket;

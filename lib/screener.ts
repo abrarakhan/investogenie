@@ -71,9 +71,10 @@ export async function runScreener(
   if (country) { params.push(country); conds.push(`country = $${params.length}`); }
   if (opts.exchange) { params.push(opts.exchange); conds.push(`exchange = $${params.length}`); }
   if (opts.limit) conds.push(`verdict <> 'NO_SETUP'`);
+  if (!settings.includeShort) conds.push(`bias <> 'SHORT'`);
   const where = conds.length ? `where ${conds.join(" and ")}` : "";
   let sql = `select ${SELECT} from public.swing_signals ${where} order by score desc, ticker asc`;
-  if (opts.limit) { params.push(opts.limit * 2); sql += ` limit $${params.length}`; }
+  if (opts.limit) { params.push(opts.limit); sql += ` limit $${params.length}`; }
 
   const raw = await query<Record<string, unknown>>(sql, params);
   const num = (v: unknown) => (v === null || v === undefined ? 0 : Number(v));
@@ -143,7 +144,9 @@ export async function runScreener(
         isBreakout: Boolean(r.is_breakout),
         isLongBuildup: Boolean(r.is_long_buildup),
         reason: (r.reason as string) ?? "",
-        asOf: (r.as_of as string) ?? "",
+        asOf: r.as_of instanceof Date
+          ? r.as_of.toISOString()
+          : String(r.as_of ?? ""),
         entry: lv.entry,
         target: lv.target,
         stopLoss: lv.stopLoss,

@@ -1,6 +1,7 @@
 import { query, queryOne, tx } from "@/lib/db";
 import { shouldSkipMarketForBackfill } from "./classifier";
 import { planQueueRows } from "./planner";
+import { isDefinitiveNoHistoryError } from "./tracking";
 import type {
   BackfillCandidate,
   BackfillMarket,
@@ -58,7 +59,9 @@ export function rowToCandidate(row: CandidateRow): BackfillCandidate {
 export async function getBackfillCandidates(): Promise<BackfillCandidate[]> {
   const rows = await query<CandidateRow>(
     `with hist as (
-       select asset_id, count(*) bar_count from public.daily_ohlcv group by asset_id
+       select asset_id, count(*) bar_count, max(date) latest_date
+         from public.daily_ohlcv
+        group by asset_id
      )
      select a.id::text asset_id,
             a.ticker symbol,
@@ -77,6 +80,8 @@ export async function getBackfillCandidates(): Promise<BackfillCandidate[]> {
        left join hist on hist.asset_id=a.id
        left join public.stock_snapshot ss on ss.asset_id=a.id
       where a.asset_class='STOCK'
+        and coalesce(a.is_active, true)
+        and not exists(select 1 from public.asset_tracking_exclusions x where x.asset_id=a.id)
         and (
           (a.country='IN' and a.exchange in ('NSE','BSE'))
           or (a.country='US' and coalesce(a.exchange, '') in ('NASDAQ','NYSE','AMEX','NYSEARCA','NYSEAMERICAN'))
@@ -88,17 +93,23 @@ export async function getBackfillCandidates(): Promise<BackfillCandidate[]> {
             and q.source = a.exchange || '_BHAVCOPY'
           )
         )
-        and coalesce(hist.bar_count, 0)=0`,
+        and (coalesce(hist.bar_count, 0)=0 or hist.latest_date <= current_date - 4)`,
   );
   return rows.map(rowToCandidate);
 }
 
 async function pruneUnsupportedBackfillItems() {
   await query(
-    `delete from public.backfill_queue q
-      using public.assets a
-     where q.asset_id = a.id
-       and not (
+    `update public.backfill_queue q
+        set status='skipped', completed_at=coalesce(q.completed_at, now()),
+            last_error=coalesce(q.last_error, 'Removed from active tracking')
+       from public.assets a
+      where q.asset_id = a.id
+        and q.status in ('pending','in_progress','failed')
+        and (
+          not coalesce(a.is_active, true)
+          or exists(select 1 from public.asset_tracking_exclusions x where x.asset_id=a.id)
+          or not (
          a.asset_class='STOCK'
          and (
            (a.country='IN' and a.exchange in ('NSE','BSE'))
@@ -108,11 +119,111 @@ async function pruneUnsupportedBackfillItems() {
            a.country <> 'IN'
            or a.ticker !~ '-RE[0-9]*$'
          )
-       )`,
+          )
+        )`,
   );
 }
 
+async function retireStructurallyUnsupportedAssets(): Promise<number> {
+  const rows = await query<{ asset_id: string }>(
+    `with candidates as (
+       select a.id asset_id,
+              case when a.country='IN' then 'temporary_rights_issue' else 'warrant_or_right' end reason_code
+         from public.assets a
+        where coalesce(a.is_active, true)
+          and a.asset_class='STOCK'
+          and (
+            (a.country='IN' and a.exchange in ('NSE','BSE') and a.ticker ~ '-RE[0-9]*$')
+            or
+            (a.country='US' and a.exchange in ('NASDAQ','NYSE','AMEX','NYSEARCA','NYSEAMERICAN')
+             and (a.ticker ~ '-[WR][A-Z]*$' or a.ticker ~ '^[A-Z0-9]{4,}[WR]$'))
+          )
+          and not exists(select 1 from public.universe_members u where u.asset_id=a.id and u.universe in ('NIFTY_500','SP_500','NASDAQ_100'))
+          and not exists(select 1 from public.holdings h where h.asset_id=a.id)
+          and not exists(select 1 from public.watchlist_items w where w.asset_id=a.id)
+          and not exists(select 1 from public.forward_test_positions f where f.asset_id=a.id and f.status='OPEN')
+     ), inserted as (
+       insert into public.asset_tracking_exclusions (asset_id, reason_code, reason, source, metadata)
+       select asset_id, reason_code,
+              case when reason_code='temporary_rights_issue'
+                   then 'Temporary rights entitlement is not an ordinary equity listing'
+                   else 'Warrant or rights listing is outside stock-strategy coverage'
+              end,
+              'listing_classifier', '{}'::jsonb
+         from candidates
+       on conflict (asset_id) do nothing
+       returning asset_id
+     )
+     update public.assets a
+        set is_active=false
+       from candidates c
+      where a.id=c.asset_id
+     returning a.id::text asset_id`,
+  );
+  return rows.length;
+}
+
+async function restoreRecentlyQuotedAssets(): Promise<number> {
+  const rows = await query<{ asset_id: string }>(
+    `with restored as (
+       delete from public.asset_tracking_exclusions x
+        using public.latest_quotes q
+        where x.asset_id=q.asset_id
+          and x.reason_code='history_unavailable'
+          and q.as_of >= current_date - 7
+       returning x.asset_id
+     )
+     update public.assets a set is_active=true
+       from restored r where a.id=r.asset_id
+     returning a.id::text asset_id`,
+  );
+  return rows.length;
+}
+
+async function retireTerminalFailedBackfillItems(): Promise<number> {
+  const rows = await query<{ asset_id: string }>(
+    `with candidates as (
+       select q.asset_id, q.attempts, q.last_error
+         from public.backfill_queue q
+         join public.assets a on a.id=q.asset_id
+        where q.status='failed'
+          and q.attempts >= 3
+          and not exists(
+            select 1 from public.latest_quotes recent
+             where recent.asset_id=a.id and recent.as_of >= current_date - 7
+          )
+          and (
+            lower(coalesce(q.last_error, '')) like '%no ohlcv bars returned%'
+            or lower(coalesce(q.last_error, '')) like '%no price data found%'
+            or lower(coalesce(q.last_error, '')) like '%possibly delisted%'
+            or lower(coalesce(q.last_error, '')) like '%quote not found%'
+            or lower(coalesce(q.last_error, '')) like '%404 not found%'
+          )
+          and not exists(select 1 from public.universe_members u where u.asset_id=a.id and u.universe in ('NIFTY_500','SP_500','NASDAQ_100'))
+          and not exists(select 1 from public.holdings h where h.asset_id=a.id)
+          and not exists(select 1 from public.watchlist_items w where w.asset_id=a.id)
+          and not exists(select 1 from public.forward_test_positions f where f.asset_id=a.id and f.status='OPEN')
+     ), inserted as (
+       insert into public.asset_tracking_exclusions (asset_id, reason_code, reason, source, metadata)
+       select asset_id, 'history_unavailable',
+              'No OHLCV history after ' || attempts || ' attempts: ' || left(coalesce(last_error, ''), 500),
+              'backfill', jsonb_build_object('attempts', attempts)
+         from candidates
+       on conflict (asset_id) do update set reason_code=excluded.reason_code, reason=excluded.reason,
+         source=excluded.source, excluded_at=now(), metadata=excluded.metadata
+       returning asset_id
+     )
+     update public.assets a set is_active=false
+       from candidates c where a.id=c.asset_id
+     returning a.id::text asset_id`,
+  );
+  return rows.length;
+}
+
 export async function populateBackfillQueue(): Promise<PopulateBackfillSummary> {
+  await restoreRecentlyQuotedAssets();
+  await retireStructurallyUnsupportedAssets();
+  await retireTerminalFailedBackfillItems();
   await pruneUnsupportedBackfillItems();
   const candidates = await getBackfillCandidates();
   const tierCounts: Record<number, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 };
@@ -136,19 +247,19 @@ export async function populateBackfillQueue(): Promise<PopulateBackfillSummary> 
        market=excluded.market,
        tier=excluded.tier,
        status=case
-         when public.backfill_queue.status in ('done','skipped','in_progress') then public.backfill_queue.status
+         when public.backfill_queue.status in ('failed','skipped','in_progress') then public.backfill_queue.status
          else 'pending'
        end,
        attempts=case
-         when public.backfill_queue.status in ('done','skipped','in_progress') then public.backfill_queue.attempts
+         when public.backfill_queue.status in ('failed','skipped','in_progress') then public.backfill_queue.attempts
          else 0
        end,
        last_error=case
-         when public.backfill_queue.status in ('done','skipped','in_progress') then public.backfill_queue.last_error
+         when public.backfill_queue.status in ('failed','skipped','in_progress') then public.backfill_queue.last_error
          else null
        end,
        queued_at=case
-         when public.backfill_queue.status in ('done','skipped','in_progress') then public.backfill_queue.queued_at
+         when public.backfill_queue.status in ('failed','skipped','in_progress') then public.backfill_queue.queued_at
          else now()
        end
      returning 1 inserted`,
@@ -188,6 +299,8 @@ export async function claimNextBackfillItem({
          from public.backfill_queue q
          join public.assets a on a.id = q.asset_id
         where q.status='pending'
+          and coalesce(a.is_active, true)
+          and not exists(select 1 from public.asset_tracking_exclusions x where x.asset_id=a.id)
           and a.asset_class='STOCK'
           and (
             (a.country='IN' and a.exchange in ('NSE','BSE'))
@@ -225,21 +338,51 @@ export async function markBackfillDone(id: number, barsLoaded: number) {
   await query(
     `update public.backfill_queue
         set status=$2, bars_loaded=$3, completed_at=now(), last_error=null
-      where id=$1`,
+      where id=$1
+      returning asset_id::text, attempts, status`,
     [id, barsLoaded > 0 ? "done" : "skipped", barsLoaded],
   );
 }
 
-export async function markBackfillFailed(id: number, error: string, maxAttempts = 3) {
-  await query(
-    `update public.backfill_queue
+export async function markBackfillFailed(id: number, error: string, maxAttempts = 3): Promise<"pending" | "failed" | "retired"> {
+  return tx(async (client) => {
+    const { rows } = await client.query<{ asset_id: string; attempts: number; status: "pending" | "failed" }>(
+      `update public.backfill_queue
         set attempts=attempts+1,
             last_error=$2,
             status=case when attempts + 1 >= $3 then 'failed' else 'pending' end,
             completed_at=case when attempts + 1 >= $3 then now() else completed_at end
       where id=$1`,
-    [id, error.slice(0, 2000), maxAttempts],
-  );
+      [id, error.slice(0, 2000), maxAttempts],
+    );
+    const updated = rows[0];
+    if (!updated || updated.status !== "failed" || !isDefinitiveNoHistoryError(error)) return updated?.status ?? "failed";
+
+    const protectedRow = await client.query<{ protected: boolean; has_recent_quote: boolean }>(
+      `select exists(select 1 from public.universe_members u where u.asset_id=$1 and u.universe in ('NIFTY_500','SP_500','NASDAQ_100'))
+           or exists(select 1 from public.holdings h where h.asset_id=$1)
+           or exists(select 1 from public.watchlist_items w where w.asset_id=$1)
+           or exists(select 1 from public.forward_test_positions f where f.asset_id=$1 and f.status='OPEN') protected,
+         exists(select 1 from public.latest_quotes q where q.asset_id=$1 and q.as_of >= current_date - 7) has_recent_quote`,
+      [updated.asset_id],
+    );
+    if (protectedRow.rows[0]?.protected || protectedRow.rows[0]?.has_recent_quote) return "failed";
+
+    await client.query(
+      `insert into public.asset_tracking_exclusions (asset_id, reason_code, reason, source, metadata)
+       values ($1, 'history_unavailable', $2, 'backfill', jsonb_build_object('attempts', $3::int))
+       on conflict (asset_id) do update set reason_code=excluded.reason_code, reason=excluded.reason,
+         source=excluded.source, excluded_at=now(), metadata=excluded.metadata`,
+      [updated.asset_id, `No OHLCV history after ${updated.attempts} attempts: ${error.slice(0, 500)}`, updated.attempts],
+    );
+    await client.query("update public.assets set is_active=false where id=$1", [updated.asset_id]);
+    await client.query(
+      `update public.backfill_queue set status='skipped', completed_at=now(),
+         last_error='Retired from tracking: ' || $2 where id=$1`,
+      [id, error.slice(0, 1000)],
+    );
+    return "retired";
+  });
 }
 
 export async function requeueFailedBackfillItems(): Promise<number> {
@@ -247,6 +390,7 @@ export async function requeueFailedBackfillItems(): Promise<number> {
     `update public.backfill_queue
         set status='pending', attempts=0, last_error=null, started_at=null, completed_at=null
       where status='failed'
+        and not exists(select 1 from public.asset_tracking_exclusions x where x.asset_id=public.backfill_queue.asset_id)
       returning id`,
   );
   return rows.length;
@@ -255,7 +399,7 @@ export async function requeueFailedBackfillItems(): Promise<number> {
 async function reconcileCoveredBackfillItems(): Promise<void> {
   await query(
     `with hist as (
-       select asset_id, count(*)::int bar_count
+       select asset_id, count(*)::int bar_count, max(date) latest_date
          from public.daily_ohlcv
         group by asset_id
      )
@@ -267,13 +411,15 @@ async function reconcileCoveredBackfillItems(): Promise<void> {
        from hist
       where hist.asset_id = q.asset_id
         and hist.bar_count > 0
+        and hist.latest_date > current_date - 4
         and q.status in ('pending','failed','skipped')`,
   );
+  await pruneUnsupportedBackfillItems();
 }
 
 export async function getBackfillStatusSummary(): Promise<BackfillStatusSummary> {
   await reconcileCoveredBackfillItems();
-  const [rows, activeRows, lastRunRows] = await Promise.all([
+  const [rows, activeRows, lastRunRows, retiredRow] = await Promise.all([
     query<{ tier: number; status: QueueStatusRow["status"]; count: string }>(
       `select tier, status, count(*)::text count
          from public.backfill_queue
@@ -293,8 +439,9 @@ export async function getBackfillStatusSummary(): Promise<BackfillStatusSummary>
          from public.cron_logs
         where job in ('backfill_ohlcv', 'backfill_ohlcv_cron', 'backfill-nse', 'backfill-bse')
         order by created_at desc
-        limit 1`,
+      limit 1`,
     ),
+    queryOne<{ count: string }>("select count(*)::text count from public.asset_tracking_exclusions"),
   ]);
   const summaryRows = rows.map((row) => ({ tier: Number(row.tier), status: row.status, count: Number(row.count) }));
   const total = summaryRows.reduce((sum, row) => sum + row.count, 0);
@@ -315,6 +462,7 @@ export async function getBackfillStatusSummary(): Promise<BackfillStatusSummary>
     done,
     failed,
     skipped,
+    retired: Number(retiredRow?.count ?? 0),
     active: activeRows.map((row) => ({
       symbol: row.symbol,
       market: row.market,

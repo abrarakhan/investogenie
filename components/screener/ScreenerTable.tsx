@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import type { ScreenRow, StrategyLevel } from "@/lib/screener";
 import { STRATEGY_META, type StrategyKey } from "@/lib/analytics/legendaryStrategies";
 
@@ -71,9 +72,33 @@ function effectiveLevels(r: ScreenRow, activeStrategy: StrategyKey | null): Effe
   };
 }
 
-function ActionBadge({ dir }: { dir: ScreenRow["direction"] }) {
+/** The Swing Candidates surface is buy-only, so short matches from two-sided
+ * strategies such as Simons must not appear in its counts or labels. */
+function isBuyStrategyMatch(r: ScreenRow, strategy: StrategyKey): boolean {
+  return r.strategyTags.includes(strategy)
+    && r.strategyLevels[strategy]?.direction === "LONG";
+}
+
+function trailingStopBreached(levels: EffectiveLevels): boolean {
+  if (levels.current === null || levels.trailingStop === null) return false;
+  return levels.dir === "LONG"
+    ? levels.current <= levels.trailingStop
+    : levels.current >= levels.trailingStop;
+}
+
+function trailingStopLabel(levels: EffectiveLevels): string {
+  return trailingStopBreached(levels) ? "BREACHED" : fmt2(levels.trailingStop);
+}
+
+function ActionBadge({
+  dir,
+  mobile = false,
+}: {
+  dir: ScreenRow["direction"];
+  mobile?: boolean;
+}) {
   return (
-    <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${dir === "SHORT" ? "bg-rose-500/20 text-rose-300" : "bg-emerald-500/20 text-emerald-300"}`}>
+    <span className={`${mobile ? "inline-flex h-7 items-center rounded-full border px-2.5" : "rounded px-1.5 py-0.5"} text-[10px] font-bold ${dir === "SHORT" ? "border-rose-500/30 bg-rose-500/20 text-rose-300" : "border-emerald-500/30 bg-emerald-500/20 text-emerald-300"}`}>
       {dir === "SHORT" ? "SHORT" : "BUY"}
     </span>
   );
@@ -86,6 +111,7 @@ export default function ScreenerTable({
   rows: ScreenRow[];
   scoped?: boolean;
 }) {
+  const router = useRouter();
   const [q, setQ] = useState("");
   const [market, setMarket] = useState<MarketFilter>("ALL");
   const [setup, setSetup] = useState<SetupFilter>("SETUPS");
@@ -94,14 +120,29 @@ export default function ScreenerTable({
   const [minRoce, setMinRoce] = useState("");
   const [maxPe, setMaxPe] = useState("");
 
+  // The server refreshes ranked India quotes every 15 minutes during market
+  // hours. Re-read that lightweight server snapshot while this page is open,
+  // and immediately after a mobile browser tab returns to the foreground.
+  useEffect(() => {
+    const refresh = () => router.refresh();
+    const timer = window.setInterval(refresh, 60_000);
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") refresh();
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [router]);
+
   const filtered = useMemo(() => {
     const needle = q.trim().toUpperCase();
     const roceMin = minRoce.trim() === "" ? null : Number(minRoce);
     const peMax = maxPe.trim() === "" ? null : Number(maxPe);
     return rows.filter((r) => {
       if (market !== "ALL" && r.country !== market) return false;
-      if (strategy !== "ALL" && !r.strategyTags.includes(strategy)) return false;
-      if (strategy !== "ALL" && r.strategyLevels[strategy]?.direction === "SHORT") return false;
+      if (strategy !== "ALL" && !isBuyStrategyMatch(r, strategy)) return false;
       // A strategy filter implies "setups" — skip the NO_SETUP gate so a tagged
       // row still shows even if the default classifier flagged nothing.
       if (strategy === "ALL" && setup === "SETUPS" && r.verdict === "NO_SETUP") return false;
@@ -120,7 +161,11 @@ export default function ScreenerTable({
   const activeStrategy: StrategyKey | null = strategy === "ALL" ? null : strategy;
   const strategyCounts = useMemo(() => {
     const c = new Map<StrategyKey, number>();
-    for (const r of rows) for (const t of r.strategyTags) c.set(t, (c.get(t) ?? 0) + 1);
+    for (const r of rows) {
+      for (const t of r.strategyTags) {
+        if (isBuyStrategyMatch(r, t)) c.set(t, (c.get(t) ?? 0) + 1);
+      }
+    }
     return c;
   }, [rows]);
 
@@ -186,11 +231,14 @@ export default function ScreenerTable({
             <button
               key={m.key}
               onClick={() => setStrategy(active ? "ALL" : m.key)}
+              disabled={n === 0}
               title={`${m.trader} — ${m.blurb}`}
               className={`group shrink-0 rounded-full border px-4 py-2 text-xs font-semibold transition-colors ${
                 active
                   ? "border-[var(--ig-accent)]/50 bg-[var(--ig-accent)]/15 text-[var(--ig-accent)]"
-                  : "border-white/10 text-white/50 hover:text-white"
+                  : n === 0
+                    ? "cursor-not-allowed border-white/5 text-white/25"
+                    : "border-white/10 text-white/50 hover:text-white"
               }`}
             >
               {m.label}
@@ -259,7 +307,7 @@ export default function ScreenerTable({
 
       {filtered.length === 0 && (
         <div className="rounded-2xl border border-white/10 px-4 py-10 text-center text-white/40">
-          No matches.
+          {activeStrategy ? "No buy-side matches for this strategy." : "No matches."}
         </div>
       )}
 
@@ -294,9 +342,9 @@ export default function ScreenerTable({
                     <td className="px-4 py-3">
                       <span className="font-semibold">{r.ticker}</span>
                       <span className="ml-2 text-[10px] uppercase text-white/30">{r.exchange} · {r.assetClass}</span>
-                      {!activeStrategy && r.strategyTags.length > 0 && (
+                      {!activeStrategy && r.strategyTags.some((t) => isBuyStrategyMatch(r, t)) && (
                         <span className="mt-1 flex flex-wrap gap-1">
-                          {r.strategyTags.map((t) => (
+                          {r.strategyTags.filter((t) => isBuyStrategyMatch(r, t)).map((t) => (
                             <span
                               key={t}
                               title={STRATEGY_LABEL[t]}
@@ -320,7 +368,9 @@ export default function ScreenerTable({
                     <td className="px-4 py-3 text-right tabular-nums text-white/80">{fmt2(lv.entry)}</td>
                     <td className="px-4 py-3 text-right tabular-nums text-emerald-400">{fmt2(lv.target)}</td>
                     <td className="px-4 py-3 text-right tabular-nums text-rose-400">{fmt2(lv.stopLoss)}</td>
-                    <td className="px-4 py-3 text-right tabular-nums text-amber-300/80">{fmt2(lv.trailingStop)}</td>
+                    <td className={`px-4 py-3 text-right tabular-nums ${trailingStopBreached(lv) ? "font-semibold text-rose-300" : "text-amber-300/80"}`}>
+                      {trailingStopLabel(lv)}
+                    </td>
                     <td className="px-4 py-3 text-right tabular-nums text-white/60">
                       {lv.riskReward ? `${lv.riskReward.toFixed(1)}×` : "—"}
                     </td>
@@ -363,12 +413,11 @@ export default function ScreenerTable({
               className="rounded-2xl border border-white/10 bg-white/[0.02] p-4"
             >
               {/* Header: ticker + action + verdict/strategy */}
-              <div className="flex items-start justify-between gap-3">
+              <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2">
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
                     <span className="text-base font-semibold">{r.ticker}</span>
                     <span className="text-[10px] uppercase text-white/30">{r.exchange} · {r.assetClass}</span>
-                    <ActionBadge dir={lv.dir} />
                   </div>
                   <div className="mt-1 tabular-nums">
                     <span className="text-lg font-bold">{fmt2(lv.current)}</span>
@@ -379,21 +428,24 @@ export default function ScreenerTable({
                     )}
                   </div>
                 </div>
-                {activeStrategy ? (
-                  <span className="shrink-0 rounded-full border border-[var(--ig-accent)]/40 bg-[var(--ig-accent)]/10 px-2.5 py-1 text-[11px] font-medium text-[var(--ig-accent)]">
-                    {STRATEGY_LABEL[activeStrategy]}
-                  </span>
-                ) : (
-                  <span className={`shrink-0 rounded-full border px-2.5 py-1 text-[11px] font-medium ${VERDICT_STYLE[r.verdict]}`}>
-                    {formatVerdict(r.verdict)}
-                  </span>
-                )}
+                <div className="flex shrink-0 items-center gap-1.5 max-[420px]:order-2 max-[420px]:basis-full">
+                  <ActionBadge dir={lv.dir} mobile />
+                  {activeStrategy ? (
+                    <span className="inline-flex h-7 items-center whitespace-nowrap rounded-full border border-[var(--ig-accent)]/40 bg-[var(--ig-accent)]/10 px-2.5 text-[10px] font-semibold text-[var(--ig-accent)]">
+                      {STRATEGY_LABEL[activeStrategy]}
+                    </span>
+                  ) : (
+                    <span className={`inline-flex h-7 items-center whitespace-nowrap rounded-full border px-2.5 text-[10px] font-semibold ${VERDICT_STYLE[r.verdict]}`}>
+                      {formatVerdict(r.verdict)}
+                    </span>
+                  )}
+                </div>
               </div>
 
               {/* Strategy badges (when not already filtered by one) */}
-              {!activeStrategy && r.strategyTags.length > 0 && (
+              {!activeStrategy && r.strategyTags.some((t) => isBuyStrategyMatch(r, t)) && (
                 <div className="mt-3 flex flex-wrap gap-1.5">
-                  {r.strategyTags.map((t) => (
+                  {r.strategyTags.filter((t) => isBuyStrategyMatch(r, t)).map((t) => (
                     <span key={t} className="rounded bg-white/10 px-2 py-0.5 text-[10px] font-medium text-white/60">
                       {STRATEGY_LABEL[t]}
                     </span>
@@ -419,7 +471,7 @@ export default function ScreenerTable({
 
               {/* Secondary metrics */}
               <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] tabular-nums text-white/50">
-                <span>Trail <b className="text-amber-300/80">{fmt2(lv.trailingStop)}</b></span>
+                <span>Trail <b className={trailingStopBreached(lv) ? "text-rose-300" : "text-amber-300/80"}>{trailingStopLabel(lv)}</b></span>
                 <span>R:R <b className="text-white/70">{lv.riskReward ? `${lv.riskReward.toFixed(1)}×` : "—"}</b></span>
                 <span>~{lv.expectedDays ? `${lv.expectedDays}d` : "—"}</span>
               </div>

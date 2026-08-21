@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { classifyBackfillTier, isMarketOpen, shouldSkipMarketForBackfill } from "./classifier";
+import { classifyBackfillTier, isMarketOpen, shouldSkipMarketForBackfill, shouldTrackBackfillCandidate } from "./classifier";
 import { filterNewQueueRows, planQueueRows, shouldContinueBatch, statusAfterFailure } from "./planner";
+import { isDefinitiveNoHistoryError, isStructurallyUnsupportedTicker, shouldRetireAfterFailure } from "./tracking";
 import type { BackfillCandidate } from "./types";
 
 const candidate = (overrides: Partial<BackfillCandidate>): BackfillCandidate => ({
@@ -38,6 +39,24 @@ describe("queue planning", () => {
 
     expect(filterNewQueueRows(rows, new Set(["existing"]))).toHaveLength(2);
     expect(filterNewQueueRows(rows, new Set(["a"]))).toEqual([expect.objectContaining({ assetId: "b" })]);
+  });
+
+  it("keeps warrants and temporary rights out of the stock-history queue", () => {
+    expect(isStructurallyUnsupportedTicker("GENESYS-RE", "IN")).toBe(true);
+    expect(isStructurallyUnsupportedTicker("GENESYS-RE1", "IN")).toBe(true);
+    expect(isStructurallyUnsupportedTicker("ACHR-WT", "US")).toBe(true);
+    expect(isStructurallyUnsupportedTicker("PTACW", "US")).toBe(true);
+    expect(isStructurallyUnsupportedTicker("LOW", "US")).toBe(false);
+    expect(shouldTrackBackfillCandidate(candidate({ symbol: "SES-WT", market: "US" }))).toBe(false);
+  });
+
+  it("retires only unprotected assets after definitive repeated no-data responses", () => {
+    expect(isDefinitiveNoHistoryError("No OHLCV bars returned")).toBe(true);
+    expect(isDefinitiveNoHistoryError("provider timeout")).toBe(false);
+    expect(shouldRetireAfterFailure({ attemptsAfterFailure: 3, maxAttempts: 3, error: "No OHLCV bars returned", protectedAsset: false, hasRecentQuote: false })).toBe(true);
+    expect(shouldRetireAfterFailure({ attemptsAfterFailure: 3, maxAttempts: 3, error: "provider timeout", protectedAsset: false, hasRecentQuote: false })).toBe(false);
+    expect(shouldRetireAfterFailure({ attemptsAfterFailure: 3, maxAttempts: 3, error: "No OHLCV bars returned", protectedAsset: true, hasRecentQuote: false })).toBe(false);
+    expect(shouldRetireAfterFailure({ attemptsAfterFailure: 3, maxAttempts: 3, error: "No OHLCV bars returned", protectedAsset: false, hasRecentQuote: true })).toBe(false);
   });
 
   it("stops at batch size", () => {

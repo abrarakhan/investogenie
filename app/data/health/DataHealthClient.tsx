@@ -151,7 +151,7 @@ export default function DataHealthClient({ data }: { data: DataHealthPageData })
               {backfill.running && <span className="inline-flex items-center gap-2 rounded-full border border-cyan-300/25 bg-cyan-300/10 px-2 py-0.5 text-[10px] uppercase tracking-wider text-cyan-200"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-cyan-200" />Running</span>}
             </div>
             <p className="mt-1 text-sm text-white/42">
-              {backfill.total.toLocaleString("en-IN")} queued · {backfill.pending.toLocaleString("en-IN")} pending · {backfill.done.toLocaleString("en-IN")} done · {backfill.failed.toLocaleString("en-IN")} failed
+              {backfill.total.toLocaleString("en-IN")} queued · {backfill.pending.toLocaleString("en-IN")} pending · {backfill.done.toLocaleString("en-IN")} done · {backfill.failed.toLocaleString("en-IN")} failed · {backfill.retired.toLocaleString("en-IN")} retired
             </p>
             <p className="mt-1 text-xs text-white/35">
               Lowest pending tier {backfill.lowestPendingTier ?? "-"} · Estimated remaining {backfill.estimatedMinutesRemaining === null ? "-" : `${backfill.estimatedMinutesRemaining.toFixed(1)} min`}

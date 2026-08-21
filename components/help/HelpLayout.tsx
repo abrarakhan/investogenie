@@ -12,9 +12,11 @@ export function HelpShell({ children }: { children: ReactNode }) {
           </Link>
           <nav className="flex items-center gap-4 text-sm text-white/60">
             <Link href="/help" className="hover:text-white">Help</Link>
-            <Link href="/terminal/in" className="rounded-full border border-white/15 px-4 py-1.5 hover:bg-white/10 hover:text-white">
+            {/* Full navigation stays reliable through remote mobile proxies when RSC requests are interrupted. */}
+            {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
+            <a href="/terminal/in" className="inline-flex min-h-11 touch-manipulation items-center rounded-lg border border-white/15 px-4 py-2 hover:bg-white/10 hover:text-white">
               Open Terminal
-            </Link>
+            </a>
           </nav>
         </div>
       </header>

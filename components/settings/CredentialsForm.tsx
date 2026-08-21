@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { updateCredentials, clearCredential, type StoredCredentials } from "@/lib/credentials-actions";
+import { updateCredentials, clearCredential, type NewsProvider, type StoredCredentials } from "@/lib/credentials-actions";
 import { AI_PROVIDERS, DEFAULT_MODEL_BY_PROVIDER, type AIProvider } from "@/lib/ai/providers";
 
 interface Props {
@@ -9,6 +9,11 @@ interface Props {
 }
 
 const CUSTOM = "__custom__";
+const NEWS_PROVIDERS: Array<{ key: NewsProvider; label: string; hint: string }> = [
+  { key: "alpha_vantage", label: "Alpha Vantage News Sentiment", hint: "Finance-native sentiment and ticker relevance. Best first choice for US coverage." },
+  { key: "gnews", label: "GNews", hint: "Broad India and US business-news search with country filtering." },
+  { key: "newsapi", label: "NewsAPI", hint: "Broad publisher coverage and advanced keyword search." },
+];
 
 export default function CredentialsForm({ initialCreds }: Props) {
   // --- SMTP state ---
@@ -36,6 +41,9 @@ export default function CredentialsForm({ initialCreds }: Props) {
   const [customModel, setCustomModel] = useState<string>(storedIsPreset ? "" : storedModel);
   const [aiKey, setAiKey] = useState("");
   const [aiKeySet, setAiKeySet] = useState(!!initialCreds?.aiApiKeySet);
+  const [newsProvider, setNewsProvider] = useState<NewsProvider>(initialCreds?.newsProvider ?? "gnews");
+  const [newsKey, setNewsKey] = useState("");
+  const [newsKeySet, setNewsKeySet] = useState(!!initialCreds?.newsApiKeySet);
 
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
@@ -111,6 +119,34 @@ export default function CredentialsForm({ initialCreds }: Props) {
       setMessage({ type: "success", text: "AI API key cleared." });
     } catch (err) {
       setMessage({ type: "error", text: err instanceof Error ? err.message : "Failed to clear" });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSaveNews = async () => {
+    setLoading(true);
+    setMessage(null);
+    try {
+      await updateCredentials({ newsProvider, newsApiKey: newsKey || undefined });
+      setNewsKey("");
+      if (newsKey) setNewsKeySet(true);
+      setMessage({ type: "success", text: `News provider saved: ${NEWS_PROVIDERS.find((item) => item.key === newsProvider)?.label}.` });
+    } catch (err) {
+      setMessage({ type: "error", text: err instanceof Error ? err.message : "Failed to save news API" });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleClearNewsKey = async () => {
+    setLoading(true);
+    try {
+      await clearCredential("newsApiKey");
+      setNewsKeySet(false);
+      setMessage({ type: "success", text: "News API key cleared." });
+    } catch (err) {
+      setMessage({ type: "error", text: err instanceof Error ? err.message : "Failed to clear news key" });
     } finally {
       setLoading(false);
     }
@@ -214,6 +250,34 @@ export default function CredentialsForm({ initialCreds }: Props) {
                 Clear key
               </button>
             )}
+          </div>
+        </div>
+      </div>
+
+      {/* News provider */}
+      <div className="rounded-xl border border-white/10 bg-white/[0.03] p-6">
+        <h3 className="mb-1 text-lg font-semibold">Financial news</h3>
+        <p className="mb-4 text-sm text-white/50">
+          Supplies source-linked market, macro, and company headlines to the separate News &amp; AI Swing workspace. The key is encrypted before storage.
+        </p>
+        <div className="space-y-4">
+          <label className="block">
+            <span className="text-sm font-medium text-white/80">Provider</span>
+            <select value={newsProvider} onChange={(event) => setNewsProvider(event.target.value as NewsProvider)} disabled={loading} className={inputCls}>
+              {NEWS_PROVIDERS.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}
+            </select>
+            <span className="mt-1 block text-xs text-white/40">{NEWS_PROVIDERS.find((item) => item.key === newsProvider)?.hint}</span>
+          </label>
+          <label className="block">
+            <span className="text-sm font-medium text-white/80">News API key</span>
+            <input type="password" value={newsKey} onChange={(event) => setNewsKey(event.target.value)} placeholder={newsKeySet ? "•••••••••••• (saved)" : "Paste provider API key"} disabled={loading} className={inputCls} />
+            <span className="mt-1 block text-xs text-white/40">{newsKeySet ? "A key is saved. Leave blank to keep it." : "Required for live headline ingestion."}</span>
+          </label>
+          <div className="flex gap-2">
+            <button onClick={handleSaveNews} disabled={loading} className="rounded-lg bg-gradient-to-r from-[var(--ig-primary)] to-[var(--ig-accent)] px-4 py-2 text-sm font-semibold text-black disabled:opacity-50">
+              {loading ? "Saving..." : "Save news API"}
+            </button>
+            {newsKeySet && <button onClick={handleClearNewsKey} disabled={loading} className="rounded-lg border border-rose-500/30 px-4 py-2 text-sm text-rose-400 hover:bg-rose-500/10 disabled:opacity-50">Clear key</button>}
           </div>
         </div>
       </div>

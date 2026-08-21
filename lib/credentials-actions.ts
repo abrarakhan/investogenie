@@ -21,6 +21,8 @@ export interface StoredCredentials {
   aiProvider: AIProvider | null;
   aiModel: string | null;
   aiApiKeySet: boolean;
+  newsProvider: NewsProvider | null;
+  newsApiKeySet: boolean;
   updatedAt: Date;
 }
 
@@ -32,7 +34,12 @@ export interface CredentialsInput {
   aiProvider?: AIProvider;
   aiModel?: string;
   aiApiKey?: string;
+  newsProvider?: NewsProvider;
+  newsApiKey?: string;
 }
+
+export type NewsProvider = "alpha_vantage" | "gnews" | "newsapi";
+const NEWS_PROVIDERS = new Set<NewsProvider>(["alpha_vantage", "gnews", "newsapi"]);
 
 interface CredsRow {
   id: string;
@@ -44,11 +51,14 @@ interface CredsRow {
   ai_provider: string | null;
   ai_model: string | null;
   ai_api_key_encrypted: string | null;
+  news_provider: string | null;
+  news_api_key_encrypted: string | null;
   updated_at: Date;
 }
 
 const SELECT_COLS = `id, user_id, smtp_host, smtp_port, smtp_user, smtp_password_encrypted,
-                     ai_provider, ai_model, ai_api_key_encrypted, updated_at`;
+                     ai_provider, ai_model, ai_api_key_encrypted,
+                     news_provider, news_api_key_encrypted, updated_at`;
 
 /** Map a DB row to the client-safe shape (never exposes decrypted secrets). */
 function mapCredentials(row: CredsRow): StoredCredentials {
@@ -62,6 +72,10 @@ function mapCredentials(row: CredsRow): StoredCredentials {
     aiProvider: isAIProvider(row.ai_provider) ? row.ai_provider : null,
     aiModel: row.ai_model,
     aiApiKeySet: !!row.ai_api_key_encrypted,
+    newsProvider: NEWS_PROVIDERS.has(row.news_provider as NewsProvider)
+      ? (row.news_provider as NewsProvider)
+      : null,
+    newsApiKeySet: !!row.news_api_key_encrypted,
     updatedAt: row.updated_at,
   };
 }
@@ -88,6 +102,11 @@ export async function updateCredentials(input: CredentialsInput): Promise<Stored
 
   const encSmtp = input.smtpPassword ? encryptCredential(input.smtpPassword) : undefined;
   const encAiKey = input.aiApiKey ? encryptCredential(input.aiApiKey) : undefined;
+  const encNewsKey = input.newsApiKey ? encryptCredential(input.newsApiKey) : undefined;
+
+  if (input.newsProvider && !NEWS_PROVIDERS.has(input.newsProvider)) {
+    throw new Error(`Unsupported news provider: ${input.newsProvider}`);
+  }
 
   const existing = await queryOne<CredsRow>(
     `select ${SELECT_COLS} from public.user_credentials where user_id = $1`,
@@ -98,8 +117,9 @@ export async function updateCredentials(input: CredentialsInput): Promise<Stored
     const row = await queryOne<CredsRow>(
       `insert into public.user_credentials
          (user_id, smtp_host, smtp_port, smtp_user, smtp_password_encrypted,
-          ai_provider, ai_model, ai_api_key_encrypted)
-       values ($1, $2, $3, $4, $5, $6, $7, $8)
+          ai_provider, ai_model, ai_api_key_encrypted,
+          news_provider, news_api_key_encrypted)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
        returning ${SELECT_COLS}`,
       [
         user.id,
@@ -110,6 +130,8 @@ export async function updateCredentials(input: CredentialsInput): Promise<Stored
         input.aiProvider ?? null,
         input.aiModel ?? null,
         encAiKey ?? null,
+        input.newsProvider ?? null,
+        encNewsKey ?? null,
       ],
     );
     if (!row) throw new Error("Failed to create credentials");
@@ -125,6 +147,8 @@ export async function updateCredentials(input: CredentialsInput): Promise<Stored
         ai_provider = coalesce($6, ai_provider),
         ai_model = coalesce($7, ai_model),
         ai_api_key_encrypted = coalesce($8, ai_api_key_encrypted),
+        news_provider = coalesce($9, news_provider),
+        news_api_key_encrypted = coalesce($10, news_api_key_encrypted),
         updated_at = now()
       where user_id = $1
       returning ${SELECT_COLS}`,
@@ -137,6 +161,8 @@ export async function updateCredentials(input: CredentialsInput): Promise<Stored
       input.aiProvider ?? null,
       input.aiModel ?? null,
       encAiKey ?? null,
+      input.newsProvider ?? null,
+      encNewsKey ?? null,
     ],
   );
   if (!row) throw new Error("Failed to update credentials");
@@ -144,15 +170,51 @@ export async function updateCredentials(input: CredentialsInput): Promise<Stored
 }
 
 /** Clear a single secret without disturbing the others. */
-export async function clearCredential(field: "smtpPassword" | "aiApiKey"): Promise<void> {
+export async function clearCredential(field: "smtpPassword" | "aiApiKey" | "newsApiKey"): Promise<void> {
   const user = await getSessionUser();
   if (!user) throw new Error("Not signed in");
-  const column =
-    field === "smtpPassword" ? "smtp_password_encrypted" : "ai_api_key_encrypted";
+  const column = field === "smtpPassword"
+    ? "smtp_password_encrypted"
+    : field === "aiApiKey" ? "ai_api_key_encrypted" : "news_api_key_encrypted";
   await query(
     `update public.user_credentials set ${column} = null, updated_at = now() where user_id = $1`,
     [user.id],
   );
+}
+
+export interface ActiveNewsConfig {
+  provider: NewsProvider;
+  apiKey: string;
+}
+
+/** Resolve a user's news API, falling back to deployment environment keys. */
+export async function getActiveNewsConfig(): Promise<ActiveNewsConfig | null> {
+  const user = await getSessionUser();
+  if (user) {
+    const row = await queryOne<{ news_provider: string | null; news_api_key_encrypted: string | null }>(
+      `select news_provider, news_api_key_encrypted from public.user_credentials where user_id = $1`,
+      [user.id],
+    );
+    if (row?.news_api_key_encrypted && NEWS_PROVIDERS.has(row.news_provider as NewsProvider)) {
+      return {
+        provider: row.news_provider as NewsProvider,
+        apiKey: decryptCredential(row.news_api_key_encrypted),
+      };
+    }
+  }
+  return getEnvironmentNewsConfig();
+}
+
+/** Cron-safe resolver. Global jobs may only consume deployment-owned keys. */
+export async function getSystemNewsConfig(): Promise<ActiveNewsConfig | null> {
+  return getEnvironmentNewsConfig();
+}
+
+function getEnvironmentNewsConfig(): ActiveNewsConfig | null {
+  if (process.env.ALPHA_VANTAGE_API_KEY) return { provider: "alpha_vantage", apiKey: process.env.ALPHA_VANTAGE_API_KEY };
+  if (process.env.GNEWS_API_KEY) return { provider: "gnews", apiKey: process.env.GNEWS_API_KEY };
+  if (process.env.NEWS_API_KEY) return { provider: "newsapi", apiKey: process.env.NEWS_API_KEY };
+  return null;
 }
 
 export interface ActiveAIConfig {
@@ -194,6 +256,24 @@ export async function getActiveAIConfig(): Promise<ActiveAIConfig | null> {
     };
   }
 
+  return null;
+}
+
+/** Cron-safe AI resolver. Global jobs may only consume deployment-owned keys. */
+export async function getSystemAIConfig(): Promise<ActiveAIConfig | null> {
+  if (process.env.ANTHROPIC_API_KEY) {
+    return {
+      provider: "anthropic",
+      model: DEFAULT_MODEL_BY_PROVIDER.anthropic,
+      apiKey: process.env.ANTHROPIC_API_KEY,
+    };
+  }
+  if (process.env.OPENAI_API_KEY) {
+    return { provider: "openai", model: DEFAULT_MODEL_BY_PROVIDER.openai, apiKey: process.env.OPENAI_API_KEY };
+  }
+  if (process.env.GOOGLE_AI_API_KEY) {
+    return { provider: "google", model: DEFAULT_MODEL_BY_PROVIDER.google, apiKey: process.env.GOOGLE_AI_API_KEY };
+  }
   return null;
 }
 

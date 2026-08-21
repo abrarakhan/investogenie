@@ -112,9 +112,13 @@ async function upsertBatch(client, batch) {
     params.push(r.ticker, (r.name ?? "").slice(0, 300), r.exchange, r.country, r.currency, true);
   });
   await client.query(
-    `insert into public.assets (ticker, name, asset_class, exchange, country, currency, is_active)
+    `insert into public.assets as current_asset (ticker, name, asset_class, exchange, country, currency, is_active)
      values ${values.join(",")}
-     on conflict (exchange, ticker) do update set name = excluded.name, is_active = true`,
+     on conflict (exchange, ticker) do update set
+       name = excluded.name,
+       is_active = not exists(
+         select 1 from public.asset_tracking_exclusions x where x.asset_id=current_asset.id
+       )`,
     params,
   );
 }

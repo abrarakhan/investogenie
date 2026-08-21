@@ -44,6 +44,22 @@ describe("classifyCoverageGaps", () => {
     expect(gaps[0]).toEqual(expect.objectContaining({ issueType: "Swing signal on stale data", severity: "critical" }));
   });
 
+  it("does not report intraday US quote age while the market is closed", () => {
+    const gaps = classifyCoverageGaps({
+      symbol: "AAPL",
+      market: "US",
+      hasQuote: true,
+      quoteUpdatedAt: "2026-07-17T20:00:00Z",
+      hasHistory: true,
+      latestHistoryDate: "2026-07-17",
+      activeSwingSignal: true,
+      now: "2026-07-18T14:00:00Z", // Saturday in New York
+    });
+
+    expect(gaps).not.toContainEqual(expect.objectContaining({ issueType: "Quote age" }));
+    expect(gaps).not.toContainEqual(expect.objectContaining({ issueType: "Swing signal on stale data" }));
+  });
+
   it("does not call Friday's NSE/BSE history stale over the weekend", () => {
     // Friday 2026-07-24 is the last trading session before the weekend.
     const fridayBar = "2026-07-24";

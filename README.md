@@ -219,6 +219,11 @@ CRON_SECRET=replace-with-a-long-random-secret
 # Without it the rest of the screener works normally and the NL box reports that
 # it is unconfigured. Get a key at https://console.anthropic.com/settings/keys
 ANTHROPIC_API_KEY=sk-ant-...
+
+# Optional — powers /terminal/{us,in}/news-swing. Configure one news source;
+# the existing AI key classifies impact, while a deterministic fallback remains available.
+GNEWS_API_KEY=...
+# Alternatives: ALPHA_VANTAGE_API_KEY=... or NEWS_API_KEY=...
 ```
 
 Start the app:

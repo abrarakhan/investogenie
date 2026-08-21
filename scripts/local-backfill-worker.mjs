@@ -19,10 +19,17 @@ const historyDays = envNumber("BACKFILL_HISTORY_DAYS", 504);
 const delayInMs = envNumber("BACKFILL_DELAY_IN_MS", 1500);
 const delayUsMs = envNumber("BACKFILL_DELAY_US_MS", 1000);
 const maxAttempts = envNumber("BACKFILL_MAX_ATTEMPTS", 3);
+const allowParallel = envBool("BACKFILL_ALLOW_PARALLEL", false);
 
 function envNumber(name, fallback) {
   const value = Number(process.env[name]);
   return Number.isFinite(value) && value >= 0 ? value : fallback;
+}
+
+function envBool(name, fallback) {
+  const value = process.env[name];
+  if (value === undefined) return fallback;
+  return value !== "0" && value.toLowerCase() !== "false";
 }
 
 function pythonBin() {
@@ -91,6 +98,15 @@ async function isRunning(client) {
   return Boolean(rows[0]?.running);
 }
 
+async function recoverStalledItems(client) {
+  await client.query(
+    `update public.backfill_queue
+        set status='pending', started_at=null,
+            last_error=coalesce(last_error, 'Recovered after worker interruption')
+      where status='in_progress' and started_at <= now() - interval '30 minutes'`,
+  );
+}
+
 async function claimNext(client) {
   await client.query("begin");
   try {
@@ -99,6 +115,8 @@ async function claimNext(client) {
          from public.backfill_queue q
          join public.assets a on a.id = q.asset_id
         where q.status='pending'
+          and coalesce(a.is_active, true)
+          and not exists(select 1 from public.asset_tracking_exclusions x where x.asset_id=a.id)
           and a.asset_class='STOCK'
           and (
             (a.country='IN' and a.exchange in ('NSE','BSE'))
@@ -128,12 +146,14 @@ async function claimNext(client) {
   }
 }
 
-async function barCount(client, assetId) {
+async function historyState(client, assetId) {
   const { rows } = await client.query(
-    "select count(*)::int count from public.daily_ohlcv where asset_id=$1",
+    `select count(*)::int count,
+            coalesce(max(date) > current_date - 4, false) fresh
+       from public.daily_ohlcv where asset_id=$1`,
     [assetId],
   );
-  return Number(rows[0]?.count ?? 0);
+  return { count: Number(rows[0]?.count ?? 0), fresh: Boolean(rows[0]?.fresh) };
 }
 
 async function markDone(client, id, barsLoaded) {
@@ -145,16 +165,63 @@ async function markDone(client, id, barsLoaded) {
   );
 }
 
-async function markFailed(client, id, error) {
-  await client.query(
+function isDefinitiveNoHistoryError(error) {
+  const message = String(error).toLowerCase();
+  return ["no ohlcv bars returned", "no price data found", "no financial data found", "possibly delisted", "quote not found", "404 not found"]
+    .some((needle) => message.includes(needle));
+}
+
+async function markFailed(client, item, error) {
+  await client.query("begin");
+  try {
+    const { rows } = await client.query(
     `update public.backfill_queue
         set attempts=attempts+1,
             last_error=$2,
             status=case when attempts + 1 >= $3 then 'failed' else 'pending' end,
             completed_at=case when attempts + 1 >= $3 then now() else completed_at end
-      where id=$1`,
-    [id, String(error).slice(0, 2000), maxAttempts],
-  );
+      where id=$1
+      returning attempts, status`,
+      [item.id, String(error).slice(0, 2000), maxAttempts],
+    );
+    const updated = rows[0];
+    if (!updated || updated.status !== "failed" || !isDefinitiveNoHistoryError(error)) {
+      await client.query("commit");
+      return updated?.status ?? "failed";
+    }
+
+    const protectedResult = await client.query(
+      `select exists(select 1 from public.universe_members u where u.asset_id=$1 and u.universe in ('NIFTY_500','SP_500','NASDAQ_100'))
+           or exists(select 1 from public.holdings h where h.asset_id=$1)
+           or exists(select 1 from public.watchlist_items w where w.asset_id=$1)
+           or exists(select 1 from public.forward_test_positions f where f.asset_id=$1 and f.status='OPEN') protected,
+         exists(select 1 from public.latest_quotes q where q.asset_id=$1 and q.as_of >= current_date - 7) has_recent_quote`,
+      [item.asset_id],
+    );
+    if (protectedResult.rows[0]?.protected || protectedResult.rows[0]?.has_recent_quote) {
+      await client.query("commit");
+      return "failed";
+    }
+
+    await client.query(
+      `insert into public.asset_tracking_exclusions (asset_id, reason_code, reason, source, metadata)
+       values ($1, 'history_unavailable', $2, 'backfill', jsonb_build_object('attempts', $3::int))
+       on conflict (asset_id) do update set reason_code=excluded.reason_code, reason=excluded.reason,
+         source=excluded.source, excluded_at=now(), metadata=excluded.metadata`,
+      [item.asset_id, `No OHLCV history after ${updated.attempts} attempts: ${String(error).slice(0, 500)}`, updated.attempts],
+    );
+    await client.query("update public.assets set is_active=false where id=$1", [item.asset_id]);
+    await client.query(
+      `update public.backfill_queue set status='skipped', completed_at=now(),
+         last_error='Retired from tracking: ' || $2 where id=$1`,
+      [item.id, String(error).slice(0, 1000)],
+    );
+    await client.query("commit");
+    return "retired";
+  } catch (errorDuringRetirement) {
+    await client.query("rollback").catch(() => {});
+    throw errorDuringRetirement;
+  }
 }
 
 async function runHistoryScript(item) {
@@ -192,7 +259,8 @@ async function main() {
   let barsLoaded = 0;
   try {
     await client.connect();
-    if (await isRunning(client)) {
+    await recoverStalledItems(client);
+    if (!allowParallel && await isRunning(client)) {
       await logCronRun({
         job,
         status: "ok",
@@ -206,8 +274,8 @@ async function main() {
       if (processed >= batchSize) break;
       const item = await claimNext(client);
       if (!item) break;
-      const before = await barCount(client, item.asset_id);
-      if (before > 0) {
+      const before = await historyState(client, item.asset_id);
+      if (before.fresh) {
         await markDone(client, item.id, 0);
         skipped++;
         processed++;
@@ -216,17 +284,18 @@ async function main() {
 
       try {
         await runHistoryScript(item);
-        const after = await barCount(client, item.asset_id);
-        const loaded = Math.max(0, after - before);
-        if (loaded === 0) {
+        const after = await historyState(client, item.asset_id);
+        const loaded = Math.max(0, after.count - before.count);
+        if (!after.fresh) {
           throw new Error("No OHLCV bars returned");
         }
-        await markDone(client, item.id, loaded);
+        await markDone(client, item.id, Math.max(1, loaded));
         barsLoaded += loaded;
         succeeded++;
       } catch (error) {
-        await markFailed(client, item.id, error instanceof Error ? error.message : String(error));
-        failed++;
+        const status = await markFailed(client, item, error instanceof Error ? error.message : String(error));
+        if (status === "retired") skipped++;
+        else failed++;
       }
       processed++;
       if (processed < batchSize) await sleep(item.market === "US" ? delayUsMs : delayInMs);

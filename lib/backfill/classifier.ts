@@ -1,4 +1,5 @@
 import type { BackfillCandidate, BackfillMarket } from "./types";
+import { isStructurallyUnsupportedTicker } from "./tracking";
 
 export function classifyBackfillTier(candidate: BackfillCandidate): number {
   if (candidate.market === "IN") return 1;
@@ -6,6 +7,10 @@ export function classifyBackfillTier(candidate: BackfillCandidate): number {
   if (candidate.inPortfolio || candidate.inWatchlist) return 3;
   if (candidate.hasActiveSignal || candidate.hasOpenForwardTest) return 4;
   return 6;
+}
+
+export function shouldTrackBackfillCandidate(candidate: BackfillCandidate): boolean {
+  return !isStructurallyUnsupportedTicker(candidate.symbol, candidate.market);
 }
 
 function zonedParts(date: Date, timeZone: string) {

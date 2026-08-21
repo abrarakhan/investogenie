@@ -59,6 +59,8 @@ const usGoogleFallbackLimit = process.env.US_GOOGLE_FALLBACK_LIMIT ?? "100";
 const marketRefreshIntervalMinutes = Number(process.env.MARKET_REFRESH_INTERVAL_MINUTES ?? 60);
 const indiaMarketQuoteRefreshIntervalMinutes = Number(process.env.INDIA_MARKET_QUOTE_REFRESH_INTERVAL_MINUTES ?? 15);
 const indiaMarketQuoteRefreshDisabled = process.env.INDIA_MARKET_QUOTE_REFRESH_DISABLED === "1";
+const newsRefreshIntervalMinutes = Number(process.env.NEWS_REFRESH_INTERVAL_MINUTES ?? 30);
+const newsRefreshDisabled = process.env.NEWS_REFRESH_DISABLED === "1";
 const usSyncSleep = process.env.US_SYNC_SLEEP_SECONDS ?? "0.4";
 const usFundamentalsLimit = process.env.US_FUNDAMENTALS_LIMIT ?? "250";
 const usFundamentalsStaleDays = process.env.US_FUNDAMENTALS_STALE_DAYS ?? "7";
@@ -108,6 +110,8 @@ let marketRefreshPromise = null;
 let marketRefreshTimer = null;
 let indiaMarketQuoteRefreshTimer = null;
 let indiaMarketQuoteRefreshPromise = null;
+let newsRefreshTimer = null;
+let newsRefreshPromise = null;
 let backfillTimer = null;
 let dailyTimer = null;
 let nseCatchupTimer = null;
@@ -458,6 +462,37 @@ function scheduleIndiaMarketQuoteRefresh() {
     indiaMarketQuoteRefreshIntervalMinutes * 60 * 1000,
   );
   setTimeout(() => runIndiaMarketQuoteRefresh("startup-market-hours"), 0);
+}
+
+async function runNewsRefresh(trigger) {
+  if (newsRefreshDisabled) return;
+  if (newsRefreshPromise) {
+    console.log(`[news-intelligence] skipping ${trigger}; prior refresh still running`);
+    return newsRefreshPromise;
+  }
+  newsRefreshPromise = (async () => {
+    await waitForApp();
+    if (!process.env.CRON_SECRET) throw new Error("CRON_SECRET is not configured");
+    const response = await fetch("http://127.0.0.1:3000/api/cron/news-intelligence", {
+      headers: { authorization: `Bearer ${process.env.CRON_SECRET}` },
+    });
+    const body = await response.text();
+    if (!response.ok) throw new Error(`news refresh failed (${response.status}): ${body}`);
+    console.log(`[news-intelligence] ${trigger} completed: ${body}`);
+  })()
+    .catch((error) => console.error(`[news-intelligence] ${trigger} failed: ${error.message}`))
+    .finally(() => { newsRefreshPromise = null; });
+  return newsRefreshPromise;
+}
+
+function scheduleNewsRefresh() {
+  if (newsRefreshDisabled || !Number.isFinite(newsRefreshIntervalMinutes) || newsRefreshIntervalMinutes <= 0) {
+    console.log("[news-intelligence] recurring refresh disabled");
+    return;
+  }
+  console.log(`[news-intelligence] refresh every ${newsRefreshIntervalMinutes} minutes`);
+  newsRefreshTimer = setInterval(() => runNewsRefresh("recurring"), newsRefreshIntervalMinutes * 60 * 1000);
+  setTimeout(() => runNewsRefresh("startup"), 5_000);
 }
 
 async function runBackfillCron(label) {
@@ -1072,6 +1107,7 @@ function shutdown(signal) {
   if (nseCatchupTimer) clearInterval(nseCatchupTimer);
   if (marketRefreshTimer) clearInterval(marketRefreshTimer);
   if (indiaMarketQuoteRefreshTimer) clearInterval(indiaMarketQuoteRefreshTimer);
+  if (newsRefreshTimer) clearInterval(newsRefreshTimer);
   if (backfillTimer) clearInterval(backfillTimer);
   if (emailDigestTimer) clearInterval(emailDigestTimer);
   if (syncChild) syncChild.kill(signal);
@@ -1121,6 +1157,7 @@ scheduleDailyAmfiSync();
 scheduleNseCatchup();
 scheduleRecurringMarketRefresh();
 scheduleIndiaMarketQuoteRefresh();
+scheduleNewsRefresh();
 scheduleBackfillCron();
 scheduleEmailDigest();
 setTimeout(() => {

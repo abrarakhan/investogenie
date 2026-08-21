@@ -45,9 +45,9 @@ function MarketSwitch({ market, activeArea }: { market: MarketId; activeArea: st
   return (
     <div className="grid grid-cols-2 rounded-lg border border-white/10 bg-black/25 p-1 text-xs font-semibold">
       {(["US", "IN"] as MarketId[]).map((m) => (
-        <Link
+        <a
           key={m}
-          href={`${target}/${marketPath(m)}${activeArea === "stock-screener" ? "/stocks" : activeArea === "swing" ? "/screener" : activeArea === "long-term" ? "/long-term" : activeArea === "probability" ? "/probability" : ""}`}
+          href={`${target}/${marketPath(m)}${activeArea === "stock-screener" ? "/stocks" : activeArea === "swing" ? "/screener" : activeArea === "strong-swing" ? "/strong-swing" : activeArea === "news-swing" ? "/news-swing" : activeArea === "long-term" ? "/long-term" : activeArea === "probability" ? "/probability" : ""}`}
           className={cx(
             "rounded-md px-3 py-1.5 text-center transition-colors",
             m.toLowerCase() === currentPath
@@ -56,7 +56,7 @@ function MarketSwitch({ market, activeArea }: { market: MarketId; activeArea: st
           )}
         >
           {MARKETS[m].flag} {m}
-        </Link>
+        </a>
       ))}
     </div>
   );
@@ -75,7 +75,7 @@ export default function AppShell({
   children: React.ReactNode;
   email?: string;
   market: MarketId;
-  active: "overview" | "terminal" | "stock-screener" | "swing" | "long-term" | "probability" | "forward-test" | "import-holdings" | "fund-mapping" | "data" | "settings";
+  active: "overview" | "terminal" | "stock-screener" | "swing" | "strong-swing" | "news-swing" | "long-term" | "probability" | "forward-test" | "import-holdings" | "fund-mapping" | "data" | "settings";
   title: string;
   subtitle?: string;
   actions?: React.ReactNode;
@@ -91,6 +91,8 @@ export default function AppShell({
         { label: "Terminal", href: `/terminal/${m}`, active: active === "terminal" },
         { label: "Stock Screener", href: `/terminal/${m}/stocks`, active: active === "stock-screener" },
         { label: "Swing Candidates", href: `/terminal/${m}/screener`, active: active === "swing", badge: "Buy" },
+        { label: "Strong Swing", href: `/terminal/${m}/strong-swing`, active: active === "strong-swing", badge: "Strict" },
+        { label: "News & AI Swing", href: `/terminal/${m}/news-swing`, active: active === "news-swing", badge: "AI" },
         { label: "Long-Term Candidates", href: `/terminal/${m}/long-term`, active: active === "long-term" },
       ],
     },
@@ -214,26 +216,58 @@ export default function AppShell({
                 {actions}
               </div>
             </div>
-            <nav className="flex gap-1 overflow-x-auto border-t border-white/10 px-5 py-2 text-xs lg:hidden">
-              {sections.flatMap((s) => s.items).map((item) => (
-                <Link
-                  key={item.label}
-                  href={item.href}
-                  className={cx(
-                    "shrink-0 rounded-md px-3 py-1.5",
-                    item.active ? "bg-[var(--ig-accent)] text-black" : "text-white/55 hover:bg-white/5 hover:text-white",
-                    item.muted && "opacity-45",
-                  )}
-                >
-                  <span>{item.label}</span>
-                  {item.statusDot === "data-health" && (
-                    <Suspense fallback={<span className="ml-1 inline-block h-1.5 w-1.5 rounded-full bg-white/20" />}>
-                      <DataHealthDot />
-                    </Suspense>
-                  )}
-                </Link>
-              ))}
-            </nav>
+            <details className="group border-t border-white/10 lg:hidden">
+              <summary className="flex min-h-12 cursor-pointer touch-manipulation list-none items-center justify-between px-5 py-3 text-sm font-semibold text-white/75 [&::-webkit-details-marker]:hidden">
+                <span>
+                  Navigate
+                  <span className="ml-2 font-normal text-white/40">
+                    {sections.flatMap((section) => section.items).find((item) => item.active)?.label ?? "Terminal"}
+                  </span>
+                </span>
+                <span aria-hidden="true" className="text-lg text-white/45 transition-transform group-open:rotate-180">⌄</span>
+              </summary>
+              <nav aria-label="Mobile terminal navigation" className="max-h-[65vh] overflow-y-auto border-t border-white/10 bg-[#070a10] px-4 py-4">
+                <div className="grid gap-5 sm:grid-cols-2">
+                  {sections.map((section) => (
+                    <div key={section.title}>
+                      <div className="mb-2 px-1 text-[10px] font-bold uppercase tracking-[0.2em] text-white/30">
+                        {section.title}
+                      </div>
+                      <div className="grid grid-cols-2 gap-2 sm:grid-cols-1">
+                        {section.items.map((item) => (
+                          <a
+                            key={`${section.title}:${item.label}`}
+                            href={item.href}
+                            aria-current={item.active ? "page" : undefined}
+                            className={cx(
+                              "flex min-h-11 touch-manipulation items-center justify-between rounded-lg border px-3 py-2 text-sm",
+                              item.active
+                                ? "border-[var(--ig-accent)]/45 bg-[var(--ig-accent)]/15 text-white"
+                                : "border-white/8 bg-white/[0.025] text-white/62 active:bg-white/10",
+                              item.muted && "opacity-45",
+                            )}
+                          >
+                            <span>{item.label}</span>
+                            <span className="ml-2 flex shrink-0 items-center gap-2">
+                              {item.statusDot === "data-health" && (
+                                <Suspense fallback={<span className="h-2 w-2 rounded-full bg-white/20" />}>
+                                  <DataHealthDot />
+                                </Suspense>
+                              )}
+                              {item.badge && (
+                                <span className="rounded-full border border-white/10 px-1.5 py-0.5 text-[9px] uppercase text-white/40">
+                                  {item.badge}
+                                </span>
+                              )}
+                            </span>
+                          </a>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </nav>
+            </details>
           </header>
 
           <main className={cx("mx-auto px-5 py-8 lg:px-6", maxWidth)}>

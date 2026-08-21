@@ -1,4 +1,4 @@
-import { classifyBackfillTier } from "./classifier";
+import { classifyBackfillTier, shouldTrackBackfillCandidate } from "./classifier";
 import type { BackfillCandidate, BackfillStatus } from "./types";
 
 export interface PlannedQueueRow {
@@ -9,7 +9,7 @@ export interface PlannedQueueRow {
 }
 
 export function planQueueRows(candidates: BackfillCandidate[]): PlannedQueueRow[] {
-  return candidates.map((candidate) => ({
+  return candidates.filter(shouldTrackBackfillCandidate).map((candidate) => ({
     assetId: candidate.assetId,
     symbol: candidate.symbol,
     market: candidate.market,

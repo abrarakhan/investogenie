@@ -15,6 +15,7 @@ export type CronJob =
   | "backfill_ohlcv_cron"
   | "refresh-screener"
   | "forward-test"
+  | "news-intelligence"
   | "send-email-digest";
 const CRON_JOBS: ReadonlySet<string> = new Set<CronJob>([
   "refresh-quotes",
@@ -27,6 +28,7 @@ const CRON_JOBS: ReadonlySet<string> = new Set<CronJob>([
   "backfill_ohlcv_cron",
   "refresh-screener",
   "forward-test",
+  "news-intelligence",
   "send-email-digest",
 ]);
 

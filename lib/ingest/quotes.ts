@@ -4,6 +4,7 @@
 //   • NSE — sec_bhavdata_full bhavcopy (latest session close)
 //   • BSE — BhavCopy_BSE_CM UDiFF bhavcopy (latest session close)
 import { Client } from "pg";
+import { isMarketOpen } from "@/lib/backfill/classifier";
 
 const UA =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36";
@@ -17,6 +18,58 @@ export interface RefreshSummary {
 }
 
 interface RawQuote { price: number; changePct: number | null; source?: string }
+
+interface IndiaLiveAsset {
+  assetId: string;
+  ticker: string;
+  exchange: "NSE" | "BSE";
+}
+
+const GOOGLE_NUMBER = "(-?[0-9]+(?:\\.[0-9]+)?(?:[Ee][+-]?[0-9]+)?)";
+
+/** Parse the quote tuple embedded in Google Finance's current page payload.
+ * The visible DOM classes change frequently; the instrument-keyed data tuple
+ * is both smaller and less ambiguous than scraping a generic price element. */
+export function parseGoogleFinanceQuote(
+  html: string,
+  ticker: string,
+  exchange: "NSE" | "BSE",
+): RawQuote | null {
+  const payload = html.replaceAll("&quot;", '"');
+  const escapedTicker = ticker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = new RegExp(
+    `\\[\\"${escapedTicker}\\",\\"${exchange}\\"\\],\\"[^\\"]*\\",0,\\"INR\\",\\[${GOOGLE_NUMBER},${GOOGLE_NUMBER},${GOOGLE_NUMBER}`,
+  );
+  const match = payload.match(pattern);
+  if (!match) return null;
+  const price = num(match[1]);
+  const changePct = num(match[3]);
+  if (price === null || price <= 0) return null;
+  return { price, changePct, source: "GOOGLE_FINANCE_LIVE" };
+}
+
+async function fetchGoogleFinanceQuote(asset: IndiaLiveAsset): Promise<RawQuote | null> {
+  const url = `https://www.google.com/finance/quote/${encodeURIComponent(asset.ticker)}:${asset.exchange}?hl=en`;
+  const response = await fetch(url, {
+    headers: { "User-Agent": UA, Accept: "text/html" },
+    signal: AbortSignal.timeout(12_000),
+  }).catch(() => null);
+  if (!response?.ok) return null;
+  return parseGoogleFinanceQuote(await response.text(), asset.ticker, asset.exchange);
+}
+
+async function fetchIndiaLiveCandidates(assets: IndiaLiveAsset[]): Promise<Map<string, RawQuote>> {
+  const quotes = new Map<string, RawQuote>();
+  const concurrency = 6;
+  for (let start = 0; start < assets.length; start += concurrency) {
+    const batch = assets.slice(start, start + concurrency);
+    const results = await Promise.all(batch.map(fetchGoogleFinanceQuote));
+    results.forEach((quote, index) => {
+      if (quote) quotes.set(batch[index].assetId, quote);
+    });
+  }
+  return quotes;
+}
 
 function parseCsvLine(line: string): string[] {
   const out: string[] = [];
@@ -237,12 +290,49 @@ export async function refreshQuotes(databaseUrl: string, startISO = localToday()
     const bseMap = toMap((await client.query("select id,ticker from public.assets where exchange='BSE'")).rows);
     const directMap = toMap((await client.query("select id,ticker from public.assets where ticker = any($1)", [["SENSEX", "USDINR"]])).rows);
 
-    const rows: { assetId: string; price: number; changePct: number | null; currency: string; asOf: string | null; source: string }[] = [];
-    for (const [t, q] of usQuotes) { const id = usMap.get(t); if (id) rows.push({ assetId: id, price: q.price, changePct: q.changePct, currency: "USD", asOf: null, source: "NASDAQ" }); }
-    for (const [t, q] of nseIndices) { const id = nseMap.get(t); if (id) rows.push({ assetId: id, price: q.price, changePct: q.changePct, currency: "INR", asOf: startISO, source: "NSE_INDEX" }); }
-    for (const [t, q] of directBenchmarks) { const id = directMap.get(t); if (id) rows.push({ assetId: id, price: q.price, changePct: q.changePct, currency: "INR", asOf: startISO, source: q.source ?? "DIRECT_QUOTE" }); }
-    for (const [t, q] of nse.quotes) { const id = nseMap.get(t); if (id) rows.push({ assetId: id, price: q.price, changePct: q.changePct, currency: "INR", asOf: nse.asOf, source: "NSE_BHAVCOPY" }); }
-    for (const [t, q] of bse.quotes) { const id = bseMap.get(t); if (id) rows.push({ assetId: id, price: q.price, changePct: q.changePct, currency: "INR", asOf: bse.asOf, source: "BSE_BHAVCOPY" }); }
+    // The market-hours refresh needs an intraday source. Bhavcopy is still the
+    // authoritative universe-wide close, but it cannot update candidate cards
+    // before EOD. Keep this overlay bounded to the highest-ranked actionable
+    // NSE names so the 15-minute job remains light and provider-friendly.
+    const liveAssets = (await client.query<IndiaLiveAsset>(
+      `select s.asset_id "assetId", s.ticker, s.exchange
+         from public.swing_signals s
+        where s.country = 'IN'
+          and s.exchange = 'NSE'
+          and s.verdict <> 'NO_SETUP'
+        order by s.score desc, s.ticker
+        limit 50`,
+    )).rows;
+    const indiaLive = await fetchIndiaLiveCandidates(liveAssets);
+
+    type QuoteRow = { assetId: string; price: number; changePct: number | null; currency: string; asOf: string | null; source: string };
+    const rowsByAsset = new Map<string, QuoteRow>();
+    const put = (row: QuoteRow) => rowsByAsset.set(row.assetId, row);
+    for (const [t, q] of usQuotes) { const id = usMap.get(t); if (id) put({ assetId: id, price: q.price, changePct: q.changePct, currency: "USD", asOf: null, source: "NASDAQ" }); }
+    for (const [t, q] of nseIndices) { const id = nseMap.get(t); if (id) put({ assetId: id, price: q.price, changePct: q.changePct, currency: "INR", asOf: startISO, source: "NSE_INDEX" }); }
+    for (const [t, q] of directBenchmarks) { const id = directMap.get(t); if (id) put({ assetId: id, price: q.price, changePct: q.changePct, currency: "INR", asOf: startISO, source: q.source ?? "DIRECT_QUOTE" }); }
+    for (const [t, q] of nse.quotes) { const id = nseMap.get(t); if (id) put({ assetId: id, price: q.price, changePct: q.changePct, currency: "INR", asOf: nse.asOf, source: "NSE_BHAVCOPY" }); }
+    for (const [t, q] of bse.quotes) { const id = bseMap.get(t); if (id) put({ assetId: id, price: q.price, changePct: q.changePct, currency: "INR", asOf: bse.asOf, source: "BSE_BHAVCOPY" }); }
+    if (isMarketOpen("IN")) {
+      const failedLiveIds = liveAssets
+        .map((asset) => asset.assetId)
+        .filter((assetId) => !indiaLive.has(assetId));
+      if (failedLiveIds.length) {
+        const recentLive = await client.query<{ assetId: string }>(
+          `select asset_id "assetId"
+             from public.latest_quotes
+            where asset_id = any($1::uuid[])
+              and source = 'GOOGLE_FINANCE_LIVE'
+              and updated_at >= now() - interval '1 hour'`,
+          [failedLiveIds],
+        );
+        // Do not overwrite a recent live tick with the previous EOD close, and
+        // do not re-upsert it: retaining its timestamp keeps freshness honest.
+        for (const row of recentLive.rows) rowsByAsset.delete(row.assetId);
+      }
+    }
+    for (const [assetId, q] of indiaLive) put({ assetId, price: q.price, changePct: q.changePct, currency: "INR", asOf: startISO, source: q.source ?? "GOOGLE_FINANCE_LIVE" });
+    const rows = [...rowsByAsset.values()];
 
     const cols = 6;
     for (let i = 0; i < rows.length; i += 1000) {
@@ -261,7 +351,7 @@ export async function refreshQuotes(databaseUrl: string, startISO = localToday()
 
     return {
       matched: rows.length,
-      bySource: { NASDAQ: usQuotes.size, NSE_INDEX: nseIndices.size, DIRECT_QUOTE: directBenchmarks.size, NSE_BHAVCOPY: nse.quotes.size, BSE_BHAVCOPY: bse.quotes.size },
+      bySource: { NASDAQ: usQuotes.size, NSE_INDEX: nseIndices.size, DIRECT_QUOTE: directBenchmarks.size, NSE_BHAVCOPY: nse.quotes.size, BSE_BHAVCOPY: bse.quotes.size, GOOGLE_FINANCE_LIVE: indiaLive.size },
       durationMs: Date.now() - t0,
     };
   } finally {

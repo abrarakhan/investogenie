@@ -57,12 +57,16 @@ function pythonBin(): string {
   return process.env.PYTHON_BIN ?? process.env.CAS_PDF_PYTHON ?? "python3";
 }
 
-async function barCount(assetId: string): Promise<number> {
-  const row = await queryOne<{ count: string }>(
-    "select count(*)::text from public.daily_ohlcv where asset_id=$1",
+interface HistoryState { count: number; fresh: boolean }
+
+async function historyState(assetId: string): Promise<HistoryState> {
+  const row = await queryOne<{ count: string; fresh: boolean }>(
+    `select count(*)::text count,
+            coalesce(max(date) > current_date - 4, false) fresh
+       from public.daily_ohlcv where asset_id=$1`,
     [assetId],
   );
-  return Number(row?.count ?? 0);
+  return { count: Number(row?.count ?? 0), fresh: row?.fresh ?? false };
 }
 
 function scriptArgs(item: BackfillQueueItem, historyDays: number): string[] {
@@ -113,26 +117,26 @@ async function runHistoryScript(item: BackfillQueueItem, historyDays: number): P
 }
 
 export async function processBackfillItem(item: BackfillQueueItem, opts: Required<BackfillWorkerOptions>): Promise<{ status: "done" | "failed" | "skipped"; barsLoaded: number; error?: string }> {
-  const before = await barCount(item.assetId);
-  if (before > 0) {
+  const before = await historyState(item.assetId);
+  if (before.fresh) {
     await markBackfillDone(item.id, 0);
     return { status: "skipped", barsLoaded: 0 };
   }
 
   try {
     await runHistoryScript(item, opts.historyDays);
-    const after = await barCount(item.assetId);
-    const loaded = Math.max(0, after - before);
-    if (loaded === 0) {
-      await markBackfillFailed(item.id, "No OHLCV bars returned", opts.maxAttempts);
-      return { status: "failed", barsLoaded: 0, error: "No OHLCV bars returned" };
+    const after = await historyState(item.assetId);
+    const loaded = Math.max(0, after.count - before.count);
+    if (!after.fresh) {
+      const status = await markBackfillFailed(item.id, "No OHLCV bars returned", opts.maxAttempts);
+      return { status: status === "retired" ? "skipped" : "failed", barsLoaded: 0, error: "No OHLCV bars returned" };
     }
-    await markBackfillDone(item.id, loaded);
+    await markBackfillDone(item.id, Math.max(1, loaded));
     return { status: "done", barsLoaded: loaded };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    await markBackfillFailed(item.id, message, opts.maxAttempts);
-    return { status: "failed", barsLoaded: 0, error: message };
+    const status = await markBackfillFailed(item.id, message, opts.maxAttempts);
+    return { status: status === "retired" ? "skipped" : "failed", barsLoaded: 0, error: message };
   }
 }
 
