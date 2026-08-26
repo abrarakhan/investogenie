@@ -94,7 +94,7 @@ function promptFor(market: MarketId, articles: NormalizedNewsArticle[], assets: 
   const compactAssets = assets.map((a) => ({ ticker: a.ticker, name: a.name, sector: a.sector }));
   const compactArticles = articles.map((a, index) => ({ index, title: a.title, description: a.description, source: a.sourceName, publishedAt: a.publishedAt }));
   return `You are a conservative financial-news event classifier for ${market === "IN" ? "Indian" : "US"} equities.
-Classify only impacts directly supported by the supplied headline/description. Do not forecast a price or invent facts.
+Classify only impacts directly supported by the supplied headline/description. Assess likely directional pressure and its time horizon, but do not invent facts, price targets, or certainty.
 Return JSON only: {"impacts":[{"articleIndex":0,"scope":"MARKET|SECTOR|ASSET","ticker":null,"sector":null,"eventType":"...","direction":"POSITIVE|NEGATIVE|NEUTRAL","sentimentScore":-1.0,"confidence":0.0,"severity":0.0,"horizon":"INTRADAY|SWING|MEDIUM_TERM","rationale":"one short sentence"}]}.
 Rules: use ASSET only for a listed ticker with direct relevance; use MARKET for war, crashes, central-bank/rate, inflation, liquidity or broad regulation; omit irrelevant articles; confidence measures attribution certainty; severity measures likely magnitude; sentimentScore is signed. For conflicting evidence, lower confidence.
 Candidates: ${JSON.stringify(compactAssets)}
@@ -121,6 +121,24 @@ async function callAI(ai: ActiveAIConfig, prompt: string): Promise<unknown> {
     if (!response.ok) throw new Error(`OpenAI news analysis failed (${response.status})`);
     const data = await response.json();
     return parseJson(data?.choices?.[0]?.message?.content ?? "{}");
+  }
+  if (ai.provider === "deepseek") {
+    const response = await fetch("https://api.deepseek.com/chat/completions", {
+      method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${ai.apiKey}` },
+      body: JSON.stringify({
+        model: ai.model,
+        temperature: 0,
+        max_tokens: 4000,
+        response_format: { type: "json_object" },
+        messages: [{ role: "user", content: prompt }],
+      }),
+      signal: AbortSignal.timeout(45_000),
+    });
+    if (!response.ok) throw new Error(`DeepSeek news analysis failed (${response.status}): ${await response.text()}`);
+    const data = await response.json();
+    const content = data?.choices?.[0]?.message?.content ?? "";
+    if (!content.trim()) throw new Error("DeepSeek returned an empty news assessment");
+    return parseJson(content);
   }
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(ai.model)}:generateContent?key=${encodeURIComponent(ai.apiKey)}`;
   const response = await fetch(url, {

@@ -1,6 +1,8 @@
 # InvestoGenie - Capabilities
 
-> Current capability snapshot (2026-08-09) after repairing the hourly swing scan (failing every
+> Current capability snapshot (2026-08-26) after adding Strong Swing and source-linked News & AI
+> Swing, DeepSeek V4 classification, GNews rate-limit recovery, conservative asset retirement,
+> and repairing the hourly swing scan (failing every
 > daytime run and periodically saturating the database), correcting a one-day date shift across
 > six modules, fixing the Long-Term Candidates page load
 > (~82s to 0.87s), activating a private, always-on macOS personal
@@ -20,8 +22,8 @@ InvestoGenie is a local-first US and India market terminal with portfolio tracki
 refreshes, OHLCV history, legendary-strategy swing screening, long-horizon fundamentals
 screening against six named investors' criteria, a probability forecast engine, company
 fundamentals, macro lead/lag analytics, a daily email digest, encrypted per-user credentials, a
-multi-provider natural-language screener, a professional help/knowledge base, and recurring data
-sync jobs.
+multi-provider natural-language screener, source-linked News & AI Swing assessment, a professional
+help/knowledge base, and recurring data sync jobs.
 
 ## Capabilities At A Glance
 
@@ -34,7 +36,8 @@ sync jobs.
 | Portfolio terminal | Holdings, watchlist, trade ledger, benchmark cards | Working |
 | Swing candidates | Buy-candidate screener with entry, target, stop, trail, score, days | Working; hourly scan repaired 2026-08-09 |
 | Stock Screener | US+India fundamental/price-action screener: filter engine, presets, saved screens, universes, CSV/Excel export | Working |
-| **NL Query (screener)** | Plain-English → filters, dispatched to a **user-chosen AI provider** (Anthropic/OpenAI/Google), validated through the same filter-engine guard regardless of provider | Working |
+| **NL Query (screener)** | Plain-English → filters, dispatched to a **user-chosen AI provider** (Anthropic/OpenAI/Google/DeepSeek), validated through the same filter-engine guard regardless of provider | Working |
+| **News & AI Swing** | Existing technical candidates overlaid with source-linked, time-decayed event assessment; DeepSeek V4 is supported for directional pressure, severity, confidence, and horizon classification without changing technical entries or risk levels | Working |
 | Legendary strategies | Qullamaggie, Minervini, Darvas, PTJ, Simons tags and filters | Working |
 | **Long-Term Candidates** | Six investor-inspired rankings with normalized income, balance-sheet and cash-flow evidence, multi-year CAGR/ROCE, confidence, sector/investability gates and daily score snapshots | Working (0.87s page load since the 2026-08-09 query fix); statement coverage backfilling |
 | Probability engine | 21-trading-day return distribution per stock: expected return, P(up), drawdown risk, Student-t price range | Working |
@@ -52,17 +55,19 @@ sync jobs.
 
 ## Current Local Data Coverage
 
-Measured from the local `investogenie` PostgreSQL database on 2026-07-25:
+Measured from the local `investogenie` PostgreSQL database on 2026-08-26:
 
 | Dataset | Count |
 | --- | ---: |
-| Assets (all markets/classes) | 16,622 (post OTC exclusion, down from 18,286) |
-| Daily OHLCV bars | 7,664,899 |
-| Latest quotes | 16,127 |
-| Swing signals | 10,809 |
-| Financial reports | 126,390 |
-| Macro indicators | 8,195 |
-| Cron logs | 421 |
+| Assets (all markets/classes) | 17,096 |
+| Daily OHLCV bars | 8,138,063 |
+| Latest quotes | 16,651 |
+| Swing signals | 15,187 |
+| Financial reports | 150,288 |
+| Macro indicators | 8,342 |
+| Cron logs | 2,096 |
+| News articles / classified impacts | 153 / 82 |
+| Asset tracking exclusions | 742 |
 | AMFI scheme master | 14,222 rows (8,657 active) |
 | Snapshot identifier bridge | 100 identifiers; all 12 loaded snapshot schemes resolved |
 
@@ -70,26 +75,26 @@ Asset universe:
 
 | Market | Exchange | Class | Count |
 | --- | --- | --- | ---: |
-| India | BSE | Stock | 5,110 |
+| India | BSE | Stock | 5,174 |
 | India | BSE | Derivative | 1 |
 | India | CAS_MF | Mutual fund (user-imported) | 63 |
 | India | CAS_STOCK | Stock (user-imported) | 37 |
 | India | FX | Currency | 1 |
-| India | NSE | Stock | 2,416 |
+| India | NSE | Stock | 2,588 |
 | India | NSE | Derivative | 2 |
-| US | CBOE | Stock | 30 |
-| US | NASDAQ | Stock | 4,419 |
-| US | NYSE | Stock | 3,340 |
+| US | CBOE | Stock | 38 |
+| US | NASDAQ | Stock | 4,519 |
+| US | NYSE | Stock | 3,378 |
 | US | NYSE | Bond | 1 |
 | US | OTC | Stock | 946 |
-| US | OTHER | Stock | 256 |
+| US | OTHER | Stock | 348 |
 
 US/India OHLCV coverage:
 
 | Market | Active stocks | With OHLCV history | Coverage |
 | --- | ---: | ---: | ---: |
-| US | 8,991 | 8,543 | 95.0% |
-| India | 7,563 | 7,284 | 96.3% |
+| US | 8,511 | 8,315 | 97.7% |
+| India | 7,775 | 7,551 | 97.1% |
 
 > **Note on US OTC:** `scripts/ingest-listings.mjs` permanently excludes OTC from the US listings
 > it ingests (`EXCLUDED_US_EXCHANGES`), fixing an earlier bug where a manual OTC purge was
@@ -102,8 +107,8 @@ Fundamentals coverage:
 
 | Market | Assets with a latest financial report |
 | --- | ---: |
-| India | 6,507 |
-| US | 5,449 |
+| India | 7,302 |
+| US | 7,955 |
 
 (Counted via `latest_financials`, one row per asset's most recent report. Corrects the
 2026-07-24 snapshot's figures of 6,965/6,227, which used a different, inconsistent count.)
@@ -112,8 +117,8 @@ Swing scan coverage:
 
 | Market | Scanned | Buy candidates (verdict ≠ NO_SETUP) |
 | --- | ---: | ---: |
-| India | 2,946 | 450 |
-| US | 7,863 | 1,071 |
+| India (2026-08-26) | 6,371 | 799 |
+| US (2026-08-25) | 2,542 | 274 |
 
 Macro coverage:
 
@@ -222,8 +227,8 @@ Route:
 Stores, per user, AES-256-GCM encrypted:
 
 - SMTP host/port/username/password (used by the email digest),
-- the active AI provider (Anthropic / OpenAI / Google), a preset-or-custom model ID, and its
-  API key (used by the NL screener query).
+- the active AI provider (Anthropic / OpenAI / Google / DeepSeek), a preset-or-custom model ID, and its
+  API key (used by the NL screener query and News & AI Swing assessment).
 
 The master encryption key lives only in the `CREDENTIAL_ENCRYPTION_KEY` environment variable —
 never in the database.
@@ -460,12 +465,25 @@ node scripts/backfill-progress.mjs   # queue + coverage status for the OHLCV bac
 | Password recovery | Physical-host `.command` helper; hidden input and bcrypt hash update without replacing the user |
 | Credential encryption | AES-256-GCM, scrypt key derivation, master key in `CREDENTIAL_ENCRYPTION_KEY` |
 | Email | Nodemailer, per-user SMTP credentials |
-| AI providers | Anthropic (native structured output), OpenAI (Chat Completions JSON mode), Google Gemini (`generateContent` JSON) |
+| AI providers | Anthropic (native structured output), OpenAI (Chat Completions JSON mode), Google Gemini (`generateContent` JSON), DeepSeek V4 (OpenAI-compatible JSON mode) |
 | Data providers | Yahoo Finance (US OHLCV history, active), Google Finance, NSE bhavcopy, FRED. Tiingo (`lib/ingest/usHistory.ts`) is configured but currently unused by the recurring sync. |
 | Scheduler | Node wrapper (`scripts/run-with-nse-sync.mjs`) around Next.js plus Python child jobs |
 | Personal hosting | macOS `launchd` + `caffeinate`; Tailscale Serve tailnet-only HTTPS to localhost |
 
 ## Verification Status
+
+News intelligence, DeepSeek V4, GNews recovery and backfill hardening, 2026-08-26:
+
+```bash
+npx tsc --noEmit    # clean
+npm run lint        # clean, whole repo
+npm test            # 146/146 passing across 17 files
+npm run build       # clean production build
+```
+
+The News & AI Swing layer preserves the original technical calculation. It only classifies
+source-linked events and applies the already-tested time-decayed, +/-20-point overlay; entries,
+targets, stops, trails and base strategy scores remain owned by the existing swing engine.
 
 Swing scan repair and six-module date fix, 2026-08-09:
 

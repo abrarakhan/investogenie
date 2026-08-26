@@ -24,7 +24,7 @@ export default function CredentialsForm({ initialCreds }: Props) {
   const [smtpPasswordSet, setSmtpPasswordSet] = useState(!!initialCreds?.smtpPasswordSet);
 
   // --- AI provider state ---
-  const initialProvider: AIProvider = initialCreds?.aiProvider ?? "anthropic";
+  const initialProvider: AIProvider = initialCreds?.aiProvider ?? "deepseek";
   const [provider, setProvider] = useState<AIProvider>(initialProvider);
 
   const providerMeta = useMemo(
@@ -161,7 +161,7 @@ export default function CredentialsForm({ initialCreds }: Props) {
       <div className="rounded-xl border border-white/10 bg-white/[0.03] p-6">
         <h3 className="mb-1 text-lg font-semibold">🤖 AI model</h3>
         <p className="mb-4 text-sm text-white/50">
-          Choose the provider and model that powers natural-language screener queries.
+          Choose the provider and model that powers News &amp; AI Swing assessments and natural-language screener queries.
           The API key is encrypted (AES-256-GCM) before it is stored.
         </p>
 

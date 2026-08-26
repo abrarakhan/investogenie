@@ -245,7 +245,7 @@ export function sanitizeIntent(raw: ScreenIntent, opts: SanitizeOptions): Screen
 
 /** The provider/model/key the current request should run against. */
 export interface AiCallConfig {
-  provider: "anthropic" | "openai" | "google";
+  provider: "anthropic" | "openai" | "google" | "deepseek";
   model: string;
   apiKey: string;
 }
@@ -366,6 +366,36 @@ async function callOpenAI(
   return parseLooseIntent(text);
 }
 
+// --- DeepSeek (OpenAI-compatible Chat Completions, JSON object mode) ---
+async function callDeepSeek(
+  ai: AiCallConfig,
+  market: string,
+  sectors: string[],
+  universes: string[],
+  turns: Turn[],
+): Promise<ScreenIntent> {
+  const res = await fetch("https://api.deepseek.com/chat/completions", {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${ai.apiKey}` },
+    body: JSON.stringify({
+      model: ai.model,
+      temperature: 0,
+      max_tokens: 2048,
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: systemText(market, sectors, universes) + JSON_ONLY_SUFFIX },
+        ...turns,
+      ],
+    }),
+    signal: AbortSignal.timeout(45_000),
+  });
+  if (!res.ok) throw new Error(`DeepSeek request failed (${res.status}): ${await res.text()}`);
+  const data = await res.json();
+  const text = data?.choices?.[0]?.message?.content ?? "";
+  if (!text.trim()) throw new Error("DeepSeek returned an empty response");
+  return parseLooseIntent(text);
+}
+
 // --- Google Gemini (generateContent, JSON MIME response) ---
 async function callGoogle(
   ai: AiCallConfig,
@@ -411,6 +441,8 @@ function callModel(
       return callOpenAI(ai, market, sectors, universes, turns);
     case "google":
       return callGoogle(ai, market, sectors, universes, turns);
+    case "deepseek":
+      return callDeepSeek(ai, market, sectors, universes, turns);
     default:
       throw new Error(`Unsupported AI provider: ${ai.provider}`);
   }

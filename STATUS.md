@@ -1,8 +1,15 @@
 # InvestoGenie Status
 
-_Last updated: 2026-08-09 (repaired the swing scan, which had failed every daytime run since 09:35 and was periodically saturating the database; fixed a one-day date shift across six modules; fixed the Long-Term Candidates page taking ~82s to load — 82s to 0.87s warm; activated the Mac as an always-on personal server with private Tailscale HTTPS and host-authorized password recovery; 96 tests, lint, typecheck and production build clean)_
+_Last updated: 2026-08-26 (added Strong Swing and News & AI Swing workspaces; added DeepSeek V4 as a first-class encrypted AI provider; serialized GNews requests with 429 retry and honest empty-result handling; hardened OHLCV retirement so recently quoted stocks stay trackable; refreshed local coverage figures; 146 tests, lint, typecheck and production build clean)_
 
 This file summarizes what has been built so far, what is currently working, what is partial, and what to build next.
+
+## Repository State
+
+- Branch: `main`; latest committed product revision: `bdbf018` (`Add news swing and harden data backfill`).
+- The DeepSeek V4 provider, GNews retry/empty-result fix, related tests, environment examples and
+  this documentation refresh are currently pending in the product working tree.
+- Generated `.claude/context` history churn is unrelated to the product changes and remains excluded.
 
 ## Product Direction
 
@@ -10,6 +17,7 @@ InvestoGenie is now a local-first market terminal and portfolio intelligence app
 
 - Market overview and charting for India and US.
 - Buy candidate discovery for swing trading.
+- A stricter Strong Swing workspace plus a separate News & AI Swing overlay that cannot create or alter a technical setup.
 - Long-horizon fundamentals screening against six well-known investors' published criteria.
 - Rule-based and probability-style strategy screens.
 - Local Postgres as the system of record.
@@ -64,6 +72,8 @@ InvestoGenie is now a local-first market terminal and portfolio intelligence app
 - Market overview route: `/markets/[market]`
 - Stocks route: `/terminal/[market]/stocks`
 - Screener route: `/terminal/[market]/screener` (with NL query support)
+- Strong Swing route: `/terminal/[market]/strong-swing`
+- News & AI Swing route: `/terminal/[market]/news-swing`
 - Long-Term Candidates route: `/terminal/[market]/long-term`
 - Probability route: `/terminal/[market]/probability`
 - Forward-test route: `/terminal/[market]/forward-test`
@@ -104,33 +114,38 @@ Current database migration stack:
 - `0019_cas_holding_details.sql`: CAS holding details such as folio/ISIN metadata.
 - `0020_email_preferences.sql`: user email digest opt-in settings (send time, screen toggles, last sent timestamp).
 - `0021_user_credentials.sql`: per-user encrypted credentials (SMTP password, AI API keys) via AES-256-GCM.
-- `0022_ai_provider_config.sql`: active AI provider/model/key selection for the NL screener (Anthropic/OpenAI/Google).
+- `0022_ai_provider_config.sql`: active AI provider/model/key selection for the NL screener and News & AI Swing (Anthropic/OpenAI/Google/DeepSeek).
 - `0023_amfi_scheme_master.sql`: option-level AMFI scheme registry plus the many-ISIN-to-one-portfolio identifier bridge.
 - `0024_us_history_sync_state.sql`: per-symbol attempt tracking for the US history sync, so batch selection rotates by attempt time instead of data staleness (see US History Coverage → 4c).
+- `0025_long_term_score_snapshots.sql`: daily Long-Term Candidate score snapshots and measurement state.
+- `0026_company_statement_details.sql`: normalized company statement detail storage.
+- `0027_password_reset_tokens.sql`: bounded, single-use password reset tokens.
+- `0028_asset_tracking_exclusions.sql`: auditable soft exclusions for structurally unsupported or unavailable listings.
+- `0029_news_intelligence.sql`: source-linked news articles and model-classified market/sector/asset impacts.
 
 ## Current Local Data Coverage
 
-Latest local Postgres snapshot checked on 2026-08-02:
+Latest local Postgres snapshot checked on 2026-08-26:
 
 | Area | Count / Status |
 |---|---:|
-| Assets (all classes/markets) | 16,689 |
-| Latest quotes | 16,218 |
-| OHLCV bars | 7,730,751 |
-| Swing signals | 10,923 |
-| Financial report rows | 126,390 |
-| Macro indicator rows | 8,195 |
-| Cron log rows | 689 |
-| US active stock assets | 9,044 (no-history OTC permanently excluded 2026-07-24 — see US History Coverage → OTC exclusion) |
-| US assets with OHLCV history | 8,703 / 9,044 (96.2%) |
-| **US assets with *fresh* history (≤3 days)** | **355 / 8,703 — mid-recovery from the 4c starvation regression (was 53; ~2.4 days to full drain)** |
-| US history sync rotation state rows | 323 and climbing (new in 0024; one per symbol attempted) |
-| India active stock assets | 7,563 |
-| India assets with OHLCV history | 7,284 / 7,563 (96.3%) |
-| US fundamentals coverage | 5,449 assets with a latest financial report |
-| India fundamentals coverage | 6,507 assets with a latest financial report |
-| US swing scan: scanned / buy candidates | 7,863 / 1,071 |
-| India swing scan: scanned / buy candidates | 2,946 / 450 |
+| Assets (all classes/markets) | 17,096 |
+| Latest quotes | 16,651 |
+| OHLCV bars | 8,138,063 |
+| Swing signals | 15,187 |
+| Financial report rows | 150,288 |
+| Macro indicator rows | 8,342 |
+| Cron log rows | 2,096 |
+| US active stock assets | 8,511 |
+| US assets with OHLCV history | 8,315 / 8,511 (97.7%) |
+| India active stock assets | 7,775 |
+| India assets with OHLCV history | 7,551 / 7,775 (97.1%) |
+| US fundamentals coverage | 7,955 assets with a financial report |
+| India fundamentals coverage | 7,302 assets with a financial report |
+| US latest swing scan (2026-08-25): scanned / buy candidates | 2,542 / 274 |
+| India latest swing scan (2026-08-26): scanned / buy candidates | 6,371 / 799 |
+| News intelligence | 153 source-linked articles / 82 classified impacts |
+| Asset tracking exclusions | 742 auditable soft exclusions |
 
 Fundamentals coverage above is counted via `latest_financials` (one row per asset, its most
 recent report) — the 2026-07-24 snapshot's US/India figures (6,227 / 6,965) were computed
@@ -152,6 +167,24 @@ Portfolio/fund figures below were refreshed on 2026-07-25 where the current DB e
 | Imported user fund value | INR 85,32,803.53 from latest CAS inventory |
 
 ## Data Sync And Workers
+
+### News & AI Swing
+
+- `/terminal/[market]/news-swing` starts from the existing buy-candidate calculation and applies
+  a separate, bounded event overlay. News never creates a setup and never changes entry, target,
+  stop, trailing stop, OI, volume, breakout, or base technical score.
+- GNews, NewsAPI and Alpha Vantage provide source-linked headlines. GNews requests are serialized
+  and retry HTTP 429 responses, preventing a rate-limited macro batch from being reported as a
+  successful zero-article refresh.
+- Anthropic, OpenAI, Google Gemini and DeepSeek V4 can classify event scope, direction, confidence,
+  severity and horizon. DeepSeek uses the official OpenAI-compatible JSON endpoint with
+  `deepseek-v4-flash` as the default and `deepseek-v4-pro` as an option.
+- The time-decayed overlay is capped at +/-20 points; a recent, severe, high-confidence negative
+  event can mark an otherwise valid candidate `RISK_OFF`.
+- Per-user AI keys are encrypted in `user_credentials`. Scheduled global classification uses only
+  deployment-owned environment keys; set `DEEPSEEK_API_KEY` to prefer DeepSeek for cron jobs.
+- The model reassesses newly fetched evidence on each refresh. It does not currently retrain on
+  subsequent price outcomes; a calibrated learning loop remains future work.
 
 ### Startup / Recurring Wrapper
 
@@ -427,7 +460,7 @@ Built:
 - Screener snapshot rebuild SQL.
 - **Natural Language Query feature:**
   - `NlQueryBar.tsx` component for plain-English screener queries.
-  - **Multi-provider** dispatch in `nlQuery.ts` — user picks Anthropic (Claude), OpenAI (GPT), or Google (Gemini) with a preset-or-custom model in Settings → AI model; the query runs against the chosen provider/model/key. Anthropic uses the SDK's native structured output; OpenAI uses Chat Completions JSON mode; Google uses Gemini `generateContent` JSON. Provider registry in `lib/ai/providers.ts`; key resolution in `getActiveAIConfig()`.
+  - **Multi-provider** dispatch in `nlQuery.ts` — user picks Anthropic (Claude), OpenAI (GPT), Google (Gemini), or DeepSeek V4 with a preset-or-custom model in Settings → AI model; the query runs against the chosen provider/model/key. Anthropic uses native structured output; OpenAI and DeepSeek use Chat Completions JSON mode; Google uses Gemini `generateContent` JSON. Provider registry in `lib/ai/providers.ts`; key resolution in `getActiveAIConfig()`.
   - Three-layer validation applied to EVERY provider's output: Zod shape → validateFilter → sanitizeIntent.
   - Unit conversion handling (Rs. Crore vs USD millions, percents vs ratios).
   - One-turn repair loop for parse failures.
@@ -1044,7 +1077,7 @@ Committed app work now includes:
 - US OHLCV bulk backfill (4,447 → 8,483 assets with history at the time; 8,543 now).
 - Email digest resilience: same-day bounded retry on failure, DB-seeded startup catch-up for a
   missed send window, `"partial"` responses now treated as failure.
-- Multi-provider AI model selection (Anthropic / OpenAI / Google) for the NL screener, with a
+- Multi-provider AI model selection (Anthropic / OpenAI / Google / DeepSeek) for the NL screener and News & AI Swing, with a
   provider dropdown, preset-or-custom model picker, and encrypted API key in Settings.
 - Email digest with daily morning sends of top 5 Swing Candidates (`runScreener`) and top 5 Probability forecasts (`getProbabilitySummary`) — same engines as the on-screen views.
 - Encrypted per-user credentials (AES-256-GCM) for SMTP password and AI API keys, managed in Settings.

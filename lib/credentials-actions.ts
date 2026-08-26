@@ -246,8 +246,16 @@ export async function getActiveAIConfig(): Promise<ActiveAIConfig | null> {
     };
   }
 
-  // Fallback: env-configured Anthropic key (keeps the feature working without
-  // per-user setup, e.g. local dev).
+  if (process.env.DEEPSEEK_API_KEY) {
+    return {
+      provider: "deepseek",
+      model: DEFAULT_MODEL_BY_PROVIDER.deepseek,
+      apiKey: process.env.DEEPSEEK_API_KEY,
+    };
+  }
+
+  // Fallback: an environment-owned model key keeps local deployments working
+  // without storing a key for every user.
   if (process.env.ANTHROPIC_API_KEY) {
     return {
       provider: "anthropic",
@@ -261,6 +269,13 @@ export async function getActiveAIConfig(): Promise<ActiveAIConfig | null> {
 
 /** Cron-safe AI resolver. Global jobs may only consume deployment-owned keys. */
 export async function getSystemAIConfig(): Promise<ActiveAIConfig | null> {
+  if (process.env.DEEPSEEK_API_KEY) {
+    return {
+      provider: "deepseek",
+      model: DEFAULT_MODEL_BY_PROVIDER.deepseek,
+      apiKey: process.env.DEEPSEEK_API_KEY,
+    };
+  }
   if (process.env.ANTHROPIC_API_KEY) {
     return {
       provider: "anthropic",

@@ -26,11 +26,18 @@ export async function refreshNewsIntelligence(
   ai: ActiveAIConfig | null,
 ): Promise<NewsSyncSummary> {
   const rows = await query<CandidateRow>(
-    `select a.id asset_id, a.ticker, a.name, a.sector
-       from public.swing_signals s
-       join public.assets a on a.id = s.asset_id
-      where s.country = $1 and s.bias <> 'SHORT' and s.verdict <> 'NO_SETUP'
-      order by s.score desc, a.ticker
+    `with latest_scan as (
+       select max(as_of) as_of from public.swing_signals where country=$1
+     ), ranked as (
+       select distinct on (a.id) a.id asset_id, a.ticker, a.name, a.sector, s.score
+         from public.swing_signals s
+         join public.assets a on a.id = s.asset_id
+         join latest_scan latest on latest.as_of=s.as_of
+        where s.country = $1 and s.bias <> 'SHORT' and s.verdict <> 'NO_SETUP'
+        order by a.id, s.score desc
+     )
+     select asset_id,ticker,name,sector from ranked
+      order by score desc,ticker
       limit 30`,
     [market],
   );
@@ -38,6 +45,9 @@ export async function refreshNewsIntelligence(
     assetId: row.asset_id, ticker: row.ticker, name: row.name, sector: row.sector,
   }));
   const fetched = await fetchNews(news, market, assets);
+  if (!fetched.length) {
+    throw new Error(`No ${market} news articles were returned from ${news.provider} for the last 72 hours.`);
+  }
   const articles = fetched.slice(0, 50);
   const impacts = await classifyNews(market, articles, assets, ai);
 

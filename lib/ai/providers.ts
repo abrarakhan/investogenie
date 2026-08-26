@@ -3,7 +3,7 @@
 // code. Used by the Settings credentials form (dropdowns) and by the NL-query
 // dispatch that routes a request to the chosen provider.
 
-export type AIProvider = "anthropic" | "openai" | "google";
+export type AIProvider = "anthropic" | "openai" | "google" | "deepseek";
 
 export interface AIProviderMeta {
   key: AIProvider;
@@ -33,12 +33,19 @@ export const AI_PROVIDERS: AIProviderMeta[] = [
     models: ["gemini-2.0-flash", "gemini-1.5-pro", "gemini-1.5-flash"],
     keyHint: "Get a key at aistudio.google.com/apikey",
   },
+  {
+    key: "deepseek",
+    label: "DeepSeek",
+    models: ["deepseek-v4-flash", "deepseek-v4-pro"],
+    keyHint: "Get a key at platform.deepseek.com",
+  },
 ];
 
 export const DEFAULT_MODEL_BY_PROVIDER: Record<AIProvider, string> = {
   anthropic: "claude-opus-4-8",
   openai: "gpt-4o",
   google: "gemini-2.0-flash",
+  deepseek: "deepseek-v4-flash",
 };
 
 export const AI_PROVIDER_KEYS: AIProvider[] = AI_PROVIDERS.map((p) => p.key);

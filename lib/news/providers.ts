@@ -39,6 +39,8 @@ function dateFrom(hours: number): string {
   return new Date(Date.now() - hours * 3_600_000).toISOString();
 }
 
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 function candidateQueries(candidates: NewsCandidateRef[], maxLength: number): string[] {
   const terms = candidates.slice(0, 20).map((candidate) => {
     const name = candidate.name?.trim();
@@ -90,10 +92,20 @@ export function buildGNewsQueries(candidates: NewsCandidateRef[]): string[] {
   return queries.slice(0, 4);
 }
 
-async function jsonFetch(url: URL, init?: RequestInit): Promise<unknown> {
-  const response = await fetch(url, { ...init, signal: AbortSignal.timeout(20_000) });
-  if (!response.ok) throw new Error(`News provider request failed (${response.status}): ${await response.text()}`);
-  return response.json();
+async function jsonFetch(url: URL, init?: RequestInit, retries = 2): Promise<unknown> {
+  for (let attempt = 0; ; attempt++) {
+    const response = await fetch(url, { ...init, signal: AbortSignal.timeout(20_000) });
+    if (response.ok) return response.json();
+    const body = await response.text();
+    if (response.status !== 429 || attempt >= retries) {
+      throw new Error(`News provider request failed (${response.status}): ${body}`);
+    }
+    const retryAfterSeconds = Number(response.headers.get("retry-after"));
+    const delayMs = Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
+      ? Math.min(10_000, retryAfterSeconds * 1_000)
+      : 1_250 * (attempt + 1);
+    await sleep(delayMs);
+  }
 }
 
 function validIso(value: unknown): string {
@@ -145,26 +157,32 @@ async function fetchGNews(
   candidates: NewsCandidateRef[],
 ): Promise<NormalizedNewsArticle[]> {
   const queries = [GNEWS_MACRO_QUERY[market], ...buildGNewsQueries(candidates)];
-  const batches = await Promise.allSettled(queries.map(async (query) => {
-    const url = new URL("https://gnews.io/api/v4/search");
-    url.searchParams.set("q", query);
-    url.searchParams.set("lang", "en");
-    url.searchParams.set("country", market === "IN" ? "in" : "us");
-    url.searchParams.set("from", dateFrom(72));
-    url.searchParams.set("sortby", "publishedAt");
-    url.searchParams.set("max", "10");
-    url.searchParams.set("apikey", apiKey);
-    const data = await jsonFetch(url) as { articles?: Array<Record<string, unknown>> };
-    return data.articles ?? [];
-  }));
-  const successful = batches.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
-  if (!successful.length) {
-    const firstFailure = batches.find((result) => result.status === "rejected");
-    throw firstFailure && firstFailure.status === "rejected"
-      ? firstFailure.reason
-      : new Error("GNews returned no usable response.");
+  const batches: Array<Array<Record<string, unknown>>> = [];
+  const failures: unknown[] = [];
+  for (const [index, query] of queries.entries()) {
+    try {
+      const url = new URL("https://gnews.io/api/v4/search");
+      url.searchParams.set("q", query);
+      url.searchParams.set("lang", "en");
+      url.searchParams.set("country", market === "IN" ? "in" : "us");
+      url.searchParams.set("from", dateFrom(72));
+      url.searchParams.set("sortby", "publishedAt");
+      url.searchParams.set("max", "10");
+      url.searchParams.set("apikey", apiKey);
+      const data = await jsonFetch(url) as { articles?: Array<Record<string, unknown>> };
+      batches.push(data.articles ?? []);
+    } catch (error) {
+      failures.push(error);
+    }
+    if (index < queries.length - 1) await sleep(1_100);
   }
-  return successful.flat().map((item) => {
+  if (!batches.length) {
+    throw failures[0] ?? new Error("GNews returned no usable response.");
+  }
+  if (!batches.some((batch) => batch.length)) {
+    throw failures[0] ?? new Error("GNews returned no articles from the last 72 hours.");
+  }
+  return batches.flat().map((item) => {
     const source = (item.source ?? {}) as Record<string, unknown>;
     return {
       provider: "gnews" as const,
