@@ -90,6 +90,20 @@ function trailingStopLabel(levels: EffectiveLevels): string {
   return trailingStopBreached(levels) ? "BREACHED" : fmt2(levels.trailingStop);
 }
 
+function tradeLedgerHref(r: ScreenRow, levels: EffectiveLevels, strategy: StrategyKey | null): string {
+  const params = new URLSearchParams({
+    assetId: r.assetId,
+    ticker: r.ticker,
+    strategy: strategy ?? "DEFAULT_SWING",
+    current: String(levels.current ?? ""),
+    target: String(levels.target ?? ""),
+    stop: String(levels.stopLoss ?? ""),
+    trail: String(levels.trailingStop ?? ""),
+    days: String(levels.expectedDays ?? ""),
+  });
+  return `/terminal/${r.country.toLowerCase()}/trade-ledger?${params.toString()}`;
+}
+
 function ActionBadge({
   dir,
   mobile = false,
@@ -355,6 +369,9 @@ export default function ScreenerTable({
                           ))}
                         </span>
                       )}
+                      <a href={tradeLedgerHref(r, lv, activeStrategy)} className="mt-2 block text-[10px] font-semibold text-[var(--ig-accent)] hover:underline">
+                        Track purchased trade
+                      </a>
                     </td>
                     <td className="px-4 py-3"><ActionBadge dir={lv.dir} /></td>
                     <td className="px-4 py-3 text-right tabular-nums">
@@ -475,6 +492,10 @@ export default function ScreenerTable({
                 <span>R:R <b className="text-white/70">{lv.riskReward ? `${lv.riskReward.toFixed(1)}×` : "—"}</b></span>
                 <span>~{lv.expectedDays ? `${lv.expectedDays}d` : "—"}</span>
               </div>
+
+              <a href={tradeLedgerHref(r, lv, activeStrategy)} className="mt-4 flex min-h-10 touch-manipulation items-center justify-center rounded-lg border border-[var(--ig-accent)]/35 bg-[var(--ig-accent)]/10 text-sm font-semibold text-[var(--ig-accent)]">
+                Track purchased trade
+              </a>
 
               {/* Fundamentals — graceful "—" for rows without a report on file. */}
               <div className="mt-3 grid grid-cols-3 gap-x-4 gap-y-1 border-t border-white/5 pt-3 text-[11px] tabular-nums text-white/50">

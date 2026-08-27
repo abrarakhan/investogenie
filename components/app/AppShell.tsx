@@ -47,7 +47,7 @@ function MarketSwitch({ market, activeArea }: { market: MarketId; activeArea: st
       {(["US", "IN"] as MarketId[]).map((m) => (
         <a
           key={m}
-          href={`${target}/${marketPath(m)}${activeArea === "stock-screener" ? "/stocks" : activeArea === "swing" ? "/screener" : activeArea === "strong-swing" ? "/strong-swing" : activeArea === "news-swing" ? "/news-swing" : activeArea === "long-term" ? "/long-term" : activeArea === "probability" ? "/probability" : ""}`}
+          href={`${target}/${marketPath(m)}${activeArea === "stock-screener" ? "/stocks" : activeArea === "swing" ? "/screener" : activeArea === "strong-swing" ? "/strong-swing" : activeArea === "news-swing" ? "/news-swing" : activeArea === "long-term" ? "/long-term" : activeArea === "probability" ? "/probability" : activeArea === "forward-test" ? "/forward-test" : activeArea === "trade-ledger" ? "/trade-ledger" : ""}`}
           className={cx(
             "rounded-md px-3 py-1.5 text-center transition-colors",
             m.toLowerCase() === currentPath
@@ -75,7 +75,7 @@ export default function AppShell({
   children: React.ReactNode;
   email?: string;
   market: MarketId;
-  active: "overview" | "terminal" | "stock-screener" | "swing" | "strong-swing" | "news-swing" | "long-term" | "probability" | "forward-test" | "import-holdings" | "fund-mapping" | "data" | "settings";
+  active: "overview" | "terminal" | "stock-screener" | "swing" | "strong-swing" | "news-swing" | "long-term" | "probability" | "forward-test" | "trade-ledger" | "import-holdings" | "fund-mapping" | "data" | "settings";
   title: string;
   subtitle?: string;
   actions?: React.ReactNode;
@@ -100,6 +100,7 @@ export default function AppShell({
       title: "Analysis",
       items: [
         { label: "Probability", href: `/terminal/${m}/probability`, active: active === "probability" },
+        { label: "Trade Ledger", href: `/terminal/${m}/trade-ledger`, active: active === "trade-ledger", badge: "Track" },
         { label: "Forward Test", href: `/terminal/${m}/forward-test`, active: active === "forward-test" },
       ],
     },
