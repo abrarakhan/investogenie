@@ -122,3 +122,15 @@ export async function closeSwingTrade(formData: FormData) {
   );
   revalidatePath(`/terminal/${market.toLowerCase()}/trade-ledger`);
 }
+
+export async function deleteSwingTrade(formData: FormData) {
+  const user = await requireUser();
+  const market = validMarket(String(formData.get("market") ?? "IN"));
+  const id = String(formData.get("tradeId") ?? "").trim();
+  if (!id) throw new Error("Trade entry is required");
+  await query(
+    "delete from public.swing_trade_ledger where id=$1 and user_id=$2",
+    [id, user.id],
+  );
+  revalidatePath(`/terminal/${market.toLowerCase()}/trade-ledger`);
+}

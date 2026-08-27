@@ -1,4 +1,5 @@
 import { addSwingTrade, closeSwingTrade } from "@/app/terminal/[market]/trade-ledger/actions";
+import DeleteTradeButton from "@/components/trade-ledger/DeleteTradeButton";
 import type { SwingLedgerTrade, SwingTradeState } from "@/lib/swingTradeLedger";
 
 const STATE: Record<SwingTradeState, { label: string; style: string }> = {
@@ -106,6 +107,9 @@ function TradeCard({ trade, today }: { trade: SwingLedgerTrade; today: string })
       </div>
       <div className="mt-4 flex flex-wrap gap-x-5 gap-y-1 border-t border-white/8 pt-3 text-xs text-white/38"><span>Initial stop {price(trade.projectedStop)}</span><span>Quantity {trade.quantity.toLocaleString("en-IN")}</span><span>Quote {trade.quoteAsOf ?? "unavailable"}</span>{trade.notes && <span>{trade.notes}</span>}</div>
       {trade.status === "OPEN" && <details className="mt-4"><summary className="cursor-pointer text-sm font-semibold text-white/55 hover:text-white">Close trade</summary><form action={closeSwingTrade} className="mt-3 grid gap-3 rounded-lg border border-white/10 bg-black/25 p-3 sm:grid-cols-4"><input type="hidden" name="tradeId" value={trade.id} /><input type="hidden" name="market" value={trade.market} /><input aria-label="Exit date" name="closedOn" type="date" required min={trade.boughtOn} max={today} defaultValue={today} className="field" /><input aria-label="Exit price" name="exitPrice" type="number" min="0.000001" step="any" required defaultValue={trade.currentPrice ?? ""} placeholder="Exit price" className="field" /><select aria-label="Exit reason" name="closeReason" className="field bg-[#090c12]"><option>Target reached</option><option>Trailing stop</option><option>Stop loss</option><option>Holding window expired</option><option>Manual exit</option></select><button className="h-11 rounded-lg border border-white/15 bg-white/8 text-sm font-semibold hover:bg-white/12">Record exit</button></form></details>}
+      <div className="mt-3 border-t border-white/5 pt-2">
+        <DeleteTradeButton tradeId={trade.id} market={trade.market} ticker={trade.ticker} />
+      </div>
     </article>
   );
 }
