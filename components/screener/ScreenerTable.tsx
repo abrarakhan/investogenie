@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { ScreenRow, StrategyLevel } from "@/lib/screener";
 import { STRATEGY_META, type StrategyKey } from "@/lib/analytics/legendaryStrategies";
+import { rankSwingCandidates, swingDisplayScore } from "@/lib/analytics/candidateRanking";
 
 const VERDICT_STYLE: Record<string, string> = {
   LONG_BREAKOUT: "bg-emerald-500/15 text-emerald-300 border-emerald-500/30",
@@ -133,6 +134,7 @@ export default function ScreenerTable({
   // Fundamental ratio filters (blank = no constraint).
   const [minRoce, setMinRoce] = useState("");
   const [maxPe, setMaxPe] = useState("");
+  const activeStrategy: StrategyKey | null = strategy === "ALL" ? null : strategy;
 
   // The server refreshes ranked India quotes every 15 minutes during market
   // hours. Re-read that lightweight server snapshot while this page is open,
@@ -154,7 +156,7 @@ export default function ScreenerTable({
     const needle = q.trim().toUpperCase();
     const roceMin = minRoce.trim() === "" ? null : Number(minRoce);
     const peMax = maxPe.trim() === "" ? null : Number(maxPe);
-    return rows.filter((r) => {
+    const matches = rows.filter((r) => {
       if (market !== "ALL" && r.country !== market) return false;
       if (strategy !== "ALL" && !isBuyStrategyMatch(r, strategy)) return false;
       // A strategy filter implies "setups" — skip the NO_SETUP gate so a tagged
@@ -166,13 +168,13 @@ export default function ScreenerTable({
       if (peMax !== null && Number.isFinite(peMax) && (r.peRatio === null || r.peRatio > peMax)) return false;
       return true;
     });
-  }, [rows, q, market, setup, strategy, minRoce, maxPe]);
+    return rankSwingCandidates(matches, activeStrategy);
+  }, [rows, q, market, setup, strategy, minRoce, maxPe, activeStrategy]);
 
   const hasFundamentals = useMemo(() => rows.some((r) => r.roce !== null || r.peRatio !== null), [rows]);
 
   // When a specific strategy is selected, surface its custom levels (entry line
   // mapped through the user's risk params) instead of the default swing levels.
-  const activeStrategy: StrategyKey | null = strategy === "ALL" ? null : strategy;
   const strategyCounts = useMemo(() => {
     const c = new Map<StrategyKey, number>();
     for (const r of rows) {
@@ -355,6 +357,7 @@ export default function ScreenerTable({
                   <tr key={`${r.exchange}:${r.ticker}`} className="border-t border-white/5">
                     <td className="px-4 py-3">
                       <span className="font-semibold">{r.ticker}</span>
+                      <span className="ml-2 font-mono text-[10px] font-semibold text-[var(--ig-accent)]">{swingDisplayScore(r, activeStrategy).toFixed(1)}</span>
                       <span className="ml-2 text-[10px] uppercase text-white/30">{r.exchange} · {r.assetClass}</span>
                       {!activeStrategy && r.strategyTags.some((t) => isBuyStrategyMatch(r, t)) && (
                         <span className="mt-1 flex flex-wrap gap-1">
@@ -434,6 +437,7 @@ export default function ScreenerTable({
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
                     <span className="text-base font-semibold">{r.ticker}</span>
+                    <span className="font-mono text-[10px] font-semibold text-[var(--ig-accent)]">{swingDisplayScore(r, activeStrategy).toFixed(1)}</span>
                     <span className="text-[10px] uppercase text-white/30">{r.exchange} · {r.assetClass}</span>
                   </div>
                   <div className="mt-1 tabular-nums">

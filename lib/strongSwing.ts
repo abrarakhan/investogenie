@@ -2,6 +2,7 @@ import { query } from "@/lib/db";
 import { runScreener, type ScreenRow } from "@/lib/screener";
 import { deriveLevels, type SwingSetup } from "@/lib/analytics/swingClassifier";
 import { assessStrongSwing, type StrongSwingAssessment } from "@/lib/analytics/strongSwing";
+import { rankStrongSwingCandidates } from "@/lib/analytics/candidateRanking";
 import type { SwingSettings } from "@/lib/settings";
 import type { MarketId, OHLCV } from "@/lib/types";
 
@@ -146,11 +147,5 @@ export async function getStrongSwingCandidates(
     });
   }
 
-  const statusRank = { CONFIRMED: 0, WATCHLIST: 1, INVALIDATED: 2 } as const;
-  return candidates.sort((a, b) =>
-    statusRank[a.status] - statusRank[b.status]
-      || b.strengthScore - a.strengthScore
-      || b.score - a.score
-      || a.ticker.localeCompare(b.ticker),
-  );
+  return rankStrongSwingCandidates(candidates);
 }

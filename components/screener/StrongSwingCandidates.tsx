@@ -1,5 +1,6 @@
 import type { StrongSwingCandidate } from "@/lib/strongSwing";
 import type { StrongSwingStatus } from "@/lib/analytics/strongSwing";
+import { rankStrongSwingCandidates } from "@/lib/analytics/candidateRanking";
 
 const STATUS_STYLE: Record<StrongSwingStatus, string> = {
   CONFIRMED: "border-emerald-400/35 bg-emerald-400/10 text-emerald-300",
@@ -74,9 +75,10 @@ function CandidateCard({ candidate }: { candidate: StrongSwingCandidate }) {
 }
 
 export default function StrongSwingCandidates({ candidates }: { candidates: StrongSwingCandidate[] }) {
-  const confirmed = candidates.filter((candidate) => candidate.status === "CONFIRMED");
-  const watchlist = candidates.filter((candidate) => candidate.status === "WATCHLIST");
-  const invalidated = candidates.filter((candidate) => candidate.status === "INVALIDATED");
+  const ranked = rankStrongSwingCandidates(candidates);
+  const confirmed = ranked.filter((candidate) => candidate.status === "CONFIRMED");
+  const watchlist = ranked.filter((candidate) => candidate.status === "WATCHLIST");
+  const invalidated = ranked.filter((candidate) => candidate.status === "INVALIDATED");
   const visibleWatchlist = watchlist.slice(0, 30);
   const visibleInvalidated = invalidated.slice(0, 20);
 
