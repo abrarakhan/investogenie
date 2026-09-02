@@ -1,6 +1,6 @@
 import { addSwingTrade, closeSwingTrade } from "@/app/terminal/[market]/trade-ledger/actions";
 import DeleteTradeButton from "@/components/trade-ledger/DeleteTradeButton";
-import type { SwingLedgerTrade, SwingTradeState } from "@/lib/swingTradeLedger";
+import { summarizeSwingTradeLedger, type SwingLedgerTrade, type SwingTradeState } from "@/lib/swingTradeLedger";
 
 const STATE: Record<SwingTradeState, { label: string; style: string }> = {
   ON_TRACK: { label: "On track", style: "border-emerald-500/30 bg-emerald-500/10 text-emerald-300" },
@@ -28,16 +28,18 @@ export default function SwingTradeLedger({ market, trades, defaults }: {
 }) {
   const open = trades.filter((trade) => trade.status === "OPEN");
   const closed = trades.filter((trade) => trade.status === "CLOSED");
-  const invested = open.reduce((sum, trade) => sum + trade.progress.investedValue, 0);
-  const marked = open.reduce((sum, trade) => sum + (trade.progress.currentValue ?? trade.progress.investedValue), 0);
+  const summary = summarizeSwingTradeLedger(trades);
+  const currency = market === "IN" ? "INR" : "USD";
   const today = new Date().toISOString().slice(0, 10);
 
   return (
     <div className="space-y-6">
-      <section className="grid gap-3 sm:grid-cols-3">
-        <Summary label="Open trades" value={String(open.length)} />
-        <Summary label="Capital logged" value={money(invested, market === "IN" ? "INR" : "USD")} />
-        <Summary label="Open P&L" value={money(marked - invested, market === "IN" ? "INR" : "USD")} tone={marked >= invested ? "good" : "bad"} />
+      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+        <Summary label="Open trades" value={String(summary.openCount)} />
+        <Summary label="Open capital" value={money(summary.openInvestedValue, currency)} />
+        <Summary label="Unrealized P&L" value={money(summary.unrealizedPnlValue, currency)} tone={summary.unrealizedPnlValue >= 0 ? "good" : "bad"} />
+        <Summary label={`Realized P&L · ${summary.closedCount} closed`} value={money(summary.realizedPnlValue, currency)} tone={summary.realizedPnlValue >= 0 ? "good" : "bad"} />
+        <Summary label="Overall P&L" value={money(summary.overallPnlValue, currency)} tone={summary.overallPnlValue >= 0 ? "good" : "bad"} />
       </section>
 
       <details open={Boolean(defaults.ticker)} className="rounded-lg border border-white/10 bg-white/[0.02]">
@@ -75,7 +77,7 @@ export default function SwingTradeLedger({ market, trades, defaults }: {
           : <div className="grid gap-4">{open.map((trade) => <TradeCard key={trade.id} trade={trade} today={today} />)}</div>}
       </section>
 
-      {closed.length > 0 && <section><h2 className="mb-3 text-xl font-bold">Closed trades</h2><div className="grid gap-3">{closed.map((trade) => <TradeCard key={trade.id} trade={trade} today={today} />)}</div></section>}
+      {closed.length > 0 && <section><div className="mb-3 flex flex-wrap items-baseline justify-between gap-2"><h2 className="text-xl font-bold">Closed trades</h2><span className={`text-sm font-semibold tabular-nums ${summary.realizedPnlValue >= 0 ? "text-emerald-300" : "text-rose-300"}`}>Realized P&amp;L {money(summary.realizedPnlValue, currency)}</span></div><div className="grid gap-3">{closed.map((trade) => <TradeCard key={trade.id} trade={trade} today={today} />)}</div></section>}
     </div>
   );
 }

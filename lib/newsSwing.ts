@@ -1,6 +1,6 @@
 import { query, queryOne } from "@/lib/db";
 import { runScreener, type ScreenRow } from "@/lib/screener";
-import { scoreNewsSwing, type NewsDirection, type NewsHorizon, type NewsScope, type NewsSwingScore } from "@/lib/analytics/newsSwing";
+import { rankNewsSwingCandidates, scoreNewsSwing, type NewsDirection, type NewsHorizon, type NewsScope, type NewsSwingScore } from "@/lib/analytics/newsSwing";
 import type { SwingSettings } from "@/lib/settings";
 import type { MarketId } from "@/lib/types";
 
@@ -101,7 +101,7 @@ export async function getNewsSwingWorkspace(
     model: row.model,
   }));
 
-  const candidates = base.map((row): NewsSwingCandidate => {
+  const candidates = rankNewsSwingCandidates(base.map((row): NewsSwingCandidate => {
     const sector = sectorByAsset.get(row.assetId);
     const news = evidence.filter((item) =>
       item.scope === "MARKET"
@@ -110,13 +110,7 @@ export async function getNewsSwingWorkspace(
     );
     const score = scoreNewsSwing(row.score, news);
     return { ...row, ...score, news };
-  }).sort((a, b) => {
-    const stateRank = { FAVORED: 0, NEUTRAL: 1, CAUTION: 2, RISK_OFF: 3 } as const;
-    return stateRank[a.state] - stateRank[b.state]
-      || b.combinedScore - a.combinedScore
-      || b.technicalScore - a.technicalScore
-      || a.ticker.localeCompare(b.ticker);
-  });
+  }));
 
   const summary = await queryOne<{ last_fetched_at: Date | null; article_count: string; impact_count: string }>(
     `select max(a.fetched_at) last_fetched_at,

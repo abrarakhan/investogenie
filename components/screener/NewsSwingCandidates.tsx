@@ -19,7 +19,7 @@ const fmtTime = (value: string) => new Intl.DateTimeFormat("en-IN", {
   dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Kolkata",
 }).format(new Date(value));
 
-function CandidateCard({ candidate }: { candidate: NewsSwingCandidate }) {
+function CandidateCard({ candidate, rank }: { candidate: NewsSwingCandidate; rank: number }) {
   const evidence = candidate.news.slice(0, 4);
   const price = candidate.lastQuote ?? candidate.close;
   return (
@@ -27,6 +27,7 @@ function CandidateCard({ candidate }: { candidate: NewsSwingCandidate }) {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="flex flex-wrap items-center gap-2">
+            <span className="font-mono text-xs font-bold text-[var(--ig-accent)]">#{rank}</span>
             <h2 className="text-lg font-bold">{candidate.ticker}</h2>
             <span className="text-[10px] uppercase tracking-wider text-white/35">{candidate.exchange} · {candidate.verdict.replaceAll("_", " ")}</span>
           </div>
@@ -120,7 +121,8 @@ export default function NewsSwingCandidates({ candidates }: { candidates: NewsSw
           </div>
         ))}
       </div>
-      {candidates.map((candidate) => <CandidateCard key={candidate.assetId} candidate={candidate} />)}
+      {candidates.length > 0 && <p className="text-xs text-white/40">Ranked from highest to lowest combined technical and news conviction. Risk-off setups are shown last.</p>}
+      {candidates.map((candidate, index) => <CandidateCard key={candidate.assetId} candidate={candidate} rank={index + 1} />)}
       {!candidates.length && <div className="rounded-lg border border-white/10 p-8 text-center text-sm text-white/45">No technical buy candidates are available to enrich with news.</div>}
     </div>
   );

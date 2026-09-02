@@ -38,6 +38,41 @@ export interface SwingTradeProgress {
   state: SwingTradeState;
 }
 
+export interface SwingTradeLedgerSummary {
+  openCount: number;
+  closedCount: number;
+  openInvestedValue: number;
+  unrealizedPnlValue: number;
+  realizedPnlValue: number;
+  overallPnlValue: number;
+}
+
+export function summarizeSwingTradeLedger(trades: ReadonlyArray<{
+  status: "OPEN" | "CLOSED";
+  progress: Pick<SwingTradeProgress, "investedValue" | "pnlValue">;
+}>): SwingTradeLedgerSummary {
+  return trades.reduce<SwingTradeLedgerSummary>((summary, trade) => {
+    const pnl = trade.progress.pnlValue ?? 0;
+    if (trade.status === "OPEN") {
+      summary.openCount += 1;
+      summary.openInvestedValue += trade.progress.investedValue;
+      summary.unrealizedPnlValue += pnl;
+    } else {
+      summary.closedCount += 1;
+      summary.realizedPnlValue += pnl;
+    }
+    summary.overallPnlValue += pnl;
+    return summary;
+  }, {
+    openCount: 0,
+    closedCount: 0,
+    openInvestedValue: 0,
+    unrealizedPnlValue: 0,
+    realizedPnlValue: 0,
+    overallPnlValue: 0,
+  });
+}
+
 function utcDate(value: string): Date {
   return new Date(`${value.slice(0, 10)}T00:00:00.000Z`);
 }

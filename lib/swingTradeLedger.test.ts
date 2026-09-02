@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { calculateSwingTradeProgress, tradingDaysBetween } from "@/lib/swingTradeLedger";
+import { calculateSwingTradeProgress, summarizeSwingTradeLedger, tradingDaysBetween } from "@/lib/swingTradeLedger";
 
 describe("swing trade ledger progress", () => {
   it("counts trading sessions rather than weekends", () => {
@@ -25,5 +25,23 @@ describe("swing trade ledger progress", () => {
     expect(calculateSwingTradeProgress({ ...base, currentPrice: 93 }).state).toBe("STOP_BREACHED");
     expect(calculateSwingTradeProgress({ ...base, currentPrice: 103 }).state).toBe("TRAIL_BREACHED");
     expect(calculateSwingTradeProgress({ ...base, currentPrice: 110 }).state).toBe("WINDOW_EXPIRED");
+  });
+
+  it("includes closed realized results in overall profit and loss", () => {
+    const summary = summarizeSwingTradeLedger([
+      { status: "OPEN", progress: { investedValue: 1_000, pnlValue: 125 } },
+      { status: "OPEN", progress: { investedValue: 500, pnlValue: -25 } },
+      { status: "CLOSED", progress: { investedValue: 2_000, pnlValue: 300 } },
+      { status: "CLOSED", progress: { investedValue: 750, pnlValue: -100 } },
+    ]);
+
+    expect(summary).toEqual({
+      openCount: 2,
+      closedCount: 2,
+      openInvestedValue: 1_500,
+      unrealizedPnlValue: 100,
+      realizedPnlValue: 200,
+      overallPnlValue: 300,
+    });
   });
 });

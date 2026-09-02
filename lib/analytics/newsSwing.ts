@@ -17,6 +17,21 @@ export interface NewsSwingScore {
   state: "FAVORED" | "NEUTRAL" | "CAUTION" | "RISK_OFF";
 }
 
+/** Rank strongest actionable setups first while keeping explicit vetoes last. */
+export function rankNewsSwingCandidates<T extends NewsSwingScore & { ticker: string }>(
+  candidates: readonly T[],
+): T[] {
+  return [...candidates].sort((a, b) => {
+    const aVetoed = a.state === "RISK_OFF" ? 1 : 0;
+    const bVetoed = b.state === "RISK_OFF" ? 1 : 0;
+    return aVetoed - bVetoed
+      || b.combinedScore - a.combinedScore
+      || b.newsAdjustment - a.newsAdjustment
+      || b.technicalScore - a.technicalScore
+      || a.ticker.localeCompare(b.ticker);
+  });
+}
+
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 
 /** News loses half its swing relevance every 24 hours and is ignored after 7 days. */

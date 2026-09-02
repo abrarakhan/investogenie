@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { newsDecay, scoreNewsSwing, type NewsImpactInput } from "./newsSwing";
+import { newsDecay, rankNewsSwingCandidates, scoreNewsSwing, type NewsImpactInput } from "./newsSwing";
 
 const NOW = new Date("2026-08-21T12:00:00Z");
 const impact = (overrides: Partial<NewsImpactInput> = {}): NewsImpactInput => ({
@@ -41,5 +41,15 @@ describe("news swing scoring", () => {
     const asset = scoreNewsSwing(70, [impact({ scope: "ASSET" })], NOW);
     const market = scoreNewsSwing(70, [impact({ scope: "MARKET" })], NOW);
     expect(asset.newsAdjustment).toBeGreaterThan(market.newsAdjustment);
+  });
+
+  it("ranks highest combined conviction first and risk-off vetoes last", () => {
+    const ranked = rankNewsSwingCandidates([
+      { ticker: "LOW", technicalScore: 60, newsAdjustment: 5, combinedScore: 65, state: "FAVORED" as const },
+      { ticker: "HIGH", technicalScore: 88, newsAdjustment: 0, combinedScore: 88, state: "NEUTRAL" as const },
+      { ticker: "VETO", technicalScore: 95, newsAdjustment: -5, combinedScore: 90, state: "RISK_OFF" as const },
+    ]);
+
+    expect(ranked.map((candidate) => candidate.ticker)).toEqual(["HIGH", "LOW", "VETO"]);
   });
 });
