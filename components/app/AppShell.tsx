@@ -115,17 +115,17 @@ export default function AppShell({
     {
       title: "Operations",
       items: [
-        { label: "Data Health", href: "/data/health", active: active === "data", statusDot: "data-health" },
-        { label: "Settings", href: "/settings", active: active === "settings" },
+        { label: "Data Health", href: `/data/health?market=${m}`, active: active === "data", statusDot: "data-health" },
+        { label: "Settings", href: `/settings?market=${m}`, active: active === "settings" },
         { label: "Help", href: "/help" },
       ],
     },
   ];
 
   return (
-    <div className="min-h-screen bg-[#05070d] text-white">
+    <div className="min-h-[100dvh] bg-[#05070d] text-white">
       <ApplyMarketTheme market={market} />
-      <div className="lg:grid lg:min-h-screen lg:grid-cols-[248px_1fr]">
+      <div className="min-h-[100dvh] lg:grid lg:grid-cols-[248px_1fr]">
         <aside className="hidden border-r border-white/10 bg-black/20 lg:block">
           <div className="sticky top-0 flex h-screen flex-col px-4 py-5">
             <Link href="/" className="text-xl font-black tracking-tight">
@@ -195,7 +195,7 @@ export default function AppShell({
           </div>
         </aside>
 
-        <div className="min-w-0">
+        <div className="min-h-[100dvh] min-w-0 bg-[#05070d]">
           <header className="sticky top-0 z-30 border-b border-white/10 bg-[#05070d]/88 backdrop-blur-xl">
             <div className="mx-auto flex max-w-7xl flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center sm:justify-between lg:px-6">
               <div className="min-w-0">

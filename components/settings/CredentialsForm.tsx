@@ -258,7 +258,7 @@ export default function CredentialsForm({ initialCreds }: Props) {
       <div className="rounded-xl border border-white/10 bg-white/[0.03] p-6">
         <h3 className="mb-1 text-lg font-semibold">Financial news</h3>
         <p className="mb-4 text-sm text-white/50">
-          Supplies source-linked market, macro, and company headlines to the separate News &amp; AI Swing workspace. The key is encrypted before storage.
+          Supplies source-linked market, macro, and company headlines to News &amp; AI Swing and open Trade Ledger positions. On a personal installation, the encrypted owner key also powers unattended hourly refreshes during each market&apos;s trading hours; deployment environment keys take priority.
         </p>
         <div className="space-y-4">
           <label className="block">

@@ -60,6 +60,20 @@ export async function getTopSwingSetups(
        from public.swing_signals s
        join public.latest_quotes q on q.asset_id = s.asset_id
       where s.country = $1 and s.verdict <> 'NO_SETUP'
+        and exists (select 1 from public.assets a where a.id=s.asset_id and a.is_active)
+        and not exists (select 1 from public.asset_tracking_exclusions x where x.asset_id=s.asset_id)
+        and exists (select 1 from public.daily_ohlcv o where o.asset_id=s.asset_id and o.date >= current_date - interval '4 days')
+        and q.as_of::date >= case
+          when s.country='IN'
+           and extract(isodow from now() at time zone 'Asia/Kolkata') between 1 and 5
+           and (now() at time zone 'Asia/Kolkata')::time between time '09:15' and time '15:30'
+            then (now() at time zone 'Asia/Kolkata')::date
+          when s.country='US'
+           and extract(isodow from now() at time zone 'America/New_York') between 1 and 5
+           and (now() at time zone 'America/New_York')::time between time '09:30' and time '16:00'
+            then (now() at time zone 'America/New_York')::date
+          else current_date - 4
+        end
       order by s.score desc
       limit $2`,
     [country, limit * 2],

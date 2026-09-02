@@ -1,7 +1,9 @@
 import { notFound, redirect } from "next/navigation";
 import AppShell from "@/components/app/AppShell";
 import SwingTradeLedger from "@/components/trade-ledger/SwingTradeLedger";
+import NewsRefreshButton from "@/components/screener/NewsRefreshButton";
 import { getSessionUser } from "@/lib/auth";
+import { getActiveNewsConfig } from "@/lib/credentials-actions";
 import { normalizeMarket } from "@/lib/markets";
 import { getSwingTradeLedger } from "@/lib/swingTradeLedger";
 
@@ -18,7 +20,10 @@ export default async function SwingTradeLedgerPage({ params, searchParams }: {
   if (!user) redirect("/login");
   const raw = await searchParams;
   const defaults = Object.fromEntries(Object.entries(raw).map(([key, value]) => [key, Array.isArray(value) ? value[0] : value]));
-  const trades = await getSwingTradeLedger(user.id, market);
+  const [trades, newsConfig] = await Promise.all([
+    getSwingTradeLedger(user.id, market),
+    getActiveNewsConfig(),
+  ]);
   return (
     <AppShell
       email={user.email}
@@ -26,6 +31,8 @@ export default async function SwingTradeLedgerPage({ params, searchParams }: {
       active="trade-ledger"
       title="Swing Trade Ledger"
       subtitle="Track real purchases against the exact target, stop, trail, and holding window recorded at entry."
+      maxWidth="max-w-6xl"
+      actions={<NewsRefreshButton market={market} configured={Boolean(newsConfig)} />}
     >
       <SwingTradeLedger market={market} trades={trades} defaults={defaults} />
     </AppShell>

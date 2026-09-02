@@ -6,6 +6,8 @@ import MatchStatusBadge from "@/components/ui/MatchStatusBadge";
 import type { FundMappingData, SnapshotWithMapping, UserFundMappingRow } from "@/lib/funds/fundMappingStore";
 import type { PairwiseOverlap } from "@/lib/analytics/fundOverlap";
 import { acceptFundSuggestion, autoAcceptIsinMatches, rejectFundSuggestion, unlinkFundMapping } from "./actions";
+import GmailDisclosurePanel from "@/components/funds/GmailDisclosurePanel";
+import type { GmailDisclosureData } from "@/lib/gmail/disclosures";
 
 function money(value: number) {
   return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(value);
@@ -177,10 +179,14 @@ export default function FundMappingClient({
   data,
   linkedStocks,
   pairwiseOverlaps = [],
+  gmail,
+  gmailStatus,
 }: {
   data: FundMappingData;
   linkedStocks?: string | null;
   pairwiseOverlaps?: PairwiseOverlap[];
+  gmail: GmailDisclosureData;
+  gmailStatus?: string | null;
 }) {
   const [selectedId, setSelectedId] = useState(data.funds.find((fund) => fund.displayStatus !== "matched")?.holdingId ?? data.funds[0]?.holdingId ?? null);
   const [query, setQuery] = useState("");
@@ -206,6 +212,13 @@ export default function FundMappingClient({
           Linked — X-Ray now covers {linkedStocks} stocks for this fund.
         </div>
       )}
+      {gmailStatus && ["denied", "invalid_state", "failed"].includes(gmailStatus) && (
+        <div className="rounded-lg border border-rose-300/20 bg-rose-300/10 px-4 py-3 text-sm text-rose-100">
+          Gmail connection failed or was cancelled. No mailbox access was stored.
+        </div>
+      )}
+
+      <GmailDisclosurePanel gmail={gmail} funds={data.funds} />
 
       <div className="grid gap-3 md:grid-cols-4">
         <div className="rounded-lg border border-white/10 bg-white/[0.03] p-4"><p className="text-[10px] uppercase tracking-[0.16em] text-white/35">Imported</p><p className="mt-1 text-2xl font-black">{data.summary.imported}</p></div>

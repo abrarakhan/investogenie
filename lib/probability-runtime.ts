@@ -221,6 +221,7 @@ export async function getProbabilitySummary(
         where o.date >= current_date - interval '430 days'
         group by o.asset_id
        having count(*) >= $4
+          and max(o.date) >= current_date - interval '4 days'
      ),
      ranked_assets as (
        select a.id
@@ -228,6 +229,22 @@ export async function getProbabilitySummary(
          join eligible e on e.asset_id = a.id
          left join public.latest_financials f on f.asset_id = a.id
         where a.country = $1 and a.exchange = any($2) and a.asset_class = 'STOCK'::asset_class and a.is_active
+          and not exists (select 1 from public.asset_tracking_exclusions x where x.asset_id=a.id)
+          and exists (
+            select 1 from public.latest_quotes current_quote
+             where current_quote.asset_id=a.id
+               and current_quote.as_of::date >= case
+                 when a.country='IN'
+                  and extract(isodow from now() at time zone 'Asia/Kolkata') between 1 and 5
+                  and (now() at time zone 'Asia/Kolkata')::time between time '09:15' and time '15:30'
+                   then (now() at time zone 'Asia/Kolkata')::date
+                 when a.country='US'
+                  and extract(isodow from now() at time zone 'America/New_York') between 1 and 5
+                  and (now() at time zone 'America/New_York')::time between time '09:30' and time '16:00'
+                   then (now() at time zone 'America/New_York')::date
+                 else current_date - 4
+               end
+          )
         order by f.market_cap desc nulls last, a.ticker
         limit $3
      )

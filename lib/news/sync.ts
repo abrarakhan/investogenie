@@ -34,6 +34,24 @@ export async function refreshNewsIntelligence(
          join public.assets a on a.id = s.asset_id
          join latest_scan latest on latest.as_of=s.as_of
         where s.country = $1 and s.bias <> 'SHORT' and s.verdict <> 'NO_SETUP'
+          and a.is_active
+          and not exists (select 1 from public.asset_tracking_exclusions x where x.asset_id=a.id)
+          and exists (select 1 from public.daily_ohlcv o where o.asset_id=a.id and o.date >= current_date - interval '4 days')
+          and exists (
+            select 1 from public.latest_quotes q
+             where q.asset_id=a.id
+               and q.as_of::date >= case
+                 when a.country='IN'
+                  and extract(isodow from now() at time zone 'Asia/Kolkata') between 1 and 5
+                  and (now() at time zone 'Asia/Kolkata')::time between time '09:15' and time '15:30'
+                   then (now() at time zone 'Asia/Kolkata')::date
+                 when a.country='US'
+                  and extract(isodow from now() at time zone 'America/New_York') between 1 and 5
+                  and (now() at time zone 'America/New_York')::time between time '09:30' and time '16:00'
+                   then (now() at time zone 'America/New_York')::date
+                 else current_date - 4
+               end
+          )
         order by a.id, s.score desc
      )
      select asset_id,ticker,name,sector from ranked
@@ -41,7 +59,18 @@ export async function refreshNewsIntelligence(
       limit 30`,
     [market],
   );
-  const assets: NewsAssetRef[] = rows.map((row) => ({
+  // Open real trades remain exposed to event risk even after they leave the
+  // current top-candidate list. Always include them in news retrieval and AI
+  // classification so ledger monitoring does not silently stop after entry.
+  const ledgerRows = await query<CandidateRow>(
+    `select distinct a.id asset_id,a.ticker,a.name,a.sector
+       from public.swing_trade_ledger l
+       join public.assets a on a.id=l.asset_id
+      where l.market=$1 and l.status='OPEN' and a.is_active`,
+    [market],
+  );
+  const tracked = new Map([...rows, ...ledgerRows].map((row) => [row.asset_id, row]));
+  const assets: NewsAssetRef[] = [...tracked.values()].map((row) => ({
     assetId: row.asset_id, ticker: row.ticker, name: row.name, sector: row.sector,
   }));
   const fetched = await fetchNews(news, market, assets);
@@ -50,6 +79,7 @@ export async function refreshNewsIntelligence(
   }
   const articles = fetched.slice(0, 50);
   const impacts = await classifyNews(market, articles, assets, ai);
+  const aiSucceeded = impacts.some((impact) => impact.analysisSource.startsWith("ai:"));
 
   const articleIds = await tx(async (client) => {
     const ids: string[] = [];
@@ -78,6 +108,19 @@ export async function refreshNewsIntelligence(
         [market, ids],
       );
     }
+    if (aiSucceeded) {
+      // A successful model pass supersedes old broad keyword guesses. Keeping
+      // those guesses for seven days can make an unrelated headline look like
+      // current market evidence even after AI has correctly omitted it.
+      await client.query(
+        `delete from public.news_impacts i
+          using public.news_articles a
+          where i.article_id=a.id and i.market=$1
+            and i.analysis_source='deterministic_fallback'
+            and a.published_at >= now() - interval '7 days'`,
+        [market],
+      );
+    }
     for (const impact of impacts) {
       const articleId = ids[impact.articleIndex];
       if (!articleId) continue;
@@ -102,6 +145,8 @@ export async function refreshNewsIntelligence(
     fetched: fetched.length,
     stored: articleIds.length,
     impacts: impacts.length,
-    analysisSource: ai ? `ai:${ai.provider}/${ai.model}` : "deterministic_fallback",
+    analysisSource: [...new Set(impacts.map((impact) =>
+      impact.model ? `${impact.analysisSource}/${impact.model}` : impact.analysisSource,
+    ))].join(", ") || "no_classified_impacts",
   };
 }

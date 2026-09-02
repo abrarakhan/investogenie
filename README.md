@@ -135,8 +135,11 @@ That command starts Next.js through `scripts/run-with-nse-sync.mjs`, which:
 - starts US fundamentals sync,
 - refreshes NSE/BSE latest quotes every 15 minutes during Indian market hours
   (09:15-15:30 IST, Mon-Fri). Tune with
-  `INDIA_MARKET_QUOTE_REFRESH_INTERVAL_MINUTES`, or disable with
-  `INDIA_MARKET_QUOTE_REFRESH_DISABLED=1`,
+  `MARKET_HOURS_QUOTE_REFRESH_INTERVAL_MINUTES` (India 09:15-15:30 IST and
+  US 09:30-16:00 ET), or disable with `MARKET_HOURS_QUOTE_REFRESH_DISABLED=1`,
+- refreshes the active NSE universe in Yahoo Finance batches before each
+  15-minute quote pass; tune provider load with `INDIA_LIVE_QUOTE_BATCH_SIZE`
+  and `INDIA_LIVE_QUOTE_SLEEP_SECONDS`,
 - repeats market quote refresh on `MARKET_REFRESH_INTERVAL_MINUTES`,
 - schedules the daily NSE/BSE bhavcopy history sync by IST time.
 
@@ -148,6 +151,7 @@ Useful manual commands:
 
 ```bash
 npm run sync:nse-history
+npm run sync:nse-quotes
 npm run sync:fundamentals
 npm run sync:us
 npm run sync:us-history

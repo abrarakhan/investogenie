@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { Metadata } from "next";
 import {
   HELP_ARTICLES, SWING_ARTICLES, ENGINE_ARTICLES, PROBABILITY_ARTICLES, LONG_TERM_ARTICLES,
+  DATA_ARTICLES,
   type HelpArticle,
 } from "@/lib/help/articles";
 import { HelpShell, Article, Eyebrow, Title, Lede, H2, P } from "@/components/help/HelpLayout";
@@ -147,6 +148,12 @@ export default function HelpPage() {
         <P>How the 21-day return distributions, up-probabilities and price ranges are computed.</P>
         <div className="mt-6 grid gap-4">
           {PROBABILITY_ARTICLES.map((a) => <ArticleCard key={a.slug} a={a} />)}
+        </div>
+
+        <H2>Data &amp; integrations</H2>
+        <P>Setup guides for optional data connections and portfolio enrichment workflows.</P>
+        <div className="mt-6 grid gap-4">
+          {DATA_ARTICLES.map((a) => <ArticleCard key={a.slug} a={a} />)}
         </div>
 
         <p className="mt-12 text-sm text-white/35">

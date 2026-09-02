@@ -60,6 +60,36 @@ Run `npm run service:install` again after pulling application changes. This
 rebuilds the production bundle and restarts the service. Logs are written to
 the ignored `logs/` directory.
 
+## Gmail mutual-fund disclosures
+
+Fund Mapping can discover monthly AMC portfolio attachments in a connected
+Gmail account. The connector requests only Gmail read access; it stores
+encrypted OAuth tokens and message metadata, while attachment bytes are fetched
+only when an import is confirmed.
+
+1. In Google Cloud Console, enable the Gmail API for a project.
+2. Configure the OAuth consent screen as External/Testing and add the Gmail
+   account as a test user.
+3. Create an OAuth 2.0 Web application client.
+4. Add `http://localhost:3000/api/gmail/callback` and the Tailscale HTTPS origin
+   followed by `/api/gmail/callback` as authorized redirect URIs.
+5. Put the client ID and secret in `.env.local`:
+
+```bash
+GOOGLE_GMAIL_CLIENT_ID=...
+GOOGLE_GMAIL_CLIENT_SECRET=...
+GMAIL_DISCLOSURE_SYNC_INTERVAL_HOURS=24
+```
+
+Restart the service, open Portfolio > Fund Mapping, and choose **Connect
+Gmail**. The startup wrapper scans connected inboxes once at startup and every
+24 hours. Discovery never imports automatically: select the matching CAS fund
+and disclosure month before accepting each snapshot.
+
+Google classifies `gmail.readonly` as a restricted scope. Personal use in OAuth
+testing mode is appropriate; a public multi-user release requires Google's
+OAuth verification process and may require an additional security assessment.
+
 ### Private access with Tailscale
 
 For personal remote access, install Tailscale on this Mac and the devices that

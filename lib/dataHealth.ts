@@ -159,7 +159,7 @@ export function classifyCoverageGaps(input: CoverageGapInput): CoverageGap[] {
       symbol: input.symbol,
       market: input.market,
       issueType: "History stale",
-      detail: `Latest OHLCV bar is ${historyGap ?? "unknown"} days old.`,
+      detail: `Latest OHLCV bar is ${historyGap ?? "unknown"} days old. This asset is excluded from strategy calculations until refreshed.`,
       severity: "medium",
       gapDays: historyGap,
       action: "Backfill history",
@@ -196,7 +196,7 @@ export function classifyCoverageGaps(input: CoverageGapInput): CoverageGap[] {
       symbol: input.symbol,
       market: input.market,
       issueType: "Quote age",
-      detail: `Latest quote update is ${quoteAge === null ? "unknown" : `${quoteAge.toFixed(1)} hours`} old.`,
+      detail: `Latest quote update is ${quoteAge === null ? "unknown" : `${quoteAge.toFixed(1)} hours`} old. This asset is excluded from live calculations until refreshed.`,
       severity: "medium",
       gapDays: null,
       action: "Sync quotes",
@@ -434,8 +434,31 @@ export async function getCoverageGaps(userId: string, now = new Date()): Promise
           swing as (
             select distinct s.asset_id
               from public.swing_signals s
+              join public.assets signal_asset on signal_asset.id=s.asset_id
               join latest_signal_scan latest on latest.country=s.country and latest.as_of=s.as_of
              where s.verdict <> 'NO_SETUP'
+               and signal_asset.is_active
+               and not exists(select 1 from public.asset_tracking_exclusions x where x.asset_id=s.asset_id)
+               and exists(
+                 select 1 from public.daily_ohlcv recent
+                  where recent.asset_id=s.asset_id
+                    and recent.date >= current_date - interval '4 days'
+               )
+               and exists(
+                 select 1 from public.latest_quotes current_quote
+                  where current_quote.asset_id=s.asset_id
+                    and current_quote.as_of::date >= case
+                      when s.country='IN'
+                       and extract(isodow from now() at time zone 'Asia/Kolkata') between 1 and 5
+                       and (now() at time zone 'Asia/Kolkata')::time between time '09:15' and time '15:30'
+                        then (now() at time zone 'Asia/Kolkata')::date
+                      when s.country='US'
+                       and extract(isodow from now() at time zone 'America/New_York') between 1 and 5
+                       and (now() at time zone 'America/New_York')::time between time '09:30' and time '16:00'
+                        then (now() at time zone 'America/New_York')::date
+                      else current_date - 4
+                    end
+               )
           ),
           fwd as (select distinct asset_id from public.forward_test_positions where status = 'OPEN'),
           scoped as (

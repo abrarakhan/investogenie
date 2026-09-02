@@ -40,14 +40,14 @@ function ActionCell({ gap }: { gap: CoverageGap }) {
   return <span>{command}</span>;
 }
 
-export default function DataHealthClient({ data }: { data: DataHealthPageData }) {
+export default function DataHealthClient({ data, initialMarket }: { data: DataHealthPageData; initialMarket: "IN" | "US" }) {
   const router = useRouter();
   const [pendingAction, startTransition] = useTransition();
   const [message, setMessage] = useState<string | null>(null);
   const [backfill, setBackfill] = useState<BackfillStatusSummary>(data.backfill);
   const [watchBackfill, setWatchBackfill] = useState(data.backfill.running);
   const [watchStartedAt, setWatchStartedAt] = useState<number | null>(null);
-  const [market, setMarket] = useState("ALL");
+  const [market, setMarket] = useState<"IN" | "US" | "ALL">(initialMarket);
   const [severity, setSeverity] = useState("all");
   const [issueType, setIssueType] = useState("all");
   const [job, setJob] = useState("all");
@@ -60,7 +60,18 @@ export default function DataHealthClient({ data }: { data: DataHealthPageData })
     (issueType === "all" || gap.issueType === issueType),
   );
   const runs = data.recentRuns.filter((run) => (job === "all" || run.job === job) && (status === "all" || run.status === status));
-  const quoteNoHistoryCount = data.quoteNoHistoryCount;
+  const marketGaps = data.gaps.filter((gap) => market === "ALL" || gap.market === market);
+  const severityCounts = marketGaps.reduce<Record<HealthSeverity, number>>(
+    (counts, gap) => ({ ...counts, [gap.severity]: counts[gap.severity] + 1 }),
+    { critical: 0, high: 0, medium: 0, low: 0 },
+  );
+  const quoteNoHistoryCount = marketGaps.filter((gap) => gap.issueType === "Quote but no OHLCV history").length;
+  const visibleSources = data.sources.filter((source) => {
+    if (market === "ALL") return true;
+    const isUs = source.source.startsWith("US ");
+    const isIndia = source.source.startsWith("NSE ") || source.source.startsWith("BSE ") || source.source.startsWith("India ");
+    return market === "US" ? isUs || source.source === "Macro Indicators" : isIndia || ["Macro Indicators", "AMC Fund Snapshots", "CAS Imports"].includes(source.source);
+  });
 
   const refreshBackfillStatus = useCallback(async () => {
     const res = await fetch("/api/backfill/status", { cache: "no-store" });
@@ -130,7 +141,7 @@ export default function DataHealthClient({ data }: { data: DataHealthPageData })
   return (
     <div className="space-y-6">
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
-        {data.sources.map((source) => (
+        {visibleSources.map((source) => (
           <section key={source.source} className="rounded-lg border border-white/10 bg-white/[0.03] p-4">
             <div className="flex items-start justify-between gap-3">
               <h2 className="text-sm font-black text-white/90">{source.source}</h2>
@@ -191,12 +202,12 @@ export default function DataHealthClient({ data }: { data: DataHealthPageData })
           <div>
             <h2 className="text-lg font-black">Coverage Gaps</h2>
             <p className="mt-1 text-sm text-white/42">
-              {data.severityCounts.critical} critical · {data.severityCounts.high} high · {data.severityCounts.medium} medium · {data.severityCounts.low} low
+              {severityCounts.critical} critical · {severityCounts.high} high · {severityCounts.medium} medium · {severityCounts.low} low
             </p>
             {quoteNoHistoryCount > 0 && <p className="mt-1 text-xs text-amber-200/75">Quote but no OHLCV history: {quoteNoHistoryCount.toLocaleString("en-IN")}</p>}
           </div>
           <div className="flex flex-wrap gap-2">
-            <select value={market} onChange={(e) => setMarket(e.target.value)} className="rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm text-white"><option value="ALL">All markets</option><option value="IN">India</option><option value="US">US</option></select>
+            <select value={market} onChange={(e) => setMarket(e.target.value as "IN" | "US" | "ALL")} className="rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm text-white"><option value="ALL">All markets</option><option value="IN">India</option><option value="US">US</option></select>
             <select value={severity} onChange={(e) => setSeverity(e.target.value)} className="rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm text-white"><option value="all">All severities</option><option value="critical">Critical</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option></select>
             <select value={issueType} onChange={(e) => setIssueType(e.target.value)} className="rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm text-white"><option value="all">All issue types</option>{issueTypes.map((type) => <option key={type} value={type}>{type}</option>)}</select>
           </div>

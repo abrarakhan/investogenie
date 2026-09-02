@@ -54,5 +54,6 @@ describe("DeepSeek news classification", () => {
     })]);
     const request = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
     expect(request.response_format).toEqual({ type: "json_object" });
+    expect(request.thinking).toEqual({ type: "disabled" });
   });
 });

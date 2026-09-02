@@ -185,6 +185,13 @@ Portfolio/fund figures below were refreshed on 2026-07-25 where the current DB e
   deployment-owned environment keys; set `DEEPSEEK_API_KEY` to prefer DeepSeek for cron jobs.
 - The model reassesses newly fetched evidence on each refresh. It does not currently retrain on
   subsequent price outcomes; a calibrated learning loop remains future work.
+- Open Swing Trade Ledger positions are always included in scheduled news retrieval, even after
+  they leave the current candidate list. Ledger cards combine exact-stock and broad-market AI
+  evidence with current-session and two-session benchmark shock checks, while preserving the
+  original frozen strategy plan.
+- The personal deployment can use the owner's encrypted GNews and DeepSeek keys for unattended
+  hourly refreshes during each market's trading hours when deployment environment keys are absent. DeepSeek V4 classification
+  uses non-thinking JSON mode, and successful AI passes remove superseded keyword fallbacks.
 
 ### Startup / Recurring Wrapper
 
@@ -196,8 +203,13 @@ The wrapper currently handles:
 - Daily NSE/BSE bhavcopy history sync scheduling by IST time.
 - NSE/BSE latest quote refresh every 15 minutes during Indian market hours
   (`09:15-15:30 IST`, Monday-Friday), configurable with
-  `INDIA_MARKET_QUOTE_REFRESH_INTERVAL_MINUTES` and disabled with
-  `INDIA_MARKET_QUOTE_REFRESH_DISABLED=1`.
+  `MARKET_HOURS_QUOTE_REFRESH_INTERVAL_MINUTES` and disabled with
+  `MARKET_HOURS_QUOTE_REFRESH_DISABLED=1`; it runs during India 09:15-15:30
+  IST and US 09:30-16:00 ET (DST-aware).
+- During the India window, the wrapper first refreshes the active NSE universe
+  through batched Yahoo intraday requests. Swing Candidate reads those
+  `latest_quotes` rows and recalculates entry, target, stop, and trail levels
+  from the current quote. Recent live rows are protected from bhavcopy overwrite.
 - Recurring broader market refresh every configured interval.
 - Security listing refresh (`scripts/ingest-listings.mjs`; excludes US OTC listings from
   ingestion since 2026-07-24 — see US History Coverage → OTC exclusion).

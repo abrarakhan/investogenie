@@ -133,6 +133,23 @@ with ranked_assets as materialized (
    where a.country = $1
      and a.asset_class = 'STOCK'
      and a.is_active
+     and not exists (select 1 from public.asset_tracking_exclusions x where x.asset_id=a.id)
+     and exists (
+       select 1 from public.daily_ohlcv recent
+        where recent.asset_id=a.id
+          and recent.date >= current_date - interval '4 days'
+     )
+     and q.as_of::date >= case
+       when a.country='IN'
+        and extract(isodow from now() at time zone 'Asia/Kolkata') between 1 and 5
+        and (now() at time zone 'Asia/Kolkata')::time between time '09:15' and time '15:30'
+         then (now() at time zone 'Asia/Kolkata')::date
+       when a.country='US'
+        and extract(isodow from now() at time zone 'America/New_York') between 1 and 5
+        and (now() at time zone 'America/New_York')::time between time '09:30' and time '16:00'
+         then (now() at time zone 'America/New_York')::date
+       else current_date - 4
+     end
      and exists (select 1 from public.asset_financial_reports f where f.asset_id = a.id)
 ),
 universe as materialized (

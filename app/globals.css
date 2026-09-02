@@ -14,8 +14,9 @@
 }
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #05070d;
+  --foreground: #ededed;
+  color-scheme: dark;
 }
 
 @theme inline {
@@ -23,13 +24,6 @@
   --color-foreground: var(--foreground);
   --font-sans: Arial, Helvetica, sans-serif;
   --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
 }
 
 body {
@@ -68,6 +62,8 @@ body {
    hijacking page scroll. */
 html,
 body {
+  min-height: 100%;
+  background: #05070d;
   max-width: 100%;
   overflow-x: hidden;
 }

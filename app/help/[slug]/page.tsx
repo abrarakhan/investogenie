@@ -10,6 +10,7 @@ const CATEGORY_LABEL: Record<string, string> = {
   probability: "Probability",
   engine: "How it works",
   "long-term": "Long-Term Strategy",
+  data: "Data & Integrations",
 };
 
 export function generateStaticParams() {

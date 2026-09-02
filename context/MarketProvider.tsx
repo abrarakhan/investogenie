@@ -8,6 +8,7 @@ import {
   useMemo,
   useState,
 } from "react";
+import { usePathname } from "next/navigation";
 import { DEFAULT_MARKET, MARKETS } from "@/lib/markets";
 import type { MarketConfig, MarketId } from "@/lib/types";
 
@@ -27,7 +28,10 @@ const MarketContext = createContext<MarketContextValue | null>(null);
  * truth without a route reload.
  */
 export function MarketProvider({ children }: { children: React.ReactNode }) {
-  const [marketId, setMarketId] = useState<MarketId>(DEFAULT_MARKET);
+  const pathname = usePathname();
+  const routeMarket = pathname.match(/^\/(?:markets|terminal)\/(in|us)(?:\/|$)/i)?.[1]?.toUpperCase() as MarketId | undefined;
+  const [selectedMarketId, setMarketId] = useState<MarketId>(routeMarket ?? DEFAULT_MARKET);
+  const marketId = routeMarket ?? selectedMarketId;
 
   useEffect(() => {
     const { theme } = MARKETS[marketId];

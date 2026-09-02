@@ -11,6 +11,7 @@ substantially across fund houses and across months.
 from __future__ import annotations
 
 import argparse
+import difflib
 import json
 import re
 import sys
@@ -188,9 +189,31 @@ def read_tabular(path: Path, full: bool = False, sheet: str = "") -> list[dict[s
             wanted = norm(sheet)
             matched = {name: f for name, f in sheets.items() if wanted in norm(name)}
             if not matched:
-                raise RuntimeError(
-                    f"sheet '{sheet}' not found; available: {', '.join(sheets.keys())}"
-                )
+                # AMC tabs are commonly abbreviated ("Flexi Cap Reg Gr") while
+                # CAS names are verbose. Rank normalized token overlap and text
+                # similarity, but require a clear winner to avoid importing the
+                # wrong scheme from a multi-scheme workbook.
+                ignored = {
+                    "fund", "plan", "option", "regular", "direct", "growth",
+                    "dividend", "scheme", "the", "of", "and",
+                }
+                wanted_tokens = {token for token in wanted.split("_") if token and token not in ignored}
+                ranked = []
+                for name in sheets:
+                    candidate = norm(name)
+                    candidate_tokens = {token for token in candidate.split("_") if token and token not in ignored}
+                    overlap = len(wanted_tokens & candidate_tokens) / max(1, len(wanted_tokens | candidate_tokens))
+                    similarity = difflib.SequenceMatcher(None, wanted, candidate).ratio()
+                    ranked.append((max(overlap, similarity), overlap, similarity, name))
+                ranked.sort(reverse=True)
+                best = ranked[0] if ranked else None
+                runner_up = ranked[1][0] if len(ranked) > 1 else 0.0
+                if best and best[0] >= 0.48 and best[0] - runner_up >= 0.05:
+                    matched = {best[3]: sheets[best[3]]}
+                else:
+                    raise RuntimeError(
+                        f"sheet '{sheet}' not found unambiguously; available: {', '.join(sheets.keys())}"
+                    )
             frames.extend(matched.values())
         else:
             frames.extend(sheets.values())

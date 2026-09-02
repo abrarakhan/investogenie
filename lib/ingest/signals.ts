@@ -77,11 +77,21 @@ export async function computeSignals(databaseUrl: string): Promise<ScanSummary> 
   });
   const client = pool;
   try {
-    // Only assets that actually have bars (skips the bulk of the 17k catalog).
+    // Data Health keeps reporting stale assets so they can be repaired, but the
+    // signal scan fails closed: only active, tracked assets with a recent daily
+    // bar are allowed into calculations. Four days spans a normal weekend.
     const { rows: assets } = await client.query<AssetMeta>(
       `select a.id, a.ticker, a.country, a.exchange, a.asset_class
          from public.assets a
-        where exists (select 1 from public.daily_ohlcv o where o.asset_id = a.id)
+        where a.is_active
+          and not exists (
+            select 1 from public.asset_tracking_exclusions x where x.asset_id = a.id
+          )
+          and exists (
+            select 1 from public.daily_ohlcv o
+             where o.asset_id = a.id
+               and o.date >= current_date - interval '4 days'
+          )
         order by a.id`,
     );
 

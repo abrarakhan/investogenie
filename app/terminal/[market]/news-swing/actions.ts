@@ -23,6 +23,7 @@ export async function refreshNewsSwing(
   try {
     const summary = await refreshNewsIntelligence(market, news, ai);
     revalidatePath(`/terminal/${market.toLowerCase()}/news-swing`);
+    revalidatePath(`/terminal/${market.toLowerCase()}/trade-ledger`);
     return {
       ok: true,
       message: `${summary.stored} articles refreshed; ${summary.impacts} event impacts classified via ${summary.analysisSource}.`,

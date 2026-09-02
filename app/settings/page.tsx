@@ -4,6 +4,7 @@ import AppShell from "@/components/app/AppShell";
 import { getUserSwingSettings } from "@/lib/settings";
 import { getEmailPreferences } from "@/lib/email-actions";
 import { getUserCredentials } from "@/lib/credentials-actions";
+import { normalizeMarket } from "@/lib/markets";
 import { saveSwingSettings, resetSwingSettings } from "./actions";
 import EmailPreferencesForm from "@/components/settings/EmailPreferencesForm";
 import CredentialsForm from "@/components/settings/CredentialsForm";
@@ -32,9 +33,14 @@ function Field({
   );
 }
 
-export default async function SettingsPage() {
+export default async function SettingsPage({ searchParams }: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   const user = await getSessionUser();
   if (!user) redirect("/login");
+  const raw = await searchParams;
+  const marketParam = Array.isArray(raw.market) ? raw.market[0] : raw.market;
+  const market = normalizeMarket(marketParam ?? "in") ?? "IN";
   const s = await getUserSwingSettings();
   const emailPrefs = await getEmailPreferences();
   const creds = await getUserCredentials();
@@ -42,7 +48,7 @@ export default async function SettingsPage() {
   return (
     <AppShell
       email={user.email ?? ""}
-      market="US"
+      market={market}
       active="settings"
       title="Settings"
       subtitle="Risk defaults and account-level preferences for the research workspace."

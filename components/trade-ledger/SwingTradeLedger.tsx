@@ -11,6 +11,11 @@ const STATE: Record<SwingTradeState, { label: string; style: string }> = {
   NO_QUOTE: { label: "Quote unavailable", style: "border-white/15 bg-white/5 text-white/50" },
   CLOSED: { label: "Closed", style: "border-white/15 bg-white/5 text-white/50" },
 };
+const RISK = {
+  NORMAL: { label: "Risk normal", style: "border-emerald-500/30 bg-emerald-500/10 text-emerald-300" },
+  CAUTION: { label: "Market caution", style: "border-amber-500/35 bg-amber-500/10 text-amber-200" },
+  RISK_OFF: { label: "Exit risk", style: "border-rose-500/40 bg-rose-500/12 text-rose-200" },
+} as const;
 
 const money = (value: number | null, currency: string) => value === null ? "—" : new Intl.NumberFormat("en-IN", { style: "currency", currency, maximumFractionDigits: 2 }).format(value);
 const pct = (value: number | null) => value === null ? "—" : `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
@@ -67,10 +72,10 @@ export default function SwingTradeLedger({ market, trades, defaults }: {
         <div className="mb-3"><h2 className="text-xl font-bold">Open trades</h2><p className="mt-1 text-sm text-white/42">Targets are projections, not guarantees. Exit alerts follow the frozen strategy plan.</p></div>
         {open.length === 0
           ? <div className="rounded-lg border border-white/10 px-5 py-12 text-center text-white/40">No open trades logged yet.</div>
-          : <div className="grid gap-4 xl:grid-cols-2">{open.map((trade) => <TradeCard key={trade.id} trade={trade} today={today} />)}</div>}
+          : <div className="grid gap-4">{open.map((trade) => <TradeCard key={trade.id} trade={trade} today={today} />)}</div>}
       </section>
 
-      {closed.length > 0 && <section><h2 className="mb-3 text-xl font-bold">Closed trades</h2><div className="grid gap-3 xl:grid-cols-2">{closed.map((trade) => <TradeCard key={trade.id} trade={trade} today={today} />)}</div></section>}
+      {closed.length > 0 && <section><h2 className="mb-3 text-xl font-bold">Closed trades</h2><div className="grid gap-3">{closed.map((trade) => <TradeCard key={trade.id} trade={trade} today={today} />)}</div></section>}
     </div>
   );
 }
@@ -90,8 +95,12 @@ function TradeCard({ trade, today }: { trade: SwingLedgerTrade; today: string })
     <article className="rounded-lg border border-white/10 bg-white/[0.025] p-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div><div className="flex items-center gap-2"><h3 className="text-xl font-black">{trade.ticker}</h3><span className="text-xs text-white/35">{trade.exchange}</span></div><div className="mt-1 text-sm text-white/45">{trade.strategyLabel} · bought {trade.boughtOn}</div></div>
-        <span className={`rounded-full border px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide ${state.style}`}>{state.label}</span>
+        <div className="flex flex-wrap justify-end gap-2">
+          <span className={`rounded-full border px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide ${state.style}`}>{state.label}</span>
+          {trade.status === "OPEN" && <span className={`rounded-full border px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide ${RISK[trade.risk.state].style}`}>{RISK[trade.risk.state].label}</span>}
+        </div>
       </div>
+      {trade.status === "OPEN" && <TradeRiskPanel trade={trade} />}
       <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Metric label="Buy" value={price(trade.buyPrice)} />
         <Metric label={trade.status === "CLOSED" ? "Exit" : "Current"} value={price(trade.status === "CLOSED" ? trade.exitPrice : trade.currentPrice)} tone={(trade.progress.pnlPct ?? 0) >= 0 ? "good" : "bad"} />
@@ -111,6 +120,47 @@ function TradeCard({ trade, today }: { trade: SwingLedgerTrade; today: string })
         <DeleteTradeButton tradeId={trade.id} market={trade.market} ticker={trade.ticker} />
       </div>
     </article>
+  );
+}
+
+function TradeRiskPanel({ trade }: { trade: SwingLedgerTrade }) {
+  const hasWarning = trade.risk.state !== "NORMAL" || trade.risk.coverageWarning;
+  if (!hasWarning) return null;
+  const riskOff = trade.risk.state === "RISK_OFF";
+  const panelClass = riskOff
+    ? "border-rose-500/30 bg-rose-500/[0.08]"
+    : "border-amber-500/25 bg-amber-500/[0.06]";
+  return (
+    <div className={`mt-4 rounded-lg border p-4 ${panelClass}`}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h4 className={`text-sm font-bold ${riskOff ? "text-rose-200" : "text-amber-200"}`}>
+          Market &amp; AI risk assessment
+        </h4>
+        <div className="flex gap-3 font-mono text-[11px] text-white/55">
+          {trade.risk.marketMove1dPct !== null && <span>Market 1d {pct(trade.risk.marketMove1dPct)}</span>}
+          {trade.risk.marketMove2dPct !== null && <span>Market 2d {pct(trade.risk.marketMove2dPct)}</span>}
+          <span>News score {trade.risk.newsAdjustment >= 0 ? "+" : ""}{trade.risk.newsAdjustment.toFixed(1)}</span>
+        </div>
+      </div>
+      {trade.risk.reasons.length > 0 && <ul className="mt-2 space-y-1 text-sm text-white/75">
+        {trade.risk.reasons.map((reason) => <li key={reason}>• {reason}</li>)}
+      </ul>}
+      {trade.risk.coverageWarning && <p className="mt-2 text-xs font-medium text-amber-200/80">
+        {trade.risk.coverageWarning} <a href="/settings" className="underline underline-offset-2">Open Settings</a>
+      </p>}
+      {trade.risk.newsAsOf && <p className="mt-2 text-[11px] text-white/35">
+        News and AI last assessed {new Intl.DateTimeFormat("en-IN", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Kolkata" }).format(new Date(trade.risk.newsAsOf))} IST
+      </p>}
+      {trade.risk.evidence.length > 0 && <div className="mt-3 border-t border-white/10 pt-2">
+        <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-white/35">Recent evidence</div>
+        <div className="mt-1 space-y-1.5">
+          {trade.risk.evidence.map((item) => <a key={`${item.url}-${item.publishedAt}`} href={item.url} target="_blank" rel="noreferrer" className="block text-xs text-white/60 hover:text-white hover:underline">
+            {item.direction === "NEGATIVE" ? "Negative" : item.direction === "POSITIVE" ? "Positive" : "Neutral"}: {item.title}
+          </a>)}
+        </div>
+      </div>}
+      <p className="mt-3 text-[11px] text-white/35">This warning does not rewrite the frozen strategy plan or guarantee an outcome.</p>
+    </div>
   );
 }
 

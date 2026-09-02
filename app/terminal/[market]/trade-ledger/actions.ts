@@ -37,7 +37,21 @@ async function resolveSignalProjection(assetId: string, market: "IN" | "US", str
        from public.swing_signals s
        join public.assets a on a.id=s.asset_id
        left join public.latest_quotes q on q.asset_id=s.asset_id
-      where s.asset_id=$1 and s.country=$2`,
+      where s.asset_id=$1 and s.country=$2
+        and a.is_active
+        and not exists (select 1 from public.asset_tracking_exclusions x where x.asset_id=a.id)
+        and exists (select 1 from public.daily_ohlcv o where o.asset_id=a.id and o.date >= current_date - interval '4 days')
+        and q.as_of::date >= case
+          when s.country='IN'
+           and extract(isodow from now() at time zone 'Asia/Kolkata') between 1 and 5
+           and (now() at time zone 'Asia/Kolkata')::time between time '09:15' and time '15:30'
+            then (now() at time zone 'Asia/Kolkata')::date
+          when s.country='US'
+           and extract(isodow from now() at time zone 'America/New_York') between 1 and 5
+           and (now() at time zone 'America/New_York')::time between time '09:30' and time '16:00'
+            then (now() at time zone 'America/New_York')::date
+          else current_date - 4
+        end`,
     [assetId, market],
   );
   if (!row) throw new Error("No current swing projection exists for this asset");

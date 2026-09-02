@@ -14,6 +14,7 @@ if (existsSync(envFile)) process.loadEnvFile(envFile);
 
 const nextCli = resolve(root, "node_modules/next/dist/bin/next");
 const pipeline = resolve(root, "pipelines/nse_yfinance_sync.py");
+const indiaQuotePipeline = resolve(root, "pipelines/india_quotes_sync.py");
 const usPipeline = resolve(root, "pipelines/us_market_sync.py");
 const usHistoryPipeline = resolve(root, "pipelines/us_history_sync.py");
 const macroPipeline = resolve(root, "pipelines/macro_sync.py");
@@ -57,10 +58,20 @@ const usQuoteLimit = process.env.US_QUOTE_LIMIT ?? "1500";
 const usQuoteBatchSize = process.env.US_QUOTE_BATCH_SIZE ?? "100";
 const usGoogleFallbackLimit = process.env.US_GOOGLE_FALLBACK_LIMIT ?? "100";
 const marketRefreshIntervalMinutes = Number(process.env.MARKET_REFRESH_INTERVAL_MINUTES ?? 60);
-const indiaMarketQuoteRefreshIntervalMinutes = Number(process.env.INDIA_MARKET_QUOTE_REFRESH_INTERVAL_MINUTES ?? 15);
-const indiaMarketQuoteRefreshDisabled = process.env.INDIA_MARKET_QUOTE_REFRESH_DISABLED === "1";
-const newsRefreshIntervalMinutes = Number(process.env.NEWS_REFRESH_INTERVAL_MINUTES ?? 30);
+const marketHoursQuoteRefreshIntervalMinutes = Number(
+  process.env.MARKET_HOURS_QUOTE_REFRESH_INTERVAL_MINUTES
+    ?? process.env.INDIA_MARKET_QUOTE_REFRESH_INTERVAL_MINUTES
+    ?? 15,
+);
+const marketHoursQuoteRefreshDisabled =
+  process.env.MARKET_HOURS_QUOTE_REFRESH_DISABLED === "1"
+  || process.env.INDIA_MARKET_QUOTE_REFRESH_DISABLED === "1";
+const indiaQuoteBatchSize = process.env.INDIA_LIVE_QUOTE_BATCH_SIZE ?? "100";
+const indiaQuoteSleep = process.env.INDIA_LIVE_QUOTE_SLEEP_SECONDS ?? "0.2";
+const newsRefreshIntervalMinutes = Number(process.env.NEWS_REFRESH_INTERVAL_MINUTES ?? 60);
 const newsRefreshDisabled = process.env.NEWS_REFRESH_DISABLED === "1";
+const gmailDisclosureSyncIntervalHours = Number(process.env.GMAIL_DISCLOSURE_SYNC_INTERVAL_HOURS ?? 24);
+const gmailDisclosureSyncDisabled = process.env.GMAIL_DISCLOSURE_SYNC_DISABLED === "1";
 const usSyncSleep = process.env.US_SYNC_SLEEP_SECONDS ?? "0.4";
 const usFundamentalsLimit = process.env.US_FUNDAMENTALS_LIMIT ?? "250";
 const usFundamentalsStaleDays = process.env.US_FUNDAMENTALS_STALE_DAYS ?? "7";
@@ -108,10 +119,13 @@ let amfiDailyTimer = null;
 let marketRefreshChild = null;
 let marketRefreshPromise = null;
 let marketRefreshTimer = null;
-let indiaMarketQuoteRefreshTimer = null;
-let indiaMarketQuoteRefreshPromise = null;
+let marketHoursQuoteRefreshTimer = null;
+let marketHoursQuoteRefreshPromise = null;
+let indiaLiveQuoteChild = null;
 let newsRefreshTimer = null;
 let newsRefreshPromise = null;
+let gmailDisclosureTimer = null;
+let gmailDisclosurePromise = null;
 let backfillTimer = null;
 let dailyTimer = null;
 let nseCatchupTimer = null;
@@ -343,7 +357,11 @@ function runMarketRefresh(trigger) {
     try {
       console.log(`[market-refresh] starting ${trigger}`);
       await runNodeScript("refreshing security listings", "scripts/ingest-listings.mjs");
-      await runNodeScript("refreshing market quotes", "scripts/ingest-quotes.mjs");
+      if (marketHoursQuoteRefreshPromise) {
+        console.log("[market-refresh] waiting for the market-hours quote refresh to finish");
+        await marketHoursQuoteRefreshPromise;
+      }
+      await runQuoteRefreshRequest("market-refresh");
       if (!usQuoteDisabled) {
         await runMarketPython("refreshing Yahoo/Google US quotes", [
           usPipeline,
@@ -415,57 +433,131 @@ function isIndiaMarketOpen(clock = istClock()) {
   return minutes >= 9 * 60 + 15 && minutes <= 15 * 60 + 30;
 }
 
-async function runIndiaMarketQuoteRefresh(trigger) {
-  if (indiaMarketQuoteRefreshDisabled) {
-    console.log(`[india-quotes] ${trigger} 15-minute refresh disabled by INDIA_MARKET_QUOTE_REFRESH_DISABLED=1`);
-    return;
-  }
-  if (!isIndiaMarketOpen()) {
-    console.log(`[india-quotes] skipping ${trigger}; Indian market is closed`);
-    return;
-  }
-  if (indiaMarketQuoteRefreshPromise) {
-    console.log(`[india-quotes] skipping ${trigger}; quote refresh still running`);
-    return indiaMarketQuoteRefreshPromise;
-  }
-
-  indiaMarketQuoteRefreshPromise = (async () => {
-    await waitForApp();
-    if (!process.env.CRON_SECRET) throw new Error("CRON_SECRET is not configured");
-    console.log(`[india-quotes] starting ${trigger} NSE/BSE market-hours quote refresh`);
-    const response = await fetch("http://127.0.0.1:3000/api/cron/refresh-quotes", {
-      headers: { authorization: `Bearer ${process.env.CRON_SECRET}` },
-    });
-    const body = await response.text();
-    if (!response.ok) throw new Error(`quote refresh failed (${response.status}): ${body}`);
-    console.log(`[india-quotes] ${trigger} completed: ${body}`);
-  })()
-    .catch((error) => console.error(`[india-quotes] ${trigger} failed: ${error.message}`))
-    .finally(() => {
-      indiaMarketQuoteRefreshPromise = null;
-    });
-  return indiaMarketQuoteRefreshPromise;
+function zonedClock(timeZone, now = new Date()) {
+  const values = Object.fromEntries(
+    new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      weekday: "short",
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+    }).formatToParts(now).map((part) => [part.type, part.value]),
+  );
+  return {
+    day: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(values.weekday),
+    hour: Number(values.hour),
+    minute: Number(values.minute),
+  };
 }
 
-function scheduleIndiaMarketQuoteRefresh() {
-  if (indiaMarketQuoteRefreshDisabled) {
-    console.log("[india-quotes] 15-minute market-hours refresh disabled");
+function isUsMarketOpen(clock = zonedClock("America/New_York")) {
+  if (clock.day === 0 || clock.day === 6) return false;
+  const minutes = clock.hour * 60 + clock.minute;
+  return minutes >= 9 * 60 + 30 && minutes <= 16 * 60;
+}
+
+async function runQuoteRefreshRequest(trigger) {
+  await waitForApp();
+  if (!process.env.CRON_SECRET) throw new Error("CRON_SECRET is not configured");
+  const response = await fetch("http://127.0.0.1:3000/api/cron/refresh-quotes", {
+    headers: { authorization: `Bearer ${process.env.CRON_SECRET}` },
+  });
+  const body = await response.text();
+  if (!response.ok) throw new Error(`quote refresh failed (${response.status}): ${body}`);
+  console.log(`[market-hours-quotes] ${trigger} completed: ${body}`);
+  return body;
+}
+
+function runIndiaLiveQuoteSync(trigger) {
+  if (!python) return Promise.reject(new Error("no Python executable found"));
+  if (indiaLiveQuoteChild) {
+    console.log(`[india-live-quotes] skipping ${trigger}; prior NSE sync still running`);
+    return Promise.resolve();
+  }
+
+  const args = [
+    indiaQuotePipeline,
+    "--exchange", "NSE",
+    "--batch-size", indiaQuoteBatchSize,
+    "--sleep", indiaQuoteSleep,
+  ];
+  if (process.env.INDIA_LIVE_QUOTE_LIMIT) {
+    args.push("--limit", process.env.INDIA_LIVE_QUOTE_LIMIT);
+  }
+
+  return new Promise((resolveRun, rejectRun) => {
+    console.log(`[india-live-quotes] starting ${trigger} batched NSE refresh`);
+    indiaLiveQuoteChild = spawn(python, args, {
+      cwd: root,
+      env: process.env,
+      stdio: "inherit",
+    });
+    indiaLiveQuoteChild.once("error", rejectRun);
+    indiaLiveQuoteChild.once("close", (code, signal) => {
+      indiaLiveQuoteChild = null;
+      if (signal) rejectRun(new Error(`NSE live quote refresh stopped by ${signal}`));
+      else if (code !== 0) rejectRun(new Error(`NSE live quote refresh failed with exit code ${code}`));
+      else resolveRun();
+    });
+  });
+}
+
+async function runMarketHoursQuoteRefresh(trigger) {
+  if (marketHoursQuoteRefreshDisabled) {
+    console.log(`[market-hours-quotes] ${trigger} refresh disabled`);
     return;
   }
-  if (!Number.isFinite(indiaMarketQuoteRefreshIntervalMinutes) || indiaMarketQuoteRefreshIntervalMinutes <= 0) {
-    console.log("[india-quotes] 15-minute market-hours refresh disabled by interval");
+  const indiaOpen = isIndiaMarketOpen();
+  const usOpen = isUsMarketOpen();
+  if (!indiaOpen && !usOpen) {
+    console.log(`[market-hours-quotes] skipping ${trigger}; India and US markets are closed`);
     return;
   }
-  console.log(`[india-quotes] NSE/BSE quote refresh every ${indiaMarketQuoteRefreshIntervalMinutes} minutes during 09:15-15:30 IST`);
-  indiaMarketQuoteRefreshTimer = setInterval(
-    () => runIndiaMarketQuoteRefresh("market-hours"),
-    indiaMarketQuoteRefreshIntervalMinutes * 60 * 1000,
+  if (marketHoursQuoteRefreshPromise) {
+    console.log(`[market-hours-quotes] skipping ${trigger}; quote refresh still running`);
+    return marketHoursQuoteRefreshPromise;
+  }
+
+  const openMarkets = [indiaOpen ? "NSE/BSE" : null, usOpen ? "US" : null].filter(Boolean).join(" + ");
+  marketHoursQuoteRefreshPromise = (async () => {
+    console.log(`[market-hours-quotes] starting ${trigger} ${openMarkets} quote refresh`);
+    if (indiaOpen) await runIndiaLiveQuoteSync(trigger);
+    await runQuoteRefreshRequest(trigger);
+  })()
+    .catch((error) => console.error(`[market-hours-quotes] ${trigger} failed: ${error.message}`))
+    .finally(() => {
+      marketHoursQuoteRefreshPromise = null;
+    });
+  return marketHoursQuoteRefreshPromise;
+}
+
+function scheduleMarketHoursQuoteRefresh() {
+  if (marketHoursQuoteRefreshDisabled) {
+    console.log("[market-hours-quotes] 15-minute refresh disabled");
+    return;
+  }
+  if (!Number.isFinite(marketHoursQuoteRefreshIntervalMinutes) || marketHoursQuoteRefreshIntervalMinutes <= 0) {
+    console.log("[market-hours-quotes] refresh disabled by interval");
+    return;
+  }
+  console.log(`[market-hours-quotes] quote refresh every ${marketHoursQuoteRefreshIntervalMinutes} minutes during India 09:15-15:30 IST and US 09:30-16:00 ET`);
+  marketHoursQuoteRefreshTimer = setInterval(
+    () => runMarketHoursQuoteRefresh("market-hours"),
+    marketHoursQuoteRefreshIntervalMinutes * 60 * 1000,
   );
-  setTimeout(() => runIndiaMarketQuoteRefresh("startup-market-hours"), 0);
+  setTimeout(() => runMarketHoursQuoteRefresh("startup-market-hours"), 0);
 }
 
 async function runNewsRefresh(trigger) {
   if (newsRefreshDisabled) return;
+  const openMarkets = [
+    isIndiaMarketOpen() ? "IN" : null,
+    isUsMarketOpen() ? "US" : null,
+  ].filter(Boolean);
+  if (openMarkets.length === 0) {
+    console.log(`[news-intelligence] skipping ${trigger}; India and US markets are closed`);
+    return;
+  }
   if (newsRefreshPromise) {
     console.log(`[news-intelligence] skipping ${trigger}; prior refresh still running`);
     return newsRefreshPromise;
@@ -473,12 +565,16 @@ async function runNewsRefresh(trigger) {
   newsRefreshPromise = (async () => {
     await waitForApp();
     if (!process.env.CRON_SECRET) throw new Error("CRON_SECRET is not configured");
-    const response = await fetch("http://127.0.0.1:3000/api/cron/news-intelligence", {
-      headers: { authorization: `Bearer ${process.env.CRON_SECRET}` },
-    });
-    const body = await response.text();
-    if (!response.ok) throw new Error(`news refresh failed (${response.status}): ${body}`);
-    console.log(`[news-intelligence] ${trigger} completed: ${body}`);
+    for (const market of openMarkets) {
+      const url = new URL("http://127.0.0.1:3000/api/cron/news-intelligence");
+      url.searchParams.set("market", market);
+      const response = await fetch(url, {
+        headers: { authorization: `Bearer ${process.env.CRON_SECRET}` },
+      });
+      const body = await response.text();
+      if (!response.ok) throw new Error(`${market} news refresh failed (${response.status}): ${body}`);
+      console.log(`[news-intelligence] ${trigger} ${market} completed: ${body}`);
+    }
   })()
     .catch((error) => console.error(`[news-intelligence] ${trigger} failed: ${error.message}`))
     .finally(() => { newsRefreshPromise = null; });
@@ -490,9 +586,47 @@ function scheduleNewsRefresh() {
     console.log("[news-intelligence] recurring refresh disabled");
     return;
   }
-  console.log(`[news-intelligence] refresh every ${newsRefreshIntervalMinutes} minutes`);
+  console.log(`[news-intelligence] refresh every ${newsRefreshIntervalMinutes} minutes during India 09:15-15:30 IST and US 09:30-16:00 ET`);
   newsRefreshTimer = setInterval(() => runNewsRefresh("recurring"), newsRefreshIntervalMinutes * 60 * 1000);
   setTimeout(() => runNewsRefresh("startup"), 5_000);
+}
+
+async function runGmailDisclosureSync(trigger) {
+  if (gmailDisclosureSyncDisabled) return;
+  if (gmailDisclosurePromise) {
+    console.log(`[gmail-disclosures] skipping ${trigger}; prior scan still running`);
+    return gmailDisclosurePromise;
+  }
+  gmailDisclosurePromise = (async () => {
+    await waitForApp();
+    if (!process.env.CRON_SECRET) throw new Error("CRON_SECRET is not configured");
+    const response = await fetch("http://127.0.0.1:3000/api/cron/gmail-disclosures", {
+      headers: { authorization: `Bearer ${process.env.CRON_SECRET}` },
+    });
+    const body = await response.text();
+    if (!response.ok) throw new Error(`Gmail disclosure scan failed (${response.status}): ${body}`);
+    console.log(`[gmail-disclosures] ${trigger} completed: ${body}`);
+  })()
+    .catch((error) => console.error(`[gmail-disclosures] ${trigger} failed: ${error.message}`))
+    .finally(() => { gmailDisclosurePromise = null; });
+  return gmailDisclosurePromise;
+}
+
+function scheduleGmailDisclosureSync() {
+  if (
+    gmailDisclosureSyncDisabled ||
+    !Number.isFinite(gmailDisclosureSyncIntervalHours) ||
+    gmailDisclosureSyncIntervalHours <= 0
+  ) {
+    console.log("[gmail-disclosures] recurring discovery disabled");
+    return;
+  }
+  console.log(`[gmail-disclosures] inbox discovery every ${gmailDisclosureSyncIntervalHours} hours`);
+  gmailDisclosureTimer = setInterval(
+    () => runGmailDisclosureSync("recurring"),
+    gmailDisclosureSyncIntervalHours * 60 * 60 * 1000,
+  );
+  setTimeout(() => runGmailDisclosureSync("startup"), 15_000);
 }
 
 async function runBackfillCron(label) {
@@ -1106,8 +1240,9 @@ function shutdown(signal) {
   if (amfiDailyTimer) clearTimeout(amfiDailyTimer);
   if (nseCatchupTimer) clearInterval(nseCatchupTimer);
   if (marketRefreshTimer) clearInterval(marketRefreshTimer);
-  if (indiaMarketQuoteRefreshTimer) clearInterval(indiaMarketQuoteRefreshTimer);
+  if (marketHoursQuoteRefreshTimer) clearInterval(marketHoursQuoteRefreshTimer);
   if (newsRefreshTimer) clearInterval(newsRefreshTimer);
+  if (gmailDisclosureTimer) clearInterval(gmailDisclosureTimer);
   if (backfillTimer) clearInterval(backfillTimer);
   if (emailDigestTimer) clearInterval(emailDigestTimer);
   if (syncChild) syncChild.kill(signal);
@@ -1117,6 +1252,7 @@ function shutdown(signal) {
   if (macroChild) macroChild.kill(signal);
   if (amfiChild) amfiChild.kill(signal);
   if (marketRefreshChild) marketRefreshChild.kill(signal);
+  if (indiaLiveQuoteChild) indiaLiveQuoteChild.kill(signal);
 
   // Print startup summary before killing Next.js
   if (syncStats.attempted > 0) {
@@ -1139,7 +1275,7 @@ nextChild.on("close", (code, signal) => {
   if (amfiDailyTimer) clearTimeout(amfiDailyTimer);
   if (nseCatchupTimer) clearInterval(nseCatchupTimer);
   if (marketRefreshTimer) clearInterval(marketRefreshTimer);
-  if (indiaMarketQuoteRefreshTimer) clearInterval(indiaMarketQuoteRefreshTimer);
+  if (marketHoursQuoteRefreshTimer) clearInterval(marketHoursQuoteRefreshTimer);
   if (backfillTimer) clearInterval(backfillTimer);
   if (emailDigestTimer) clearInterval(emailDigestTimer);
   if (syncChild) syncChild.kill("SIGTERM");
@@ -1149,6 +1285,7 @@ nextChild.on("close", (code, signal) => {
   if (macroChild) macroChild.kill("SIGTERM");
   if (amfiChild) amfiChild.kill("SIGTERM");
   if (marketRefreshChild) marketRefreshChild.kill("SIGTERM");
+  if (indiaLiveQuoteChild) indiaLiveQuoteChild.kill("SIGTERM");
   process.exitCode = signal ? 1 : (code ?? 1);
 });
 
@@ -1156,8 +1293,9 @@ scheduleDailySync();
 scheduleDailyAmfiSync();
 scheduleNseCatchup();
 scheduleRecurringMarketRefresh();
-scheduleIndiaMarketQuoteRefresh();
+scheduleMarketHoursQuoteRefresh();
 scheduleNewsRefresh();
+scheduleGmailDisclosureSync();
 scheduleBackfillCron();
 scheduleEmailDigest();
 setTimeout(() => {

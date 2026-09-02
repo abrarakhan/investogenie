@@ -4,18 +4,20 @@ import { getSessionUser } from "@/lib/auth";
 import { getFundMappingData } from "@/lib/funds/fundMappingStore";
 import { getFundOverlap } from "@/lib/engines-runtime";
 import FundMappingClient from "./FundMappingClient";
+import { getGmailDisclosureData } from "@/lib/gmail/disclosures";
 
 export const dynamic = "force-dynamic";
 
-export default async function FundMappingPage({ searchParams }: { searchParams: Promise<{ linked?: string }> }) {
+export default async function FundMappingPage({ searchParams }: { searchParams: Promise<{ linked?: string; gmail?: string }> }) {
   const user = await getSessionUser();
   if (!user) redirect("/login");
   // Reuse the same engine the terminal's X-Ray uses rather than recomputing
   // overlap here — mapping decisions and the X-Ray must never disagree.
-  const [data, params, overlap] = await Promise.all([
+  const [data, params, overlap, gmail] = await Promise.all([
     getFundMappingData(user.id),
     searchParams,
     getFundOverlap(),
+    getGmailDisclosureData(user.id),
   ]);
 
   return (
@@ -31,6 +33,8 @@ export default async function FundMappingPage({ searchParams }: { searchParams: 
         data={data}
         linkedStocks={params.linked ?? null}
         pairwiseOverlaps={overlap?.pairwiseOverlaps ?? []}
+        gmail={gmail}
+        gmailStatus={params.gmail ?? null}
       />
     </AppShell>
   );

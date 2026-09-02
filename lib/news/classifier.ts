@@ -127,7 +127,7 @@ async function callAI(ai: ActiveAIConfig, prompt: string): Promise<unknown> {
       method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${ai.apiKey}` },
       body: JSON.stringify({
         model: ai.model,
-        temperature: 0,
+        thinking: { type: "disabled" },
         max_tokens: 4000,
         response_format: { type: "json_object" },
         messages: [{ role: "user", content: prompt }],

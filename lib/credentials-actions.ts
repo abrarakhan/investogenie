@@ -205,9 +205,28 @@ export async function getActiveNewsConfig(): Promise<ActiveNewsConfig | null> {
   return getEnvironmentNewsConfig();
 }
 
-/** Cron-safe resolver. Global jobs may only consume deployment-owned keys. */
+/**
+ * Cron-safe resolver. Deployment keys take priority. A local/personal install
+ * may fall back to the configured owner's encrypted key so unattended news
+ * monitoring does not silently stop after the browser session ends.
+ */
 export async function getSystemNewsConfig(): Promise<ActiveNewsConfig | null> {
-  return getEnvironmentNewsConfig();
+  const environment = getEnvironmentNewsConfig();
+  if (environment) return environment;
+  const row = await queryOne<{ news_provider: string | null; news_api_key_encrypted: string | null }>(
+    `select c.news_provider,c.news_api_key_encrypted
+       from public.user_credentials c
+       join public.users u on u.id=c.user_id
+      where c.news_api_key_encrypted is not null
+      order by (u.email=$1) desc,u.created_at asc
+      limit 1`,
+    [process.env.DEFAULT_USER_EMAIL ?? ""],
+  );
+  if (!row?.news_api_key_encrypted || !NEWS_PROVIDERS.has(row.news_provider as NewsProvider)) return null;
+  return {
+    provider: row.news_provider as NewsProvider,
+    apiKey: decryptCredential(row.news_api_key_encrypted),
+  };
 }
 
 function getEnvironmentNewsConfig(): ActiveNewsConfig | null {
@@ -267,7 +286,7 @@ export async function getActiveAIConfig(): Promise<ActiveAIConfig | null> {
   return null;
 }
 
-/** Cron-safe AI resolver. Global jobs may only consume deployment-owned keys. */
+/** Environment-first AI resolver with the same owner fallback as news cron. */
 export async function getSystemAIConfig(): Promise<ActiveAIConfig | null> {
   if (process.env.DEEPSEEK_API_KEY) {
     return {
@@ -289,7 +308,25 @@ export async function getSystemAIConfig(): Promise<ActiveAIConfig | null> {
   if (process.env.GOOGLE_AI_API_KEY) {
     return { provider: "google", model: DEFAULT_MODEL_BY_PROVIDER.google, apiKey: process.env.GOOGLE_AI_API_KEY };
   }
-  return null;
+  const row = await queryOne<{
+    ai_provider: string | null;
+    ai_model: string | null;
+    ai_api_key_encrypted: string | null;
+  }>(
+    `select c.ai_provider,c.ai_model,c.ai_api_key_encrypted
+       from public.user_credentials c
+       join public.users u on u.id=c.user_id
+      where c.ai_api_key_encrypted is not null
+      order by (u.email=$1) desc,u.created_at asc
+      limit 1`,
+    [process.env.DEFAULT_USER_EMAIL ?? ""],
+  );
+  if (!row?.ai_api_key_encrypted || !isAIProvider(row.ai_provider)) return null;
+  return {
+    provider: row.ai_provider,
+    model: row.ai_model || DEFAULT_MODEL_BY_PROVIDER[row.ai_provider],
+    apiKey: decryptCredential(row.ai_api_key_encrypted),
+  };
 }
 
 /** SMTP config for email sending. Prefers per-user DB creds, falls back to env. */

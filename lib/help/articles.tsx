@@ -1,9 +1,9 @@
 import type { ReactNode } from "react";
 import {
-  H2, H3, P, UL, LI, Formula, Callout, SpecTable, References,
+  H2, H3, P, UL, LI, Steps, Formula, Callout, SpecTable, References,
 } from "@/components/help/HelpLayout";
 
-export type HelpCategory = "swing" | "probability" | "engine" | "long-term";
+export type HelpCategory = "swing" | "probability" | "engine" | "long-term" | "data";
 
 export interface HelpArticle {
   slug: string;
@@ -1013,6 +1013,100 @@ Earnings Yield         = EBIT ÷ Enterprise Value`}</Formula>
 
 // ---------------------------------------------------------------------------
 
+const gmailFundDisclosures: HelpArticle = {
+  slug: "gmail-fund-disclosures",
+  category: "data",
+  title: "Connect Gmail for fund disclosures",
+  subtitle: "Discover monthly AMC portfolio files in Fund Mapping without storing your email bodies or attachment files.",
+  readMins: 5,
+  summary:
+    "Set up read-only Gmail access, authorize your account, and review monthly AMC portfolio attachments before importing them into Fund X-Ray.",
+  Body: () => (
+    <>
+      <P>
+        Indian mutual fund houses commonly email their monthly portfolio disclosures as Excel,
+        CSV, or PDF attachments. InvestoGenie can discover those messages and present the files in
+        <strong> Portfolio → Fund Mapping</strong>. Discovery does not modify your portfolio: you
+        choose the matching CAS fund and snapshot month before every import.
+      </P>
+
+      <Callout>
+        This connector is optional. Until Google credentials are configured, Fund Mapping continues
+        to work normally and shows a setup-required message in the Gmail Disclosure Inbox panel.
+      </Callout>
+
+      <H2>One-time Google Cloud setup</H2>
+      <Steps
+        items={[
+          {
+            title: "Enable the Gmail API",
+            body: "Open Google Cloud Console, create or select a project, then enable the Gmail API under APIs & Services.",
+          },
+          {
+            title: "Configure OAuth consent",
+            body: "Choose External and Testing for personal use, fill in the required app details, and add your Gmail address as a test user.",
+          },
+          {
+            title: "Create a Web OAuth client",
+            body: "Under Credentials, create an OAuth 2.0 Client ID with application type Web application.",
+          },
+          {
+            title: "Register callback URLs",
+            body: "Add http://localhost:3000/api/gmail/callback. For phone access, also add your full Tailscale HTTPS address followed by /api/gmail/callback.",
+          },
+          {
+            title: "Add the credentials",
+            body: "Put the generated client ID and client secret into InvestoGenie's .env.local file using the variables shown below.",
+          },
+          {
+            title: "Restart and connect",
+            body: "Run npm run service:install, open Portfolio → Fund Mapping, select Connect Gmail, approve read-only access, and then scan the inbox.",
+          },
+        ]}
+      />
+
+      <H2>Environment settings</H2>
+      <Formula>{`GOOGLE_GMAIL_CLIENT_ID=your-google-client-id
+GOOGLE_GMAIL_CLIENT_SECRET=your-google-client-secret
+GMAIL_DISCLOSURE_SYNC_INTERVAL_HOURS=24
+GMAIL_DISCLOSURE_SYNC_DISABLED=0`}</Formula>
+      <P>
+        Keep the client secret out of Git. The local service reads these values from
+        <strong> .env.local</strong>. Each deployment origin needs its own exact callback URL in
+        the Google OAuth client configuration.
+      </P>
+
+      <H2>How monthly processing works</H2>
+      <SpecTable
+        rows={[
+          { k: "Permission", v: "Gmail read-only. InvestoGenie cannot send, edit, move, or delete email." },
+          { k: "Discovery", v: "A scan runs at service startup and every 24 hours while the service remains running." },
+          { k: "Stored locally", v: "Encrypted OAuth tokens plus attachment metadata such as sender, subject, filename, date, and import status." },
+          { k: "Not stored", v: "Email bodies and attachment file contents. A file is downloaded only while you confirm its import." },
+          { k: "Import control", v: "You select the CAS fund and disclosure month. The existing snapshot weight checks must pass before data is written." },
+          { k: "Disconnect", v: "Disconnecting removes the saved Gmail tokens and discovered Gmail metadata from InvestoGenie." },
+        ]}
+      />
+
+      <H2>When a file is discovered</H2>
+      <UL>
+        <LI>Confirm that the sender, filename, and month belong to the expected AMC disclosure.</LI>
+        <LI>Select the exact CAS fund; do not map a similarly named Direct plan to a Regular plan.</LI>
+        <LI>Use Ignore for account statements, transaction confirmations, or unrelated attachments.</LI>
+        <LI>If import fails, review the displayed parser message and import the AMC workbook manually if needed.</LI>
+      </UL>
+
+      <Callout tone="warn">
+        Google classifies Gmail read-only access as a restricted OAuth scope. Testing mode is
+        suitable for your personal account. Before offering this connector to outside customers,
+        complete Google&apos;s OAuth verification requirements and assess whether a security review is required.
+      </Callout>
+    </>
+  ),
+};
+
+// ---------------------------------------------------------------------------
+
 export const HELP_ARTICLES: HelpArticle[] = [
   swingEngine,
   qullamaggie,
@@ -1028,6 +1122,7 @@ export const HELP_ARTICLES: HelpArticle[] = [
   fisherGrowth,
   templetonContrarian,
   greenblattMagic,
+  gmailFundDisclosures,
 ];
 
 export const HELP_BY_SLUG: Record<string, HelpArticle> = Object.fromEntries(
@@ -1038,3 +1133,4 @@ export const SWING_ARTICLES = HELP_ARTICLES.filter((a) => a.category === "swing"
 export const ENGINE_ARTICLES = HELP_ARTICLES.filter((a) => a.category === "engine");
 export const LONG_TERM_ARTICLES = HELP_ARTICLES.filter((a) => a.category === "long-term");
 export const PROBABILITY_ARTICLES = HELP_ARTICLES.filter((a) => a.category === "probability");
+export const DATA_ARTICLES = HELP_ARTICLES.filter((a) => a.category === "data");

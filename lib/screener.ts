@@ -66,7 +66,26 @@ export async function runScreener(
   settings: SwingSettings = DEFAULT_SETTINGS,
   opts: { exchange?: string; limit?: number } = {},
 ): Promise<ScreenRow[]> {
-  const conds: string[] = [];
+  const conds: string[] = [
+    `exists (select 1 from public.assets a where a.id = swing_signals.asset_id and a.is_active)`,
+    `not exists (select 1 from public.asset_tracking_exclusions x where x.asset_id = swing_signals.asset_id)`,
+    `exists (select 1 from public.daily_ohlcv o where o.asset_id = swing_signals.asset_id and o.date >= current_date - interval '4 days')`,
+    `exists (
+      select 1 from public.latest_quotes q
+       where q.asset_id = swing_signals.asset_id
+         and q.as_of::date >= case
+           when swing_signals.country='IN'
+            and extract(isodow from now() at time zone 'Asia/Kolkata') between 1 and 5
+            and (now() at time zone 'Asia/Kolkata')::time between time '09:15' and time '15:30'
+             then (now() at time zone 'Asia/Kolkata')::date
+           when swing_signals.country='US'
+            and extract(isodow from now() at time zone 'America/New_York') between 1 and 5
+            and (now() at time zone 'America/New_York')::time between time '09:30' and time '16:00'
+             then (now() at time zone 'America/New_York')::date
+           else current_date - 4
+         end
+    )`,
+  ];
   const params: unknown[] = [];
   if (country) { params.push(country); conds.push(`country = $${params.length}`); }
   if (opts.exchange) { params.push(opts.exchange); conds.push(`exchange = $${params.length}`); }
