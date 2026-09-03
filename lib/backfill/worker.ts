@@ -38,7 +38,7 @@ function envBool(name: string, fallback: boolean): boolean {
 
 export function backfillWorkerOptionsFromEnv(overrides: BackfillWorkerOptions = {}): Required<BackfillWorkerOptions> {
   return {
-    batchSize: overrides.batchSize ?? envNumber("BACKFILL_BATCH_SIZE", 100),
+    batchSize: overrides.batchSize ?? envNumber("BACKFILL_BATCH_SIZE", 500),
     delayInMs: overrides.delayInMs ?? envNumber("BACKFILL_DELAY_IN_MS", 1500),
     delayUsMs: overrides.delayUsMs ?? envNumber("BACKFILL_DELAY_US_MS", 1000),
     historyDays: overrides.historyDays ?? envNumber("BACKFILL_HISTORY_DAYS", 504),
@@ -61,8 +61,21 @@ interface HistoryState { count: number; fresh: boolean }
 
 async function historyState(assetId: string): Promise<HistoryState> {
   const row = await queryOne<{ count: string; fresh: boolean }>(
-    `select count(*)::text count,
-            coalesce(max(date) > current_date - 4, false) fresh
+    `with clock as (
+       select (now() at time zone 'Asia/Kolkata')::date today,
+              extract(isodow from now() at time zone 'Asia/Kolkata')::int dow,
+              (now() at time zone 'Asia/Kolkata')::time local_time
+     ), expected as (
+       select case
+         when dow=1 and local_time < time '18:00' then today-3
+         when dow between 2 and 5 and local_time < time '18:00' then today-1
+         when dow=6 then today-1
+         when dow=7 then today-2
+         else today end as market_date
+       from clock
+     )
+     select count(*)::text count,
+            coalesce(max(date) >= (select market_date - 2 from expected), false) fresh
        from public.daily_ohlcv where asset_id=$1`,
     [assetId],
   );

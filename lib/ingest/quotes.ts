@@ -25,6 +25,97 @@ interface IndiaLiveAsset {
   exchange: "NSE" | "BSE";
 }
 
+async function promoteLatestOhlcvToQuotes(client: Client): Promise<number> {
+  const promoted = await client.query<{ asset_id: string }>(
+    `with latest as (
+       select a.id asset_id,current_bar.date,current_bar.close,previous_bar.close previous_close,a.currency
+         from public.assets a
+         cross join lateral (
+           select o.date,o.close from public.daily_ohlcv o
+            where o.asset_id=a.id order by o.date desc limit 1
+         ) current_bar
+         left join lateral (
+           select o.close from public.daily_ohlcv o
+            where o.asset_id=a.id and o.date < current_bar.date order by o.date desc limit 1
+         ) previous_bar on true
+        where a.country='IN' and a.exchange in ('NSE','BSE') and a.asset_class='STOCK'
+          and current_bar.close > 0
+     )
+     insert into public.latest_quotes (asset_id,price,change_pct,currency,as_of,source)
+     select l.asset_id,l.close,
+            case when l.previous_close > 0 then ((l.close/l.previous_close)-1)*100 else null end,
+            l.currency,
+            ((l.date::timestamp + time '15:30') at time zone 'Asia/Kolkata'),
+            'OHLCV_CLOSE'
+       from latest l
+       left join public.latest_quotes q on q.asset_id=l.asset_id
+      where q.asset_id is null or q.as_of::date < l.date
+     on conflict (asset_id) do update set
+       price=excluded.price,change_pct=excluded.change_pct,currency=excluded.currency,
+       as_of=excluded.as_of,source=excluded.source,updated_at=now()
+     where public.latest_quotes.as_of::date < excluded.as_of::date
+     returning asset_id::text`,
+  );
+  return promoted.rowCount ?? 0;
+}
+
+async function reconcileDormantIndianListings(client: Client): Promise<void> {
+  const promoted = await promoteLatestOhlcvToQuotes(client);
+  const restored = await client.query<{ id: string }>(
+    `with restored as (
+       delete from public.asset_tracking_exclusions x
+        using public.latest_quotes q
+        where x.asset_id=q.asset_id
+          and x.reason_code='dormant_indian_listing'
+          and q.as_of::date >= current_date - interval '1 day'
+       returning x.asset_id
+     )
+     update public.assets a set is_active=true
+       from restored r where a.id=r.asset_id
+     returning a.id::text id`,
+  );
+
+  const retired = await client.query<{ id: string }>(
+    `with hist as (
+       select asset_id,max(date) latest_date from public.daily_ohlcv group by asset_id
+     ), candidates as (
+       select a.id
+         from public.assets a
+         left join public.latest_quotes q on q.asset_id=a.id
+         left join hist h on h.asset_id=a.id
+        where a.country='IN' and a.exchange in ('NSE','BSE')
+          and a.asset_class='STOCK' and coalesce(a.is_active,true)
+          and greatest(
+            coalesce(q.as_of::date,date '1900-01-01'),
+            coalesce(h.latest_date,date '1900-01-01')
+          ) < current_date - interval '7 days'
+          and not exists(select 1 from public.universe_members u where u.asset_id=a.id)
+          and not exists(select 1 from public.holdings p where p.asset_id=a.id)
+          and not exists(select 1 from public.watchlist_items w where w.asset_id=a.id)
+          and not exists(select 1 from public.forward_test_positions f where f.asset_id=a.id and f.status='OPEN')
+          and not exists(select 1 from public.swing_trade_ledger l where l.asset_id=a.id and l.status='OPEN')
+          and not exists(select 1 from public.asset_tracking_exclusions x where x.asset_id=a.id)
+     ), excluded as (
+       insert into public.asset_tracking_exclusions
+         (asset_id,reason_code,reason,source,review_after,metadata)
+       select id,'dormant_indian_listing',
+              'No official quote or OHLCV print for seven days; excluded until trading resumes',
+              'quote_coverage',now() + interval '30 days',
+              jsonb_build_object('thresholdDays',7)
+         from candidates
+       on conflict (asset_id) do nothing
+       returning asset_id
+     )
+     update public.assets a set is_active=false
+       from excluded e where a.id=e.asset_id
+     returning a.id::text id`,
+  );
+
+  if (promoted || restored.rowCount || retired.rowCount) {
+    console.log(`[quote-coverage] promoted ${promoted} OHLCV closes; restored ${restored.rowCount ?? 0}; soft-excluded ${retired.rowCount ?? 0} dormant Indian listings`);
+  }
+}
+
 const GOOGLE_NUMBER = "(-?[0-9]+(?:\\.[0-9]+)?(?:[Ee][+-]?[0-9]+)?)";
 
 /** Parse the quote tuple embedded in Google Finance's current page payload.
@@ -379,6 +470,8 @@ export async function refreshQuotes(databaseUrl: string, startISO = localToday()
            currency=excluded.currency, as_of=excluded.as_of, source=excluded.source, updated_at=now()`,
         params);
     }
+
+    await reconcileDormantIndianListings(client);
 
     return {
       matched: rows.length,

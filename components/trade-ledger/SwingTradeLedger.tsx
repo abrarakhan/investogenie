@@ -1,4 +1,5 @@
 import { addSwingTrade, closeSwingTrade } from "@/app/terminal/[market]/trade-ledger/actions";
+import AssetPicker from "@/components/dashboard/AssetPicker";
 import DeleteTradeButton from "@/components/trade-ledger/DeleteTradeButton";
 import { summarizeSwingTradeLedger, type SwingLedgerTrade, type SwingTradeState } from "@/lib/swingTradeLedger";
 
@@ -49,23 +50,28 @@ export default function SwingTradeLedger({ market, trades, defaults }: {
         </summary>
         <form action={addSwingTrade} className="grid gap-4 border-t border-white/10 p-5 sm:grid-cols-2 lg:grid-cols-4">
           <input type="hidden" name="market" value={market} />
-          <input type="hidden" name="assetId" value={defaults.assetId ?? ""} />
-          <Field label="Ticker"><input name="ticker" required defaultValue={defaults.ticker ?? ""} className="field uppercase" /></Field>
+          <Field label="Stock name or ticker">
+            <AssetPicker
+              name="assetId"
+              queryName="ticker"
+              country={market}
+              defaultAssetId={defaults.assetId}
+              defaultTicker={defaults.ticker}
+              placeholder="e.g. RELIANCE or Reliance Industries"
+              required
+            />
+          </Field>
           <Field label="Purchase date"><input name="boughtOn" type="date" required max={today} defaultValue={defaults.boughtOn ?? today} className="field" /></Field>
           <Field label="Actual buy price"><input name="buyPrice" type="number" min="0.000001" step="any" required defaultValue={defaults.buyPrice ?? defaults.current ?? ""} className="field" /></Field>
           <Field label="Quantity"><input name="quantity" type="number" min="0.000001" step="any" required className="field" /></Field>
-          <Field label="Strategy">
-            <select name="strategyKey" defaultValue={defaults.strategy ?? "DEFAULT_SWING"} className="field bg-[#090c12]">
-              <option value="DEFAULT_SWING">Default Swing</option><option value="QULLAMAGGIE">Qullamaggie Momentum</option>
-              <option value="MINERVINI">Minervini VCP</option><option value="DARVAS">Darvas Box</option>
-              <option value="PTJ">PTJ 200-Day Trend</option><option value="SIMONS">Simons Quant Reversion</option>
-            </select>
-          </Field>
-          <Field label="Projected target"><input name="projectedTarget" type="number" min="0" step="any" defaultValue={defaults.target ?? ""} placeholder="Use current signal" className="field" /></Field>
-          <Field label="Initial stop"><input name="projectedStop" type="number" min="0" step="any" defaultValue={defaults.stop ?? ""} placeholder="Use current signal" className="field" /></Field>
-          <Field label="Expected trading days"><input name="expectedHoldingDays" type="number" min="1" max="365" defaultValue={defaults.days ?? ""} placeholder="Use current signal" className="field" /></Field>
+          <input type="hidden" name="strategyKey" value={defaults.strategy ?? ""} />
+          <input type="hidden" name="projectedTarget" value={defaults.target ?? ""} />
+          <input type="hidden" name="projectedStop" value={defaults.stop ?? ""} />
+          <input type="hidden" name="expectedHoldingDays" value={defaults.days ?? ""} />
           <input type="hidden" name="projectedTrailingStop" value={defaults.trail ?? ""} />
-          <label className="text-xs text-white/50 sm:col-span-2 lg:col-span-3">Notes<input name="notes" maxLength={1000} placeholder="Broker order, thesis, or exit discipline" className="field" /></label>
+          <p className="text-xs leading-5 text-white/40 sm:col-span-2 lg:col-span-3">
+            Strategy, target, stop, trailing stop, and projected holding period are captured automatically from the latest swing candidate data.
+          </p>
           <button className="h-11 self-end rounded-lg bg-[var(--ig-accent)] px-5 text-sm font-bold text-black transition-opacity hover:opacity-90">Add to ledger</button>
         </form>
       </details>

@@ -14,7 +14,7 @@ if (!databaseUrl) {
 }
 
 const root = process.cwd();
-const batchSize = envNumber("BACKFILL_BATCH_SIZE", 100);
+const batchSize = envNumber("BACKFILL_BATCH_SIZE", 500);
 const historyDays = envNumber("BACKFILL_HISTORY_DAYS", 504);
 const delayInMs = envNumber("BACKFILL_DELAY_IN_MS", 1500);
 const delayUsMs = envNumber("BACKFILL_DELAY_US_MS", 1000);
@@ -123,7 +123,7 @@ async function claimNext(client) {
             or (a.country='US' and coalesce(a.exchange, '') in ('NASDAQ','NYSE','AMEX','NYSEARCA','NYSEAMERICAN'))
           )
           and (a.country <> 'IN' or a.ticker !~ '-RE[0-9]*$')
-        order by q.tier asc, q.queued_at asc
+        order by case when q.market='IN' then 0 else 1 end, q.tier asc, q.queued_at asc
         for update skip locked
         limit 1`,
     );
@@ -148,8 +148,21 @@ async function claimNext(client) {
 
 async function historyState(client, assetId) {
   const { rows } = await client.query(
-    `select count(*)::int count,
-            coalesce(max(date) > current_date - 4, false) fresh
+    `with clock as (
+       select (now() at time zone 'Asia/Kolkata')::date today,
+              extract(isodow from now() at time zone 'Asia/Kolkata')::int dow,
+              (now() at time zone 'Asia/Kolkata')::time local_time
+     ), expected as (
+       select case
+         when dow=1 and local_time < time '18:00' then today-3
+         when dow between 2 and 5 and local_time < time '18:00' then today-1
+         when dow=6 then today-1
+         when dow=7 then today-2
+         else today end as market_date
+       from clock
+     )
+     select count(*)::int count,
+            coalesce(max(date) >= (select market_date - 2 from expected), false) fresh
        from public.daily_ohlcv where asset_id=$1`,
     [assetId],
   );
@@ -194,11 +207,11 @@ async function markFailed(client, item, error) {
       `select exists(select 1 from public.universe_members u where u.asset_id=$1 and u.universe in ('NIFTY_500','SP_500','NASDAQ_100'))
            or exists(select 1 from public.holdings h where h.asset_id=$1)
            or exists(select 1 from public.watchlist_items w where w.asset_id=$1)
-           or exists(select 1 from public.forward_test_positions f where f.asset_id=$1 and f.status='OPEN') protected,
-         exists(select 1 from public.latest_quotes q where q.asset_id=$1 and q.as_of >= current_date - 7) has_recent_quote`,
+           or exists(select 1 from public.forward_test_positions f where f.asset_id=$1 and f.status='OPEN')
+           or exists(select 1 from public.swing_trade_ledger l where l.asset_id=$1 and l.status='OPEN') protected`,
       [item.asset_id],
     );
-    if (protectedResult.rows[0]?.protected || protectedResult.rows[0]?.has_recent_quote) {
+    if (protectedResult.rows[0]?.protected) {
       await client.query("commit");
       return "failed";
     }

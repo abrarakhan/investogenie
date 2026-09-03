@@ -94,7 +94,7 @@ const amfiSyncDisabled = process.env.AMFI_SCHEME_SYNC_DISABLED === "1";
 const amfiSyncHour = Number(process.env.AMFI_SCHEME_SYNC_HOUR_IST ?? 6);
 const amfiSyncMinute = Number(process.env.AMFI_SCHEME_SYNC_MINUTE_IST ?? 30);
 const backfillDisabled =
-  process.env.BACKFILL_CRON_ENABLED !== "1" ||
+  process.env.BACKFILL_CRON_ENABLED === "0" ||
   process.env.BACKFILL_CRON_DISABLED === "1";
 const backfillIndiaHour = Number(process.env.BACKFILL_INDIA_HOUR_IST ?? 17);
 const backfillUsHour = Number(process.env.BACKFILL_US_HOUR_IST ?? 22);
@@ -666,6 +666,7 @@ function scheduleBackfillCron() {
   if (initialClock.hour >= backfillIndiaHour) lastBackfillIndiaDate = initialClock.date;
   if (initialClock.hour >= backfillUsHour) lastBackfillUsDate = initialClock.date;
   console.log(`[backfill] queued OHLCV checks after ${backfillIndiaHour}:00 IST and ${backfillUsHour}:00 IST`);
+  setTimeout(() => runBackfillCron("startup"), 45_000);
   backfillTimer = setInterval(() => {
     const clock = istClock();
     if (clock.hour >= backfillIndiaHour && lastBackfillIndiaDate !== clock.date) {

@@ -245,6 +245,20 @@ const iso = (value: Date | string | null): string | null => value ? new Date(val
 
 export interface SourceRow { source: string; last_success_at: Date | string | null; quote_as_of: string | null; record_count: string | number; failed: boolean; cadence_hours: string | number; detail: string }
 
+interface IndianCoverageRow {
+  source: string;
+  current_count: string | number;
+  total_count: string | number;
+}
+
+export function classifyCoverageFreshness(currentCount: number, totalCount: number): FreshnessStatus | null {
+  if (totalCount <= 0) return null;
+  const ratio = currentCount / totalCount;
+  if (ratio < 0.8) return "failed";
+  if (ratio < 0.95) return "stale";
+  return "fresh";
+}
+
 function istParts(now: Date) {
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone: "Asia/Kolkata",
@@ -330,7 +344,8 @@ export function classifySourceFreshness(row: SourceRow, now: Date, nowIso: strin
 
 export async function getDataHealthSummary(now = new Date()): Promise<SourceHealthCard[]> {
   const nowIso = now.toISOString();
-  const rows = await query<SourceRow>(
+  const expectedIndianDate = expectedIndianBhavcopyDate(now);
+  const [rows, coverageRows] = await Promise.all([query<SourceRow>(
     `with latest_cron as (
        select distinct on (job) job, status, error, created_at
          from public.cron_logs
@@ -372,14 +387,48 @@ export async function getDataHealthSummary(now = new Date()): Promise<SourceHeal
      select c.*, coalesce(l.status='error', false) failed
        from counts c
        left join latest_cron l on lower(c.source) like '%' || replace(l.job, '-', ' ') || '%'`,
-  );
-  return rows.map((row) => ({
-    source: row.source,
-    status: classifySourceFreshness(row, now, nowIso),
-    lastSuccessAt: iso(row.last_success_at),
-    recordCount: Number(row.record_count),
-    detail: row.detail,
-  }));
+  ), query<IndianCoverageRow>(
+    `with hist as (
+       select asset_id,max(date) latest_date from public.daily_ohlcv group by asset_id
+     ), scoped as (
+       select a.id,a.exchange,q.as_of::date quote_date,h.latest_date
+         from public.assets a
+         left join public.latest_quotes q on q.asset_id=a.id
+         left join hist h on h.asset_id=a.id
+        where a.country='IN' and a.exchange in ('NSE','BSE')
+          and a.asset_class='STOCK' and coalesce(a.is_active,true)
+          and not exists(select 1 from public.asset_tracking_exclusions x where x.asset_id=a.id)
+     )
+     select exchange || ' Quotes' source,
+            count(*) filter(where quote_date >= $1::date) current_count,
+            count(*) total_count
+       from scoped group by exchange
+     union all
+     select exchange || ' OHLCV History',
+            count(*) filter(where latest_date >= $1::date),
+            count(*)
+       from scoped group by exchange`,
+    [expectedIndianDate],
+  )]);
+  const coverageBySource = new Map(coverageRows.map((row) => [row.source, {
+    current: Number(row.current_count), total: Number(row.total_count),
+  }]));
+  return rows.map((row) => {
+    const coverage = coverageBySource.get(row.source);
+    const sourceStatus = classifySourceFreshness(row, now, nowIso);
+    const coverageStatus = coverage
+      ? classifyCoverageFreshness(coverage.current, coverage.total)
+      : null;
+    return {
+      source: row.source,
+      status: coverageStatus ? worstFreshnessStatus([sourceStatus, coverageStatus]) : sourceStatus,
+      lastSuccessAt: iso(row.last_success_at),
+      recordCount: Number(row.record_count),
+      detail: coverage
+        ? `${coverage.current.toLocaleString("en-IN")}/${coverage.total.toLocaleString("en-IN")} active listings current`
+        : row.detail,
+    };
+  });
 }
 
 export async function getWorstDataHealthStatus(): Promise<FreshnessStatus> {

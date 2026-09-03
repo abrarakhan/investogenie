@@ -23,12 +23,20 @@ export default function AssetPicker({
   name,
   placeholder = "Search ticker…",
   country,
+  defaultAssetId,
+  defaultTicker = "",
+  queryName,
+  required = false,
 }: {
   name: string;
   placeholder?: string;
   country?: "US" | "IN";
+  defaultAssetId?: string;
+  defaultTicker?: string;
+  queryName?: string;
+  required?: boolean;
 }) {
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(defaultTicker);
   const [results, setResults] = useState<Result[]>([]);
   const [selected, setSelected] = useState<Result | null>(null);
   const [open, setOpen] = useState(false);
@@ -69,8 +77,10 @@ export default function AssetPicker({
 
   return (
     <div ref={boxRef} className="relative">
-      <input type="hidden" name={name} value={selected?.id ?? ""} />
+      <input type="hidden" name={name} value={selected?.id ?? (query === defaultTicker ? defaultAssetId ?? "" : "")} />
+      {queryName && <input type="hidden" name={queryName} value={query} />}
       <input
+        required={required}
         value={query}
         onChange={(e) => { setQuery(e.target.value); setSelected(null); }}
         onFocus={() => results.length && setOpen(true)}

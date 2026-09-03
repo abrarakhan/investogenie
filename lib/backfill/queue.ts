@@ -58,7 +58,19 @@ export function rowToCandidate(row: CandidateRow): BackfillCandidate {
 
 export async function getBackfillCandidates(): Promise<BackfillCandidate[]> {
   const rows = await query<CandidateRow>(
-    `with hist as (
+    `with clock as (
+       select (now() at time zone 'Asia/Kolkata')::date today,
+              extract(isodow from now() at time zone 'Asia/Kolkata')::int dow,
+              (now() at time zone 'Asia/Kolkata')::time local_time
+     ), expected as (
+       select case
+         when dow=1 and local_time < time '18:00' then today-3
+         when dow between 2 and 5 and local_time < time '18:00' then today-1
+         when dow=6 then today-1
+         when dow=7 then today-2
+         else today end as market_date
+       from clock
+     ), hist as (
        select asset_id, count(*) bar_count, max(date) latest_date
          from public.daily_ohlcv
         group by asset_id
@@ -88,12 +100,9 @@ export async function getBackfillCandidates(): Promise<BackfillCandidate[]> {
         )
         and (
           a.country <> 'IN'
-          or (
-            a.ticker !~ '-RE[0-9]*$'
-            and q.source = a.exchange || '_BHAVCOPY'
-          )
+          or a.ticker !~ '-RE[0-9]*$'
         )
-        and (coalesce(hist.bar_count, 0)=0 or hist.latest_date <= current_date - 4)`,
+        and (coalesce(hist.bar_count, 0)=0 or hist.latest_date < (select market_date - 2 from expected))`,
   );
   return rows.map(rowToCandidate);
 }
@@ -165,12 +174,26 @@ async function retireStructurallyUnsupportedAssets(): Promise<number> {
 
 async function restoreRecentlyQuotedAssets(): Promise<number> {
   const rows = await query<{ asset_id: string }>(
-    `with restored as (
+    `with clock as (
+       select (now() at time zone 'Asia/Kolkata')::date today,
+              extract(isodow from now() at time zone 'Asia/Kolkata')::int dow,
+              (now() at time zone 'Asia/Kolkata')::time local_time
+     ), expected as (
+       select case
+         when dow=1 and local_time < time '18:00' then today-3
+         when dow between 2 and 5 and local_time < time '18:00' then today-1
+         when dow=6 then today-1
+         when dow=7 then today-2
+         else today end as market_date
+       from clock
+     ), restored as (
        delete from public.asset_tracking_exclusions x
-        using public.latest_quotes q
-        where x.asset_id=q.asset_id
-          and x.reason_code='history_unavailable'
-          and q.as_of >= current_date - 7
+        where x.reason_code='history_unavailable'
+          and exists (
+            select 1 from public.daily_ohlcv o
+             where o.asset_id=x.asset_id
+               and o.date >= (select market_date - 2 from expected)
+          )
        returning x.asset_id
      )
      update public.assets a set is_active=true
@@ -188,10 +211,6 @@ async function retireTerminalFailedBackfillItems(): Promise<number> {
          join public.assets a on a.id=q.asset_id
         where q.status='failed'
           and q.attempts >= 3
-          and not exists(
-            select 1 from public.latest_quotes recent
-             where recent.asset_id=a.id and recent.as_of >= current_date - 7
-          )
           and (
             lower(coalesce(q.last_error, '')) like '%no ohlcv bars returned%'
             or lower(coalesce(q.last_error, '')) like '%no price data found%'
@@ -203,6 +222,7 @@ async function retireTerminalFailedBackfillItems(): Promise<number> {
           and not exists(select 1 from public.holdings h where h.asset_id=a.id)
           and not exists(select 1 from public.watchlist_items w where w.asset_id=a.id)
           and not exists(select 1 from public.forward_test_positions f where f.asset_id=a.id and f.status='OPEN')
+          and not exists(select 1 from public.swing_trade_ledger l where l.asset_id=a.id and l.status='OPEN')
      ), inserted as (
        insert into public.asset_tracking_exclusions (asset_id, reason_code, reason, source, metadata)
        select asset_id, 'history_unavailable',
@@ -310,7 +330,7 @@ export async function claimNextBackfillItem({
             a.country <> 'IN'
             or a.ticker !~ '-RE[0-9]*$'
           )
-        order by q.tier asc, q.queued_at asc
+        order by case when q.market='IN' then 0 else 1 end, q.tier asc, q.queued_at asc
         for update skip locked
         limit 20`,
     );
@@ -358,15 +378,15 @@ export async function markBackfillFailed(id: number, error: string, maxAttempts 
     const updated = rows[0];
     if (!updated || updated.status !== "failed" || !isDefinitiveNoHistoryError(error)) return updated?.status ?? "failed";
 
-    const protectedRow = await client.query<{ protected: boolean; has_recent_quote: boolean }>(
+    const protectedRow = await client.query<{ protected: boolean }>(
       `select exists(select 1 from public.universe_members u where u.asset_id=$1 and u.universe in ('NIFTY_500','SP_500','NASDAQ_100'))
            or exists(select 1 from public.holdings h where h.asset_id=$1)
            or exists(select 1 from public.watchlist_items w where w.asset_id=$1)
-           or exists(select 1 from public.forward_test_positions f where f.asset_id=$1 and f.status='OPEN') protected,
-         exists(select 1 from public.latest_quotes q where q.asset_id=$1 and q.as_of >= current_date - 7) has_recent_quote`,
+           or exists(select 1 from public.forward_test_positions f where f.asset_id=$1 and f.status='OPEN')
+           or exists(select 1 from public.swing_trade_ledger l where l.asset_id=$1 and l.status='OPEN') protected`,
       [updated.asset_id],
     );
-    if (protectedRow.rows[0]?.protected || protectedRow.rows[0]?.has_recent_quote) return "failed";
+    if (protectedRow.rows[0]?.protected) return "failed";
 
     await client.query(
       `insert into public.asset_tracking_exclusions (asset_id, reason_code, reason, source, metadata)
@@ -398,7 +418,19 @@ export async function requeueFailedBackfillItems(): Promise<number> {
 
 async function reconcileCoveredBackfillItems(): Promise<void> {
   await query(
-    `with hist as (
+    `with clock as (
+       select (now() at time zone 'Asia/Kolkata')::date today,
+              extract(isodow from now() at time zone 'Asia/Kolkata')::int dow,
+              (now() at time zone 'Asia/Kolkata')::time local_time
+     ), expected as (
+       select case
+         when dow=1 and local_time < time '18:00' then today-3
+         when dow between 2 and 5 and local_time < time '18:00' then today-1
+         when dow=6 then today-1
+         when dow=7 then today-2
+         else today end as market_date
+       from clock
+     ), hist as (
        select asset_id, count(*)::int bar_count, max(date) latest_date
          from public.daily_ohlcv
         group by asset_id
@@ -411,7 +443,7 @@ async function reconcileCoveredBackfillItems(): Promise<void> {
        from hist
       where hist.asset_id = q.asset_id
         and hist.bar_count > 0
-        and hist.latest_date > current_date - 4
+        and hist.latest_date >= (select market_date - 2 from expected)
         and q.status in ('pending','failed','skipped')`,
   );
   await pruneUnsupportedBackfillItems();

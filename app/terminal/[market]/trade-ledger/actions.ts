@@ -30,78 +30,76 @@ type SignalRow = {
   as_of: string | null; strategy_scores: Record<string, StrategyScore> | null; quote_price: string | number | null;
 };
 
-async function resolveSignalProjection(assetId: string, market: "IN" | "US", strategyKey: string) {
+async function resolveSignalProjection(assetId: string, market: "IN" | "US", preferredStrategy: string, buyPrice: number) {
   const row = await queryOne<SignalRow>(
     `select s.asset_id,s.ticker,a.currency,s.current_price,s.last_close,s.atr,s.long_trigger,s.short_trigger,
             s.hh22,s.ll22,s.daily_velocity,s.verdict,s.score,s.as_of,s.strategy_scores,q.price quote_price
        from public.swing_signals s
        join public.assets a on a.id=s.asset_id
        left join public.latest_quotes q on q.asset_id=s.asset_id
-      where s.asset_id=$1 and s.country=$2
-        and a.is_active
-        and not exists (select 1 from public.asset_tracking_exclusions x where x.asset_id=a.id)
-        and exists (select 1 from public.daily_ohlcv o where o.asset_id=a.id and o.date >= current_date - interval '4 days')
-        and q.as_of::date >= case
-          when s.country='IN'
-           and extract(isodow from now() at time zone 'Asia/Kolkata') between 1 and 5
-           and (now() at time zone 'Asia/Kolkata')::time between time '09:15' and time '15:30'
-            then (now() at time zone 'Asia/Kolkata')::date
-          when s.country='US'
-           and extract(isodow from now() at time zone 'America/New_York') between 1 and 5
-           and (now() at time zone 'America/New_York')::time between time '09:30' and time '16:00'
-            then (now() at time zone 'America/New_York')::date
-          else current_date - 4
-        end`,
+      where s.asset_id=$1 and s.country=$2`,
     [assetId, market],
   );
-  if (!row) throw new Error("No current swing projection exists for this asset");
+  if (!row) throw new Error("No swing projection has been calculated for this stock yet");
   const num = (value: string | number | null) => value === null ? 0 : Number(value);
+  const availableLongStrategies = Object.entries(row.strategy_scores ?? {})
+    .filter(([, score]) => score.dir === "LONG")
+    .sort(([, left], [, right]) => right.score - left.score);
+  const preferredScore = row.strategy_scores?.[preferredStrategy];
+  const strategyKey = preferredStrategy && preferredScore?.dir === "LONG"
+    ? preferredStrategy
+    : availableLongStrategies[0]?.[0] ?? "DEFAULT_SWING";
   const setup: SwingSetup = {
-    currentPrice: num(row.quote_price) || num(row.current_price) || num(row.last_close),
-    atr: num(row.atr), longTrigger: num(row.long_trigger), shortTrigger: num(row.short_trigger),
-    hh22: num(row.hh22), ll22: num(row.ll22), dailyVelocity: num(row.daily_velocity),
+    currentPrice: buyPrice,
+    atr: num(row.atr), longTrigger: buyPrice, shortTrigger: num(row.short_trigger),
+    hh22: Math.min(num(row.hh22) || buyPrice, buyPrice), ll22: num(row.ll22), dailyVelocity: num(row.daily_velocity),
   };
   const strategyScore = row.strategy_scores?.[strategyKey];
-  if (strategyKey !== "DEFAULT_SWING" && !strategyScore) {
-    throw new Error("That strategy was not matched by the current signal for this stock");
-  }
-  const trigger = strategyScore?.entry ?? setup.longTrigger;
   const settings = await getUserSwingSettings();
-  const levels = deriveLevels({ ...setup, longTrigger: trigger }, "LONG", settings);
+  const levels = deriveLevels(setup, "LONG", settings);
   const label = STRATEGY_META.find((item) => item.key === strategyKey)?.label ?? "Default Swing";
-  return { row, levels, label, strategyScore, trailingDistance: settings.trailAtrMult * levels.atr };
+  return { row, levels, label, strategyKey, strategyScore, trailingDistance: settings.trailAtrMult * levels.atr };
 }
 
 export async function addSwingTrade(formData: FormData) {
   const user = await requireUser();
-  const market = validMarket(String(formData.get("market") ?? "IN"));
+  const requestedMarket = validMarket(String(formData.get("market") ?? "IN"));
   const assetId = String(formData.get("assetId") ?? "").trim();
-  const ticker = String(formData.get("ticker") ?? "").trim().toUpperCase();
-  const asset = await queryOne<{ id: string; ticker: string; currency: string }>(
+  const stockQuery = String(formData.get("ticker") ?? "").trim();
+  const ticker = stockQuery.toUpperCase();
+  const asset = await queryOne<{ id: string; ticker: string; currency: string; country: "IN" | "US" }>(
     assetId
-      ? `select id,ticker,currency from public.assets where id=$1 and country=$2 and asset_class='STOCK'`
-      : `select id,ticker,currency from public.assets where upper(ticker)=$1 and country=$2 and asset_class='STOCK'
-           order by case when $2='IN' and exchange='NSE' then 0 when $2='US' and exchange='NASDAQ' then 0 else 1 end limit 1`,
-    [assetId || ticker, market],
+      ? `select id,ticker,currency,country from public.assets where id=$1 and asset_class='STOCK'`
+      : `select id,ticker,currency,country from public.assets
+          where country=$2 and asset_class='STOCK'
+            and (upper(ticker)=$1 or upper(coalesce(name,''))=$1 or upper(coalesce(name,'')) like $1 || '%')
+          order by case when upper(ticker)=$1 then 0 when upper(coalesce(name,''))=$1 then 1 else 2 end,
+                   case when $2='IN' and exchange='NSE' then 0 when $2='US' and exchange='NASDAQ' then 0 else 1 end
+          limit 1`,
+    assetId ? [assetId] : [ticker, requestedMarket],
   );
   if (!asset) throw new Error("Ticker was not found in this market");
 
-  const strategyKey = String(formData.get("strategyKey") ?? "DEFAULT_SWING").toUpperCase();
-  const projection = await resolveSignalProjection(asset.id, market, strategyKey);
+  const market = asset.country;
   const boughtOn = String(formData.get("boughtOn") ?? "").slice(0, 10);
   const buyPrice = cleanNumber(formData, "buyPrice");
   const quantity = cleanNumber(formData, "quantity");
   if (!/^\d{4}-\d{2}-\d{2}$/.test(boughtOn) || boughtOn > new Date().toISOString().slice(0, 10)) throw new Error("Enter a valid purchase date");
   if (!buyPrice || buyPrice <= 0 || !quantity || quantity <= 0) throw new Error("Buy price and quantity must be greater than zero");
 
-  const target = cleanNumber(formData, "projectedTarget") ?? projection.levels.target;
-  const stop = cleanNumber(formData, "projectedStop") ?? projection.levels.stopLoss;
-  const trail = cleanNumber(formData, "projectedTrailingStop") ?? projection.levels.trailingStop;
+  const preferredStrategy = String(formData.get("strategyKey") ?? "").toUpperCase();
+  const projection = await resolveSignalProjection(asset.id, market, preferredStrategy, buyPrice);
+  const suppliedTarget = cleanNumber(formData, "projectedTarget");
+  const suppliedStop = cleanNumber(formData, "projectedStop");
+  const suppliedTrail = cleanNumber(formData, "projectedTrailingStop");
+  const target = suppliedTarget !== null && suppliedTarget > buyPrice ? suppliedTarget : projection.levels.target;
+  const stop = suppliedStop !== null && suppliedStop >= 0 && suppliedStop < buyPrice ? suppliedStop : projection.levels.stopLoss;
+  const trail = suppliedTrail !== null && suppliedTrail >= 0 && suppliedTrail < buyPrice ? suppliedTrail : projection.levels.trailingStop;
   const expectedDays = Math.round(cleanNumber(formData, "expectedHoldingDays") ?? projection.levels.expectedDays);
   if (target <= buyPrice || target <= stop || stop < 0 || expectedDays < 1 || expectedDays > 365) {
     throw new Error("For a buy trade, the target must be above your buy price and above the stop");
   }
-  const notes = String(formData.get("notes") ?? "").trim().slice(0, 1000) || null;
+  const notes = null;
   const trailingDistance = projection.levels.atr > 0 && trail !== null
     ? projection.trailingDistance
     : null;
@@ -112,7 +110,7 @@ export async function addSwingTrade(formData: FormData) {
         signal_verdict,signal_as_of,signal_score,projection_entry,projected_target,projected_stop,
         projected_trailing_stop,projected_atr,trailing_distance,expected_holding_days,projection_snapshot,notes)
      values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20::jsonb,$21)`,
-    [user.id, asset.id, market, boughtOn, buyPrice, quantity, asset.currency, strategyKey,
+    [user.id, asset.id, market, boughtOn, buyPrice, quantity, asset.currency, projection.strategyKey,
       projection.label, projection.row.verdict, projection.row.as_of, projection.strategyScore?.score ?? projection.row.score,
       projection.levels.entry, target, stop, trail, projection.levels.atr, trailingDistance,
       expectedDays, JSON.stringify({ levels: projection.levels, strategyScore: projection.strategyScore ?? null }), notes],

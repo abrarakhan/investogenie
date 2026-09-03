@@ -19,9 +19,14 @@ const { rows: runningRows } = await client.query(
    ) running`,
 );
 await client.end();
-if (runningRows[0]?.running) {
+const joinRunning = process.env.FAST_BACKFILL_JOIN_RUNNING === "1";
+if (runningRows[0]?.running && !joinRunning) {
   console.log("[fast-backfill] backfill is already running; follow progress on Data Health");
+  console.log("[fast-backfill] set FAST_BACKFILL_JOIN_RUNNING=1 to add parallel workers");
   process.exit(0);
+}
+if (runningRows[0]?.running) {
+  console.log("[fast-backfill] joining the active repair with additional queue workers");
 }
 
 const requestedWorkers = Number(process.env.FAST_BACKFILL_WORKERS ?? 3);

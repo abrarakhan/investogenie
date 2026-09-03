@@ -81,7 +81,20 @@ export async function computeSignals(databaseUrl: string): Promise<ScanSummary> 
     // signal scan fails closed: only active, tracked assets with a recent daily
     // bar are allowed into calculations. Four days spans a normal weekend.
     const { rows: assets } = await client.query<AssetMeta>(
-      `select a.id, a.ticker, a.country, a.exchange, a.asset_class
+      `with clock as (
+         select (now() at time zone 'Asia/Kolkata')::date today,
+                extract(isodow from now() at time zone 'Asia/Kolkata')::int dow,
+                (now() at time zone 'Asia/Kolkata')::time local_time
+       ), expected as (
+         select case
+           when dow=1 and local_time < time '18:00' then today-3
+           when dow between 2 and 5 and local_time < time '18:00' then today-1
+           when dow=6 then today-1
+           when dow=7 then today-2
+           else today end as market_date
+         from clock
+       )
+       select a.id, a.ticker, a.country, a.exchange, a.asset_class
          from public.assets a
         where a.is_active
           and not exists (
@@ -90,7 +103,9 @@ export async function computeSignals(databaseUrl: string): Promise<ScanSummary> 
           and exists (
             select 1 from public.daily_ohlcv o
              where o.asset_id = a.id
-               and o.date >= current_date - interval '4 days'
+               and o.date >= case when a.country='IN'
+                 then (select market_date - 2 from expected)
+                 else current_date - 4 end
           )
         order by a.id`,
     );

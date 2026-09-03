@@ -3,8 +3,8 @@ import { query } from "@/lib/db";
 
 export const runtime = "nodejs";
 
-// Typeahead search over the catalog, latest price embedded. Ticker-prefix match
-// (uppercase) so the btree index is used. India is NSE-only (drop BSE dups).
+// Typeahead search over ticker or company name, with the latest price embedded.
+// India is NSE-only to avoid duplicate NSE/BSE listings.
 interface Row {
   id: string;
   ticker: string;
@@ -24,8 +24,9 @@ export async function GET(request: NextRequest) {
   if (raw.length < 1) return NextResponse.json({ results: [] });
   const q = raw.toUpperCase().replace(/[%_,]/g, "");
 
-  const conds = ["a.ticker like $1"];
+  const conds = ["(a.ticker like $1 or upper(coalesce(a.name,'')) like '%' || $2 || '%')"];
   const args: unknown[] = [`${q}%`];
+  args.push(q);
   if (country === "US" || country === "IN") {
     args.push(country);
     conds.push(`a.country = $${args.length}`);
@@ -40,7 +41,8 @@ export async function GET(request: NextRequest) {
          from public.assets a
          left join public.latest_quotes q on q.asset_id = a.id
         where ${conds.join(" and ")}
-        order by a.ticker asc
+        order by case when a.ticker = $2 then 0 when a.ticker like $1 then 1 else 2 end,
+                 a.ticker asc
         limit 20`,
       args,
     );

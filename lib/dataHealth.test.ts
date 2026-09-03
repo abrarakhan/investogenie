@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  classifyCoverageGaps, classifyFreshness, classifySourceFreshness, worstFreshnessStatus,
+  classifyCoverageFreshness, classifyCoverageGaps, classifyFreshness, classifySourceFreshness, worstFreshnessStatus,
   type SourceRow,
 } from "./dataHealth";
 
@@ -13,6 +13,14 @@ describe("classifyFreshness", () => {
   it("treats failed or never-synced sources as failed", () => {
     expect(classifyFreshness({ lastSuccessAt: null, cadenceHours: 24, now: "2026-07-20T10:00:00Z" })).toBe("failed");
     expect(classifyFreshness({ lastSuccessAt: "2026-07-20T09:00:00Z", failed: true, cadenceHours: 24, now: "2026-07-20T10:00:00Z" })).toBe("failed");
+  });
+});
+
+describe("classifyCoverageFreshness", () => {
+  it("does not let one current row make a mostly stale source healthy", () => {
+    expect(classifyCoverageFreshness(99, 100)).toBe("fresh");
+    expect(classifyCoverageFreshness(90, 100)).toBe("stale");
+    expect(classifyCoverageFreshness(70, 100)).toBe("failed");
   });
 });
 
