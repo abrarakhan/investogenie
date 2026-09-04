@@ -179,7 +179,7 @@ export function classifyCoverageGaps(input: CoverageGapInput): CoverageGap[] {
   }
 
   const fundamentalsGap = daysBetween(now, input.latestFundamentalsDate);
-  if (input.hasFundamentals && fundamentalsGap !== null && fundamentalsGap > 183) {
+  if (input.inUniverse && input.hasFundamentals && fundamentalsGap !== null && fundamentalsGap > 183) {
     gaps.push({
       symbol: input.symbol,
       market: input.market,
@@ -254,8 +254,12 @@ interface IndianCoverageRow {
 export function classifyCoverageFreshness(currentCount: number, totalCount: number): FreshnessStatus | null {
   if (totalCount <= 0) return null;
   const ratio = currentCount / totalCount;
-  if (ratio < 0.8) return "failed";
-  if (ratio < 0.95) return "stale";
+  // Exchange bhavcopies contain securities that actually printed in that
+  // session, while the asset master also includes suspended and thinly traded
+  // listings. Treat broad session coverage as feed health; individual missing
+  // symbols remain visible in Coverage Gaps and fail closed in strategies.
+  if (ratio < 0.5) return "failed";
+  if (ratio < 0.8) return "stale";
   return "fresh";
 }
 

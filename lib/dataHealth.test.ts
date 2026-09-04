@@ -17,10 +17,11 @@ describe("classifyFreshness", () => {
 });
 
 describe("classifyCoverageFreshness", () => {
-  it("does not let one current row make a mostly stale source healthy", () => {
+  it("allows normal non-trading listings without hiding broad feed failures", () => {
     expect(classifyCoverageFreshness(99, 100)).toBe("fresh");
-    expect(classifyCoverageFreshness(90, 100)).toBe("stale");
-    expect(classifyCoverageFreshness(70, 100)).toBe("failed");
+    expect(classifyCoverageFreshness(90, 100)).toBe("fresh");
+    expect(classifyCoverageFreshness(70, 100)).toBe("stale");
+    expect(classifyCoverageFreshness(40, 100)).toBe("failed");
   });
 });
 
@@ -101,9 +102,11 @@ describe("classifyCoverageGaps", () => {
   it("detects universe assets with missing and stale fundamentals", () => {
     const missing = classifyCoverageGaps({ symbol: "AAPL", market: "US", inUniverse: true, hasFundamentals: false, now: "2026-07-20T10:00:00Z" });
     const stale = classifyCoverageGaps({ symbol: "MSFT", market: "US", inUniverse: true, hasFundamentals: true, latestFundamentalsDate: "2025-12-01", now: "2026-07-20T10:00:00Z" });
+    const outOfScope = classifyCoverageGaps({ symbol: "MICROCAP", market: "IN", inUniverse: false, hasFundamentals: true, latestFundamentalsDate: "2025-01-01", now: "2026-07-20T10:00:00Z" });
 
     expect(missing).toContainEqual(expect.objectContaining({ issueType: "No fundamentals", severity: "medium" }));
     expect(stale).toContainEqual(expect.objectContaining({ issueType: "Stale fundamentals", severity: "low" }));
+    expect(outOfScope).not.toContainEqual(expect.objectContaining({ issueType: "Stale fundamentals" }));
   });
 });
 

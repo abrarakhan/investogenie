@@ -209,7 +209,7 @@ async function retireTerminalFailedBackfillItems(): Promise<number> {
        select q.asset_id, q.attempts, q.last_error
          from public.backfill_queue q
          join public.assets a on a.id=q.asset_id
-        where q.status='failed'
+        where q.status in ('failed','skipped')
           and q.attempts >= 3
           and (
             lower(coalesce(q.last_error, '')) like '%no ohlcv bars returned%'

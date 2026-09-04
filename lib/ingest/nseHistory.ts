@@ -1,4 +1,5 @@
 import { Client } from "pg";
+import { fetchTextLenient } from "@/lib/ingest/fetchText";
 
 const NSE_BHAVCOPY_URL =
   "https://archives.nseindia.com/products/content/sec_bhavdata_full_{date}.csv";
@@ -107,6 +108,7 @@ async function fetchBhavcopy(
   const dateToken = ddmmyyyy(day);
   const url = NSE_BHAVCOPY_URL.replace("{date}", dateToken);
   const res = await fetch(url, {
+    cache: "no-store",
     headers: {
       "User-Agent": UA,
       Accept: "text/csv,*/*",
@@ -172,16 +174,21 @@ async function fetchBseBhavcopy(
 ): Promise<{ date: string; rows: BhavRow[] } | null> {
   const dateToken = yyyymmdd(day);
   const url = BSE_BHAVCOPY_URL.replace("{date}", dateToken);
+  const headers = {
+    "User-Agent": UA,
+    Accept: "text/csv,*/*",
+    Referer: "https://www.bseindia.com/",
+  };
   const res = await fetch(url, {
-    headers: {
-      "User-Agent": UA,
-      Accept: "text/csv,*/*",
-      Referer: "https://www.bseindia.com/",
-    },
+    cache: "no-store",
+    headers,
   }).catch(() => null);
-  if (!res || !res.ok) return null;
-
-  const text = await res.text();
+  let text: string | null = res?.ok ? await res.text() : null;
+  if (text === null) {
+    const fallback = await fetchTextLenient(url, headers).catch(() => null);
+    if (fallback?.ok) text = fallback.text;
+  }
+  if (text === null) return null;
   if (!text.includes("TckrSymb")) return null;
 
   const lines = text.split(/\r?\n/).filter(Boolean);

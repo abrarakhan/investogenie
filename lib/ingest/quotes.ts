@@ -5,6 +5,7 @@
 //   • BSE — BhavCopy_BSE_CM UDiFF bhavcopy (latest session close)
 import { Client } from "pg";
 import { isMarketOpen } from "@/lib/backfill/classifier";
+import { fetchTextLenient } from "@/lib/ingest/fetchText";
 
 const UA =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36";
@@ -59,7 +60,38 @@ async function promoteLatestOhlcvToQuotes(client: Client): Promise<number> {
   return promoted.rowCount ?? 0;
 }
 
+async function enforceTerminalBackfillRetirements(client: Client): Promise<number> {
+  const retired = await client.query<{ id: string }>(
+    `with candidates as (
+       select a.id,q.attempts,q.last_error
+         from public.backfill_queue q
+         join public.assets a on a.id=q.asset_id
+        where q.status='skipped'
+          and q.attempts >= 3
+          and q.last_error like 'Retired from tracking:%'
+          and not exists(select 1 from public.universe_members u where u.asset_id=a.id and u.universe in ('NIFTY_500','SP_500','NASDAQ_100'))
+          and not exists(select 1 from public.holdings h where h.asset_id=a.id)
+          and not exists(select 1 from public.watchlist_items w where w.asset_id=a.id)
+          and not exists(select 1 from public.forward_test_positions f where f.asset_id=a.id and f.status='OPEN')
+          and not exists(select 1 from public.swing_trade_ledger l where l.asset_id=a.id and l.status='OPEN')
+     ), excluded as (
+       insert into public.asset_tracking_exclusions (asset_id,reason_code,reason,source,metadata)
+       select id,'history_unavailable',left(last_error,500),'backfill_reconciliation',
+              jsonb_build_object('attempts',attempts)
+         from candidates
+       on conflict (asset_id) do update set reason_code=excluded.reason_code,
+         reason=excluded.reason,source=excluded.source,excluded_at=now(),metadata=excluded.metadata
+       returning asset_id
+     )
+     update public.assets a set is_active=false
+       from candidates c where a.id=c.id and (a.is_active or a.is_active is null)
+     returning a.id::text id`,
+  );
+  return retired.rowCount ?? 0;
+}
+
 async function reconcileDormantIndianListings(client: Client): Promise<void> {
+  const terminalRetirements = await enforceTerminalBackfillRetirements(client);
   const promoted = await promoteLatestOhlcvToQuotes(client);
   const restored = await client.query<{ id: string }>(
     `with restored as (
@@ -111,8 +143,8 @@ async function reconcileDormantIndianListings(client: Client): Promise<void> {
      returning a.id::text id`,
   );
 
-  if (promoted || restored.rowCount || retired.rowCount) {
-    console.log(`[quote-coverage] promoted ${promoted} OHLCV closes; restored ${restored.rowCount ?? 0}; soft-excluded ${retired.rowCount ?? 0} dormant Indian listings`);
+  if (terminalRetirements || promoted || restored.rowCount || retired.rowCount) {
+    console.log(`[quote-coverage] enforced ${terminalRetirements} terminal retirements; promoted ${promoted} OHLCV closes; restored ${restored.rowCount ?? 0}; soft-excluded ${retired.rowCount ?? 0} dormant Indian listings`);
   }
 }
 
@@ -303,14 +335,25 @@ async function fetchBhavSeries(
   startISO: string,
   build: (text: string) => { quotes: Map<string, RawQuote>; asOf: string | null } | null,
   url: (d: Date) => string,
+  referer: string,
 ): Promise<{ quotes: Map<string, RawQuote>; asOf: string | null }> {
   const start = new Date(`${startISO}T00:00:00Z`);
   for (let i = 0; i < 8; i++) {
     const d = new Date(start); d.setUTCDate(d.getUTCDate() - i);
     if (d.getUTCDay() === 0 || d.getUTCDay() === 6) continue;
-    const res = await fetch(url(d), { headers: { "User-Agent": UA, Referer: "https://www.nseindia.com/" } }).catch(() => null);
-    if (!res || !res.ok) continue;
-    const built = build(await res.text());
+    const requestUrl = url(d);
+    const headers = { "User-Agent": UA, Accept: "text/csv,*/*", Referer: referer };
+    const res = await fetch(requestUrl, {
+      cache: "no-store",
+      headers,
+    }).catch(() => null);
+    let text: string | null = res?.ok ? await res.text() : null;
+    if (text === null && requestUrl.includes("bseindia.com")) {
+      const fallback = await fetchTextLenient(requestUrl, headers).catch(() => null);
+      if (fallback?.ok) text = fallback.text;
+    }
+    if (text === null) continue;
+    const built = build(text);
     if (built && built.quotes.size) return built;
   }
   return { quotes: new Map(), asOf: null };
@@ -381,8 +424,8 @@ export async function refreshQuotes(databaseUrl: string, startISO = localToday()
     fetchUS(),
     fetchNSEIndices(),
     fetchDirectBenchmarks(),
-    fetchBhavSeries(startISO, buildNSE, (d) => `https://archives.nseindia.com/products/content/sec_bhavdata_full_${ddmmyyyy(d)}.csv`),
-    fetchBhavSeries(startISO, buildBSE, (d) => `https://www.bseindia.com/download/BhavCopy/Equity/BhavCopy_BSE_CM_0_0_0_${yyyymmdd(d)}_F_0000.CSV`),
+    fetchBhavSeries(startISO, buildNSE, (d) => `https://archives.nseindia.com/products/content/sec_bhavdata_full_${ddmmyyyy(d)}.csv`, "https://www.nseindia.com/"),
+    fetchBhavSeries(startISO, buildBSE, (d) => `https://www.bseindia.com/download/BhavCopy/Equity/BhavCopy_BSE_CM_0_0_0_${yyyymmdd(d)}_F_0000.CSV`, "https://www.bseindia.com/"),
   ]);
 
   const client = new Client({ connectionString: databaseUrl, ssl: /127\.0\.0\.1|localhost/.test(databaseUrl) ? false : { rejectUnauthorized: false } });
