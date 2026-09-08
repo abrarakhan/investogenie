@@ -82,10 +82,26 @@ export async function addSwingTrade(formData: FormData) {
 
   const market = asset.country;
   const boughtOn = String(formData.get("boughtOn") ?? "").slice(0, 10);
+  const entryStatus = String(formData.get("entryStatus") ?? "OPEN") === "CLOSED" ? "CLOSED" : "OPEN";
   const buyPrice = cleanNumber(formData, "buyPrice");
   const quantity = cleanNumber(formData, "quantity");
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(boughtOn) || boughtOn > new Date().toISOString().slice(0, 10)) throw new Error("Enter a valid purchase date");
+  const today = new Date().toISOString().slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(boughtOn) || boughtOn > today) throw new Error("Enter a valid purchase date");
   if (!buyPrice || buyPrice <= 0 || !quantity || quantity <= 0) throw new Error("Buy price and quantity must be greater than zero");
+
+  const closedOn = entryStatus === "CLOSED" ? String(formData.get("closedOn") ?? "").slice(0, 10) : null;
+  const exitPrice = entryStatus === "CLOSED" ? cleanNumber(formData, "exitPrice") : null;
+  const closeReason = entryStatus === "CLOSED"
+    ? String(formData.get("closeReason") ?? "Manual exit").trim().slice(0, 120) || "Manual exit"
+    : null;
+  if (entryStatus === "CLOSED" && (
+    !closedOn
+    || !/^\d{4}-\d{2}-\d{2}$/.test(closedOn)
+    || closedOn < boughtOn
+    || closedOn > today
+    || !exitPrice
+    || exitPrice <= 0
+  )) throw new Error("Enter a valid exit date and price for the past trade");
 
   const preferredStrategy = String(formData.get("strategyKey") ?? "").toUpperCase();
   const projection = await resolveSignalProjection(asset.id, market, preferredStrategy, buyPrice);
@@ -106,17 +122,64 @@ export async function addSwingTrade(formData: FormData) {
 
   await query(
     `insert into public.swing_trade_ledger
-       (user_id,asset_id,market,bought_on,buy_price,quantity,currency,strategy_key,strategy_label,
+       (user_id,asset_id,market,status,bought_on,buy_price,quantity,currency,strategy_key,strategy_label,
         signal_verdict,signal_as_of,signal_score,projection_entry,projected_target,projected_stop,
-        projected_trailing_stop,projected_atr,trailing_distance,expected_holding_days,projection_snapshot,notes)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20::jsonb,$21)`,
-    [user.id, asset.id, market, boughtOn, buyPrice, quantity, asset.currency, projection.strategyKey,
+        projected_trailing_stop,projected_atr,trailing_distance,expected_holding_days,projection_snapshot,notes,
+        closed_on,exit_price,close_reason)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21::jsonb,$22,$23,$24,$25)`,
+    [user.id, asset.id, market, entryStatus, boughtOn, buyPrice, quantity, asset.currency, projection.strategyKey,
       projection.label, projection.row.verdict, projection.row.as_of, projection.strategyScore?.score ?? projection.row.score,
       projection.levels.entry, target, stop, trail, projection.levels.atr, trailingDistance,
-      expectedDays, JSON.stringify({ levels: projection.levels, strategyScore: projection.strategyScore ?? null }), notes],
+      expectedDays, JSON.stringify({ levels: projection.levels, strategyScore: projection.strategyScore ?? null }), notes,
+      closedOn, exitPrice, closeReason],
   );
   revalidatePath(`/terminal/${market.toLowerCase()}/trade-ledger`);
   redirect(`/terminal/${market.toLowerCase()}/trade-ledger?added=1`);
+}
+
+export async function updateSwingTrade(formData: FormData) {
+  const user = await requireUser();
+  const market = validMarket(String(formData.get("market") ?? "IN"));
+  const id = String(formData.get("tradeId") ?? "").trim();
+  const boughtOn = String(formData.get("boughtOn") ?? "").slice(0, 10);
+  const buyPrice = cleanNumber(formData, "buyPrice");
+  const quantity = cleanNumber(formData, "quantity");
+  const notes = String(formData.get("notes") ?? "").trim().slice(0, 500) || null;
+  const today = new Date().toISOString().slice(0, 10);
+  if (!id || !/^\d{4}-\d{2}-\d{2}$/.test(boughtOn) || boughtOn > today) throw new Error("Enter a valid purchase date");
+  if (!buyPrice || buyPrice <= 0 || !quantity || quantity <= 0) throw new Error("Buy price and quantity must be greater than zero");
+
+  const trade = await queryOne<{ status: "OPEN" | "CLOSED" }>(
+    "select status from public.swing_trade_ledger where id=$1 and user_id=$2 and market=$3",
+    [id, user.id, market],
+  );
+  if (!trade) throw new Error("Trade entry was not found");
+
+  const closedOn = trade.status === "CLOSED" ? String(formData.get("closedOn") ?? "").slice(0, 10) : null;
+  const exitPrice = trade.status === "CLOSED" ? cleanNumber(formData, "exitPrice") : null;
+  const closeReason = trade.status === "CLOSED"
+    ? String(formData.get("closeReason") ?? "Manual exit").trim().slice(0, 120) || "Manual exit"
+    : null;
+  if (trade.status === "CLOSED" && (
+    !closedOn
+    || !/^\d{4}-\d{2}-\d{2}$/.test(closedOn)
+    || closedOn < boughtOn
+    || closedOn > today
+    || !exitPrice
+    || exitPrice <= 0
+  )) throw new Error("Enter a valid exit date and price");
+
+  await query(
+    `update public.swing_trade_ledger
+        set bought_on=$1,buy_price=$2,quantity=$3,notes=$4,
+            closed_on=case when status='CLOSED' then $5::date else null end,
+            exit_price=case when status='CLOSED' then $6::numeric else null end,
+            close_reason=case when status='CLOSED' then $7 else null end,
+            updated_at=now()
+      where id=$8 and user_id=$9 and market=$10`,
+    [boughtOn, buyPrice, quantity, notes, closedOn, exitPrice, closeReason, id, user.id, market],
+  );
+  revalidatePath(`/terminal/${market.toLowerCase()}/trade-ledger`);
 }
 
 export async function closeSwingTrade(formData: FormData) {

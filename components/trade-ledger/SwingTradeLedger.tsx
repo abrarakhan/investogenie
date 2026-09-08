@@ -1,4 +1,4 @@
-import { addSwingTrade, closeSwingTrade } from "@/app/terminal/[market]/trade-ledger/actions";
+import { addSwingTrade, closeSwingTrade, updateSwingTrade } from "@/app/terminal/[market]/trade-ledger/actions";
 import AssetPicker from "@/components/dashboard/AssetPicker";
 import DeleteTradeButton from "@/components/trade-ledger/DeleteTradeButton";
 import { summarizeSwingTradeLedger, type SwingLedgerTrade, type SwingTradeState } from "@/lib/swingTradeLedger";
@@ -50,6 +50,7 @@ export default function SwingTradeLedger({ market, trades, defaults }: {
         </summary>
         <form action={addSwingTrade} className="grid gap-4 border-t border-white/10 p-5 sm:grid-cols-2 lg:grid-cols-4">
           <input type="hidden" name="market" value={market} />
+          <input type="hidden" name="entryStatus" value="OPEN" />
           <Field label="Stock name or ticker">
             <AssetPicker
               name="assetId"
@@ -73,6 +74,30 @@ export default function SwingTradeLedger({ market, trades, defaults }: {
             Strategy, target, stop, trailing stop, and projected holding period are captured automatically from the latest swing candidate data.
           </p>
           <button className="h-11 self-end rounded-lg bg-[var(--ig-accent)] px-5 text-sm font-bold text-black transition-opacity hover:opacity-90">Add to ledger</button>
+        </form>
+      </details>
+
+      <details className="rounded-lg border border-white/10 bg-white/[0.02]">
+        <summary className="cursor-pointer list-none px-5 py-4 font-semibold [&::-webkit-details-marker]:hidden">
+          Log a past trade
+          <span className="ml-2 text-sm font-normal text-white/40">Record a trade that has already been sold</span>
+        </summary>
+        <form action={addSwingTrade} className="grid gap-4 border-t border-white/10 p-5 sm:grid-cols-2 lg:grid-cols-4">
+          <input type="hidden" name="market" value={market} />
+          <input type="hidden" name="entryStatus" value="CLOSED" />
+          <Field label="Stock name or ticker">
+            <AssetPicker name="assetId" queryName="ticker" country={market} placeholder="e.g. RELIANCE" required />
+          </Field>
+          <Field label="Purchase date"><input name="boughtOn" type="date" required max={today} className="field" /></Field>
+          <Field label="Actual buy price"><input name="buyPrice" type="number" min="0.000001" step="any" required className="field" /></Field>
+          <Field label="Quantity"><input name="quantity" type="number" min="0.000001" step="any" required className="field" /></Field>
+          <Field label="Exit date"><input name="closedOn" type="date" required max={today} className="field" /></Field>
+          <Field label="Exit price"><input name="exitPrice" type="number" min="0.000001" step="any" required className="field" /></Field>
+          <Field label="Exit reason"><select name="closeReason" className="field bg-[#090c12]"><option>Target reached</option><option>Trailing stop</option><option>Stop loss</option><option>Holding window expired</option><option>Manual exit</option></select></Field>
+          <button className="h-11 self-end rounded-lg bg-[var(--ig-accent)] px-5 text-sm font-bold text-black transition-opacity hover:opacity-90">Add past trade</button>
+          <p className="text-xs leading-5 text-white/40 sm:col-span-2 lg:col-span-4">
+            The ledger uses the stock&apos;s existing swing analysis to fill the frozen strategy projection and records your actual realized result.
+          </p>
         </form>
       </details>
 
@@ -125,6 +150,23 @@ function TradeCard({ trade, today }: { trade: SwingLedgerTrade; today: string })
       <div className="mt-4 flex flex-wrap gap-x-5 gap-y-1 border-t border-white/8 pt-3 text-xs text-white/38"><span>Initial stop {price(trade.projectedStop)}</span><span>Quantity {trade.quantity.toLocaleString("en-IN")}</span><span>Quote {trade.quoteAsOf ?? "unavailable"}</span>{trade.notes && <span>{trade.notes}</span>}</div>
       {trade.status === "OPEN" && <details className="mt-4"><summary className="cursor-pointer text-sm font-semibold text-white/55 hover:text-white">Close trade</summary><form action={closeSwingTrade} className="mt-3 grid gap-3 rounded-lg border border-white/10 bg-black/25 p-3 sm:grid-cols-4"><input type="hidden" name="tradeId" value={trade.id} /><input type="hidden" name="market" value={trade.market} /><input aria-label="Exit date" name="closedOn" type="date" required min={trade.boughtOn} max={today} defaultValue={today} className="field" /><input aria-label="Exit price" name="exitPrice" type="number" min="0.000001" step="any" required defaultValue={trade.currentPrice ?? ""} placeholder="Exit price" className="field" /><select aria-label="Exit reason" name="closeReason" className="field bg-[#090c12]"><option>Target reached</option><option>Trailing stop</option><option>Stop loss</option><option>Holding window expired</option><option>Manual exit</option></select><button className="h-11 rounded-lg border border-white/15 bg-white/8 text-sm font-semibold hover:bg-white/12">Record exit</button></form></details>}
       <div className="mt-3 border-t border-white/5 pt-2">
+        <details>
+          <summary className="min-h-10 cursor-pointer list-none rounded-lg px-3 py-2.5 text-sm font-semibold text-white/55 hover:bg-white/5 hover:text-white [&::-webkit-details-marker]:hidden">Edit trade</summary>
+          <form action={updateSwingTrade} className="mt-2 grid gap-3 rounded-lg border border-white/10 bg-black/25 p-3 sm:grid-cols-2 lg:grid-cols-4">
+            <input type="hidden" name="tradeId" value={trade.id} />
+            <input type="hidden" name="market" value={trade.market} />
+            <Field label="Purchase date"><input name="boughtOn" type="date" required max={today} defaultValue={trade.boughtOn} className="field" /></Field>
+            <Field label="Buy price"><input name="buyPrice" type="number" min="0.000001" step="any" required defaultValue={trade.buyPrice} className="field" /></Field>
+            <Field label="Quantity"><input name="quantity" type="number" min="0.000001" step="any" required defaultValue={trade.quantity} className="field" /></Field>
+            {trade.status === "CLOSED" && <>
+              <Field label="Exit date"><input name="closedOn" type="date" required min={trade.boughtOn} max={today} defaultValue={trade.closedOn ?? ""} className="field" /></Field>
+              <Field label="Exit price"><input name="exitPrice" type="number" min="0.000001" step="any" required defaultValue={trade.exitPrice ?? ""} className="field" /></Field>
+              <Field label="Exit reason"><select name="closeReason" defaultValue={trade.closeReason ?? "Manual exit"} className="field bg-[#090c12]"><option>Target reached</option><option>Trailing stop</option><option>Stop loss</option><option>Holding window expired</option><option>Manual exit</option></select></Field>
+            </>}
+            <Field label="Notes"><input name="notes" maxLength={500} defaultValue={trade.notes ?? ""} className="field" /></Field>
+            <button className="h-11 self-end rounded-lg border border-[var(--ig-accent)]/40 bg-[var(--ig-accent)]/10 px-4 text-sm font-semibold text-[var(--ig-accent)] hover:bg-[var(--ig-accent)]/15">Save changes</button>
+          </form>
+        </details>
         <DeleteTradeButton tradeId={trade.id} market={trade.market} ticker={trade.ticker} />
       </div>
     </article>
