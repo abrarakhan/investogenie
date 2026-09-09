@@ -66,6 +66,7 @@ export default function SwingTradeLedger({ market, trades, defaults }: {
           <Field label="Actual buy price"><input name="buyPrice" type="number" min="0.000001" step="any" required defaultValue={defaults.buyPrice ?? defaults.current ?? ""} className="field" /></Field>
           <Field label="Quantity"><input name="quantity" type="number" min="0.000001" step="any" required className="field" /></Field>
           <input type="hidden" name="strategyKey" value={defaults.strategy ?? ""} />
+          <input type="hidden" name="projectionEntry" value={defaults.entry ?? ""} />
           <input type="hidden" name="projectedTarget" value={defaults.target ?? ""} />
           <input type="hidden" name="projectedStop" value={defaults.stop ?? ""} />
           <input type="hidden" name="expectedHoldingDays" value={defaults.days ?? ""} />

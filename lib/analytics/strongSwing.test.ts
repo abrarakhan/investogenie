@@ -50,7 +50,69 @@ function breakoutBars(count = 240, opts: { clears?: boolean } = {}): OHLCV[] {
 /** Benchmark that trails the stock, so relative strength is positive and the regime is healthy. */
 const benchmark = (count = 240) => risingBars(count, false, 0.2);
 
+function cleanConfirmedBars(): { bars: OHLCV[]; entry: number } {
+  const bars = risingBars(240, false, 0.5);
+  const breakoutLevel = Math.max(...bars.slice(-22, -2).map((bar) => bar.high));
+  const entry = breakoutLevel + 0.5;
+  for (let index = bars.length - 2; index < bars.length; index++) {
+    const close = entry + 0.2;
+    bars[index] = {
+      ...bars[index],
+      open: close - 0.4,
+      high: close + 0.2,
+      low: close - 0.6,
+      close,
+      volume: 4_000_000,
+    };
+  }
+  return { bars, entry };
+}
+
 describe("assessStrongSwing", () => {
+  it("marks a clean, timely setup as execution ready", () => {
+    const { bars, entry } = cleanConfirmedBars();
+    const result = assessStrongSwing({
+      market: "IN", verdict: "LONG_BREAKOUT", isBreakout: true,
+      trigger: entry, atr: 2, trailingStop: null, currentPrice: entry + 0.2,
+      stopAtrMult: 1.5, bars, benchmarkBars: benchmark(),
+    });
+
+    expect(result.status).toBe("EXECUTION_READY");
+    expect(result.gates.every((gate) => gate.passed)).toBe(true);
+  });
+
+  it("does not reprice a missed breakout into a new entry", () => {
+    const { bars, entry } = cleanConfirmedBars();
+    const result = assessStrongSwing({
+      market: "IN", verdict: "LONG_BREAKOUT", isBreakout: true,
+      trigger: entry, atr: 2, trailingStop: null, currentPrice: entry + 2,
+      stopAtrMult: 1.5, bars, benchmarkBars: benchmark(),
+    });
+
+    expect(result.status).toBe("WAIT_FOR_ENTRY");
+    expect(result.gates.find((gate) => gate.key === "entry_zone")?.passed).toBe(false);
+  });
+
+  it("blocks a BODALCHEM-style parabolic move", () => {
+    const { bars, entry } = cleanConfirmedBars();
+    const start = bars.length - 11;
+    for (let index = start; index < bars.length; index++) {
+      const close = 180 + (index - start) * 12;
+      bars[index] = {
+        ...bars[index], open: close - 2, high: close + 1, low: close - 3,
+        close, volume: 4_000_000,
+      };
+    }
+    const result = assessStrongSwing({
+      market: "IN", verdict: "LONG_BREAKOUT", isBreakout: true,
+      trigger: entry, atr: 4, trailingStop: null, currentPrice: bars.at(-1)!.close,
+      stopAtrMult: 1.5, bars, benchmarkBars: benchmark(),
+    });
+
+    expect(result.status).toBe("RISK_OFF");
+    expect(result.gates.find((gate) => gate.key === "extension_10d")?.passed).toBe(false);
+  });
+
   it("keeps a first-day breakout on the watchlist", () => {
     // Only the final bar clears the level, so follow-through has not been proven.
     const bars = breakoutBars();

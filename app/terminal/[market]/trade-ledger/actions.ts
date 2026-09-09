@@ -46,18 +46,23 @@ async function resolveSignalProjection(assetId: string, market: "IN" | "US", pre
     .filter(([, score]) => score.dir === "LONG")
     .sort(([, left], [, right]) => right.score - left.score);
   const preferredScore = row.strategy_scores?.[preferredStrategy];
-  const strategyKey = preferredStrategy && preferredScore?.dir === "LONG"
-    ? preferredStrategy
-    : availableLongStrategies[0]?.[0] ?? "DEFAULT_SWING";
+  const isStrongSwing = preferredStrategy === "STRONG_SWING";
+  const strategyKey = isStrongSwing
+    ? "STRONG_SWING"
+    : preferredStrategy && preferredScore?.dir === "LONG"
+      ? preferredStrategy
+      : availableLongStrategies[0]?.[0] ?? "DEFAULT_SWING";
   const setup: SwingSetup = {
     currentPrice: buyPrice,
     atr: num(row.atr), longTrigger: buyPrice, shortTrigger: num(row.short_trigger),
     hh22: Math.min(num(row.hh22) || buyPrice, buyPrice), ll22: num(row.ll22), dailyVelocity: num(row.daily_velocity),
   };
-  const strategyScore = row.strategy_scores?.[strategyKey];
+  const strategyScore = isStrongSwing ? undefined : row.strategy_scores?.[strategyKey];
   const settings = await getUserSwingSettings();
   const levels = deriveLevels(setup, "LONG", settings);
-  const label = STRATEGY_META.find((item) => item.key === strategyKey)?.label ?? "Default Swing";
+  const label = isStrongSwing
+    ? "Strong Swing"
+    : STRATEGY_META.find((item) => item.key === strategyKey)?.label ?? "Default Swing";
   return { row, levels, label, strategyKey, strategyScore, trailingDistance: settings.trailAtrMult * levels.atr };
 }
 
@@ -105,6 +110,7 @@ export async function addSwingTrade(formData: FormData) {
 
   const preferredStrategy = String(formData.get("strategyKey") ?? "").toUpperCase();
   const projection = await resolveSignalProjection(asset.id, market, preferredStrategy, buyPrice);
+  const suppliedEntry = cleanNumber(formData, "projectionEntry");
   const suppliedTarget = cleanNumber(formData, "projectedTarget");
   const suppliedStop = cleanNumber(formData, "projectedStop");
   const suppliedTrail = cleanNumber(formData, "projectedTrailingStop");
@@ -129,7 +135,7 @@ export async function addSwingTrade(formData: FormData) {
      values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21::jsonb,$22,$23,$24,$25)`,
     [user.id, asset.id, market, entryStatus, boughtOn, buyPrice, quantity, asset.currency, projection.strategyKey,
       projection.label, projection.row.verdict, projection.row.as_of, projection.strategyScore?.score ?? projection.row.score,
-      projection.levels.entry, target, stop, trail, projection.levels.atr, trailingDistance,
+      suppliedEntry ?? projection.levels.entry, target, stop, trail, projection.levels.atr, trailingDistance,
       expectedDays, JSON.stringify({ levels: projection.levels, strategyScore: projection.strategyScore ?? null }), notes,
       closedOn, exitPrice, closeReason],
   );

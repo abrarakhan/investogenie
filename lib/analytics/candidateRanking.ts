@@ -26,13 +26,19 @@ export function rankSwingCandidates<T extends SwingRankable>(
 
 export interface StrongSwingRankable {
   ticker: string;
-  status: "CONFIRMED" | "WATCHLIST" | "INVALIDATED";
+  status: "EXECUTION_READY" | "WAIT_FOR_ENTRY" | "WATCHLIST" | "RISK_OFF" | "INVALIDATED";
   strengthScore: number;
   score: number;
 }
 
 export function rankStrongSwingCandidates<T extends StrongSwingRankable>(candidates: readonly T[]): T[] {
-  const statusRank = { CONFIRMED: 0, WATCHLIST: 1, INVALIDATED: 2 } as const;
+  const statusRank = {
+    EXECUTION_READY: 0,
+    WAIT_FOR_ENTRY: 1,
+    WATCHLIST: 2,
+    RISK_OFF: 3,
+    INVALIDATED: 4,
+  } as const;
   return [...candidates].sort((a, b) =>
     statusRank[a.status] - statusRank[b.status]
       || b.strengthScore - a.strengthScore

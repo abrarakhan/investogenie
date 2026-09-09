@@ -1,12 +1,18 @@
 import type { OHLCV } from "@/lib/types";
 
-export type StrongSwingStatus = "CONFIRMED" | "WATCHLIST" | "INVALIDATED";
+export type StrongSwingStatus =
+  | "EXECUTION_READY"
+  | "WAIT_FOR_ENTRY"
+  | "WATCHLIST"
+  | "RISK_OFF"
+  | "INVALIDATED";
 
 export interface StrongSwingGate {
   key: string;
   label: string;
   passed: boolean;
   detail: string;
+  category: "technical" | "execution";
 }
 
 export interface StrongSwingInput {
@@ -16,6 +22,8 @@ export interface StrongSwingInput {
   trigger: number;
   atr: number;
   trailingStop: number | null;
+  currentPrice?: number | null;
+  stopAtrMult?: number;
   bars: OHLCV[];
   benchmarkBars: OHLCV[];
 }
@@ -38,6 +46,13 @@ export interface StrongSwingAssessment {
   oiChange5Pct: number | null;
   marketRegimePositive: boolean;
   confirmationMode: "OI" | "CASH";
+  fiveDayReturnPct: number | null;
+  tenDayReturnPct: number | null;
+  distanceAboveSma20Pct: number | null;
+  atrPct: number;
+  stopRiskPct: number;
+  entryExtensionAtr: number;
+  circuitLikeSessions20: number;
 }
 
 const mean = (values: number[]): number =>
@@ -65,8 +80,28 @@ const absDaysBetween = (from: string, to: string): number => {
     : Number.POSITIVE_INFINITY;
 };
 
-function gate(key: string, label: string, passed: boolean, detail: string): StrongSwingGate {
-  return { key, label, passed, detail };
+function gate(
+  key: string,
+  label: string,
+  passed: boolean,
+  detail: string,
+  category: StrongSwingGate["category"] = "technical",
+): StrongSwingGate {
+  return { key, label, passed, detail, category };
+}
+
+const KNOWN_CIRCUIT_BANDS = [5, 10, 20];
+
+function isCircuitLikeSession(previous: OHLCV, current: OHLCV): boolean {
+  const change = pctChange(previous.close, current.close);
+  if (change === null) return false;
+  const absChange = Math.abs(change);
+  const nearBand = KNOWN_CIRCUIT_BANDS.some((band) => Math.abs(absChange - band) <= 0.25);
+  if (!nearBand) return false;
+  const range = current.high - current.low;
+  if (range <= 0) return true;
+  const closeLocation = (current.close - current.low) / range;
+  return change > 0 ? closeLocation >= 0.98 : closeLocation <= 0.02;
 }
 
 /**
@@ -86,6 +121,7 @@ export function assessStrongSwing(input: StrongSwingInput): StrongSwingAssessmen
   const sma200 = sma(closes, 200);
   const sma50Prior = sma(closes, 50, closes.length - 20);
   const latestPrice = latest.close;
+  const currentPrice = input.currentPrice && input.currentPrice > 0 ? input.currentPrice : latestPrice;
   const atr = Math.max(0, input.atr);
 
   // The breakout level is derived from price history, NOT from input.trigger.
@@ -104,6 +140,21 @@ export function assessStrongSwing(input: StrongSwingInput): StrongSwingAssessmen
     ? Math.max(...breakoutWindow.map((bar) => bar.high))
     : latest.close;
   const confirmationEntry = breakoutLevel + 0.25 * atr;
+  const fiveBarsAgo = bars.length >= 6 ? bars[bars.length - 6] : null;
+  const tenBarsAgo = bars.length >= 11 ? bars[bars.length - 11] : null;
+  const fiveDayReturnPct = fiveBarsAgo ? pctChange(fiveBarsAgo.close, latest.close) : null;
+  const tenDayReturnPct = tenBarsAgo ? pctChange(tenBarsAgo.close, latest.close) : null;
+  const distanceAboveSma20Pct = sma20 === null ? null : pctChange(sma20, latest.close);
+  const atrPct = latest.close > 0 ? (atr / latest.close) * 100 : Number.POSITIVE_INFINITY;
+  const stopRiskPct = confirmationEntry > 0
+    ? ((atr * (input.stopAtrMult ?? 1.5)) / confirmationEntry) * 100
+    : Number.POSITIVE_INFINITY;
+  const entryExtensionAtr = atr > 0 ? (currentPrice - confirmationEntry) / atr : Number.POSITIVE_INFINITY;
+  let circuitLikeSessions20 = 0;
+  const circuitWindow = bars.slice(-21);
+  for (let index = 1; index < circuitWindow.length; index++) {
+    if (isCircuitLikeSession(circuitWindow[index - 1], circuitWindow[index])) circuitLikeSessions20++;
+  }
 
   const prior20 = bars.slice(-21, -1);
   const averageVolume20 = mean(prior20.map((bar) => bar.volume));
@@ -160,7 +211,6 @@ export function assessStrongSwing(input: StrongSwingInput): StrongSwingAssessmen
   );
   const followThrough = previous.close >= confirmationEntry && latest.close >= confirmationEntry;
 
-  const fiveBarsAgo = bars.length >= 6 ? bars[bars.length - 6] : null;
   const hasOi = fiveBarsAgo?.openInterest != null && latest.openInterest != null
     && Number(fiveBarsAgo.openInterest) > 0;
   const oiChange5Pct = hasOi
@@ -188,9 +238,9 @@ export function assessStrongSwing(input: StrongSwingInput): StrongSwingAssessmen
     gate("freshness", "Fresh EOD data", dataFresh,
       benchmarkBars.length === 0
         ? "Benchmark data unavailable — cannot verify freshness."
-        : dataFresh ? `Latest bar ${latest.date}.` : `Latest bar ${latest.date}; benchmark ${referenceDate}.`),
-    gate("price", "Price floor", latest.close >= priceFloor, `${latest.close.toFixed(2)} vs minimum ${priceFloor.toFixed(2)}.`),
-    gate("liquidity", "20-day liquidity", averageTradedValue20 >= tradedValueFloor, `Average traded value ${Math.round(averageTradedValue20).toLocaleString("en-US")}.`),
+        : dataFresh ? `Latest bar ${latest.date}.` : `Latest bar ${latest.date}; benchmark ${referenceDate}.`, "execution"),
+    gate("price", "Price floor", latest.close >= priceFloor, `${latest.close.toFixed(2)} vs minimum ${priceFloor.toFixed(2)}.`, "execution"),
+    gate("liquidity", "20-day liquidity", averageTradedValue20 >= tradedValueFloor, `Average traded value ${Math.round(averageTradedValue20).toLocaleString("en-US")}.`, "execution"),
     gate("trend", "Primary trend", trendAligned, hasTrendHistory ? "Price > 50/200 SMA; 20 > 50 and 50 SMA rising." : "Insufficient 200-session trend history."),
     gate("relative_strength", "Relative strength", (relativeStrength20Pct ?? Number.NEGATIVE_INFINITY) > 0, relativeStrength20Pct === null ? "Benchmark comparison unavailable." : `${relativeStrength20Pct.toFixed(1)}% vs benchmark over 20 sessions.`),
     gate("clearance", "Decisive breakout", triggerClearanceAtr >= 0.25, `${triggerClearanceAtr.toFixed(2)} ATR above the ${breakoutLevel.toFixed(2)} 20-session high; requires 0.25.`),
@@ -205,6 +255,20 @@ export function assessStrongSwing(input: StrongSwingInput): StrongSwingAssessmen
       hasOi
         ? `${(oiChange5Pct ?? 0).toFixed(1)}% OI change over five sessions.`
         : `${volumeTrend5.toFixed(2)}x five-session volume vs the 20-session base, price ${(priceChange5Pct ?? 0).toFixed(1)}% over five sessions; requires 1.20x and a rise.`),
+    gate("entry_zone", "Entry discipline", entryExtensionAtr <= 0.5,
+      `${entryExtensionAtr.toFixed(2)} ATR above confirmed entry ${confirmationEntry.toFixed(2)}; maximum 0.50 ATR.`, "execution"),
+    gate("extension_5d", "Five-session extension", (fiveDayReturnPct ?? Number.POSITIVE_INFINITY) <= 30,
+      fiveDayReturnPct === null ? "Five-session return unavailable." : `${fiveDayReturnPct.toFixed(1)}%; maximum 30%.`, "execution"),
+    gate("extension_10d", "Ten-session extension", (tenDayReturnPct ?? Number.POSITIVE_INFINITY) <= 50,
+      tenDayReturnPct === null ? "Ten-session return unavailable." : `${tenDayReturnPct.toFixed(1)}%; maximum 50%.`, "execution"),
+    gate("sma20_extension", "20-day extension", (distanceAboveSma20Pct ?? Number.POSITIVE_INFINITY) <= 15,
+      distanceAboveSma20Pct === null ? "20-day average unavailable." : `${distanceAboveSma20Pct.toFixed(1)}% above SMA20; maximum 15%.`, "execution"),
+    gate("atr_risk", "Volatility ceiling", atrPct <= 5,
+      `ATR is ${atrPct.toFixed(1)}% of price; maximum 5%.`, "execution"),
+    gate("stop_width", "Stop-risk ceiling", stopRiskPct <= 7,
+      `Technical stop requires ${stopRiskPct.toFixed(1)}% risk; maximum 7%.`, "execution"),
+    gate("circuit_behaviour", "Circuit behaviour", circuitLikeSessions20 < 2,
+      `${circuitLikeSessions20} circuit-like closes in 20 sessions; maximum 1.`, "execution"),
   ];
 
   const passed = gates.filter((item) => item.passed).length;
@@ -214,9 +278,20 @@ export function assessStrongSwing(input: StrongSwingInput): StrongSwingAssessmen
   // whether the close sat a full ATR below itself, so it never fired and every invalidation
   // came from the trailing stop alone.
   const breakoutFailed = input.isBreakout && atr > 0 && latest.close < breakoutLevel - atr;
+  const hardRiskKeys = new Set([
+    "extension_5d", "extension_10d", "sma20_extension", "atr_risk",
+    "stop_width", "circuit_behaviour", "freshness", "price", "liquidity",
+  ]);
+  const hardRiskFailed = gates.some((item) => hardRiskKeys.has(item.key) && !item.passed);
+  const entryZoneFailed = gates.some((item) => item.key === "entry_zone" && !item.passed);
+  const technicalPassed = gates
+    .filter((item) => item.category === "technical")
+    .every((item) => item.passed);
   const status: StrongSwingStatus = trailingBreached || breakoutFailed
     ? "INVALIDATED"
-    : gates.every((item) => item.passed) ? "CONFIRMED" : "WATCHLIST";
+    : hardRiskFailed ? "RISK_OFF"
+      : technicalPassed && entryZoneFailed ? "WAIT_FOR_ENTRY"
+        : gates.every((item) => item.passed) ? "EXECUTION_READY" : "WATCHLIST";
 
   return {
     status,
@@ -236,5 +311,12 @@ export function assessStrongSwing(input: StrongSwingInput): StrongSwingAssessmen
     oiChange5Pct,
     marketRegimePositive,
     confirmationMode: hasOi ? "OI" : "CASH",
+    fiveDayReturnPct,
+    tenDayReturnPct,
+    distanceAboveSma20Pct,
+    atrPct,
+    stopRiskPct,
+    entryExtensionAtr,
+    circuitLikeSessions20,
   };
 }

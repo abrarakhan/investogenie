@@ -28,10 +28,10 @@ export default async function StrongSwingPage({
       market={market}
       active="strong-swing"
       title="Strong Swing Candidates"
-      subtitle="Confirmed execution-quality setups. Structural signals remain on watch until trend, liquidity, breakout, follow-through, regime and OI/cash validation agree."
+      subtitle="Execution-ready setups only after technical confirmation, entry discipline, volatility, stop-risk, liquidity and circuit-behaviour checks agree."
     >
       <div className="mb-6 border-l-2 border-[var(--ig-accent)] pl-4 text-sm leading-relaxed text-white/52">
-        A strength score reports gates passed, not a guaranteed win probability. Only the green Confirmed state is actionable; amber rows are monitoring candidates.
+        Swing Candidates is the discovery surface. Here, only the green Execution Ready state is actionable. Broker RTCM/GTT validation will be added with the broker API; until then, verify exchange restrictions before placing an order.
       </div>
       <StrongSwingCandidates candidates={candidates} />
     </AppShell>

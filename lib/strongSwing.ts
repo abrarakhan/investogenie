@@ -28,6 +28,7 @@ export interface StrongSwingCandidate extends ScreenRow, StrongSwingAssessment {
   strongTarget: number;
   strongStop: number;
   strongTrail: number;
+  strongExpectedDays: number;
 }
 
 const toBar = (row: BarRow): OHLCV => ({
@@ -47,6 +48,68 @@ const meanVelocity = (bars: OHLCV[]): number => {
   for (let i = 1; i < closes.length; i++) total += Math.abs(closes[i] - closes[i - 1]);
   return total / (closes.length - 1);
 };
+
+async function captureStrongSwingSnapshot(
+  market: MarketId,
+  candidates: StrongSwingCandidate[],
+): Promise<void> {
+  if (!candidates.length) return;
+  const payload = candidates.map((candidate, index) => ({
+    assetId: candidate.assetId,
+    ticker: candidate.ticker,
+    rank: index + 1,
+    status: candidate.status,
+    strengthScore: candidate.strengthScore,
+    baseScore: candidate.score,
+    currentPrice: candidate.lastQuote ?? candidate.latestClose,
+    entry: candidate.strongEntry,
+    target: candidate.strongTarget,
+    stop: candidate.strongStop,
+    trail: candidate.strongTrail,
+    expectedDays: candidate.strongExpectedDays,
+    latestDate: candidate.latestDate,
+    gates: candidate.gates,
+    metrics: {
+      fiveDayReturnPct: candidate.fiveDayReturnPct,
+      tenDayReturnPct: candidate.tenDayReturnPct,
+      distanceAboveSma20Pct: candidate.distanceAboveSma20Pct,
+      atrPct: candidate.atrPct,
+      stopRiskPct: candidate.stopRiskPct,
+      entryExtensionAtr: candidate.entryExtensionAtr,
+      circuitLikeSessions20: candidate.circuitLikeSessions20,
+    },
+  }));
+  await query(
+    `with stamp as (
+       select date_trunc('hour', now())
+              + floor(extract(minute from now()) / 15) * interval '15 minutes' captured_at
+     ), rows as (
+       select * from jsonb_to_recordset($2::jsonb) as x(
+         "assetId" uuid,"ticker" text,"rank" integer,"status" text,
+         "strengthScore" numeric,"baseScore" numeric,"currentPrice" numeric,
+         "entry" numeric,"target" numeric,"stop" numeric,"trail" numeric,
+         "expectedDays" integer,"latestDate" date,"gates" jsonb,"metrics" jsonb
+       )
+     )
+     insert into public.strong_swing_snapshots
+       (captured_at,market,asset_id,ticker,rank,status,strength_score,base_score,
+        current_price,confirmation_entry,projected_target,projected_stop,
+        projected_trail,expected_days,latest_bar_date,gates,metrics)
+     select stamp.captured_at,$1,rows."assetId",rows."ticker",rows."rank",rows."status",
+            rows."strengthScore",rows."baseScore",rows."currentPrice",rows."entry",
+            rows."target",rows."stop",rows."trail",rows."expectedDays",rows."latestDate",
+            rows."gates",rows."metrics"
+       from rows cross join stamp
+     on conflict (captured_at,market,asset_id) do update set
+       rank=excluded.rank,status=excluded.status,strength_score=excluded.strength_score,
+       base_score=excluded.base_score,current_price=excluded.current_price,
+       confirmation_entry=excluded.confirmation_entry,projected_target=excluded.projected_target,
+       projected_stop=excluded.projected_stop,projected_trail=excluded.projected_trail,
+       expected_days=excluded.expected_days,latest_bar_date=excluded.latest_bar_date,
+       gates=excluded.gates,metrics=excluded.metrics`,
+    [market, JSON.stringify(payload)],
+  );
+}
 
 export async function getStrongSwingCandidates(
   market: MarketId,
@@ -122,13 +185,17 @@ export async function getStrongSwingCandidates(
       trigger,
       atr,
       trailingStop: row.trailingStop,
+      currentPrice: row.lastQuote,
+      stopAtrMult: settings.stopAtrMult,
       bars,
       benchmarkBars,
     });
     const recent = bars.slice(-22);
-    const currentPrice = row.lastQuote ?? assessment.latestClose;
+    // Strong Swing freezes the confirmed breakout entry. Repricing entry to a
+    // later quote turns a missed trade into a fresh recommendation and widens
+    // its ATR stop after parabolic moves.
     const setup: SwingSetup = {
-      currentPrice,
+      currentPrice: assessment.confirmationEntry,
       atr,
       longTrigger: assessment.confirmationEntry,
       shortTrigger: 0,
@@ -140,12 +207,19 @@ export async function getStrongSwingCandidates(
     candidates.push({
       ...row,
       ...assessment,
-      strongEntry: levels.entry,
+      strongEntry: assessment.confirmationEntry,
       strongTarget: levels.target,
       strongStop: levels.stopLoss,
       strongTrail: levels.trailingStop,
+      strongExpectedDays: levels.expectedDays,
     });
   }
 
-  return rankStrongSwingCandidates(candidates);
+  const ranked = rankStrongSwingCandidates(candidates);
+  try {
+    await captureStrongSwingSnapshot(market, ranked);
+  } catch (error) {
+    console.error("[strong-swing] failed to capture audit snapshot", error);
+  }
+  return ranked;
 }

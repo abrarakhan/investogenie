@@ -15,13 +15,15 @@ describe("candidate display ranking", () => {
   it("orders strong swing states by actionability then strength", () => {
     const rows = [
       { ticker: "WATCH_HIGH", status: "WATCHLIST" as const, strengthScore: 95, score: 90 },
-      { ticker: "CONFIRMED_LOW", status: "CONFIRMED" as const, strengthScore: 75, score: 70 },
-      { ticker: "CONFIRMED_HIGH", status: "CONFIRMED" as const, strengthScore: 92, score: 85 },
+      { ticker: "READY_LOW", status: "EXECUTION_READY" as const, strengthScore: 75, score: 70 },
+      { ticker: "READY_HIGH", status: "EXECUTION_READY" as const, strengthScore: 92, score: 85 },
+      { ticker: "WAIT_ENTRY", status: "WAIT_FOR_ENTRY" as const, strengthScore: 98, score: 95 },
+      { ticker: "RISK_OFF", status: "RISK_OFF" as const, strengthScore: 100, score: 99 },
       { ticker: "INVALID", status: "INVALIDATED" as const, strengthScore: 100, score: 99 },
     ];
 
     expect(rankStrongSwingCandidates(rows).map((row) => row.ticker)).toEqual([
-      "CONFIRMED_HIGH", "CONFIRMED_LOW", "WATCH_HIGH", "INVALID",
+      "READY_HIGH", "READY_LOW", "WAIT_ENTRY", "WATCH_HIGH", "RISK_OFF", "INVALID",
     ]);
   });
 });

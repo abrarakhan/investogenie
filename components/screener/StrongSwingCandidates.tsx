@@ -1,16 +1,21 @@
+import Link from "next/link";
 import type { StrongSwingCandidate } from "@/lib/strongSwing";
 import type { StrongSwingStatus } from "@/lib/analytics/strongSwing";
 import { rankStrongSwingCandidates } from "@/lib/analytics/candidateRanking";
 
 const STATUS_STYLE: Record<StrongSwingStatus, string> = {
-  CONFIRMED: "border-emerald-400/35 bg-emerald-400/10 text-emerald-300",
+  EXECUTION_READY: "border-emerald-400/35 bg-emerald-400/10 text-emerald-300",
+  WAIT_FOR_ENTRY: "border-cyan-400/35 bg-cyan-400/10 text-cyan-200",
   WATCHLIST: "border-amber-400/35 bg-amber-400/10 text-amber-200",
+  RISK_OFF: "border-orange-400/35 bg-orange-400/10 text-orange-200",
   INVALIDATED: "border-rose-400/35 bg-rose-400/10 text-rose-300",
 };
 
 const statusLabel: Record<StrongSwingStatus, string> = {
-  CONFIRMED: "Confirmed buy",
+  EXECUTION_READY: "Execution ready",
+  WAIT_FOR_ENTRY: "Wait for entry",
   WATCHLIST: "Awaiting confirmation",
+  RISK_OFF: "Risk off",
   INVALIDATED: "Invalidated",
 };
 
@@ -19,6 +24,17 @@ const fmt = (value: number | null, digits = 2) =>
 
 function CandidateCard({ candidate }: { candidate: StrongSwingCandidate }) {
   const passed = candidate.gates.filter((gate) => gate.passed).length;
+  const ledgerParams = new URLSearchParams({
+    assetId: candidate.assetId,
+    ticker: candidate.ticker,
+    strategy: "STRONG_SWING",
+    current: String(candidate.strongEntry),
+    entry: String(candidate.strongEntry),
+    target: String(candidate.strongTarget),
+    stop: String(candidate.strongStop),
+    trail: String(candidate.strongTrail),
+    days: String(candidate.strongExpectedDays),
+  });
   return (
     <article className="rounded-lg border border-white/10 bg-white/[0.025] p-4 sm:p-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -53,9 +69,11 @@ function CandidateCard({ candidate }: { candidate: StrongSwingCandidate }) {
 
       <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
         {candidate.gates.map((gate) => (
-          <div key={gate.key} className={`rounded-md border px-3 py-2 ${gate.passed ? "border-emerald-400/15 bg-emerald-400/[0.035]" : "border-rose-400/15 bg-rose-400/[0.035]"}`}>
+          <div key={gate.key} className={`rounded-md border px-3 py-2 ${gate.passed ? "border-emerald-400/15 bg-emerald-400/[0.035]" : gate.category === "execution" ? "border-orange-400/15 bg-orange-400/[0.035]" : "border-rose-400/15 bg-rose-400/[0.035]"}`}>
             <div className="flex items-center gap-2 text-xs font-semibold">
-              <span className={gate.passed ? "text-emerald-300" : "text-rose-300"}>{gate.passed ? "PASS" : "WAIT"}</span>
+              <span className={gate.passed ? "text-emerald-300" : gate.category === "execution" ? "text-orange-300" : "text-rose-300"}>
+                {gate.passed ? "PASS" : gate.category === "execution" ? "BLOCK" : "WAIT"}
+              </span>
               <span className="text-white/75">{gate.label}</span>
             </div>
             <p className="mt-1 text-[11px] leading-relaxed text-white/42">{gate.detail}</p>
@@ -69,25 +87,41 @@ function CandidateCard({ candidate }: { candidate: StrongSwingCandidate }) {
         <span>RS {fmt(candidate.relativeStrength20Pct, 1)}%</span>
         <span>Breakout {candidate.triggerClearanceAtr.toFixed(2)} ATR</span>
         <span>Close location {(candidate.closeLocation * 100).toFixed(0)}%</span>
+        <span>ATR risk {candidate.atrPct.toFixed(1)}%</span>
+        <span>Stop risk {candidate.stopRiskPct.toFixed(1)}%</span>
       </div>
+      {candidate.status === "EXECUTION_READY" && (
+        <div className="mt-4 border-t border-white/8 pt-4">
+          <Link
+            href={`/terminal/${candidate.country.toLowerCase()}/trade-ledger?${ledgerParams.toString()}`}
+            className="inline-flex min-h-11 items-center rounded-lg border border-emerald-400/35 bg-emerald-400/10 px-4 text-sm font-bold text-emerald-200 hover:bg-emerald-400/15"
+          >
+            Log this exact trade plan
+          </Link>
+        </div>
+      )}
     </article>
   );
 }
 
 export default function StrongSwingCandidates({ candidates }: { candidates: StrongSwingCandidate[] }) {
   const ranked = rankStrongSwingCandidates(candidates);
-  const confirmed = ranked.filter((candidate) => candidate.status === "CONFIRMED");
+  const executionReady = ranked.filter((candidate) => candidate.status === "EXECUTION_READY");
+  const waitingForEntry = ranked.filter((candidate) => candidate.status === "WAIT_FOR_ENTRY");
   const watchlist = ranked.filter((candidate) => candidate.status === "WATCHLIST");
+  const riskOff = ranked.filter((candidate) => candidate.status === "RISK_OFF");
   const invalidated = ranked.filter((candidate) => candidate.status === "INVALIDATED");
   const visibleWatchlist = watchlist.slice(0, 30);
   const visibleInvalidated = invalidated.slice(0, 20);
 
   return (
     <div className="space-y-8">
-      <div className="grid grid-cols-3 gap-2 sm:gap-3">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-5 sm:gap-3">
         {[
-          ["Confirmed", confirmed.length, "text-emerald-300"],
+          ["Execution ready", executionReady.length, "text-emerald-300"],
+          ["Wait for entry", waitingForEntry.length, "text-cyan-200"],
           ["Watchlist", watchlist.length, "text-amber-200"],
+          ["Risk off", riskOff.length, "text-orange-200"],
           ["Invalidated", invalidated.length, "text-rose-300"],
         ].map(([label, value, color]) => (
           <div key={String(label)} className="border-b border-white/10 px-1 pb-3">
@@ -97,14 +131,16 @@ export default function StrongSwingCandidates({ candidates }: { candidates: Stro
         ))}
       </div>
 
-      {confirmed.length === 0 && (
+      {executionReady.length === 0 && (
         <div className="rounded-lg border border-amber-400/20 bg-amber-400/[0.04] px-4 py-5 text-sm text-amber-100/75">
-          No stock currently passes every confirmation gate. This is intentional: first-day breakouts stay on the watchlist until follow-through is proven.
+          No stock currently passes every technical and execution-safety gate. This is intentional: missed entries, parabolic moves, excessive stop risk and circuit-prone behaviour are not actionable.
         </div>
       )}
 
-      {confirmed.length > 0 && <section className="space-y-3"><h2 className="text-sm font-bold uppercase tracking-[0.18em] text-emerald-300">Confirmed buys</h2>{confirmed.map((candidate) => <CandidateCard key={candidate.assetId} candidate={candidate} />)}</section>}
+      {executionReady.length > 0 && <section className="space-y-3"><h2 className="text-sm font-bold uppercase tracking-[0.18em] text-emerald-300">Execution ready</h2>{executionReady.map((candidate) => <CandidateCard key={candidate.assetId} candidate={candidate} />)}</section>}
+      {waitingForEntry.length > 0 && <section className="space-y-3"><h2 className="text-sm font-bold uppercase tracking-[0.18em] text-cyan-200">Wait for entry</h2>{waitingForEntry.map((candidate) => <CandidateCard key={candidate.assetId} candidate={candidate} />)}</section>}
       {watchlist.length > 0 && <section className="space-y-3"><div className="flex flex-wrap items-end justify-between gap-2"><h2 className="text-sm font-bold uppercase tracking-[0.18em] text-amber-200">Awaiting confirmation</h2>{watchlist.length > visibleWatchlist.length && <span className="text-[11px] text-white/35">Showing the strongest {visibleWatchlist.length} of {watchlist.length}</span>}</div>{visibleWatchlist.map((candidate) => <CandidateCard key={candidate.assetId} candidate={candidate} />)}</section>}
+      {riskOff.length > 0 && <details className="rounded-lg border border-orange-400/15 px-4 py-3"><summary className="cursor-pointer text-sm text-orange-200/70">Show risk-off setups ({riskOff.length})</summary><div className="mt-4 space-y-3">{riskOff.slice(0, 30).map((candidate) => <CandidateCard key={candidate.assetId} candidate={candidate} />)}</div></details>}
       {invalidated.length > 0 && <details className="rounded-lg border border-white/10 px-4 py-3"><summary className="cursor-pointer text-sm text-white/55">Show invalidated setups ({invalidated.length})</summary><div className="mt-4 space-y-3">{visibleInvalidated.map((candidate) => <CandidateCard key={candidate.assetId} candidate={candidate} />)}{invalidated.length > visibleInvalidated.length && <p className="text-xs text-white/35">Showing the highest-ranked {visibleInvalidated.length} invalidated setups.</p>}</div></details>}
     </div>
   );
