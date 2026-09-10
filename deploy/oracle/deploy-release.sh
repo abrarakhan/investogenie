@@ -14,7 +14,7 @@ sudo -u "${APP_USER}" git -C "${APP_DIR}" checkout main
 sudo -u "${APP_USER}" git -C "${APP_DIR}" pull --ff-only origin main
 
 sudo -u "${APP_USER}" bash -lc \
-  "set -a; source /etc/investogenie/investogenie.env; set +a; cd '${APP_DIR}' && npm ci && npm run build"
+  "set -a; source /etc/investogenie/investogenie.env; set +a; cd '${APP_DIR}' && npm ci --include=dev && npm run build"
 sudo -u "${APP_USER}" "${APP_DIR}/.venv/bin/pip" install -r "${APP_DIR}/pipelines/requirements.txt"
 sudo -u "${APP_USER}" "${APP_DIR}/.venv/bin/pip" install -r "${APP_DIR}/workers/requirements.txt"
 
