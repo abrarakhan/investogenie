@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Refresh active Indian stock quotes in Yahoo batches during market hours."""
+"""Refresh active Indian stock quotes and today's OHLCV in Yahoo batches."""
 
 from __future__ import annotations
 
@@ -32,12 +32,16 @@ class Quote:
     price: float
     change_pct: float | None
     as_of: date
+    open: float
+    high: float
+    low: float
+    volume: int | None
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--database-url", default=os.environ.get("DATABASE_URL", DEFAULT_DATABASE_URL))
-    parser.add_argument("--exchange", choices=sorted(SUFFIX), default="NSE")
+    parser.add_argument("--exchange", choices=["ALL", *sorted(SUFFIX)], default="ALL")
     parser.add_argument("--batch-size", type=int, default=100)
     parser.add_argument("--limit", type=int)
     parser.add_argument("--sleep", type=float, default=0.2)
@@ -103,12 +107,25 @@ def quote_from_section(section: pd.DataFrame, previous_close: float | None, toda
     if as_of != today:
         return None
     price = float(closes.iloc[-1])
+    def numeric_column(name: str) -> pd.Series:
+        if name not in section.columns:
+            return pd.Series(dtype="float64")
+        return pd.to_numeric(section[name], errors="coerce").dropna()
+
+    opens = numeric_column("Open")
+    highs = numeric_column("High")
+    lows = numeric_column("Low")
+    volumes = numeric_column("Volume")
+    open_price = float(opens.iloc[0]) if not opens.empty else price
+    high_price = float(highs.max()) if not highs.empty else price
+    low_price = float(lows.min()) if not lows.empty else price
+    volume = int(volumes.clip(lower=0).sum()) if not volumes.empty else None
     change_pct = (
         (price - previous_close) / previous_close * 100
         if previous_close is not None and previous_close > 0
         else None
     )
-    return Quote(price, change_pct, as_of)
+    return Quote(price, change_pct, as_of, open_price, high_price, low_price, volume)
 
 
 def fetch_batch(assets: list[Asset], exchange: str, retries: int, today: date) -> dict[str, Quote]:
@@ -150,7 +167,7 @@ def fetch_batch(assets: list[Asset], exchange: str, retries: int, today: date) -
     return {}
 
 
-def upsert_quotes(conn, rows: list[tuple]) -> int:
+def upsert_market_data(conn, rows: list[tuple]) -> int:
     if not rows:
         return 0
     with conn.cursor() as cur:
@@ -168,7 +185,27 @@ def upsert_quotes(conn, rows: list[tuple]) -> int:
               source=excluded.source,
               updated_at=now()
             """,
-            rows,
+            [row[:6] for row in rows],
+            page_size=500,
+        )
+        execute_values(
+            cur,
+            """
+            insert into public.daily_ohlcv
+              (asset_id,date,open,high,low,close,volume)
+            values %s
+            on conflict (asset_id,date) do update set
+              open=excluded.open,
+              high=excluded.high,
+              low=excluded.low,
+              close=excluded.close,
+              volume=excluded.volume
+            """,
+            [
+                (asset_id, as_of, open_price, high, low, price, volume)
+                for asset_id, price, _change_pct, _currency, as_of, _source,
+                    open_price, high, low, volume in rows
+            ],
             page_size=500,
         )
     conn.commit()
@@ -238,30 +275,35 @@ def main() -> None:
     today = datetime.now(ZoneInfo("Asia/Kolkata")).date()
     conn = psycopg2.connect(args.database_url)
     try:
-        benchmark_rows = sync_nifty_history(conn, args.dry_run) if args.exchange == "NSE" else 0
+        exchanges = ["NSE", "BSE"] if args.exchange == "ALL" else [args.exchange]
+        benchmark_rows = sync_nifty_history(conn, args.dry_run) if "NSE" in exchanges else 0
         print(f"Nifty market-regime history: {benchmark_rows} session(s) refreshed.")
-        assets = load_assets(conn, args.exchange, args.limit)
-        batch_size = max(1, args.batch_size)
-        resolved_count = 0
-        written = 0
-        print(f"Refreshing live quotes for {len(assets)} active {args.exchange} stocks.")
-        for start in range(0, len(assets), batch_size):
-            batch = assets[start : start + batch_size]
-            resolved = fetch_batch(batch, args.exchange, max(1, args.retries), today)
-            rows = [
-                (asset_id, quote.price, quote.change_pct, "INR", quote.as_of, "YAHOO_FINANCE_LIVE")
-                for asset_id, quote in resolved.items()
-            ]
-            resolved_count += len(resolved)
-            if not args.dry_run:
-                written += upsert_quotes(conn, rows)
-            print(f"  batch {start // batch_size + 1}: {resolved_count}/{len(assets)} resolved")
-            if args.sleep > 0:
-                time.sleep(args.sleep)
-        print(
-            f"India live quote sync complete: exchange={args.exchange} "
-            f"assets={len(assets)} resolved={resolved_count} written={written}"
-        )
+        for exchange in exchanges:
+            assets = load_assets(conn, exchange, args.limit)
+            batch_size = max(1, args.batch_size)
+            resolved_count = 0
+            written = 0
+            print(f"Refreshing live quotes and OHLCV for {len(assets)} active {exchange} stocks.")
+            for start in range(0, len(assets), batch_size):
+                batch = assets[start : start + batch_size]
+                resolved = fetch_batch(batch, exchange, max(1, args.retries), today)
+                rows = [
+                    (
+                        asset_id, quote.price, quote.change_pct, "INR", quote.as_of,
+                        "YAHOO_FINANCE_LIVE", quote.open, quote.high, quote.low, quote.volume,
+                    )
+                    for asset_id, quote in resolved.items()
+                ]
+                resolved_count += len(resolved)
+                if not args.dry_run:
+                    written += upsert_market_data(conn, rows)
+                print(f"  {exchange} batch {start // batch_size + 1}: {resolved_count}/{len(assets)} resolved")
+                if args.sleep > 0:
+                    time.sleep(args.sleep)
+            print(
+                f"India live sync complete: exchange={exchange} "
+                f"assets={len(assets)} resolved={resolved_count} written={written}"
+            )
     finally:
         conn.close()
 

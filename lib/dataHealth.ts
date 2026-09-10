@@ -361,17 +361,29 @@ export async function getDataHealthSummary(now = new Date()): Promise<SourceHeal
        select 'BSE Quotes', max(q.updated_at), max(q.as_of)::text, count(*), 1, 'BSE/inferred Indian quote rows'
          from public.latest_quotes q join public.assets a on a.id=q.asset_id where a.country='IN' and a.exchange='BSE' and coalesce(a.is_active,true)
        union all
-       select 'NSE OHLCV History', max(o.date)::timestamptz, max(o.date)::text, count(distinct o.asset_id), 24, 'NSE assets with OHLCV bars'
-         from public.daily_ohlcv o join public.assets a on a.id=o.asset_id where a.country='IN' and a.exchange='NSE' and a.asset_class='STOCK' and coalesce(a.is_active,true)
+       select 'NSE OHLCV History', max(o.date)::timestamptz, max(o.date)::text, count(*), 24, 'NSE assets with OHLCV bars'
+         from public.assets a
+         cross join lateral (
+           select h.date from public.daily_ohlcv h where h.asset_id=a.id order by h.date desc limit 1
+         ) o
+        where a.country='IN' and a.exchange='NSE' and a.asset_class='STOCK' and coalesce(a.is_active,true)
        union all
-       select 'BSE OHLCV History', max(o.date)::timestamptz, max(o.date)::text, count(distinct o.asset_id), 24, 'BSE assets with OHLCV bars'
-         from public.daily_ohlcv o join public.assets a on a.id=o.asset_id where a.country='IN' and a.exchange='BSE' and a.asset_class='STOCK' and coalesce(a.is_active,true)
+       select 'BSE OHLCV History', max(o.date)::timestamptz, max(o.date)::text, count(*), 24, 'BSE assets with OHLCV bars'
+         from public.assets a
+         cross join lateral (
+           select h.date from public.daily_ohlcv h where h.asset_id=a.id order by h.date desc limit 1
+         ) o
+        where a.country='IN' and a.exchange='BSE' and a.asset_class='STOCK' and coalesce(a.is_active,true)
        union all
        select 'US Quotes', max(q.updated_at), null::text, count(*), 1, 'US latest quote rows'
          from public.latest_quotes q join public.assets a on a.id=q.asset_id where a.country='US' and a.asset_class='STOCK' and coalesce(a.is_active,true) and a.exchange in ('NASDAQ','NYSE','AMEX','NYSEARCA','NYSEAMERICAN')
        union all
-       select 'US OHLCV History', max(o.date)::timestamptz, null::text, count(distinct o.asset_id), 24, 'US assets with OHLCV bars'
-         from public.daily_ohlcv o join public.assets a on a.id=o.asset_id where a.country='US' and a.asset_class='STOCK' and coalesce(a.is_active,true) and a.exchange in ('NASDAQ','NYSE','AMEX','NYSEARCA','NYSEAMERICAN')
+       select 'US OHLCV History', max(o.date)::timestamptz, null::text, count(*), 24, 'US assets with OHLCV bars'
+         from public.assets a
+         cross join lateral (
+           select h.date from public.daily_ohlcv h where h.asset_id=a.id order by h.date desc limit 1
+         ) o
+        where a.country='US' and a.asset_class='STOCK' and coalesce(a.is_active,true) and a.exchange in ('NASDAQ','NYSE','AMEX','NYSEARCA','NYSEAMERICAN')
        union all
        select 'US Fundamentals', max(f.updated_at), null::text, count(distinct f.asset_id), 168, 'US financial report rows'
          from public.asset_financial_reports f join public.assets a on a.id=f.asset_id where a.country='US'
@@ -392,13 +404,17 @@ export async function getDataHealthSummary(now = new Date()): Promise<SourceHeal
        from counts c
        left join latest_cron l on lower(c.source) like '%' || replace(l.job, '-', ' ') || '%'`,
   ), query<IndianCoverageRow>(
-    `with hist as (
-       select asset_id,max(date) latest_date from public.daily_ohlcv group by asset_id
-     ), scoped as (
+    `with scoped as (
        select a.id,a.exchange,q.as_of::date quote_date,h.latest_date
          from public.assets a
          left join public.latest_quotes q on q.asset_id=a.id
-         left join hist h on h.asset_id=a.id
+         left join lateral (
+           select o.date latest_date
+             from public.daily_ohlcv o
+            where o.asset_id=a.id
+            order by o.date desc
+            limit 1
+         ) h on true
         where a.country='IN' and a.exchange in ('NSE','BSE')
           and a.asset_class='STOCK' and coalesce(a.is_active,true)
           and not exists(select 1 from public.asset_tracking_exclusions x where x.asset_id=a.id)
@@ -478,9 +494,7 @@ function parseDetail(value: Record<string, unknown> | string | null): Record<str
 
 export async function getCoverageGaps(userId: string, now = new Date()): Promise<CoverageGap[]> {
   const rows = await query<AssetGapRow>(
-    `with hist as (select asset_id, max(date)::text latest_history_date from public.daily_ohlcv group by asset_id),
-          fin as (select asset_id, max(period_end_date) latest_fundamentals_date from public.asset_financial_reports group by asset_id),
-          uni as (select distinct asset_id from public.universe_members where universe in ('NIFTY_500','SP_500')),
+    `with uni as (select distinct asset_id from public.universe_members where universe in ('NIFTY_500','SP_500')),
           latest_signal_scan as (
             select country, max(as_of) as_of from public.swing_signals group by country
           ),
@@ -526,8 +540,20 @@ export async function getCoverageGaps(userId: string, now = new Date()): Promise
                    (fwd.asset_id is not null) open_forward_test
               from public.assets a
               left join public.latest_quotes q on q.asset_id = a.id
-              left join hist on hist.asset_id = a.id
-              left join fin on fin.asset_id = a.id
+              left join lateral (
+                select o.date::text latest_history_date
+                  from public.daily_ohlcv o
+                 where o.asset_id=a.id
+                 order by o.date desc
+                 limit 1
+              ) hist on true
+              left join lateral (
+                select f.period_end_date latest_fundamentals_date
+                  from public.asset_financial_reports f
+                 where f.asset_id=a.id
+                 order by f.period_end_date desc
+                 limit 1
+              ) fin on true
               left join uni on uni.asset_id = a.id
               left join swing on swing.asset_id = a.id
               left join fwd on fwd.asset_id = a.id
@@ -625,11 +651,9 @@ export async function getRecentCronLogs(limit = 50): Promise<CronLogEntry[]> {
 
 export async function getQuoteNoHistoryCount(): Promise<number> {
   const row = await queryOne<{ count: string }>(
-    `with scoped as (
-       select a.ticker, a.country::text market, bool_or(o.asset_id is not null) has_history
+    `select count(distinct (a.country, a.ticker))::text count
          from public.assets a
          join public.latest_quotes q on q.asset_id = a.id
-         left join public.daily_ohlcv o on o.asset_id = a.id
         where a.asset_class='STOCK'
           and a.country in ('IN','US')
           and coalesce(a.is_active, true)
@@ -638,16 +662,15 @@ export async function getQuoteNoHistoryCount(): Promise<number> {
             (a.country='IN' and a.exchange in ('NSE','BSE'))
             or (a.country='US' and a.exchange in ('NASDAQ','NYSE','AMEX','NYSEARCA','NYSEAMERICAN'))
           )
-        group by a.ticker, a.country
-     )
-     select count(*)::text
-       from scoped
-      where not has_history`,
+          and not exists(select 1 from public.daily_ohlcv o where o.asset_id=a.id)`,
   );
   return Number(row?.count ?? 0);
 }
 
-export async function getDataHealthPageData(userId: string): Promise<DataHealthPageData> {
+const HEALTH_CACHE_TTL_MS = 30_000;
+const healthPageCache = new Map<string, { expiresAt: number; value: Promise<DataHealthPageData> }>();
+
+async function loadDataHealthPageData(userId: string): Promise<DataHealthPageData> {
   const now = new Date();
   const [sources, gaps, recentRuns, backfill, quoteNoHistoryCount] = await Promise.all([
     getDataHealthSummary(now),
@@ -666,4 +689,17 @@ export async function getDataHealthPageData(userId: string): Promise<DataHealthP
     backfill,
     quoteNoHistoryCount,
   };
+}
+
+export async function getDataHealthPageData(userId: string): Promise<DataHealthPageData> {
+  const now = Date.now();
+  const cached = healthPageCache.get(userId);
+  if (cached && cached.expiresAt > now) return cached.value;
+
+  const value = loadDataHealthPageData(userId).catch((error) => {
+    healthPageCache.delete(userId);
+    throw error;
+  });
+  healthPageCache.set(userId, { expiresAt: now + HEALTH_CACHE_TTL_MS, value });
+  return value;
 }

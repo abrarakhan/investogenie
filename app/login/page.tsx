@@ -6,7 +6,7 @@ import { isPasswordResetEnabled } from "./actions";
 
 // If already authenticated, skip straight to the terminal.
 export default async function LoginPage() {
-  if (await getSessionUser()) redirect("/terminal/us");
+  if (await getSessionUser()) redirect("/terminal/in");
   // Resolved on the server so the reset option is absent, not merely hidden, when no
   // recovery key is configured.
   const resetEnabled = await isPasswordResetEnabled();

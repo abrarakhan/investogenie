@@ -10,6 +10,9 @@ import { queryOne } from "@/lib/db";
 
 const COOKIE = "ig_session";
 const MAX_AGE = 60 * 60 * 24 * 7; // 7 days
+const secureSessionCookie =
+  process.env.SESSION_COOKIE_SECURE === "1"
+  || (process.env.SESSION_COOKIE_SECURE !== "0" && process.env.NODE_ENV === "production");
 const secret = new TextEncoder().encode(
   process.env.SESSION_SECRET ?? "dev-insecure-session-secret-change-me-0123456789",
 );
@@ -34,7 +37,7 @@ export async function createSession(user: SessionUser): Promise<void> {
   const jar = await cookies();
   jar.set(COOKIE, token, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    secure: secureSessionCookie,
     sameSite: "lax",
     path: "/",
     maxAge: MAX_AGE,

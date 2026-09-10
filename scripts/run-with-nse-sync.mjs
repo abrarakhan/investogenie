@@ -35,6 +35,9 @@ const syncHour = Number(process.env.NSE_SYNC_HOUR_IST ?? 18);
 const syncMinute = Number(process.env.NSE_SYNC_MINUTE_IST ?? 30);
 const syncSleep = process.env.NSE_SYNC_SLEEP_SECONDS ?? "1.2";
 const syncDisabled = process.env.NSE_SYNC_DISABLED === "1";
+// Production restarts must become responsive before optional maintenance jobs
+// begin. Timed schedules remain active when immediate startup runs are skipped.
+const startupSyncDisabled = process.env.STARTUP_SYNC_DISABLED === "1";
 const nseSyncProvider = (process.env.NSE_SYNC_PROVIDER ?? "bhavcopy").toLowerCase();
 const nseBhavcopyMaxSessions = process.env.NSE_BHAVCOPY_MAX_SESSIONS ?? "20";
 // The single scheduleDailySync() attempt at syncHour:syncMinute IST treats a
@@ -471,13 +474,13 @@ async function runQuoteRefreshRequest(trigger) {
 function runIndiaLiveQuoteSync(trigger) {
   if (!python) return Promise.reject(new Error("no Python executable found"));
   if (indiaLiveQuoteChild) {
-    console.log(`[india-live-quotes] skipping ${trigger}; prior NSE sync still running`);
+    console.log(`[india-live-quotes] skipping ${trigger}; prior NSE/BSE sync still running`);
     return Promise.resolve();
   }
 
   const args = [
     indiaQuotePipeline,
-    "--exchange", "NSE",
+    "--exchange", "ALL",
     "--batch-size", indiaQuoteBatchSize,
     "--sleep", indiaQuoteSleep,
   ];
@@ -486,7 +489,7 @@ function runIndiaLiveQuoteSync(trigger) {
   }
 
   return new Promise((resolveRun, rejectRun) => {
-    console.log(`[india-live-quotes] starting ${trigger} batched NSE refresh`);
+    console.log(`[india-live-quotes] starting ${trigger} batched NSE/BSE Yahoo refresh`);
     indiaLiveQuoteChild = spawn(python, args, {
       cwd: root,
       env: process.env,
@@ -495,8 +498,8 @@ function runIndiaLiveQuoteSync(trigger) {
     indiaLiveQuoteChild.once("error", rejectRun);
     indiaLiveQuoteChild.once("close", (code, signal) => {
       indiaLiveQuoteChild = null;
-      if (signal) rejectRun(new Error(`NSE live quote refresh stopped by ${signal}`));
-      else if (code !== 0) rejectRun(new Error(`NSE live quote refresh failed with exit code ${code}`));
+      if (signal) rejectRun(new Error(`India live quote refresh stopped by ${signal}`));
+      else if (code !== 0) rejectRun(new Error(`India live quote refresh failed with exit code ${code}`));
       else resolveRun();
     });
   });
@@ -508,7 +511,7 @@ async function runMarketHoursQuoteRefresh(trigger) {
     return;
   }
   const indiaOpen = isIndiaMarketOpen();
-  const usOpen = isUsMarketOpen();
+  const usOpen = !usQuoteDisabled && isUsMarketOpen();
   if (!indiaOpen && !usOpen) {
     console.log(`[market-hours-quotes] skipping ${trigger}; India and US markets are closed`);
     return;
@@ -545,7 +548,7 @@ function scheduleMarketHoursQuoteRefresh() {
     () => runMarketHoursQuoteRefresh("market-hours"),
     marketHoursQuoteRefreshIntervalMinutes * 60 * 1000,
   );
-  setTimeout(() => runMarketHoursQuoteRefresh("startup-market-hours"), 0);
+  if (!startupSyncDisabled) setTimeout(() => runMarketHoursQuoteRefresh("startup-market-hours"), 0);
 }
 
 async function runNewsRefresh(trigger) {
@@ -588,7 +591,7 @@ function scheduleNewsRefresh() {
   }
   console.log(`[news-intelligence] refresh every ${newsRefreshIntervalMinutes} minutes during India 09:15-15:30 IST and US 09:30-16:00 ET`);
   newsRefreshTimer = setInterval(() => runNewsRefresh("recurring"), newsRefreshIntervalMinutes * 60 * 1000);
-  setTimeout(() => runNewsRefresh("startup"), 5_000);
+  if (!startupSyncDisabled) setTimeout(() => runNewsRefresh("startup"), 5_000);
 }
 
 async function runGmailDisclosureSync(trigger) {
@@ -626,7 +629,7 @@ function scheduleGmailDisclosureSync() {
     () => runGmailDisclosureSync("recurring"),
     gmailDisclosureSyncIntervalHours * 60 * 60 * 1000,
   );
-  setTimeout(() => runGmailDisclosureSync("startup"), 15_000);
+  if (!startupSyncDisabled) setTimeout(() => runGmailDisclosureSync("startup"), 15_000);
 }
 
 async function runBackfillCron(label) {
@@ -666,7 +669,7 @@ function scheduleBackfillCron() {
   if (initialClock.hour >= backfillIndiaHour) lastBackfillIndiaDate = initialClock.date;
   if (initialClock.hour >= backfillUsHour) lastBackfillUsDate = initialClock.date;
   console.log(`[backfill] queued OHLCV checks after ${backfillIndiaHour}:00 IST and ${backfillUsHour}:00 IST`);
-  setTimeout(() => runBackfillCron("startup"), 45_000);
+  if (!startupSyncDisabled) setTimeout(() => runBackfillCron("startup"), 45_000);
   backfillTimer = setInterval(() => {
     const clock = istClock();
     if (clock.hour >= backfillIndiaHour && lastBackfillIndiaDate !== clock.date) {
@@ -1299,18 +1302,22 @@ scheduleNewsRefresh();
 scheduleGmailDisclosureSync();
 scheduleBackfillCron();
 scheduleEmailDigest();
-setTimeout(() => {
-  runAmfiSchemeMasterSync("startup");
-  if (syncDisabled) {
-    runMarketRefresh("startup");
-    runFundamentals("startup");
-  } else {
-    runSync("startup");
-  }
-  // Print summary after startup syncs have time to complete (10 seconds)
+if (startupSyncDisabled) {
+  console.log("[startup] immediate maintenance jobs disabled; recurring schedules remain active");
+} else {
   setTimeout(() => {
-    if (syncStats.attempted > 0) {
-      printSyncSummary();
+    runAmfiSchemeMasterSync("startup");
+    if (syncDisabled) {
+      runMarketRefresh("startup");
+      runFundamentals("startup");
+    } else {
+      runSync("startup");
     }
-  }, 10000);
-}, 0);
+    // Print summary after startup syncs have time to complete (10 seconds)
+    setTimeout(() => {
+      if (syncStats.attempted > 0) {
+        printSyncSummary();
+      }
+    }, 10000);
+  }, 0);
+}

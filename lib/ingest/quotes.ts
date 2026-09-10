@@ -483,20 +483,31 @@ export async function refreshQuotes(databaseUrl: string, startISO = localToday()
     for (const [t, q] of nse.quotes) { const id = nseMap.get(t); if (id) put({ assetId: id, price: q.price, changePct: q.changePct, currency: "INR", asOf: nse.asOf, source: "NSE_BHAVCOPY" }); }
     for (const [t, q] of bse.quotes) { const id = bseMap.get(t); if (id) put({ assetId: id, price: q.price, changePct: q.changePct, currency: "INR", asOf: bse.asOf, source: "BSE_BHAVCOPY" }); }
     if (isMarketOpen("IN")) {
-      const recentLive = await client.query<{ assetId: string }>(
-        `select asset_id "assetId"
+      const recentLive = await client.query<{ assetId: string; source: string }>(
+        `select asset_id "assetId",source
            from public.latest_quotes
           where source = any($1::text[])
             and as_of = (now() at time zone 'Asia/Kolkata')::date
             and updated_at >= now() - interval '30 minutes'`,
-        [["GOOGLE_FINANCE_LIVE", "YAHOO_FINANCE_LIVE"]],
+        [["BREEZE_LIVE", "GOOGLE_FINANCE_LIVE", "YAHOO_FINANCE_LIVE"]],
+      );
+      const recentPrimaryIds = new Set(
+        recentLive.rows
+          .filter((row) => row.source === "YAHOO_FINANCE_LIVE" || row.source === "BREEZE_LIVE")
+          .map((row) => row.assetId),
       );
       // Bhavcopy is authoritative for EOD history, but must never replace a
       // current-session intraday quote. Retaining the existing row also keeps
       // its real provider timestamp instead of making an old close look fresh.
       for (const row of recentLive.rows) rowsByAsset.delete(row.assetId);
+      for (const [assetId, q] of indiaLive) {
+        if (!recentPrimaryIds.has(assetId)) {
+          put({ assetId, price: q.price, changePct: q.changePct, currency: "INR", asOf: startISO, source: q.source ?? "GOOGLE_FINANCE_LIVE" });
+        }
+      }
+    } else {
+      for (const [assetId, q] of indiaLive) put({ assetId, price: q.price, changePct: q.changePct, currency: "INR", asOf: startISO, source: q.source ?? "GOOGLE_FINANCE_LIVE" });
     }
-    for (const [assetId, q] of indiaLive) put({ assetId, price: q.price, changePct: q.changePct, currency: "INR", asOf: startISO, source: q.source ?? "GOOGLE_FINANCE_LIVE" });
     const rows = [...rowsByAsset.values()];
 
     const cols = 6;
