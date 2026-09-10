@@ -26,8 +26,9 @@ if [ ! -x .venv/bin/python ]; then
   python3 -m venv .venv
 fi
 
-if ! .venv/bin/python -c "import openpyxl, pandas, psycopg2, requests, xlrd, yfinance" >/dev/null 2>&1; then
+if ! .venv/bin/python -c "import breeze_connect, cryptography, openpyxl, pandas, psycopg2, requests, xlrd, yfinance" >/dev/null 2>&1; then
   .venv/bin/pip install -r pipelines/requirements.txt
+  .venv/bin/pip install -r workers/requirements.txt
 fi
 
 echo "Building InvestoGenie for background operation..."

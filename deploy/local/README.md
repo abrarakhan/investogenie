@@ -26,6 +26,7 @@ createdb investogenie 2>/dev/null || true
 npm install
 python3 -m venv .venv
 .venv/bin/pip install -r pipelines/requirements.txt
+.venv/bin/pip install -r workers/requirements.txt
 npm run deploy:check:local
 ```
 
@@ -135,6 +136,11 @@ npm start
 ```
 
 Both modes load `.env.local`. Stop with `Ctrl+C`.
+
+Both modes also start the optional Breeze cash-market worker. With no Breeze
+credentials it waits quietly; after the API key, secret, and daily token are
+saved under **Settings > ICICI Breeze market data**, it connects within 30
+seconds. Set `BREEZE_WORKER_DISABLED=1` only when the feed should remain off.
 
 ## Relationship to Oracle
 

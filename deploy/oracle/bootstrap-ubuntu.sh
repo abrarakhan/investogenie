@@ -44,6 +44,7 @@ fi
 sudo -u "${APP_USER}" python3 -m venv "${APP_DIR}/.venv"
 sudo -u "${APP_USER}" "${APP_DIR}/.venv/bin/pip" install --upgrade pip wheel
 sudo -u "${APP_USER}" "${APP_DIR}/.venv/bin/pip" install -r "${APP_DIR}/pipelines/requirements.txt"
+sudo -u "${APP_USER}" "${APP_DIR}/.venv/bin/pip" install -r "${APP_DIR}/workers/requirements.txt"
 
 pushd "${APP_DIR}" >/dev/null
 sudo -u "${APP_USER}" npm ci
@@ -95,7 +96,10 @@ systemctl enable --now postgresql nginx
 
 install -m 0644 "${APP_DIR}/deploy/oracle/investogenie.service" \
   /etc/systemd/system/investogenie.service
+install -m 0644 "${APP_DIR}/deploy/oracle/investogenie-breeze.service" \
+  /etc/systemd/system/investogenie-breeze.service
 systemctl daemon-reload
+systemctl enable --now investogenie-breeze.service
 
 ufw allow OpenSSH
 ufw allow 'Nginx Full'

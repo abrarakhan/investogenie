@@ -27,7 +27,8 @@
     "sync:macro": ".venv/bin/python pipelines/macro_sync.py",
     "backfill": "node scripts/backfill-ohlcv.mjs",
     "backfill:fast": "node --env-file-if-exists=.env.local scripts/fast-backfill.mjs",
-    "worker:breeze": ".venv/bin/python workers/breeze_daemon.py",
+    "worker:breeze": ".venv/bin/python workers/breeze_market_daemon.py",
+    "worker:breeze-oi": ".venv/bin/python workers/breeze_daemon.py",
     "smoke": "node scripts/smoke-routes.mjs",
     "test": "vitest run",
     "test:watch": "vitest"

@@ -137,3 +137,28 @@ ssh -N -L 5433:127.0.0.1:5432 ubuntu@YOUR_RESERVED_IP
 ```
 
 Then connect the desktop database tool to `127.0.0.1:5433`.
+# ICICI Breeze live market data
+
+The optional Breeze worker makes ICICI WebSocket ticks the primary intraday
+source for up to 750 priority NSE/BSE cash stocks: open ledger trades, active
+swing signals, then Nifty 500 members. Yahoo/Google still refresh the broader
+active universe every 15 minutes, and Bhavcopy stays enabled for official EOD
+reconciliation and corporate-action continuity.
+
+1. Allowlist the server's static public IP in the ICICI Breeze app settings.
+2. Deploy normally; the release script installs worker dependencies and keeps
+   `investogenie-breeze.service` running in a credential-waiting state.
+3. Open **Settings > ICICI Breeze market data** in InvestoGenie.
+4. Enter the stable API key and secret during first-time setup, then paste the
+   newly generated session token each trading day. Saving a replacement token
+   makes the worker reconnect automatically within 30 seconds. Credentials are
+   encrypted in PostgreSQL and are never returned to the browser.
+5. Follow logs with `sudo journalctl -u investogenie-breeze -f`.
+
+The worker does not place, modify, or cancel orders. It only reads market data
+and writes `BREEZE_LIVE` rows to `latest_quotes` plus the current daily bar to
+`daily_ohlcv`.
+
+The separate derivatives/OI bridge uses the same Settings credentials but is
+kept operator-started to avoid opening a second Breeze session unintentionally:
+`npm run worker:breeze-oi`. It requires populated derivative contract metadata.

@@ -18,7 +18,11 @@ check("Node.js", major >= 20, `${process.version} (requires 20+)`);
 const python = process.env.PYTHON_BIN || ".venv/bin/python";
 const py = spawnSync(python, ["--version"], { encoding: "utf8" });
 check("Python environment", py.status === 0, (py.stdout || py.stderr || python).trim());
-check("Python requirements", existsSync("pipelines/requirements.txt"), "pipelines/requirements.txt");
+check(
+  "Python requirements",
+  existsSync("pipelines/requirements.txt") && existsSync("workers/requirements.txt"),
+  "pipelines/requirements.txt + workers/requirements.txt",
+);
 
 const required = ["DATABASE_URL", "SESSION_SECRET", "CRON_SECRET", "CREDENTIAL_ENCRYPTION_KEY"];
 for (const name of required) {

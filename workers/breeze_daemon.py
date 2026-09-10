@@ -4,11 +4,9 @@
 Runs a live Breeze WebSocket session, subscribes to NSE derivatives in full mode,
 and batches real-time Open Interest updates into public.daily_ohlcv.
 
-Required environment:
-  BREEZE_API_KEY
-  BREEZE_API_SECRET
-  BREEZE_SESSION_TOKEN          # daily session token
-  DATABASE_URL                  # defaults to local investogenie Postgres
+Credentials are read from the encrypted Settings record used by the cash-feed
+worker, with BREEZE_API_KEY/BREEZE_API_SECRET/BREEZE_SESSION_TOKEN retained as
+an operator fallback. DATABASE_URL defaults to local InvestoGenie Postgres.
 
 Contract sources, in priority order:
   1. BREEZE_CONTRACTS as semicolon-separated rows:
@@ -42,6 +40,8 @@ from zoneinfo import ZoneInfo
 
 import psycopg2
 from psycopg2.extras import execute_values
+
+from breeze_market_daemon import wait_for_breeze_credentials
 
 try:
     from breeze_connect import BreezeConnect
@@ -143,6 +143,7 @@ class OIBatcher:
         self.pending: dict[tuple[str, dt.date], dict[str, Any]] = {}
         self.last_seen: dict[str, float] = {}
         self.lock = threading.Lock()
+        self.flush_lock = threading.Lock()
         self.stop_event = threading.Event()
         self.thread = threading.Thread(target=self._loop, name="oi-flusher", daemon=True)
         self.conn = psycopg2.connect(dsn)
@@ -168,6 +169,10 @@ class OIBatcher:
             self.flush()
 
     def flush(self) -> int:
+        with self.flush_lock:
+            return self._flush_locked()
+
+    def _flush_locked(self) -> int:
         with self.lock:
             rows = list(self.pending.values())
             self.pending.clear()
@@ -415,11 +420,17 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    api_key = env("BREEZE_API_KEY")
-    api_secret = env("BREEZE_API_SECRET")
-    session_token = env("BREEZE_SESSION_TOKEN")
-    if not api_key or not api_secret or not session_token:
-        raise SystemExit("Set BREEZE_API_KEY, BREEZE_API_SECRET, and BREEZE_SESSION_TOKEN before starting the daemon")
+    stop_event = threading.Event()
+
+    def stop(signum: int, _frame: Any) -> None:
+        print(f"[breeze-oi] stopping on signal {signum}")
+        stop_event.set()
+
+    signal.signal(signal.SIGINT, stop)
+    signal.signal(signal.SIGTERM, stop)
+    credentials = wait_for_breeze_credentials(stop_event)
+    if not credentials:
+        return 0
 
     exchange_code = env("BREEZE_EXCHANGE_CODE", "NFO") or "NFO"
     mode_full = env("BREEZE_MODE_FULL", "MODE_FULL") or "MODE_FULL"
@@ -443,8 +454,6 @@ def main() -> int:
         return 0
 
     batcher = OIBatcher(resolve_database_url(), args.flush_seconds, args.max_batch, args.min_asset_interval)
-    stop_event = threading.Event()
-
     def on_ticks(ticks: Any) -> None:
         for tick in extract_tick_items(ticks):
             oi = find_oi(tick)
@@ -458,8 +467,8 @@ def main() -> int:
             volume = first_number(tick, VOLUME_KEYS, want_int=True)
             batcher.enqueue(contract.asset_id, today_ist(), oi, price, volume)  # intraday OI updates today's bar
 
-    breeze = BreezeConnect(api_key=api_key)
-    breeze.generate_session(api_secret=api_secret, session_token=session_token)
+    breeze = BreezeConnect(api_key=credentials.api_key)
+    breeze.generate_session(api_secret=credentials.api_secret, session_token=credentials.session_token)
     breeze.on_ticks = on_ticks
     breeze.ws_connect()
     print("[breeze-oi] websocket connected")
@@ -470,13 +479,6 @@ def main() -> int:
             time.sleep(float(env("BREEZE_SUBSCRIBE_SLEEP", "0.15") or "0.15"))
         except Exception as exc:
             print(f"[breeze-oi] subscription failed for {contract.local_ticker}: {exc}", file=sys.stderr)
-
-    def stop(signum: int, _frame: Any) -> None:
-        print(f"[breeze-oi] stopping on signal {signum}")
-        stop_event.set()
-
-    signal.signal(signal.SIGINT, stop)
-    signal.signal(signal.SIGTERM, stop)
 
     try:
         while not stop_event.wait(1):

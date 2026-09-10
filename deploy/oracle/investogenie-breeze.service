@@ -1,6 +1,6 @@
 [Unit]
-Description=InvestoGenie web application and market-data scheduler
-After=network-online.target postgresql.service
+Description=InvestoGenie ICICI Breeze live market-data worker
+After=network-online.target postgresql.service investogenie.service
 Wants=network-online.target
 Requires=postgresql.service
 
@@ -10,14 +10,10 @@ User=investogenie
 Group=investogenie
 WorkingDirectory=/opt/investogenie/app
 EnvironmentFile=/etc/investogenie/investogenie.env
-Environment=NODE_ENV=production
-Environment=BREEZE_WORKER_MANAGED_EXTERNALLY=1
-ExecStart=/usr/bin/npm start
+ExecStart=/opt/investogenie/app/.venv/bin/python workers/breeze_market_daemon.py
 Restart=on-failure
-RestartSec=10
-TimeoutStartSec=180
-TimeoutStopSec=90
-KillSignal=SIGTERM
+RestartSec=20
+TimeoutStopSec=30
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full

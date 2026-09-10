@@ -44,6 +44,12 @@ export default function CredentialsForm({ initialCreds }: Props) {
   const [newsProvider, setNewsProvider] = useState<NewsProvider>(initialCreds?.newsProvider ?? "gnews");
   const [newsKey, setNewsKey] = useState("");
   const [newsKeySet, setNewsKeySet] = useState(!!initialCreds?.newsApiKeySet);
+  const [breezeApiKey, setBreezeApiKey] = useState("");
+  const [breezeApiSecret, setBreezeApiSecret] = useState("");
+  const [breezeSessionToken, setBreezeSessionToken] = useState("");
+  const [breezeApiKeySet, setBreezeApiKeySet] = useState(!!initialCreds?.breezeApiKeySet);
+  const [breezeApiSecretSet, setBreezeApiSecretSet] = useState(!!initialCreds?.breezeApiSecretSet);
+  const [breezeSessionTokenSet, setBreezeSessionTokenSet] = useState(!!initialCreds?.breezeSessionTokenSet);
 
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
@@ -152,11 +158,94 @@ export default function CredentialsForm({ initialCreds }: Props) {
     }
   };
 
+  const handleSaveBreeze = async () => {
+    if (!breezeApiKeySet && !breezeApiKey.trim()) {
+      setMessage({ type: "error", text: "Enter the Breeze API key for first-time setup." });
+      return;
+    }
+    if (!breezeApiSecretSet && !breezeApiSecret.trim()) {
+      setMessage({ type: "error", text: "Enter the Breeze API secret for first-time setup." });
+      return;
+    }
+    if (!breezeSessionToken.trim()) {
+      setMessage({ type: "error", text: "Enter today's Breeze session token." });
+      return;
+    }
+    setLoading(true);
+    setMessage(null);
+    try {
+      await updateCredentials({
+        breezeApiKey: breezeApiKey || undefined,
+        breezeApiSecret: breezeApiSecret || undefined,
+        breezeSessionToken,
+      });
+      if (breezeApiKey) setBreezeApiKeySet(true);
+      if (breezeApiSecret) setBreezeApiSecretSet(true);
+      setBreezeSessionTokenSet(true);
+      setBreezeApiKey("");
+      setBreezeApiSecret("");
+      setBreezeSessionToken("");
+      setMessage({ type: "success", text: "Breeze credentials saved. The live worker will connect or reconnect within 30 seconds." });
+    } catch (err) {
+      setMessage({ type: "error", text: err instanceof Error ? err.message : "Failed to save Breeze credentials" });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleClearBreeze = async () => {
+    setLoading(true);
+    try {
+      await clearCredential("breeze");
+      setBreezeApiKeySet(false);
+      setBreezeApiSecretSet(false);
+      setBreezeSessionTokenSet(false);
+      setMessage({ type: "success", text: "Breeze credentials cleared." });
+    } catch (err) {
+      setMessage({ type: "error", text: err instanceof Error ? err.message : "Failed to clear Breeze credentials" });
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const inputCls =
     "mt-1 w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-white outline-none focus:border-[var(--ig-primary)]";
 
   return (
     <div className="space-y-8">
+      <div className="rounded-xl border border-white/10 bg-white/[0.03] p-6">
+        <h3 className="mb-1 text-lg font-semibold">ICICI Breeze market data</h3>
+        <p className="mb-4 text-sm text-white/50">
+          Optional primary live feed for priority NSE/BSE stocks. Yahoo and Google remain active as the 15-minute fallback, and Bhavcopy remains the end-of-day authority. Generate a fresh Breeze session token before each trading day.
+        </p>
+        <div className="space-y-4">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <label className="block">
+              <span className="text-sm font-medium text-white/80">API key</span>
+              <input type="password" value={breezeApiKey} onChange={(event) => setBreezeApiKey(event.target.value)} placeholder={breezeApiKeySet ? "Saved; leave blank to keep" : "Breeze API key"} disabled={loading} className={inputCls} autoComplete="off" />
+            </label>
+            <label className="block">
+              <span className="text-sm font-medium text-white/80">API secret</span>
+              <input type="password" value={breezeApiSecret} onChange={(event) => setBreezeApiSecret(event.target.value)} placeholder={breezeApiSecretSet ? "Saved; leave blank to keep" : "Breeze API secret"} disabled={loading} className={inputCls} autoComplete="new-password" />
+            </label>
+          </div>
+          <label className="block">
+            <span className="text-sm font-medium text-white/80">Today&apos;s session token</span>
+            <input type="password" value={breezeSessionToken} onChange={(event) => setBreezeSessionToken(event.target.value)} placeholder={breezeSessionTokenSet ? "Paste a new daily token" : "Daily Breeze session token"} disabled={loading} className={inputCls} autoComplete="off" />
+            <span className="mt-1 block text-xs text-white/40">
+              {initialCreds?.breezeSessionUpdatedAt ? `Last replaced ${new Date(initialCreds.breezeSessionUpdatedAt).toISOString().slice(0, 16).replace("T", " ")} UTC. ` : ""}
+              The API key and secret are needed only once; replace the session token daily.
+            </span>
+          </label>
+          <div className="flex flex-wrap gap-2">
+            <button onClick={handleSaveBreeze} disabled={loading} className="rounded-lg bg-gradient-to-r from-[var(--ig-primary)] to-[var(--ig-accent)] px-4 py-2 text-sm font-semibold text-black disabled:opacity-50">
+              {loading ? "Saving..." : "Save and reconnect Breeze"}
+            </button>
+            {(breezeApiKeySet || breezeApiSecretSet || breezeSessionTokenSet) && <button onClick={handleClearBreeze} disabled={loading} className="rounded-lg border border-rose-500/30 px-4 py-2 text-sm text-rose-400 hover:bg-rose-500/10 disabled:opacity-50">Clear Breeze credentials</button>}
+          </div>
+        </div>
+      </div>
+
       {/* AI Provider */}
       <div className="rounded-xl border border-white/10 bg-white/[0.03] p-6">
         <h3 className="mb-1 text-lg font-semibold">🤖 AI model</h3>

@@ -23,6 +23,10 @@ export interface StoredCredentials {
   aiApiKeySet: boolean;
   newsProvider: NewsProvider | null;
   newsApiKeySet: boolean;
+  breezeApiKeySet: boolean;
+  breezeApiSecretSet: boolean;
+  breezeSessionTokenSet: boolean;
+  breezeSessionUpdatedAt: Date | null;
   updatedAt: Date;
 }
 
@@ -36,6 +40,9 @@ export interface CredentialsInput {
   aiApiKey?: string;
   newsProvider?: NewsProvider;
   newsApiKey?: string;
+  breezeApiKey?: string;
+  breezeApiSecret?: string;
+  breezeSessionToken?: string;
 }
 
 export type NewsProvider = "alpha_vantage" | "gnews" | "newsapi";
@@ -53,12 +60,18 @@ interface CredsRow {
   ai_api_key_encrypted: string | null;
   news_provider: string | null;
   news_api_key_encrypted: string | null;
+  breeze_api_key_encrypted: string | null;
+  breeze_api_secret_encrypted: string | null;
+  breeze_session_token_encrypted: string | null;
+  breeze_session_updated_at: Date | null;
   updated_at: Date;
 }
 
 const SELECT_COLS = `id, user_id, smtp_host, smtp_port, smtp_user, smtp_password_encrypted,
                      ai_provider, ai_model, ai_api_key_encrypted,
-                     news_provider, news_api_key_encrypted, updated_at`;
+                     news_provider, news_api_key_encrypted,
+                     breeze_api_key_encrypted, breeze_api_secret_encrypted,
+                     breeze_session_token_encrypted, breeze_session_updated_at, updated_at`;
 
 /** Map a DB row to the client-safe shape (never exposes decrypted secrets). */
 function mapCredentials(row: CredsRow): StoredCredentials {
@@ -76,6 +89,10 @@ function mapCredentials(row: CredsRow): StoredCredentials {
       ? (row.news_provider as NewsProvider)
       : null,
     newsApiKeySet: !!row.news_api_key_encrypted,
+    breezeApiKeySet: !!row.breeze_api_key_encrypted,
+    breezeApiSecretSet: !!row.breeze_api_secret_encrypted,
+    breezeSessionTokenSet: !!row.breeze_session_token_encrypted,
+    breezeSessionUpdatedAt: row.breeze_session_updated_at,
     updatedAt: row.updated_at,
   };
 }
@@ -103,6 +120,9 @@ export async function updateCredentials(input: CredentialsInput): Promise<Stored
   const encSmtp = input.smtpPassword ? encryptCredential(input.smtpPassword) : undefined;
   const encAiKey = input.aiApiKey ? encryptCredential(input.aiApiKey) : undefined;
   const encNewsKey = input.newsApiKey ? encryptCredential(input.newsApiKey) : undefined;
+  const encBreezeApiKey = input.breezeApiKey ? encryptCredential(input.breezeApiKey.trim()) : undefined;
+  const encBreezeApiSecret = input.breezeApiSecret ? encryptCredential(input.breezeApiSecret.trim()) : undefined;
+  const encBreezeSessionToken = input.breezeSessionToken ? encryptCredential(input.breezeSessionToken.trim()) : undefined;
 
   if (input.newsProvider && !NEWS_PROVIDERS.has(input.newsProvider)) {
     throw new Error(`Unsupported news provider: ${input.newsProvider}`);
@@ -118,8 +138,11 @@ export async function updateCredentials(input: CredentialsInput): Promise<Stored
       `insert into public.user_credentials
          (user_id, smtp_host, smtp_port, smtp_user, smtp_password_encrypted,
           ai_provider, ai_model, ai_api_key_encrypted,
-          news_provider, news_api_key_encrypted)
-       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+          news_provider, news_api_key_encrypted,
+          breeze_api_key_encrypted, breeze_api_secret_encrypted,
+          breeze_session_token_encrypted, breeze_session_updated_at)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
+               case when $13::text is null then null else now() end)
        returning ${SELECT_COLS}`,
       [
         user.id,
@@ -132,6 +155,9 @@ export async function updateCredentials(input: CredentialsInput): Promise<Stored
         encAiKey ?? null,
         input.newsProvider ?? null,
         encNewsKey ?? null,
+        encBreezeApiKey ?? null,
+        encBreezeApiSecret ?? null,
+        encBreezeSessionToken ?? null,
       ],
     );
     if (!row) throw new Error("Failed to create credentials");
@@ -149,6 +175,10 @@ export async function updateCredentials(input: CredentialsInput): Promise<Stored
         ai_api_key_encrypted = coalesce($8, ai_api_key_encrypted),
         news_provider = coalesce($9, news_provider),
         news_api_key_encrypted = coalesce($10, news_api_key_encrypted),
+        breeze_api_key_encrypted = coalesce($11, breeze_api_key_encrypted),
+        breeze_api_secret_encrypted = coalesce($12, breeze_api_secret_encrypted),
+        breeze_session_token_encrypted = coalesce($13, breeze_session_token_encrypted),
+        breeze_session_updated_at = case when $13::text is null then breeze_session_updated_at else now() end,
         updated_at = now()
       where user_id = $1
       returning ${SELECT_COLS}`,
@@ -163,6 +193,9 @@ export async function updateCredentials(input: CredentialsInput): Promise<Stored
       encAiKey ?? null,
       input.newsProvider ?? null,
       encNewsKey ?? null,
+      encBreezeApiKey ?? null,
+      encBreezeApiSecret ?? null,
+      encBreezeSessionToken ?? null,
     ],
   );
   if (!row) throw new Error("Failed to update credentials");
@@ -170,9 +203,19 @@ export async function updateCredentials(input: CredentialsInput): Promise<Stored
 }
 
 /** Clear a single secret without disturbing the others. */
-export async function clearCredential(field: "smtpPassword" | "aiApiKey" | "newsApiKey"): Promise<void> {
+export async function clearCredential(field: "smtpPassword" | "aiApiKey" | "newsApiKey" | "breeze"): Promise<void> {
   const user = await getSessionUser();
   if (!user) throw new Error("Not signed in");
+  if (field === "breeze") {
+    await query(
+      `update public.user_credentials set
+         breeze_api_key_encrypted=null,breeze_api_secret_encrypted=null,
+         breeze_session_token_encrypted=null,breeze_session_updated_at=null,updated_at=now()
+       where user_id=$1`,
+      [user.id],
+    );
+    return;
+  }
   const column = field === "smtpPassword"
     ? "smtp_password_encrypted"
     : field === "aiApiKey" ? "ai_api_key_encrypted" : "news_api_key_encrypted";

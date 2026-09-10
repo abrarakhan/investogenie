@@ -15,6 +15,7 @@ if (existsSync(envFile)) process.loadEnvFile(envFile);
 const nextCli = resolve(root, "node_modules/next/dist/bin/next");
 const pipeline = resolve(root, "pipelines/nse_yfinance_sync.py");
 const indiaQuotePipeline = resolve(root, "pipelines/india_quotes_sync.py");
+const breezeMarketWorker = resolve(root, "workers/breeze_market_daemon.py");
 const usPipeline = resolve(root, "pipelines/us_market_sync.py");
 const usHistoryPipeline = resolve(root, "pipelines/us_history_sync.py");
 const macroPipeline = resolve(root, "pipelines/macro_sync.py");
@@ -125,6 +126,8 @@ let marketRefreshTimer = null;
 let marketHoursQuoteRefreshTimer = null;
 let marketHoursQuoteRefreshPromise = null;
 let indiaLiveQuoteChild = null;
+let breezeChild = null;
+let breezeRestartTimer = null;
 let newsRefreshTimer = null;
 let newsRefreshPromise = null;
 let gmailDisclosureTimer = null;
@@ -144,6 +147,29 @@ let emailDigestAttemptDate = null; // IST date the current attempt run belongs t
 let emailDigestAttempts = 0;
 let emailDigestNextRetryAt = 0;    // epoch ms; gate for the next retry
 let shuttingDown = false;
+
+function startEmbeddedBreezeWorker() {
+  if (
+    process.env.BREEZE_WORKER_DISABLED === "1"
+    || process.env.BREEZE_WORKER_MANAGED_EXTERNALLY === "1"
+  ) return;
+  if (!python || !existsSync(breezeMarketWorker) || breezeChild || shuttingDown) return;
+  console.log("[breeze-market] embedded worker enabled; waiting for Settings credentials when absent");
+  breezeChild = spawn(python, [breezeMarketWorker], {
+    cwd: root,
+    env: process.env,
+    stdio: "inherit",
+  });
+  breezeChild.once("error", (error) => {
+    console.error(`[breeze-market] local worker failed to start: ${error.message}`);
+  });
+  breezeChild.once("close", (code, signal) => {
+    breezeChild = null;
+    if (shuttingDown) return;
+    console.warn(`[breeze-market] embedded worker exited (${signal ?? code}); retrying in 20 seconds`);
+    breezeRestartTimer = setTimeout(startEmbeddedBreezeWorker, 20_000);
+  });
+}
 
 import { Client } from "pg";
 
@@ -1249,6 +1275,7 @@ function shutdown(signal) {
   if (gmailDisclosureTimer) clearInterval(gmailDisclosureTimer);
   if (backfillTimer) clearInterval(backfillTimer);
   if (emailDigestTimer) clearInterval(emailDigestTimer);
+  if (breezeRestartTimer) clearTimeout(breezeRestartTimer);
   if (syncChild) syncChild.kill(signal);
   if (fundamentalsChild) fundamentalsChild.kill(signal);
   if (usFundamentalsChild) usFundamentalsChild.kill(signal);
@@ -1257,6 +1284,7 @@ function shutdown(signal) {
   if (amfiChild) amfiChild.kill(signal);
   if (marketRefreshChild) marketRefreshChild.kill(signal);
   if (indiaLiveQuoteChild) indiaLiveQuoteChild.kill(signal);
+  if (breezeChild) breezeChild.kill(signal);
 
   // Print startup summary before killing Next.js
   if (syncStats.attempted > 0) {
@@ -1290,6 +1318,8 @@ nextChild.on("close", (code, signal) => {
   if (amfiChild) amfiChild.kill("SIGTERM");
   if (marketRefreshChild) marketRefreshChild.kill("SIGTERM");
   if (indiaLiveQuoteChild) indiaLiveQuoteChild.kill("SIGTERM");
+  if (breezeRestartTimer) clearTimeout(breezeRestartTimer);
+  if (breezeChild) breezeChild.kill("SIGTERM");
   process.exitCode = signal ? 1 : (code ?? 1);
 });
 
@@ -1302,6 +1332,7 @@ scheduleNewsRefresh();
 scheduleGmailDisclosureSync();
 scheduleBackfillCron();
 scheduleEmailDigest();
+startEmbeddedBreezeWorker();
 if (startupSyncDisabled) {
   console.log("[startup] immediate maintenance jobs disabled; recurring schedules remain active");
 } else {
