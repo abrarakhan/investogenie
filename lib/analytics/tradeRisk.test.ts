@@ -7,6 +7,8 @@ const base = {
   distanceToStopPct: 5,
   marketMove1dPct: 0,
   marketMove2dPct: 0,
+  stockMove1dPct: 0,
+  stockMove2dPct: 0,
   newsScore: { technicalScore: 70, newsAdjustment: 0, combinedScore: 70, state: "NEUTRAL" as const },
   newsFresh: true,
 };
@@ -28,6 +30,20 @@ describe("trade risk assessment", () => {
 
   it("raises risk-off for a sharp current-session market fall", () => {
     expect(assessTradeRisk({ ...base, marketMove1dPct: -2.8 }).state).toBe("RISK_OFF");
+  });
+
+  it("recommends exit when a held stock sells off sharply below entry", () => {
+    const result = assessTradeRisk({ ...base, pnlPct: -4, stockMove1dPct: -5 });
+    expect(result.state).toBe("RISK_OFF");
+    expect(result.recommendation).toBe("EXIT");
+  });
+
+  it("recommends staying when the plan, movement, and news remain healthy", () => {
+    expect(assessTradeRisk(base).recommendation).toBe("STAY");
+  });
+
+  it("recommends staying with caution when evidence is incomplete", () => {
+    expect(assessTradeRisk({ ...base, newsFresh: false }).recommendation).toBe("STAY_CAUTION");
   });
 
   it("preserves an explicit warning when news cannot be assessed", () => {

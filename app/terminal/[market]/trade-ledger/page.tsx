@@ -1,6 +1,7 @@
 import { notFound, redirect } from "next/navigation";
 import AppShell from "@/components/app/AppShell";
 import SwingTradeLedger from "@/components/trade-ledger/SwingTradeLedger";
+import LedgerAutoRefresh from "@/components/trade-ledger/LedgerAutoRefresh";
 import NewsRefreshButton from "@/components/screener/NewsRefreshButton";
 import { getSessionUser } from "@/lib/auth";
 import { getActiveNewsConfig } from "@/lib/credentials-actions";
@@ -34,6 +35,7 @@ export default async function SwingTradeLedgerPage({ params, searchParams }: {
       maxWidth="max-w-6xl"
       actions={<NewsRefreshButton market={market} configured={Boolean(newsConfig)} />}
     >
+      <LedgerAutoRefresh market={market} />
       <SwingTradeLedger market={market} trades={trades} defaults={defaults} />
     </AppShell>
   );

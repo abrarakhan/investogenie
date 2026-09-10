@@ -166,6 +166,8 @@ export interface SwingLedgerTrade {
     newsAdjustment: number;
     marketMove1dPct: number | null;
     marketMove2dPct: number | null;
+    stockMove1dPct: number | null;
+    stockMove2dPct: number | null;
     newsAsOf: string | null;
     evidence: Array<{
       title: string;
@@ -190,14 +192,28 @@ export async function getSwingTradeLedger(userId: string, market: "IN" | "US"): 
   const rows = await query<LedgerRow>(
     `select l.*, a.ticker, a.name asset_name, a.exchange, a.sector asset_sector,
             q.price current_price, q.as_of quote_as_of,
+            stock_path.prior_close, stock_path.two_session_close,
             case
-              when l.projected_trailing_stop is null then null
-              when l.trailing_distance is null or path.highest_high is null then l.projected_trailing_stop
-              else greatest(l.projected_trailing_stop, path.highest_high - l.trailing_distance)
+              when l.projected_trailing_stop is null then l.projected_stop
+              when l.trailing_distance is null or path.highest_high is null
+                then greatest(l.projected_stop, l.projected_trailing_stop)
+              else greatest(l.projected_stop, l.projected_trailing_stop, path.highest_high - l.trailing_distance)
             end effective_trailing_stop
        from public.swing_trade_ledger l
        join public.assets a on a.id = l.asset_id
        left join public.latest_quotes q on q.asset_id = l.asset_id
+       left join lateral (
+         select max(close) filter (where rn=1) prior_close,
+                max(close) filter (where rn=2) two_session_close
+           from (
+             select d.close,row_number() over (order by d.date desc) rn
+               from public.daily_ohlcv d
+              where d.asset_id=l.asset_id
+                and d.date < coalesce(q.as_of::date,current_date)
+              order by d.date desc
+              limit 2
+           ) closes
+       ) stock_path on true
        left join lateral (
          select max(d.high) highest_high
            from public.daily_ohlcv d
@@ -274,6 +290,14 @@ export async function getSwingTradeLedger(userId: string, market: "IN" | "US"): 
     const status = String(row.status) as "OPEN" | "CLOSED";
     const currentPrice = nullableNumber(row.current_price);
     const effectiveTrailingStop = nullableNumber(row.effective_trailing_stop);
+    const priorClose = nullableNumber(row.prior_close);
+    const twoSessionClose = nullableNumber(row.two_session_close);
+    const stockMove1dPct = currentPrice !== null && priorClose !== null && priorClose > 0
+      ? ((currentPrice / priorClose) - 1) * 100
+      : null;
+    const stockMove2dPct = currentPrice !== null && twoSessionClose !== null && twoSessionClose > 0
+      ? ((currentPrice / twoSessionClose) - 1) * 100
+      : null;
     const trade = {
       id: String(row.id), assetId: String(row.asset_id), ticker: String(row.ticker),
       assetName: row.asset_name === null ? null : String(row.asset_name),
@@ -317,6 +341,8 @@ export async function getSwingTradeLedger(userId: string, market: "IN" | "US"): 
       distanceToStopPct,
       marketMove1dPct,
       marketMove2dPct,
+      stockMove1dPct,
+      stockMove2dPct,
       newsScore,
       newsFresh,
     });
@@ -328,6 +354,8 @@ export async function getSwingTradeLedger(userId: string, market: "IN" | "US"): 
         newsAdjustment: newsScore.newsAdjustment,
         marketMove1dPct,
         marketMove2dPct,
+        stockMove1dPct,
+        stockMove2dPct,
         newsAsOf,
         evidence: relevantImpacts.slice(0, 3).map((impact) => ({
           title: impact.title,

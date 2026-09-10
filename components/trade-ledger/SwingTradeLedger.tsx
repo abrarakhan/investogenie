@@ -175,19 +175,34 @@ function TradeCard({ trade, today }: { trade: SwingLedgerTrade; today: string })
 }
 
 function TradeRiskPanel({ trade }: { trade: SwingLedgerTrade }) {
-  const hasWarning = trade.risk.state !== "NORMAL" || trade.risk.coverageWarning;
-  if (!hasWarning) return null;
   const riskOff = trade.risk.state === "RISK_OFF";
   const panelClass = riskOff
     ? "border-rose-500/30 bg-rose-500/[0.08]"
-    : "border-amber-500/25 bg-amber-500/[0.06]";
+    : trade.risk.state === "CAUTION" || trade.risk.coverageWarning
+      ? "border-amber-500/25 bg-amber-500/[0.06]"
+      : "border-emerald-500/25 bg-emerald-500/[0.05]";
+  const recommendation = trade.risk.recommendation === "EXIT"
+    ? "EXIT"
+    : trade.risk.recommendation === "STAY_CAUTION" ? "STAY / CAUTION" : "STAY";
+  const headingClass = riskOff
+    ? "text-rose-200"
+    : trade.risk.recommendation === "STAY_CAUTION" ? "text-amber-200" : "text-emerald-200";
   return (
     <div className={`mt-4 rounded-lg border p-4 ${panelClass}`}>
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h4 className={`text-sm font-bold ${riskOff ? "text-rose-200" : "text-amber-200"}`}>
-          Market &amp; AI risk assessment
+        <h4 className={`text-sm font-bold ${headingClass}`}>
+          Hourly News &amp; AI trade check
         </h4>
+        <span className={`rounded-full border px-3 py-1 text-xs font-bold tracking-wide ${
+          riskOff
+            ? "border-rose-400/35 bg-rose-500/15 text-rose-200"
+            : trade.risk.recommendation === "STAY_CAUTION"
+              ? "border-amber-400/35 bg-amber-500/15 text-amber-200"
+              : "border-emerald-400/35 bg-emerald-500/15 text-emerald-200"
+        }`}>{recommendation}</span>
         <div className="flex gap-3 font-mono text-[11px] text-white/55">
+          {trade.risk.stockMove1dPct !== null && <span>Stock 1d {pct(trade.risk.stockMove1dPct)}</span>}
+          {trade.risk.stockMove2dPct !== null && <span>Stock 2d {pct(trade.risk.stockMove2dPct)}</span>}
           {trade.risk.marketMove1dPct !== null && <span>Market 1d {pct(trade.risk.marketMove1dPct)}</span>}
           {trade.risk.marketMove2dPct !== null && <span>Market 2d {pct(trade.risk.marketMove2dPct)}</span>}
           <span>News score {trade.risk.newsAdjustment >= 0 ? "+" : ""}{trade.risk.newsAdjustment.toFixed(1)}</span>
@@ -196,6 +211,9 @@ function TradeRiskPanel({ trade }: { trade: SwingLedgerTrade }) {
       {trade.risk.reasons.length > 0 && <ul className="mt-2 space-y-1 text-sm text-white/75">
         {trade.risk.reasons.map((reason) => <li key={reason}>• {reason}</li>)}
       </ul>}
+      {trade.risk.reasons.length === 0 && <p className="mt-2 text-sm text-white/70">
+        No strategy exit condition, material adverse movement, or AI-classified negative event is currently detected.
+      </p>}
       {trade.risk.coverageWarning && <p className="mt-2 text-xs font-medium text-amber-200/80">
         {trade.risk.coverageWarning} <a href="/settings" className="underline underline-offset-2">Open Settings</a>
       </p>}
@@ -210,7 +228,7 @@ function TradeRiskPanel({ trade }: { trade: SwingLedgerTrade }) {
           </a>)}
         </div>
       </div>}
-      <p className="mt-3 text-[11px] text-white/35">This warning does not rewrite the frozen strategy plan or guarantee an outcome.</p>
+      <p className="mt-3 text-[11px] text-white/35">This assessment does not rewrite the frozen strategy plan or guarantee an outcome.</p>
     </div>
   );
 }

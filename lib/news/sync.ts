@@ -17,6 +17,7 @@ export interface NewsSyncSummary {
   fetched: number;
   stored: number;
   impacts: number;
+  openLedgerStocks: number;
   analysisSource: string;
 }
 
@@ -69,7 +70,10 @@ export async function refreshNewsIntelligence(
       where l.market=$1 and l.status='OPEN' and a.is_active`,
     [market],
   );
-  const tracked = new Map([...rows, ...ledgerRows].map((row) => [row.asset_id, row]));
+  // Provider queries are intentionally quota-bounded. Open real trades must
+  // come first so swing candidates can never crowd held positions out of the
+  // stock-specific news search.
+  const tracked = new Map([...ledgerRows, ...rows].map((row) => [row.asset_id, row]));
   const assets: NewsAssetRef[] = [...tracked.values()].map((row) => ({
     assetId: row.asset_id, ticker: row.ticker, name: row.name, sector: row.sector,
   }));
@@ -145,6 +149,7 @@ export async function refreshNewsIntelligence(
     fetched: fetched.length,
     stored: articleIds.length,
     impacts: impacts.length,
+    openLedgerStocks: ledgerRows.length,
     analysisSource: [...new Set(impacts.map((impact) =>
       impact.model ? `${impact.analysisSource}/${impact.model}` : impact.analysisSource,
     ))].join(", ") || "no_classified_impacts",
