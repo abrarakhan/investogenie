@@ -36,7 +36,7 @@ export default async function StrongSwingPage({
       subtitle="Execution-ready setups only after technical confirmation, entry discipline, volatility, stop-risk, liquidity and circuit-behaviour checks agree."
     >
       <div className="mb-6 border-l-2 border-[var(--ig-accent)] pl-4 text-sm leading-relaxed text-white/52">
-        Swing Candidates is the discovery surface. Here, only the green Execution Ready state is actionable. Broker RTCM/GTT validation will be added with the broker API; until then, verify exchange restrictions before placing an order.
+        Buy &amp; Track is enabled only for green Execution Ready setups and records the frozen plan in your ledger. Breeze currently supplies live market data; it does not place the broker order, so confirm exchange restrictions in ICICI Direct before buying.
       </div>
       {market === "IN" && <MomentumIgnitionCandidates result={momentumIgnition} />}
       <section className={market === "IN" ? "mt-12 border-t border-white/10 pt-8" : ""}>

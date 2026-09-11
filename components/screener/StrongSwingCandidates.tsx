@@ -19,6 +19,13 @@ const statusLabel: Record<StrongSwingStatus, string> = {
   INVALIDATED: "Invalidated",
 };
 
+const blockedBuyLabel: Record<Exclude<StrongSwingStatus, "EXECUTION_READY">, string> = {
+  WAIT_FOR_ENTRY: "Buy after confirmation",
+  WATCHLIST: "Buy unavailable",
+  RISK_OFF: "Buy blocked: risk off",
+  INVALIDATED: "Buy blocked: invalidated",
+};
+
 const fmt = (value: number | null, digits = 2) =>
   value === null || !Number.isFinite(value) ? "-" : value.toFixed(digits);
 
@@ -90,8 +97,9 @@ function CandidateCard({ candidate }: { candidate: StrongSwingCandidate }) {
         <span>ATR risk {candidate.atrPct.toFixed(1)}%</span>
         <span>Stop risk {candidate.stopRiskPct.toFixed(1)}%</span>
       </div>
-      {candidate.status === "EXECUTION_READY" && (
-        <div className="mt-4 border-t border-white/8 pt-4">
+      <div className="mt-4 border-t border-white/8 pt-4">
+        {candidate.status === "EXECUTION_READY" ? (
+          <>
           <Link
             href={`/terminal/${candidate.country.toLowerCase()}/trade-ledger?${ledgerParams.toString()}`}
             className="inline-flex min-h-11 items-center rounded-lg border border-emerald-400/35 bg-emerald-400/10 px-4 text-sm font-bold text-emerald-200 hover:bg-emerald-400/15"
@@ -101,8 +109,22 @@ function CandidateCard({ candidate }: { candidate: StrongSwingCandidate }) {
           <p className="mt-2 text-[11px] leading-relaxed text-white/38">
             Records your purchase against this frozen plan. Broker order placement is not connected yet.
           </p>
-        </div>
-      )}
+          </>
+        ) : (
+          <>
+            <button
+              type="button"
+              disabled
+              className="inline-flex min-h-11 cursor-not-allowed items-center rounded-lg border border-white/10 bg-white/[0.025] px-4 text-sm font-bold text-white/30"
+            >
+              {blockedBuyLabel[candidate.status]}
+            </button>
+            <p className="mt-2 text-[11px] leading-relaxed text-white/38">
+              Buy &amp; Track unlocks only after every technical and execution-safety gate passes.
+            </p>
+          </>
+        )}
+      </div>
     </article>
   );
 }
