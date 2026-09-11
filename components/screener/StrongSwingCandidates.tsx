@@ -96,8 +96,11 @@ function CandidateCard({ candidate }: { candidate: StrongSwingCandidate }) {
             href={`/terminal/${candidate.country.toLowerCase()}/trade-ledger?${ledgerParams.toString()}`}
             className="inline-flex min-h-11 items-center rounded-lg border border-emerald-400/35 bg-emerald-400/10 px-4 text-sm font-bold text-emerald-200 hover:bg-emerald-400/15"
           >
-            Log this exact trade plan
+            Buy &amp; Track
           </Link>
+          <p className="mt-2 text-[11px] leading-relaxed text-white/38">
+            Records your purchase against this frozen plan. Broker order placement is not connected yet.
+          </p>
         </div>
       )}
     </article>
