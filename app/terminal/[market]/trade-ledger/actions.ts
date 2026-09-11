@@ -213,17 +213,15 @@ export async function recordSwingTradeSale(formData: FormData) {
   }
 
   await tx(async (client) => {
-    const tradeResult = await client.query<{ quantity: string; bought_on: Date | string }>(
-      `select quantity,bought_on from public.swing_trade_ledger
+    const tradeResult = await client.query<{ quantity: string; bought_on: string }>(
+      `select quantity,bought_on::text from public.swing_trade_ledger
         where id=$1 and user_id=$2 and market=$3 and status='OPEN'
         for update`,
       [id, user.id, market],
     );
     const trade = tradeResult.rows[0];
     if (!trade) throw new Error("Open trade entry was not found");
-    const boughtOn = trade.bought_on instanceof Date
-      ? trade.bought_on.toISOString().slice(0, 10)
-      : String(trade.bought_on).slice(0, 10);
+    const boughtOn = trade.bought_on;
     if (soldOn < boughtOn) throw new Error("Sale date cannot be before the purchase date");
 
     const soldResult = await client.query<{ quantity: string }>(
@@ -245,18 +243,102 @@ export async function recordSwingTradeSale(formData: FormData) {
 
     const fullySold = remaining - soldQuantity <= 0.000001;
     if (fullySold) {
-      const averageResult = await client.query<{ average_price: string }>(
-        `select (sum(quantity * exit_price) / nullif(sum(quantity),0))::text average_price
+      const averageResult = await client.query<{ average_price: string; closed_on: string; close_reason: string | null }>(
+        `select (sum(quantity * exit_price) / nullif(sum(quantity),0))::text average_price,
+                max(sold_on)::text closed_on,
+                (array_agg(reason order by sold_on desc,created_at desc))[1] close_reason
            from public.swing_trade_exits where trade_id=$1`,
         [id],
       );
+      const closing = averageResult.rows[0];
       await client.query(
         `update public.swing_trade_ledger
             set status='CLOSED',closed_on=$1,exit_price=$2,close_reason=$3,updated_at=now()
           where id=$4`,
-        [soldOn, Number(averageResult.rows[0]?.average_price ?? exitPrice), reason, id],
+        [closing.closed_on, Number(closing.average_price), closing.close_reason, id],
       );
     }
+  });
+  revalidatePath(`/terminal/${market.toLowerCase()}/trade-ledger`);
+}
+
+export async function updateSwingTradeSale(formData: FormData) {
+  const user = await requireUser();
+  const market = validMarket(String(formData.get("market") ?? "IN"));
+  const tradeId = String(formData.get("tradeId") ?? "").trim();
+  const saleId = String(formData.get("saleId") ?? "").trim();
+  const soldOn = String(formData.get("soldOn") ?? "").slice(0, 10);
+  const soldQuantity = cleanNumber(formData, "soldQuantity");
+  const exitPrice = cleanNumber(formData, "exitPrice");
+  const reason = String(formData.get("saleReason") ?? "Manual exit").trim().slice(0, 120) || "Manual exit";
+  const today = new Date().toISOString().slice(0, 10);
+  if (!tradeId || !saleId || !/^\d{4}-\d{2}-\d{2}$/.test(soldOn) || soldOn > today || !soldQuantity || soldQuantity <= 0 || !exitPrice || exitPrice <= 0) {
+    throw new Error("Enter a valid sale date, quantity, and price");
+  }
+
+  await tx(async (client) => {
+    const tradeResult = await client.query<{ quantity: string; bought_on: string }>(
+      `select quantity,bought_on::text from public.swing_trade_ledger
+        where id=$1 and user_id=$2 and market=$3
+        for update`,
+      [tradeId, user.id, market],
+    );
+    const trade = tradeResult.rows[0];
+    if (!trade) throw new Error("Trade entry was not found");
+    if (soldOn < trade.bought_on) throw new Error("Sale date cannot be before the purchase date");
+
+    const saleResult = await client.query<{ id: string }>(
+      `select id from public.swing_trade_exits
+        where id=$1 and trade_id=$2 and user_id=$3
+        for update`,
+      [saleId, tradeId, user.id],
+    );
+    if (!saleResult.rows[0]) throw new Error("Recorded sale was not found");
+
+    const otherSalesResult = await client.query<{ quantity: string }>(
+      `select coalesce(sum(quantity),0)::text quantity
+         from public.swing_trade_exits where trade_id=$1 and id<>$2`,
+      [tradeId, saleId],
+    );
+    const originalQuantity = Number(trade.quantity);
+    const otherSales = Number(otherSalesResult.rows[0]?.quantity ?? 0);
+    const maximumQuantity = originalQuantity - otherSales;
+    if (soldQuantity > maximumQuantity + 0.000001) {
+      throw new Error(`Sale quantity exceeds the ${maximumQuantity.toLocaleString("en-IN")} shares available for this sale`);
+    }
+
+    await client.query(
+      `update public.swing_trade_exits
+          set sold_on=$1,quantity=$2,exit_price=$3,reason=$4,updated_at=now()
+        where id=$5`,
+      [soldOn, soldQuantity, exitPrice, reason, saleId],
+    );
+
+    const totalsResult = await client.query<{
+      sold_quantity: string;
+      average_price: string;
+      closed_on: string;
+      close_reason: string | null;
+    }>(
+      `select sum(quantity)::text sold_quantity,
+              (sum(quantity * exit_price) / nullif(sum(quantity),0))::text average_price,
+              max(sold_on)::text closed_on,
+              (array_agg(reason order by sold_on desc,created_at desc))[1] close_reason
+         from public.swing_trade_exits where trade_id=$1`,
+      [tradeId],
+    );
+    const totals = totalsResult.rows[0];
+    const fullySold = Number(totals.sold_quantity) >= originalQuantity - 0.000001;
+    await client.query(
+      `update public.swing_trade_ledger
+          set status=$1,
+              closed_on=case when $1='CLOSED' then $2::date else null end,
+              exit_price=case when $1='CLOSED' then $3::numeric else null end,
+              close_reason=case when $1='CLOSED' then $4 else null end,
+              updated_at=now()
+        where id=$5`,
+      [fullySold ? "CLOSED" : "OPEN", totals.closed_on, Number(totals.average_price), totals.close_reason, tradeId],
+    );
   });
   revalidatePath(`/terminal/${market.toLowerCase()}/trade-ledger`);
 }
