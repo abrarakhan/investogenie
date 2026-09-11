@@ -44,4 +44,22 @@ describe("swing trade ledger progress", () => {
       overallPnlValue: 300,
     });
   });
+
+  it("combines partial-sale profit with unrealized profit on remaining shares", () => {
+    const remaining = calculateSwingTradeProgress({
+      status: "OPEN", boughtOn: "2026-09-01", buyPrice: 100, quantity: 6,
+      currentPrice: 105, target: 120, stop: 94, trailingStop: 98,
+      expectedDays: 10, asOf: "2026-09-03",
+    });
+    const summary = summarizeSwingTradeLedger([{
+      status: "OPEN",
+      progress: remaining,
+      realizedPnlValue: 40,
+    }]);
+
+    expect(summary.openInvestedValue).toBe(600);
+    expect(summary.unrealizedPnlValue).toBe(30);
+    expect(summary.realizedPnlValue).toBe(40);
+    expect(summary.overallPnlValue).toBe(70);
+  });
 });

@@ -50,18 +50,21 @@ export interface SwingTradeLedgerSummary {
 export function summarizeSwingTradeLedger(trades: ReadonlyArray<{
   status: "OPEN" | "CLOSED";
   progress: Pick<SwingTradeProgress, "investedValue" | "pnlValue">;
+  realizedPnlValue?: number;
 }>): SwingTradeLedgerSummary {
   return trades.reduce<SwingTradeLedgerSummary>((summary, trade) => {
-    const pnl = trade.progress.pnlValue ?? 0;
+    const unrealizedPnl = trade.status === "OPEN" ? trade.progress.pnlValue ?? 0 : 0;
+    const realizedPnl = trade.realizedPnlValue
+      ?? (trade.status === "CLOSED" ? trade.progress.pnlValue ?? 0 : 0);
     if (trade.status === "OPEN") {
       summary.openCount += 1;
       summary.openInvestedValue += trade.progress.investedValue;
-      summary.unrealizedPnlValue += pnl;
+      summary.unrealizedPnlValue += unrealizedPnl;
     } else {
       summary.closedCount += 1;
-      summary.realizedPnlValue += pnl;
     }
-    summary.overallPnlValue += pnl;
+    summary.realizedPnlValue += realizedPnl;
+    summary.overallPnlValue += unrealizedPnl + realizedPnl;
     return summary;
   }, {
     openCount: 0,
@@ -71,6 +74,15 @@ export function summarizeSwingTradeLedger(trades: ReadonlyArray<{
     realizedPnlValue: 0,
     overallPnlValue: 0,
   });
+}
+
+export interface SwingTradeExit {
+  id: string;
+  soldOn: string;
+  quantity: number;
+  exitPrice: number;
+  reason: string | null;
+  realizedPnlValue: number;
 }
 
 function utcDate(value: string): Date {
@@ -142,6 +154,10 @@ export interface SwingLedgerTrade {
   boughtOn: string;
   buyPrice: number;
   quantity: number;
+  soldQuantity: number;
+  remainingQuantity: number;
+  realizedPnlValue: number;
+  exits: SwingTradeExit[];
   currency: string;
   strategyKey: string;
   strategyLabel: string;
@@ -179,7 +195,7 @@ export interface SwingLedgerTrade {
   };
 }
 
-type LedgerValue = string | number | Date | null;
+type LedgerValue = unknown;
 type LedgerRow = Record<string, LedgerValue>;
 const dateText = (value: LedgerValue) => {
   if (!value) return null;
@@ -188,11 +204,33 @@ const dateText = (value: LedgerValue) => {
 };
 const nullableNumber = (value: LedgerValue) => value === null ? null : Number(value);
 
+function parseExits(value: LedgerValue, buyPrice: number): SwingTradeExit[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const record = item as Record<string, unknown>;
+    const quantity = Number(record.quantity);
+    const exitPrice = Number(record.exitPrice);
+    if (!Number.isFinite(quantity) || !Number.isFinite(exitPrice)) return [];
+    return [{
+      id: String(record.id),
+      soldOn: dateText(record.soldOn) ?? "",
+      quantity,
+      exitPrice,
+      reason: record.reason === null || record.reason === undefined ? null : String(record.reason),
+      realizedPnlValue: (exitPrice - buyPrice) * quantity,
+    }];
+  });
+}
+
 export async function getSwingTradeLedger(userId: string, market: "IN" | "US"): Promise<SwingLedgerTrade[]> {
   const rows = await query<LedgerRow>(
     `select l.*, a.ticker, a.name asset_name, a.exchange, a.sector asset_sector,
             q.price current_price, q.as_of quote_as_of,
             stock_path.prior_close, stock_path.two_session_close,
+            coalesce(sales.sold_quantity,0) sold_quantity,
+            coalesce(sales.realized_proceeds,0) realized_proceeds,
+            coalesce(sales.exits,'[]'::jsonb) exits,
             case
               when l.projected_trailing_stop is null then l.projected_stop
               when l.trailing_distance is null or path.highest_high is null
@@ -221,6 +259,19 @@ export async function getSwingTradeLedger(userId: string, market: "IN" | "US"): 
             and d.date >= l.bought_on
             and d.date <= coalesce(l.closed_on, current_date)
        ) path on true
+       left join lateral (
+         select sum(e.quantity) sold_quantity,
+                sum(e.quantity * e.exit_price) realized_proceeds,
+                jsonb_agg(jsonb_build_object(
+                  'id',e.id,
+                  'soldOn',e.sold_on,
+                  'quantity',e.quantity,
+                  'exitPrice',e.exit_price,
+                  'reason',e.reason
+                ) order by e.sold_on,e.created_at) exits
+           from public.swing_trade_exits e
+          where e.trade_id=l.id
+       ) sales on true
       where l.user_id = $1 and l.market = $2
       order by (l.status = 'OPEN') desc, l.bought_on desc, l.created_at desc`,
     [userId, market],
@@ -288,6 +339,17 @@ export async function getSwingTradeLedger(userId: string, market: "IN" | "US"): 
   return rows.map((row) => {
     const boughtOn = dateText(row.bought_on) ?? "";
     const status = String(row.status) as "OPEN" | "CLOSED";
+    const buyPrice = Number(row.buy_price);
+    const quantity = Number(row.quantity);
+    const exits = parseExits(row.exits, buyPrice);
+    const soldQuantity = Math.min(quantity, Math.max(0, Number(row.sold_quantity ?? 0)));
+    const remainingQuantity = status === "CLOSED" ? 0 : Math.max(0, quantity - soldQuantity);
+    const legacyExitPrice = nullableNumber(row.exit_price);
+    const realizedPnlValue = soldQuantity > 0
+      ? Number(row.realized_proceeds ?? 0) - (buyPrice * soldQuantity)
+      : status === "CLOSED" && legacyExitPrice !== null
+        ? (legacyExitPrice - buyPrice) * quantity
+        : 0;
     const currentPrice = nullableNumber(row.current_price);
     const effectiveTrailingStop = nullableNumber(row.effective_trailing_stop);
     const priorClose = nullableNumber(row.prior_close);
@@ -302,7 +364,7 @@ export async function getSwingTradeLedger(userId: string, market: "IN" | "US"): 
       id: String(row.id), assetId: String(row.asset_id), ticker: String(row.ticker),
       assetName: row.asset_name === null ? null : String(row.asset_name),
       exchange: row.exchange === null ? null : String(row.exchange), market,
-      status, boughtOn, buyPrice: Number(row.buy_price), quantity: Number(row.quantity),
+      status, boughtOn, buyPrice, quantity, soldQuantity, remainingQuantity, realizedPnlValue, exits,
       currency: String(row.currency), strategyKey: String(row.strategy_key),
       strategyLabel: String(row.strategy_label),
       signalVerdict: row.signal_verdict === null ? null : String(row.signal_verdict),
@@ -311,11 +373,12 @@ export async function getSwingTradeLedger(userId: string, market: "IN" | "US"): 
       projectedStop: Number(row.projected_stop), projectedTrailingStop: nullableNumber(row.projected_trailing_stop),
       effectiveTrailingStop, expectedHoldingDays: Number(row.expected_holding_days),
       currentPrice, quoteAsOf: dateText(row.quote_as_of), closedOn: dateText(row.closed_on),
-      exitPrice: nullableNumber(row.exit_price), closeReason: row.close_reason === null ? null : String(row.close_reason),
+      exitPrice: legacyExitPrice, closeReason: row.close_reason === null ? null : String(row.close_reason),
       notes: row.notes === null ? null : String(row.notes),
     };
     const progress = calculateSwingTradeProgress({
-      status, boughtOn, buyPrice: trade.buyPrice, quantity: trade.quantity,
+      status, boughtOn, buyPrice: trade.buyPrice,
+      quantity: status === "OPEN" ? trade.remainingQuantity : trade.quantity,
       currentPrice, target: trade.projectedTarget, stop: trade.projectedStop,
       trailingStop: effectiveTrailingStop, expectedDays: trade.expectedHoldingDays,
       exitPrice: trade.exitPrice, asOf: trade.closedOn ?? undefined,

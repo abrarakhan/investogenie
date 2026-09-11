@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getSessionUser } from "@/lib/auth";
-import { query, queryOne } from "@/lib/db";
+import { query, queryOne, tx } from "@/lib/db";
 import { deriveLevels, type SwingSetup } from "@/lib/analytics/swingClassifier";
 import { STRATEGY_META, type StrategyScore } from "@/lib/analytics/legendaryStrategies";
 import { getUserSwingSettings } from "@/lib/settings";
@@ -155,11 +155,22 @@ export async function updateSwingTrade(formData: FormData) {
   if (!id || !/^\d{4}-\d{2}-\d{2}$/.test(boughtOn) || boughtOn > today) throw new Error("Enter a valid purchase date");
   if (!buyPrice || buyPrice <= 0 || !quantity || quantity <= 0) throw new Error("Buy price and quantity must be greater than zero");
 
-  const trade = await queryOne<{ status: "OPEN" | "CLOSED" }>(
-    "select status from public.swing_trade_ledger where id=$1 and user_id=$2 and market=$3",
+  const trade = await queryOne<{ status: "OPEN" | "CLOSED"; sold_quantity: string }>(
+    `select l.status,coalesce(sum(e.quantity),0)::text sold_quantity
+       from public.swing_trade_ledger l
+       left join public.swing_trade_exits e on e.trade_id=l.id
+      where l.id=$1 and l.user_id=$2 and l.market=$3
+      group by l.id,l.status`,
     [id, user.id, market],
   );
   if (!trade) throw new Error("Trade entry was not found");
+  const soldQuantity = Number(trade.sold_quantity);
+  if (quantity + 0.000001 < soldQuantity) {
+    throw new Error(`Quantity cannot be below the ${soldQuantity.toLocaleString("en-IN")} shares already sold`);
+  }
+  if (trade.status === "CLOSED" && soldQuantity > 0 && Math.abs(quantity - soldQuantity) > 0.000001) {
+    throw new Error("A fully exited trade's quantity must equal its recorded sales");
+  }
 
   const closedOn = trade.status === "CLOSED" ? String(formData.get("closedOn") ?? "").slice(0, 10) : null;
   const exitPrice = trade.status === "CLOSED" ? cleanNumber(formData, "exitPrice") : null;
@@ -188,19 +199,65 @@ export async function updateSwingTrade(formData: FormData) {
   revalidatePath(`/terminal/${market.toLowerCase()}/trade-ledger`);
 }
 
-export async function closeSwingTrade(formData: FormData) {
+export async function recordSwingTradeSale(formData: FormData) {
   const user = await requireUser();
   const market = validMarket(String(formData.get("market") ?? "IN"));
-  const id = String(formData.get("tradeId") ?? "");
-  const closedOn = String(formData.get("closedOn") ?? "").slice(0, 10);
+  const id = String(formData.get("tradeId") ?? "").trim();
+  const soldOn = String(formData.get("soldOn") ?? "").slice(0, 10);
+  const soldQuantity = cleanNumber(formData, "soldQuantity");
   const exitPrice = cleanNumber(formData, "exitPrice");
-  const reason = String(formData.get("closeReason") ?? "Manual exit").trim().slice(0, 120);
-  if (!id || !/^\d{4}-\d{2}-\d{2}$/.test(closedOn) || !exitPrice || exitPrice <= 0) throw new Error("Enter a valid exit date and price");
-  await query(
-    `update public.swing_trade_ledger set status='CLOSED',closed_on=$1,exit_price=$2,close_reason=$3,updated_at=now()
-      where id=$4 and user_id=$5 and status='OPEN' and bought_on <= $1`,
-    [closedOn, exitPrice, reason || "Manual exit", id, user.id],
-  );
+  const reason = String(formData.get("saleReason") ?? "Manual exit").trim().slice(0, 120) || "Manual exit";
+  const today = new Date().toISOString().slice(0, 10);
+  if (!id || !/^\d{4}-\d{2}-\d{2}$/.test(soldOn) || soldOn > today || !soldQuantity || soldQuantity <= 0 || !exitPrice || exitPrice <= 0) {
+    throw new Error("Enter a valid sale date, quantity, and price");
+  }
+
+  await tx(async (client) => {
+    const tradeResult = await client.query<{ quantity: string; bought_on: Date | string }>(
+      `select quantity,bought_on from public.swing_trade_ledger
+        where id=$1 and user_id=$2 and market=$3 and status='OPEN'
+        for update`,
+      [id, user.id, market],
+    );
+    const trade = tradeResult.rows[0];
+    if (!trade) throw new Error("Open trade entry was not found");
+    const boughtOn = trade.bought_on instanceof Date
+      ? trade.bought_on.toISOString().slice(0, 10)
+      : String(trade.bought_on).slice(0, 10);
+    if (soldOn < boughtOn) throw new Error("Sale date cannot be before the purchase date");
+
+    const soldResult = await client.query<{ quantity: string }>(
+      "select coalesce(sum(quantity),0)::text quantity from public.swing_trade_exits where trade_id=$1",
+      [id],
+    );
+    const originalQuantity = Number(trade.quantity);
+    const alreadySold = Number(soldResult.rows[0]?.quantity ?? 0);
+    const remaining = originalQuantity - alreadySold;
+    if (soldQuantity > remaining + 0.000001) {
+      throw new Error(`Sale quantity exceeds the ${remaining.toLocaleString("en-IN")} shares remaining`);
+    }
+
+    await client.query(
+      `insert into public.swing_trade_exits (trade_id,user_id,sold_on,quantity,exit_price,reason)
+       values ($1,$2,$3,$4,$5,$6)`,
+      [id, user.id, soldOn, soldQuantity, exitPrice, reason],
+    );
+
+    const fullySold = remaining - soldQuantity <= 0.000001;
+    if (fullySold) {
+      const averageResult = await client.query<{ average_price: string }>(
+        `select (sum(quantity * exit_price) / nullif(sum(quantity),0))::text average_price
+           from public.swing_trade_exits where trade_id=$1`,
+        [id],
+      );
+      await client.query(
+        `update public.swing_trade_ledger
+            set status='CLOSED',closed_on=$1,exit_price=$2,close_reason=$3,updated_at=now()
+          where id=$4`,
+        [soldOn, Number(averageResult.rows[0]?.average_price ?? exitPrice), reason, id],
+      );
+    }
+  });
   revalidatePath(`/terminal/${market.toLowerCase()}/trade-ledger`);
 }
 

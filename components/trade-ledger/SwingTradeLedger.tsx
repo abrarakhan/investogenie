@@ -1,4 +1,4 @@
-import { addSwingTrade, closeSwingTrade, updateSwingTrade } from "@/app/terminal/[market]/trade-ledger/actions";
+import { addSwingTrade, recordSwingTradeSale, updateSwingTrade } from "@/app/terminal/[market]/trade-ledger/actions";
 import AssetPicker from "@/components/dashboard/AssetPicker";
 import DeleteTradeButton from "@/components/trade-ledger/DeleteTradeButton";
 import { summarizeSwingTradeLedger, type SwingLedgerTrade, type SwingTradeState } from "@/lib/swingTradeLedger";
@@ -148,8 +148,17 @@ function TradeCard({ trade, today }: { trade: SwingLedgerTrade; today: string })
         <Metric label="Effective trail" value={price(trade.effectiveTrailingStop)} tone={trade.progress.state === "TRAIL_BREACHED" ? "bad" : "warn"} />
         <Metric label="Days remaining" value={String(trade.progress.daysRemaining)} tone={trade.progress.daysRemaining ? "muted" : "warn"} />
       </div>
-      <div className="mt-4 flex flex-wrap gap-x-5 gap-y-1 border-t border-white/8 pt-3 text-xs text-white/38"><span>Initial stop {price(trade.projectedStop)}</span><span>Quantity {trade.quantity.toLocaleString("en-IN")}</span><span>Quote {trade.quoteAsOf ?? "unavailable"}</span>{trade.notes && <span>{trade.notes}</span>}</div>
-      {trade.status === "OPEN" && <details className="mt-4"><summary className="cursor-pointer text-sm font-semibold text-white/55 hover:text-white">Close trade</summary><form action={closeSwingTrade} className="mt-3 grid gap-3 rounded-lg border border-white/10 bg-black/25 p-3 sm:grid-cols-4"><input type="hidden" name="tradeId" value={trade.id} /><input type="hidden" name="market" value={trade.market} /><input aria-label="Exit date" name="closedOn" type="date" required min={trade.boughtOn} max={today} defaultValue={today} className="field" /><input aria-label="Exit price" name="exitPrice" type="number" min="0.000001" step="any" required defaultValue={trade.currentPrice ?? ""} placeholder="Exit price" className="field" /><select aria-label="Exit reason" name="closeReason" className="field bg-[#090c12]"><option>Target reached</option><option>Trailing stop</option><option>Stop loss</option><option>Holding window expired</option><option>Manual exit</option></select><button className="h-11 rounded-lg border border-white/15 bg-white/8 text-sm font-semibold hover:bg-white/12">Record exit</button></form></details>}
+      <div className="mt-4 flex flex-wrap gap-x-5 gap-y-1 border-t border-white/8 pt-3 text-xs text-white/38">
+        <span>Initial stop {price(trade.projectedStop)}</span>
+        <span>Purchased {trade.quantity.toLocaleString("en-IN")}</span>
+        {trade.soldQuantity > 0 && <span>Sold {trade.soldQuantity.toLocaleString("en-IN")}</span>}
+        <span>Remaining {trade.remainingQuantity.toLocaleString("en-IN")}</span>
+        {trade.soldQuantity > 0 && <span className={trade.realizedPnlValue >= 0 ? "text-emerald-300" : "text-rose-300"}>Realized {money(trade.realizedPnlValue, trade.currency)}</span>}
+        <span>Quote {trade.quoteAsOf ?? "unavailable"}</span>
+        {trade.notes && <span>{trade.notes}</span>}
+      </div>
+      {trade.status === "OPEN" && <details className="mt-4"><summary className="cursor-pointer text-sm font-semibold text-white/55 hover:text-white">Record partial or full sale</summary><form action={recordSwingTradeSale} className="mt-3 grid gap-3 rounded-lg border border-white/10 bg-black/25 p-3 sm:grid-cols-2 lg:grid-cols-5"><input type="hidden" name="tradeId" value={trade.id} /><input type="hidden" name="market" value={trade.market} /><Field label="Sale date"><input name="soldOn" type="date" required min={trade.boughtOn} max={today} defaultValue={today} className="field" /></Field><Field label={`Quantity (max ${trade.remainingQuantity.toLocaleString("en-IN")})`}><input name="soldQuantity" type="number" min="0.000001" max={trade.remainingQuantity} step="any" required defaultValue={trade.remainingQuantity} className="field" /></Field><Field label="Sale price"><input name="exitPrice" type="number" min="0.000001" step="any" required defaultValue={trade.currentPrice ?? ""} className="field" /></Field><Field label="Reason"><select name="saleReason" className="field bg-[#090c12]"><option>Partial profit booking</option><option>Target reached</option><option>Trailing stop</option><option>Stop loss</option><option>Holding window expired</option><option>Manual exit</option></select></Field><button className="h-11 self-end rounded-lg border border-white/15 bg-white/8 text-sm font-semibold hover:bg-white/12">Record sale</button></form></details>}
+      {trade.exits.length > 0 && <details className="mt-3"><summary className="cursor-pointer text-sm font-semibold text-white/45 hover:text-white">Sale history · {trade.exits.length}</summary><div className="mt-2 divide-y divide-white/8 rounded-lg border border-white/8 bg-black/20 px-3">{trade.exits.map((exit) => <div key={exit.id} className="grid gap-1 py-3 text-xs sm:grid-cols-5 sm:items-center"><span>{exit.soldOn}</span><span>{exit.quantity.toLocaleString("en-IN")} shares</span><span>@ {price(exit.exitPrice)}</span><span className={exit.realizedPnlValue >= 0 ? "text-emerald-300" : "text-rose-300"}>{money(exit.realizedPnlValue, trade.currency)}</span><span className="text-white/40">{exit.reason ?? "Sale"}</span></div>)}</div></details>}
       <div className="mt-3 border-t border-white/5 pt-2">
         <details>
           <summary className="min-h-10 cursor-pointer list-none rounded-lg px-3 py-2.5 text-sm font-semibold text-white/55 hover:bg-white/5 hover:text-white [&::-webkit-details-marker]:hidden">Edit trade</summary>
@@ -158,8 +167,8 @@ function TradeCard({ trade, today }: { trade: SwingLedgerTrade; today: string })
             <input type="hidden" name="market" value={trade.market} />
             <Field label="Purchase date"><input name="boughtOn" type="date" required max={today} defaultValue={trade.boughtOn} className="field" /></Field>
             <Field label="Buy price"><input name="buyPrice" type="number" min="0.000001" step="any" required defaultValue={trade.buyPrice} className="field" /></Field>
-            <Field label="Quantity"><input name="quantity" type="number" min="0.000001" step="any" required defaultValue={trade.quantity} className="field" /></Field>
-            {trade.status === "CLOSED" && <>
+            <Field label="Original quantity"><input name="quantity" type="number" min={Math.max(0.000001, trade.soldQuantity)} step="any" required defaultValue={trade.quantity} className="field" /></Field>
+            {trade.status === "CLOSED" && trade.exits.length === 0 && <>
               <Field label="Exit date"><input name="closedOn" type="date" required min={trade.boughtOn} max={today} defaultValue={trade.closedOn ?? ""} className="field" /></Field>
               <Field label="Exit price"><input name="exitPrice" type="number" min="0.000001" step="any" required defaultValue={trade.exitPrice ?? ""} className="field" /></Field>
               <Field label="Exit reason"><select name="closeReason" defaultValue={trade.closeReason ?? "Manual exit"} className="field bg-[#090c12]"><option>Target reached</option><option>Trailing stop</option><option>Stop loss</option><option>Holding window expired</option><option>Manual exit</option></select></Field>
