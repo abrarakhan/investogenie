@@ -59,7 +59,11 @@ def load_assets(conn, exchange: str, limit: int | None) -> list[Asset]:
     with conn.cursor() as cur:
         cur.execute(
             f"""
-            select a.id::text,a.ticker,latest.close
+            select a.id::text,a.ticker,latest.close,
+                   exists (
+                     select 1 from public.swing_trade_ledger l
+                      where l.asset_id=a.id and l.status='OPEN'
+                   ) ledger_open
               from public.assets a
               join lateral (
                 select o.close
@@ -82,7 +86,8 @@ def load_assets(conn, exchange: str, limit: int | None) -> list[Asset]:
                and not exists (
                  select 1 from public.asset_tracking_exclusions x where x.asset_id=a.id
                )
-             order by (signal.score is not null) desc,signal.score desc nulls last,a.ticker
+             order by ledger_open desc,(signal.score is not null) desc,
+                      signal.score desc nulls last,a.ticker
              {limit_sql}
             """,
             params,

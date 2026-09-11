@@ -172,6 +172,7 @@ export interface SwingLedgerTrade {
   expectedHoldingDays: number;
   currentPrice: number | null;
   quoteAsOf: string | null;
+  quoteUpdatedAt: string | null;
   closedOn: string | null;
   exitPrice: number | null;
   closeReason: string | null;
@@ -197,11 +198,17 @@ export interface SwingLedgerTrade {
 
 type LedgerValue = unknown;
 type LedgerRow = Record<string, LedgerValue>;
-const dateText = (value: LedgerValue) => {
+export const ledgerDateText = (value: LedgerValue) => {
   if (!value) return null;
-  if (value instanceof Date) return value.toISOString().slice(0, 10);
+  if (value instanceof Date) {
+    const year = value.getFullYear();
+    const month = String(value.getMonth() + 1).padStart(2, "0");
+    const day = String(value.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  }
   return String(value).slice(0, 10);
 };
+const dateText = ledgerDateText;
 const nullableNumber = (value: LedgerValue) => value === null ? null : Number(value);
 
 function parseExits(value: LedgerValue, buyPrice: number): SwingTradeExit[] {
@@ -226,7 +233,7 @@ function parseExits(value: LedgerValue, buyPrice: number): SwingTradeExit[] {
 export async function getSwingTradeLedger(userId: string, market: "IN" | "US"): Promise<SwingLedgerTrade[]> {
   const rows = await query<LedgerRow>(
     `select l.*, a.ticker, a.name asset_name, a.exchange, a.sector asset_sector,
-            q.price current_price, q.as_of quote_as_of,
+            q.price current_price, q.as_of quote_as_of, q.updated_at quote_updated_at,
             stock_path.prior_close, stock_path.two_session_close,
             coalesce(sales.sold_quantity,0) sold_quantity,
             coalesce(sales.realized_proceeds,0) realized_proceeds,
@@ -372,7 +379,12 @@ export async function getSwingTradeLedger(userId: string, market: "IN" | "US"): 
       projectionEntry: nullableNumber(row.projection_entry), projectedTarget: Number(row.projected_target),
       projectedStop: Number(row.projected_stop), projectedTrailingStop: nullableNumber(row.projected_trailing_stop),
       effectiveTrailingStop, expectedHoldingDays: Number(row.expected_holding_days),
-      currentPrice, quoteAsOf: dateText(row.quote_as_of), closedOn: dateText(row.closed_on),
+      currentPrice,
+      quoteAsOf: dateText(row.quote_as_of),
+      quoteUpdatedAt: row.quote_updated_at instanceof Date
+        ? row.quote_updated_at.toISOString()
+        : row.quote_updated_at ? String(row.quote_updated_at) : null,
+      closedOn: dateText(row.closed_on),
       exitPrice: legacyExitPrice, closeReason: row.close_reason === null ? null : String(row.close_reason),
       notes: row.notes === null ? null : String(row.notes),
     };

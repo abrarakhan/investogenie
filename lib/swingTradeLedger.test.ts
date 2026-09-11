@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { calculateSwingTradeProgress, summarizeSwingTradeLedger, tradingDaysBetween } from "@/lib/swingTradeLedger";
+import { calculateSwingTradeProgress, ledgerDateText, summarizeSwingTradeLedger, tradingDaysBetween } from "@/lib/swingTradeLedger";
 
 describe("swing trade ledger progress", () => {
+  it("keeps PostgreSQL date values on their local calendar day", () => {
+    expect(ledgerDateText(new Date(2026, 8, 11))).toBe("2026-09-11");
+  });
+
   it("counts trading sessions rather than weekends", () => {
     expect(tradingDaysBetween("2026-08-21", "2026-08-24")).toBe(1);
   });

@@ -21,6 +21,10 @@ const RISK = {
 const money = (value: number | null, currency: string) => value === null ? "—" : new Intl.NumberFormat("en-IN", { style: "currency", currency, maximumFractionDigits: 2 }).format(value);
 const pct = (value: number | null) => value === null ? "—" : `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
 const price = (value: number | null) => value === null ? "—" : value.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const quoteTime = (value: string | null, market: "IN" | "US") => value === null ? "unavailable" : new Intl.DateTimeFormat("en-IN", {
+  day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit",
+  timeZone: market === "IN" ? "Asia/Kolkata" : "America/New_York",
+}).format(new Date(value));
 
 export default function SwingTradeLedger({ market, trades, defaults }: {
   market: "IN" | "US";
@@ -154,7 +158,8 @@ function TradeCard({ trade, today }: { trade: SwingLedgerTrade; today: string })
         {trade.soldQuantity > 0 && <span>Sold {trade.soldQuantity.toLocaleString("en-IN")}</span>}
         <span>Remaining {trade.remainingQuantity.toLocaleString("en-IN")}</span>
         {trade.soldQuantity > 0 && <span className={trade.realizedPnlValue >= 0 ? "text-emerald-300" : "text-rose-300"}>Realized {money(trade.realizedPnlValue, trade.currency)}</span>}
-        <span>Quote {trade.quoteAsOf ?? "unavailable"}</span>
+        <span>Quote session {trade.quoteAsOf ?? "unavailable"}</span>
+        <span>Updated {quoteTime(trade.quoteUpdatedAt, trade.market)} {trade.market === "IN" ? "IST" : "ET"}</span>
         {trade.notes && <span>{trade.notes}</span>}
       </div>
       {trade.status === "OPEN" && <details className="mt-4"><summary className="cursor-pointer text-sm font-semibold text-white/55 hover:text-white">Record partial or full sale</summary><form action={recordSwingTradeSale} className="mt-3 grid gap-3 rounded-lg border border-white/10 bg-black/25 p-3 sm:grid-cols-2 lg:grid-cols-5"><input type="hidden" name="tradeId" value={trade.id} /><input type="hidden" name="market" value={trade.market} /><Field label="Sale date"><input name="soldOn" type="date" required min={trade.boughtOn} max={today} defaultValue={today} className="field" /></Field><Field label={`Quantity (max ${trade.remainingQuantity.toLocaleString("en-IN")})`}><input name="soldQuantity" type="number" min="0.000001" max={trade.remainingQuantity} step="any" required defaultValue={trade.remainingQuantity} className="field" /></Field><Field label="Sale price"><input name="exitPrice" type="number" min="0.000001" step="any" required defaultValue={trade.currentPrice ?? ""} className="field" /></Field><Field label="Reason"><select name="saleReason" className="field bg-[#090c12]"><option>Partial profit booking</option><option>Target reached</option><option>Trailing stop</option><option>Stop loss</option><option>Holding window expired</option><option>Manual exit</option></select></Field><button className="h-11 self-end rounded-lg border border-white/15 bg-white/8 text-sm font-semibold hover:bg-white/12">Record sale</button></form></details>}
