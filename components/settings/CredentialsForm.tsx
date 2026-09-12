@@ -6,7 +6,17 @@ import { AI_PROVIDERS, DEFAULT_MODEL_BY_PROVIDER, type AIProvider } from "@/lib/
 
 interface Props {
   initialCreds: StoredCredentials | null;
+  breezeStatus?: string;
+  breezeCallbackUrl: string;
 }
+
+const BREEZE_STATUS: Record<string, { type: "success" | "error"; text: string }> = {
+  connected: { type: "success", text: "Today’s Breeze session was saved. The live worker will reconnect within 30 seconds." },
+  denied: { type: "error", text: "ICICI Direct did not return a Breeze API session. Sign in again and complete every confirmation step." },
+  invalid_state: { type: "error", text: "The Breeze login link expired or returned in a different browser. Start again here and finish within 10 minutes." },
+  not_configured: { type: "error", text: "Save the Breeze API key and secret before generating a daily session." },
+  failed: { type: "error", text: "The returned Breeze session could not be saved. Please try again." },
+};
 
 const CUSTOM = "__custom__";
 const NEWS_PROVIDERS: Array<{ key: NewsProvider; label: string; hint: string }> = [
@@ -15,7 +25,7 @@ const NEWS_PROVIDERS: Array<{ key: NewsProvider; label: string; hint: string }> 
   { key: "newsapi", label: "NewsAPI", hint: "Broad publisher coverage and advanced keyword search." },
 ];
 
-export default function CredentialsForm({ initialCreds }: Props) {
+export default function CredentialsForm({ initialCreds, breezeStatus, breezeCallbackUrl }: Props) {
   // --- SMTP state ---
   const [smtpHost, setSmtpHost] = useState(initialCreds?.smtpHost || "");
   const [smtpPort, setSmtpPort] = useState(initialCreds?.smtpPort || 587);
@@ -218,7 +228,17 @@ export default function CredentialsForm({ initialCreds }: Props) {
         <p className="mb-4 text-sm text-white/50">
           Optional primary live feed for priority NSE/BSE stocks. Yahoo and Google remain active as the 15-minute fallback, and Bhavcopy remains the end-of-day authority. Generate a fresh Breeze session token before each trading day.
         </p>
+        {breezeStatus && BREEZE_STATUS[breezeStatus] && (
+          <p className={`mb-4 rounded-lg border px-3 py-2 text-sm ${BREEZE_STATUS[breezeStatus].type === "success" ? "border-emerald-400/25 bg-emerald-400/10 text-emerald-200" : "border-rose-400/25 bg-rose-400/10 text-rose-200"}`}>
+            {BREEZE_STATUS[breezeStatus].text}
+          </p>
+        )}
         <div className="space-y-4">
+          <div className="rounded-lg border border-cyan-300/15 bg-cyan-300/[0.04] p-3 text-xs leading-relaxed text-white/55">
+            In the ICICI Breeze app registration, set the Redirect URI exactly to
+            <code className="mt-1 block break-all font-mono text-cyan-200">{breezeCallbackUrl}</code>
+            Then use the button below on the same mobile browser where InvestoGenie is signed in. Your ICICI password and OTP never pass through InvestoGenie.
+          </div>
           <div className="grid gap-4 sm:grid-cols-2">
             <label className="block">
               <span className="text-sm font-medium text-white/80">API key</span>
@@ -238,6 +258,11 @@ export default function CredentialsForm({ initialCreds }: Props) {
             </span>
           </label>
           <div className="flex flex-wrap gap-2">
+            {breezeApiKeySet && breezeApiSecretSet && (
+              <a href="/api/breeze/connect" className="inline-flex min-h-10 items-center rounded-lg border border-cyan-300/30 bg-cyan-300/10 px-4 py-2 text-sm font-semibold text-cyan-100 hover:bg-cyan-300/15">
+                Generate today&apos;s session on ICICI Direct
+              </a>
+            )}
             <button onClick={handleSaveBreeze} disabled={loading} className="rounded-lg bg-gradient-to-r from-[var(--ig-primary)] to-[var(--ig-accent)] px-4 py-2 text-sm font-semibold text-black disabled:opacity-50">
               {loading ? "Saving..." : "Save and reconnect Breeze"}
             </button>

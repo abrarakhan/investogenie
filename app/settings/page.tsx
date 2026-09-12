@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import { headers } from "next/headers";
 import { getSessionUser } from "@/lib/auth";
 import AppShell from "@/components/app/AppShell";
 import { getUserSwingSettings } from "@/lib/settings";
@@ -39,7 +40,12 @@ export default async function SettingsPage({ searchParams }: {
   const user = await getSessionUser();
   if (!user) redirect("/login");
   const raw = await searchParams;
+  const requestHeaders = await headers();
   const marketParam = Array.isArray(raw.market) ? raw.market[0] : raw.market;
+  const breezeParam = Array.isArray(raw.breeze) ? raw.breeze[0] : raw.breeze;
+  const host = requestHeaders.get("x-forwarded-host") ?? requestHeaders.get("host");
+  const protocol = requestHeaders.get("x-forwarded-proto") ?? (process.env.NODE_ENV === "production" ? "https" : "http");
+  const breezeCallbackUrl = host ? `${protocol}://${host}/api/breeze/callback` : "/api/breeze/callback";
   const market = normalizeMarket(marketParam ?? "in") ?? "IN";
   const s = await getUserSwingSettings();
   const emailPrefs = await getEmailPreferences();
@@ -107,7 +113,7 @@ export default async function SettingsPage({ searchParams }: {
           before storage in the database.
         </p>
         <div className="mt-8">
-          <CredentialsForm initialCreds={creds} />
+          <CredentialsForm initialCreds={creds} breezeStatus={breezeParam} breezeCallbackUrl={breezeCallbackUrl} />
         </div>
       </section>
     </AppShell>
