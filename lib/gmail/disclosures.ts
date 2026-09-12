@@ -2,6 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { decryptCredential, encryptCredential } from "@/lib/crypto/credentials";
 import { query, queryOne } from "@/lib/db";
 import { inferAmc } from "@/lib/funds/fundMapping";
+import { classifyGmailDocument } from "@/lib/gmail/classification";
 
 export const GMAIL_READONLY_SCOPE = "https://www.googleapis.com/auth/gmail.readonly";
 const API = "https://gmail.googleapis.com/gmail/v1/users/me";
@@ -17,7 +18,8 @@ export interface GmailDisclosureAttachment {
   sender: string | null;
   receivedAt: string | null;
   inferredAmc: string | null;
-  status: "discovered" | "imported" | "ignored" | "error";
+  documentType: "nsdl_cas" | "amc_disclosure" | "unknown";
+  status: "discovered" | "processing" | "imported" | "needs_password" | "needs_review" | "ignored" | "error";
   matchedHoldingId: string | null;
   snapshotMonth: string | null;
   errorMessage: string | null;
@@ -29,6 +31,8 @@ export interface GmailDisclosureData {
     configured: boolean;
     email: string | null;
     lastScanAt: string | null;
+    casPasswordSet: boolean;
+    autoImportEnabled: boolean;
   };
   attachments: GmailDisclosureAttachment[];
 }
@@ -40,16 +44,29 @@ type ConnectionRow = {
   token_expires_at: Date | string | null;
   scope: string;
   last_scan_at: Date | string | null;
+  cas_pdf_password_encrypted?: string | null;
+  auto_import_enabled?: boolean;
 };
 
 const iso = (value: Date | string | null) => value
   ? (value instanceof Date ? value.toISOString() : new Date(value).toISOString())
   : null;
 
-export function getGmailOAuthConfig() {
+export async function getGmailOAuthConfig(userId?: string) {
   const clientId = process.env.GOOGLE_GMAIL_CLIENT_ID ?? "";
   const clientSecret = process.env.GOOGLE_GMAIL_CLIENT_SECRET ?? "";
-  return clientId && clientSecret ? { clientId, clientSecret } : null;
+  if (clientId && clientSecret) return { clientId, clientSecret, source: "environment" as const };
+  if (!userId) return null;
+  const row = await queryOne<{ gmail_client_id_encrypted: string | null; gmail_client_secret_encrypted: string | null }>(
+    "select gmail_client_id_encrypted,gmail_client_secret_encrypted from public.user_credentials where user_id=$1",
+    [userId],
+  );
+  if (!row?.gmail_client_id_encrypted || !row.gmail_client_secret_encrypted) return null;
+  return {
+    clientId: decryptCredential(row.gmail_client_id_encrypted),
+    clientSecret: decryptCredential(row.gmail_client_secret_encrypted),
+    source: "user" as const,
+  };
 }
 
 export const hashOAuthState = (state: string) => createHash("sha256").update(state).digest("hex");
@@ -100,7 +117,7 @@ async function tokenRequest(body: URLSearchParams): Promise<TokenResponse> {
 }
 
 export async function completeGmailConnection(input: { userId: string; code: string; redirectUri: string }) {
-  const config = getGmailOAuthConfig();
+  const config = await getGmailOAuthConfig(input.userId);
   if (!config) throw new Error("Gmail OAuth is not configured");
   const token = await tokenRequest(new URLSearchParams({
     code: input.code, client_id: config.clientId, client_secret: config.clientSecret,
@@ -136,7 +153,7 @@ async function getAccessToken(userId: string) {
   const expires = connection.token_expires_at ? new Date(connection.token_expires_at).getTime() : 0;
   if (expires > Date.now() + 60_000) return decryptCredential(connection.access_token_encrypted);
   if (!connection.refresh_token_encrypted) throw new Error("Gmail authorization expired; reconnect Gmail");
-  const config = getGmailOAuthConfig();
+  const config = await getGmailOAuthConfig(userId);
   if (!config) throw new Error("Gmail OAuth is not configured");
   const token = await tokenRequest(new URLSearchParams({
     refresh_token: decryptCredential(connection.refresh_token_encrypted),
@@ -172,7 +189,7 @@ const flatten = (part: GmailPart | undefined): GmailPart[] =>
   part ? [part, ...(part.parts ?? []).flatMap(flatten)] : [];
 
 const SEARCH =
-  'has:attachment newer_than:18m {subject:"portfolio disclosure" subject:"monthly portfolio" subject:"monthly disclosure" subject:"portfolio statement"}';
+  'has:attachment newer_than:24m {subject:"portfolio disclosure" subject:"monthly portfolio" subject:"monthly disclosure" subject:"portfolio statement" subject:"consolidated account statement" subject:"e-CAS" subject:"CAS statement"}';
 
 export async function scanGmailDisclosures(userId: string) {
   let pageToken: string | undefined;
@@ -198,21 +215,25 @@ export async function scanGmailDisclosures(userId: string) {
       const size = Number(part.body?.size ?? 0);
       if (!filename || !SUPPORTED.test(filename) || size > MAX_BYTES) continue;
       const amc = inferAmc((sender ?? "") + " " + (subject ?? "") + " " + filename, null);
+      const documentType = classifyGmailDocument({ filename, subject, sender });
+      if (documentType === "unknown") continue;
       await query(
         "insert into public.gmail_disclosure_attachments " +
-        "(user_id,message_id,attachment_id,part_id,filename,mime_type,size_bytes,email_subject,sender,received_at,inferred_amc) " +
-        "values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) " +
+        "(user_id,message_id,attachment_id,part_id,filename,mime_type,size_bytes,email_subject,sender,received_at,inferred_amc,document_type) " +
+        "values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) " +
         "on conflict (user_id,message_id,part_id) do update set attachment_id=excluded.attachment_id,filename=excluded.filename," +
         "mime_type=excluded.mime_type,size_bytes=excluded.size_bytes,email_subject=excluded.email_subject,sender=excluded.sender," +
-        "received_at=excluded.received_at,inferred_amc=excluded.inferred_amc,updated_at=now()",
+        "received_at=excluded.received_at,inferred_amc=excluded.inferred_amc,document_type=excluded.document_type,updated_at=now()",
         [userId, message.id, part.body?.attachmentId ?? null, part.partId ?? filename, filename,
-          part.mimeType ?? null, size, subject, sender, receivedAt, amc],
+          part.mimeType ?? null, size, subject, sender, receivedAt, amc, documentType],
       );
       attachments++;
     }
   }
   await query("update public.gmail_connections set last_scan_at=now(),updated_at=now() where user_id=$1", [userId]);
-  return { messages: messageIds.length, attachments };
+  const { processPendingGmailAttachments } = await import("@/lib/gmail/processing");
+  const processing = await processPendingGmailAttachments(userId);
+  return { messages: messageIds.length, attachments, processing };
 }
 
 export async function scanAllConnectedGmailDisclosures() {
@@ -224,6 +245,7 @@ export async function scanAllConnectedGmailDisclosures() {
     email: string;
     messages: number;
     attachments: number;
+    processing?: { processed: number; imported: number; review: number; errors: number };
     error?: string;
   }> = [];
   for (const connection of connections) {
@@ -250,6 +272,9 @@ export async function scanAllConnectedGmailDisclosures() {
     failed: results.filter((item) => item.error).length,
     messages: results.reduce((sum, item) => sum + item.messages, 0),
     attachments: results.reduce((sum, item) => sum + item.attachments, 0),
+    processed: results.reduce((sum, item) => sum + (item.processing?.processed ?? 0), 0),
+    imported: results.reduce((sum, item) => sum + (item.processing?.imported ?? 0), 0),
+    review: results.reduce((sum, item) => sum + (item.processing?.review ?? 0), 0),
     results,
   };
 }
@@ -282,31 +307,35 @@ export async function downloadGmailDisclosureAttachment(userId: string, recordId
 }
 
 export async function getGmailDisclosureData(userId: string): Promise<GmailDisclosureData> {
-  const [connection, rows] = await Promise.all([
+  const [connection, rows, oauthConfig] = await Promise.all([
     queryOne<ConnectionRow>(
-      "select gmail_email,access_token_encrypted,refresh_token_encrypted,token_expires_at,scope,last_scan_at from public.gmail_connections where user_id=$1",
+      "select gmail_email,access_token_encrypted,refresh_token_encrypted,token_expires_at,scope,last_scan_at,cas_pdf_password_encrypted,auto_import_enabled from public.gmail_connections where user_id=$1",
       [userId],
     ),
     query<{
       id: string; filename: string; mime_type: string | null; size_bytes: number;
       email_subject: string | null; sender: string | null; received_at: Date | string | null;
-      inferred_amc: string | null; status: GmailDisclosureAttachment["status"];
+      inferred_amc: string | null; document_type: GmailDisclosureAttachment["documentType"]; status: GmailDisclosureAttachment["status"];
       matched_holding_id: string | null; snapshot_month: Date | string | null; error_message: string | null;
     }>(
-      "select id,filename,mime_type,size_bytes,email_subject,sender,received_at,inferred_amc,status,matched_holding_id,snapshot_month,error_message " +
+      "select id,filename,mime_type,size_bytes,email_subject,sender,received_at,inferred_amc,document_type,status,matched_holding_id,snapshot_month,error_message " +
       "from public.gmail_disclosure_attachments where user_id=$1 order by received_at desc nulls last,discovered_at desc limit 100",
       [userId],
     ),
+    getGmailOAuthConfig(userId),
   ]);
   return {
     connection: {
-      connected: Boolean(connection), configured: Boolean(getGmailOAuthConfig()),
+      connected: Boolean(connection), configured: Boolean(oauthConfig),
       email: connection?.gmail_email ?? null, lastScanAt: iso(connection?.last_scan_at ?? null),
+      casPasswordSet: Boolean(connection?.cas_pdf_password_encrypted),
+      autoImportEnabled: connection?.auto_import_enabled ?? true,
     },
     attachments: rows.map((row) => ({
       id: row.id, filename: row.filename, mimeType: row.mime_type, sizeBytes: Number(row.size_bytes),
       subject: row.email_subject, sender: row.sender, receivedAt: iso(row.received_at),
       inferredAmc: row.inferred_amc, status: row.status, matchedHoldingId: row.matched_holding_id,
+      documentType: row.document_type,
       snapshotMonth: iso(row.snapshot_month), errorMessage: row.error_message,
     })),
   };

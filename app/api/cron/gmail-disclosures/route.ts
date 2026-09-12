@@ -22,6 +22,9 @@ export async function GET(request: NextRequest) {
       failed: result.failed,
       messages: result.messages,
       attachments: result.attachments,
+      processed: result.processed,
+      imported: result.imported,
+      review: result.review,
     };
     await logCronRun(databaseUrl, {
       job: "gmail-disclosures",

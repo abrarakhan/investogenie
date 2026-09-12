@@ -55,7 +55,7 @@ const JOURNEY: { step: string; title: string; href: string; body: string }[] = [
     step: "7",
     title: "Bring in your holdings — Import",
     href: "/terminal/in/cas",
-    body: "For India, upload CAS statements and AMC disclosures to power local holdings and the Fund Overlap X-Ray.",
+    body: "For India, upload CAS statements and AMC disclosures, or connect Gmail read-only in Fund Mapping. Gmail can automatically import NSDL e-CAS PDFs and validated AMC monthly disclosures; encrypted CAS files require the saved PDF password.",
   },
   {
     step: "8",

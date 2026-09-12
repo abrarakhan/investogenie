@@ -1160,6 +1160,15 @@ Still open:
 
 ### 2. Complete Fund Mapping Coverage
 
+Gmail-assisted ingestion is now automated:
+
+- Read-only Gmail discovery recognizes NSDL/CDSL e-CAS PDFs and AMC monthly portfolio disclosure attachments.
+- Encrypted CAS PDFs can use a per-user AES-256-GCM-encrypted password configured on Fund Mapping.
+- CAS imports are additive/updating in unattended mode; a partial statement cannot silently delete an existing holding.
+- Multi-scheme AMC workbooks import only fund/sheet matches that parse unambiguously and pass the existing ±2% snapshot-weight validation.
+- Ambiguous or unmatched documents remain visible as `Needs review`; attachment bytes and email bodies are not retained.
+- The existing 24-hour in-app Gmail scheduler now performs discovery and processing, with idempotent per-attachment/fund/month audit rows.
+
 Use `/portfolio/fund-mapping` to review and bulk-accept the 7 remaining exact AMFI/ISIN suggestions, then import AMC disclosures for the remaining 10 funds.
 
 Next actions:

@@ -11,7 +11,7 @@ export const runtime = "nodejs";
 export async function GET(request: NextRequest) {
   const user = await getSessionUser();
   if (!user) return NextResponse.redirect(new URL("/login", request.url));
-  const config = getGmailOAuthConfig();
+  const config = await getGmailOAuthConfig(user.id);
   if (!config) {
     return NextResponse.redirect(new URL("/portfolio/fund-mapping?gmail=not_configured", request.url));
   }
