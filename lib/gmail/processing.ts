@@ -9,15 +9,18 @@ import { inferSnapshotMonth, type GmailDocumentType } from "@/lib/gmail/classifi
 type HeldFund = { holding_id: string; asset_id: string; ticker: string; name: string; isin: string | null; amc: string | null };
 
 async function heldFunds(userId: string): Promise<HeldFund[]> {
-  const rows = await query<Omit<HeldFund, "amc">>(
+  const rows = await query<HeldFund>(
     `select h.id holding_id,a.id asset_id,a.ticker,
-            coalesce(amfi.scheme_name,a.name,a.ticker) name,
-            coalesce(nullif(chd.isin,''),nullif(m.amfi_code_in,'')) isin
+            coalesce(mapped.name,amfi.scheme_name,a.name,a.ticker) name,
+            coalesce(nullif(chd.isin,''),nullif(m.amfi_code_in,'')) isin,
+            coalesce(mapped.amc,amfi.amc) amc
        from public.holdings h join public.assets a on a.id=h.asset_id
        left join public.cas_holding_details chd on chd.holding_id=h.id and chd.user_id=h.user_id
        left join public.mutual_fund_meta m on m.asset_id=a.id
+       left join public.user_fund_mappings map on map.user_id=h.user_id and map.user_holding_id=h.id and map.status='matched'
+       left join public.fund_schemes mapped on mapped.scheme_code=map.scheme_code
        left join lateral (
-         select master.scheme_name
+         select master.scheme_name,master.amc
            from public.amfi_scheme_master master
           where upper(master.isin_payout_or_growth)=upper(coalesce(nullif(chd.isin,''),nullif(m.amfi_code_in,'')))
              or upper(master.isin_reinvestment)=upper(coalesce(nullif(chd.isin,''),nullif(m.amfi_code_in,'')))
@@ -26,7 +29,7 @@ async function heldFunds(userId: string): Promise<HeldFund[]> {
        ) amfi on true
       where h.user_id=$1 and a.asset_class='MUTUAL_FUND'::asset_class`, [userId],
   );
-  return rows.map((row) => ({ ...row, amc: inferAmc(row.name, row.isin) }));
+  return rows.map((row) => ({ ...row, amc: row.amc ?? inferAmc(row.name, row.isin) }));
 }
 
 async function processCas(userId: string, id: string, passwordEncrypted: string | null) {
@@ -50,7 +53,7 @@ async function processCas(userId: string, id: string, passwordEncrypted: string 
 
 async function processDisclosure(userId: string, id: string, meta: { inferred_amc: string | null; filename: string; email_subject: string | null; received_at: Date | string | null }) {
   const attachment = await downloadGmailDisclosureAttachment(userId, id);
-  const funds = (await heldFunds(userId)).filter((fund) => sameAmc(meta.inferred_amc, fund.amc));
+  const funds = (await heldFunds(userId)).filter((fund) => fund.amc && sameAmc(meta.inferred_amc, fund.amc));
   if (!funds.length) throw new Error(`No imported CAS fund matches ${meta.inferred_amc ?? "this disclosure's AMC"}`);
   const multiScheme = /\.(?:xlsx?|xlsm)$/i.test(attachment.filename);
   if (!multiScheme && funds.length !== 1) throw new Error(`${funds.length} funds match this single-scheme attachment; choose the fund manually`);
