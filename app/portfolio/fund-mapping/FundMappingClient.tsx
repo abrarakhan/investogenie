@@ -264,6 +264,16 @@ export default function FundMappingClient({
           Gmail connection failed or was cancelled. No mailbox access was stored.
         </div>
       )}
+      {data.summary.unidentified > 0 && (
+        <div className="flex flex-col gap-3 rounded-lg border border-amber-300/25 bg-amber-300/[0.08] px-4 py-3 text-sm text-amber-50 sm:flex-row sm:items-center sm:justify-between">
+          <span>
+            {data.summary.unidentified} imported fund {data.summary.unidentified === 1 ? "row is" : "rows are"} missing an ISIN, so automatic AMC matching is intentionally blocked for those rows. Re-import the latest CAS to restore complete scheme identities.
+          </span>
+          <Link href="/terminal/in/cas" className="shrink-0 rounded-md border border-amber-200/25 px-3 py-1.5 text-xs font-bold text-amber-100">
+            Re-import latest CAS
+          </Link>
+        </div>
+      )}
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
         <div className="rounded-lg border border-[var(--ig-accent)]/25 bg-[var(--ig-accent)]/[0.07] p-4 sm:col-span-2 xl:col-span-1"><p className="text-[10px] uppercase tracking-[0.16em] text-white/40">Overall fund value</p><p className="mt-1 text-2xl font-black text-white">{money(data.summary.totalValue)}</p></div>
