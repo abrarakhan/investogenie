@@ -116,6 +116,20 @@ def wait_for_breeze_credentials(stop_event: threading.Event) -> BreezeCredential
     return None
 
 
+def wait_for_credential_change(
+    previous_fingerprint: str,
+    stop_event: threading.Event,
+) -> BreezeCredentials | None:
+    while not stop_event.wait(30):
+        try:
+            credentials = load_breeze_credentials()
+            if credentials and credentials.fingerprint != previous_fingerprint:
+                return credentials
+        except Exception as exc:
+            print(f"[breeze-market] credential lookup failed: {exc}", file=sys.stderr, flush=True)
+    return None
+
+
 def number(value: Any) -> float | None:
     if value in (None, "", "--", "-"):
         return None
@@ -347,8 +361,27 @@ def main() -> int:
     from breeze_connect import BreezeConnect
     import breeze_connect.breeze_connect as breeze_module
 
-    breeze = BreezeConnect(api_key=credentials.api_key)
-    breeze.generate_session(api_secret=credentials.api_secret, session_token=credentials.session_token)
+    while True:
+        breeze = BreezeConnect(api_key=credentials.api_key)
+        try:
+            breeze.generate_session(
+                api_secret=credentials.api_secret,
+                session_token=credentials.session_token,
+            )
+            break
+        except Exception as exc:
+            if "session key is expired" not in str(exc).lower():
+                raise
+            print(
+                "[breeze-market] session token expired; update it in Settings. "
+                "Waiting for the saved token to change.",
+                file=sys.stderr,
+                flush=True,
+            )
+            refreshed = wait_for_credential_change(credentials.fingerprint, process_stop_event)
+            if not refreshed:
+                return 0
+            credentials = refreshed
     exchanges = [value.strip().upper() for value in (env("BREEZE_CASH_EXCHANGES", "NSE,BSE") or "").split(",")]
     exchanges = [value for value in exchanges if value in {"NSE", "BSE"}]
     with psycopg2.connect(database_url()) as conn:

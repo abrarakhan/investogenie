@@ -65,11 +65,10 @@ def load_assets(conn, exchange: str, limit: int | None) -> list[Asset]:
                       where l.asset_id=a.id and l.status='OPEN'
                    ) ledger_open
               from public.assets a
-              join lateral (
+              left join lateral (
                 select o.close
                   from public.daily_ohlcv o
                  where o.asset_id=a.id
-                   and o.date >= current_date - interval '10 days'
                  order by o.date desc
                  limit 1
               ) latest on true

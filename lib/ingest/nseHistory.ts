@@ -22,10 +22,13 @@ const MON: Record<string, number> = {
   Nov: 11,
   Dec: 12,
 };
+const NSE_EQUITY_SERIES = new Set(["EQ", "BE", "BZ", "SM", "ST", "SZ"]);
 
 export interface NseHistoryOptions {
   /** Max successful trading sessions to ingest per run. Repeated runs catch up. */
   maxSessions?: number;
+  /** Reprocess from this date even when a newer exchange-wide bar exists. */
+  startISO?: string;
   /** Override end date, mainly for tests/manual replay. Defaults to today UTC. */
   endISO?: string;
 }
@@ -94,6 +97,23 @@ function addDays(d: Date, days: number): Date {
   return out;
 }
 
+/**
+ * Replay a short recent window even when another symbol already advanced the
+ * exchange-wide maximum date. Thinly traded symbols can otherwise miss a
+ * session forever because the next run starts after the global max date.
+ */
+export function historyBackfillStart(
+  latestDate: string | null,
+  end: Date,
+  explicitStart?: string,
+): Date {
+  if (explicitStart) return new Date(`${explicitStart}T00:00:00Z`);
+  const replayStart = addDays(end, -8);
+  if (!latestDate) return replayStart;
+  const incrementalStart = addDays(new Date(`${latestDate}T00:00:00Z`), 1);
+  return incrementalStart < replayStart ? incrementalStart : replayStart;
+}
+
 function parseNseDate(value: string): string | null {
   const [dd, mon, yyyy] = value.split("-");
   const month = MON[mon];
@@ -141,7 +161,7 @@ async function fetchBhavcopy(
   let isoDate: string | null = null;
   for (let i = 1; i < lines.length; i++) {
     const p = parseCsvLine(lines[i]);
-    if (p[iSer] !== "EQ") continue;
+    if (!NSE_EQUITY_SERIES.has(p[iSer])) continue;
 
     const assetId = idByTicker.get(p[iSym].toUpperCase());
     if (!assetId) continue;
@@ -303,9 +323,7 @@ async function backfillIndianExchangeHistory(
     );
     const latestDateBefore = latestRows[0]?.latest ?? null;
 
-    let cursor = latestDateBefore
-      ? addDays(new Date(`${latestDateBefore}T00:00:00Z`), 1)
-      : addDays(end, -7);
+    let cursor = historyBackfillStart(latestDateBefore, end, opts.startISO);
 
     let datesAttempted = 0;
     let sessionsFetched = 0;

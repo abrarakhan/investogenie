@@ -24,8 +24,16 @@ export async function GET(request: NextRequest) {
 
   try {
     const maxSessions = Number(request.nextUrl.searchParams.get("maxSessions") ?? 20);
+    const startISO = request.nextUrl.searchParams.get("startISO") ?? undefined;
+    const endISO = request.nextUrl.searchParams.get("endISO") ?? undefined;
+    const isoDate = /^\d{4}-\d{2}-\d{2}$/;
+    if ((startISO && !isoDate.test(startISO)) || (endISO && !isoDate.test(endISO))) {
+      return NextResponse.json({ ok: false, error: "startISO and endISO must use YYYY-MM-DD" }, { status: 400 });
+    }
     const summary = await backfillBseHistory(databaseUrl, {
       maxSessions: Number.isFinite(maxSessions) ? Math.min(60, Math.max(1, maxSessions)) : 20,
+      startISO,
+      endISO,
     });
     await logCronRun(databaseUrl, {
       job: "backfill-bse",
