@@ -25,6 +25,21 @@ const NEWS_PROVIDERS: Array<{ key: NewsProvider; label: string; hint: string }> 
   { key: "newsapi", label: "NewsAPI", hint: "Broad publisher coverage and advanced keyword search." },
 ];
 
+function formatIstTimestamp(value: string | Date | null): string | null {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return new Intl.DateTimeFormat("en-IN", {
+    timeZone: "Asia/Kolkata",
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: true,
+  }).format(date);
+}
+
 export default function CredentialsForm({ initialCreds, breezeStatus, breezeCallbackUrl }: Props) {
   // --- SMTP state ---
   const [smtpHost, setSmtpHost] = useState(initialCreds?.smtpHost || "");
@@ -60,6 +75,11 @@ export default function CredentialsForm({ initialCreds, breezeStatus, breezeCall
   const [breezeApiKeySet, setBreezeApiKeySet] = useState(!!initialCreds?.breezeApiKeySet);
   const [breezeApiSecretSet, setBreezeApiSecretSet] = useState(!!initialCreds?.breezeApiSecretSet);
   const [breezeSessionTokenSet, setBreezeSessionTokenSet] = useState(!!initialCreds?.breezeSessionTokenSet);
+  const [breezeSessionUpdatedAt, setBreezeSessionUpdatedAt] = useState<string | null>(
+    initialCreds?.breezeSessionUpdatedAt
+      ? new Date(initialCreds.breezeSessionUpdatedAt).toISOString()
+      : null,
+  );
 
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
@@ -184,7 +204,7 @@ export default function CredentialsForm({ initialCreds, breezeStatus, breezeCall
     setLoading(true);
     setMessage(null);
     try {
-      await updateCredentials({
+      const updated = await updateCredentials({
         breezeApiKey: breezeApiKey || undefined,
         breezeApiSecret: breezeApiSecret || undefined,
         breezeSessionToken,
@@ -192,6 +212,11 @@ export default function CredentialsForm({ initialCreds, breezeStatus, breezeCall
       if (breezeApiKey) setBreezeApiKeySet(true);
       if (breezeApiSecret) setBreezeApiSecretSet(true);
       setBreezeSessionTokenSet(true);
+      setBreezeSessionUpdatedAt(
+        updated.breezeSessionUpdatedAt
+          ? new Date(updated.breezeSessionUpdatedAt).toISOString()
+          : null,
+      );
       setBreezeApiKey("");
       setBreezeApiSecret("");
       setBreezeSessionToken("");
@@ -210,6 +235,7 @@ export default function CredentialsForm({ initialCreds, breezeStatus, breezeCall
       setBreezeApiKeySet(false);
       setBreezeApiSecretSet(false);
       setBreezeSessionTokenSet(false);
+      setBreezeSessionUpdatedAt(null);
       setMessage({ type: "success", text: "Breeze credentials cleared." });
     } catch (err) {
       setMessage({ type: "error", text: err instanceof Error ? err.message : "Failed to clear Breeze credentials" });
@@ -253,7 +279,7 @@ export default function CredentialsForm({ initialCreds, breezeStatus, breezeCall
             <span className="text-sm font-medium text-white/80">Today&apos;s session token</span>
             <input type="password" value={breezeSessionToken} onChange={(event) => setBreezeSessionToken(event.target.value)} placeholder={breezeSessionTokenSet ? "Paste a new daily token" : "Daily Breeze session token"} disabled={loading} className={inputCls} autoComplete="off" />
             <span className="mt-1 block text-xs text-white/40">
-              {initialCreds?.breezeSessionUpdatedAt ? `Last replaced ${new Date(initialCreds.breezeSessionUpdatedAt).toISOString().slice(0, 16).replace("T", " ")} UTC. ` : ""}
+              {formatIstTimestamp(breezeSessionUpdatedAt) ? `Last replaced ${formatIstTimestamp(breezeSessionUpdatedAt)} IST. ` : ""}
               The API key and secret are needed only once; replace the session token daily.
             </span>
           </label>
