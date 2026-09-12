@@ -86,13 +86,40 @@ export async function processPendingGmailAttachments(userId: string) {
     "select cas_pdf_password_encrypted,auto_import_enabled from public.gmail_connections where user_id=$1", [userId],
   );
   if (!connection?.auto_import_enabled) return { processed: 0, imported: 0, review: 0, errors: 0 };
+
+  // A consolidated account statement is cumulative. Importing older CAS PDFs
+  // wastes work and can overwrite newer holdings with historical balances.
+  await query(
+    `with latest_cas as (
+       select id
+         from public.gmail_disclosure_attachments
+        where user_id=$1 and document_type='nsdl_cas'
+        order by received_at desc nulls last,discovered_at desc,id desc
+        limit 1
+     )
+     update public.gmail_disclosure_attachments a
+        set status='ignored',error_message='Superseded by the latest CAS statement',updated_at=now()
+      where a.user_id=$1 and a.document_type='nsdl_cas'
+        and a.id <> coalesce((select id from latest_cas),a.id)
+        and (a.status in ('discovered','needs_password','error')
+             or (a.status='processing' and a.processing_started_at < now()-interval '30 minutes'))`,
+    [userId],
+  );
   const candidates = await query<{ id: string; document_type: GmailDocumentType; inferred_amc: string | null; filename: string; email_subject: string | null; received_at: Date | string | null }>(
     `select id,document_type,inferred_amc,filename,email_subject,received_at
        from public.gmail_disclosure_attachments
       where user_id=$1
         and (status in ('discovered','needs_password') or (status='processing' and processing_started_at < now()-interval '30 minutes'))
         and document_type <> 'unknown'
-      order by received_at asc nulls last limit 5`, [userId],
+        and (document_type <> 'nsdl_cas' or id=(
+          select newest.id from public.gmail_disclosure_attachments newest
+           where newest.user_id=$1 and newest.document_type='nsdl_cas'
+           order by newest.received_at desc nulls last,newest.discovered_at desc,newest.id desc
+           limit 1
+        ))
+      order by case when document_type='nsdl_cas' then 0 else 1 end,
+               received_at desc nulls last
+      limit 5`, [userId],
   );
   const result = { processed: 0, imported: 0, review: 0, errors: 0 };
   for (const item of candidates) {

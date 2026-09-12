@@ -319,7 +319,14 @@ export async function getGmailDisclosureData(userId: string): Promise<GmailDiscl
       matched_holding_id: string | null; snapshot_month: Date | string | null; error_message: string | null;
     }>(
       "select id,filename,mime_type,size_bytes,email_subject,sender,received_at,inferred_amc,document_type,status,matched_holding_id,snapshot_month,error_message " +
-      "from public.gmail_disclosure_attachments where user_id=$1 order by received_at desc nulls last,discovered_at desc limit 100",
+      `from public.gmail_disclosure_attachments a where user_id=$1
+         and (document_type <> 'nsdl_cas' or id=(
+           select newest.id from public.gmail_disclosure_attachments newest
+            where newest.user_id=$1 and newest.document_type='nsdl_cas'
+            order by newest.received_at desc nulls last,newest.discovered_at desc,newest.id desc
+            limit 1
+         ))
+       order by received_at desc nulls last,discovered_at desc limit 100`,
       [userId],
     ),
     getGmailOAuthConfig(userId),
