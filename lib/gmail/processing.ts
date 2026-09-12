@@ -10,11 +10,20 @@ type HeldFund = { holding_id: string; asset_id: string; ticker: string; name: st
 
 async function heldFunds(userId: string): Promise<HeldFund[]> {
   const rows = await query<Omit<HeldFund, "amc">>(
-    `select h.id holding_id,a.id asset_id,a.ticker,coalesce(a.name,a.ticker) name,
+    `select h.id holding_id,a.id asset_id,a.ticker,
+            coalesce(amfi.scheme_name,a.name,a.ticker) name,
             coalesce(nullif(chd.isin,''),nullif(m.amfi_code_in,'')) isin
        from public.holdings h join public.assets a on a.id=h.asset_id
        left join public.cas_holding_details chd on chd.holding_id=h.id and chd.user_id=h.user_id
        left join public.mutual_fund_meta m on m.asset_id=a.id
+       left join lateral (
+         select master.scheme_name
+           from public.amfi_scheme_master master
+          where upper(master.isin_payout_or_growth)=upper(coalesce(nullif(chd.isin,''),nullif(m.amfi_code_in,'')))
+             or upper(master.isin_reinvestment)=upper(coalesce(nullif(chd.isin,''),nullif(m.amfi_code_in,'')))
+          order by master.is_active desc,master.nav_date desc nulls last
+          limit 1
+       ) amfi on true
       where h.user_id=$1 and a.asset_class='MUTUAL_FUND'::asset_class`, [userId],
   );
   return rows.map((row) => ({ ...row, amc: inferAmc(row.name, row.isin) }));
@@ -55,7 +64,13 @@ async function processDisclosure(userId: string, id: string, meta: { inferred_am
     );
     if (prior) continue;
     const file = new File([new Uint8Array(attachment.bytes)], attachment.filename, { type: attachment.mime_type ?? "application/octet-stream" });
-    const parsed = await parseDisclosureSource(file, { full: true, sheet: multiScheme ? fund.name : undefined });
+    let parsed = await parseDisclosureSource(file, { full: true, sheet: multiScheme ? fund.name : undefined });
+    // A one-fund AMC cannot be mapped to the wrong user holding. Some AMCs use
+    // opaque sheet codes, so accept an unselected workbook only when its full
+    // contents still form one valid ~100% portfolio at ingest.
+    if (typeof parsed === "string" && multiScheme && funds.length === 1) {
+      parsed = await parseDisclosureSource(file, { full: true });
+    }
     if (typeof parsed === "string" || !parsed.rows.length) {
       failures.push(fund.name);
       continue;

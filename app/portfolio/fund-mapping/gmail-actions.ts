@@ -106,11 +106,15 @@ export async function importGmailDisclosure(formData: FormData) {
   if (document?.document_type !== "amc_disclosure") throw new Error("This attachment is not an AMC portfolio disclosure");
 
   const fund = await queryOne<HeldFund>(
-    "select h.id holding_id,a.id asset_id,a.ticker,coalesce(a.name,a.ticker) name," +
+    "select h.id holding_id,a.id asset_id,a.ticker,coalesce(amfi.scheme_name,a.name,a.ticker) name," +
     "coalesce(nullif(chd.isin,''),nullif(m.amfi_code_in,'')) isin " +
     "from public.holdings h join public.assets a on a.id=h.asset_id " +
     "left join public.cas_holding_details chd on chd.holding_id=h.id and chd.user_id=h.user_id " +
     "left join public.mutual_fund_meta m on m.asset_id=a.id " +
+    "left join lateral (select master.scheme_name from public.amfi_scheme_master master " +
+    "where upper(master.isin_payout_or_growth)=upper(coalesce(nullif(chd.isin,''),nullif(m.amfi_code_in,''))) " +
+    "or upper(master.isin_reinvestment)=upper(coalesce(nullif(chd.isin,''),nullif(m.amfi_code_in,''))) " +
+    "order by master.is_active desc,master.nav_date desc nulls last limit 1) amfi on true " +
     "where h.id=$1 and h.user_id=$2 and a.asset_class='MUTUAL_FUND' limit 1",
     [holdingId, user.id],
   );

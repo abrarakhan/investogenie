@@ -132,6 +132,14 @@ export async function importCasStatement(formData: FormData): Promise<void> {
   const scaffold = await ensureScaffold();
   if (!scaffold) redirect("/login");
 
+  // A successfully parsed newer statement supersedes parsing errors from
+  // earlier uploads. Keep them for audit, but remove them from active error
+  // views before recording any artifacts specific to this statement.
+  await query(
+    "update public.cas_import_rejected_holdings set resolved_at=now() where user_id=$1 and resolved_at is null",
+    [scaffold.userId],
+  ).catch(() => {});
+
   for (const row of parsed.filter((row) => isLikelyCasNoise(row))) {
     await rejectCasArtifact(scaffold, row, "CAS parser artifact: AMC header or disclosure/legal text").catch(() => {});
   }
@@ -190,6 +198,13 @@ export async function importCasStatement(formData: FormData): Promise<void> {
       }
     }
   });
+
+  await query(
+    `update public.gmail_disclosure_attachments
+        set status='ignored',error_message=null,updated_at=now()
+      where user_id=$1 and document_type='nsdl_cas' and status<>'imported'`,
+    [scaffold.userId],
+  ).catch(() => {});
 
   const funds = rows.filter((r) => r.assetClass === "MUTUAL_FUND").length;
   const stocks = rows.filter((r) => r.assetClass === "STOCK").length;

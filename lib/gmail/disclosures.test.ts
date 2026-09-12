@@ -73,6 +73,11 @@ describe("Gmail disclosure links", () => {
     expect(extractDisclosureDownloadUrl(html)).toBe("https://quantmutual.com/Admin/disclouser/quant_Infrastructure_31_Aug_2026.xlsx");
   });
 
+  it("extracts an encoded trusted workbook from a download landing page", () => {
+    const html = `window.location = &quot;https://www.sbimf.com/docs/portfolio-august-2026.xlsx?x=1&amp;y=2&quot;`;
+    expect(extractDisclosureDownloadUrl(html)).toBe("https://www.sbimf.com/docs/portfolio-august-2026.xlsx?x=1&y=2");
+  });
+
   it("rejects untrusted and local download targets", () => {
     expect(extractDisclosureDownloadUrl('<a href="http://127.0.0.1/private.xlsx">Download</a>')).toBeNull();
     expect(extractDisclosureDownloadUrl('<a href="https://evil.example/portfolio.xlsx">Download</a>')).toBeNull();

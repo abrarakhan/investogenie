@@ -28,6 +28,39 @@ def clean(value: Any) -> str:
     return re.sub(r"\s+", " ", text)
 
 
+SHEET_NOISE_TOKENS = {
+    "fund", "plan", "option", "regular", "direct", "growth", "dividend",
+    "scheme", "the", "of", "and", "mutual", "mf", "india", "aditya",
+    "birla", "sun", "life", "canara", "robeco", "dsp", "franklin",
+    "templeton", "hdfc", "icici", "prudential", "motilal", "oswal",
+    "nippon", "sbi", "quant",
+}
+
+
+def sheet_aliases(value: Any) -> set[str]:
+    """Return common AMC tab abbreviations for a verbose scheme name."""
+    tokens = [token for token in norm(value).split("_") if token and token not in SHEET_NOISE_TOKENS]
+    if not tokens:
+        return set()
+    aliases = {"".join(tokens), "".join(token[0] for token in tokens)}
+    if len(tokens) >= 2:
+        aliases.add(tokens[0][0] + "".join(tokens[1:]))
+        aliases.add("".join(token[0] for token in tokens[:-1]) + tokens[-1])
+    return {alias for alias in aliases if alias}
+
+
+def sheet_match_score(wanted: Any, candidate: Any) -> tuple[float, float, float]:
+    wanted_norm = norm(wanted)
+    candidate_norm = norm(candidate)
+    wanted_tokens = {token for token in wanted_norm.split("_") if token and token not in SHEET_NOISE_TOKENS}
+    candidate_tokens = {token for token in candidate_norm.split("_") if token and token not in SHEET_NOISE_TOKENS}
+    overlap = len(wanted_tokens & candidate_tokens) / max(1, len(wanted_tokens | candidate_tokens))
+    similarity = difflib.SequenceMatcher(None, wanted_norm, candidate_norm).ratio()
+    compact_candidate = candidate_norm.replace("_", "")
+    alias_match = 1.0 if compact_candidate in sheet_aliases(wanted) else 0.0
+    return max(alias_match, overlap, similarity), overlap, similarity
+
+
 def to_number(value: Any) -> float | None:
     if value is None:
         return None
@@ -193,18 +226,10 @@ def read_tabular(path: Path, full: bool = False, sheet: str = "") -> list[dict[s
                 # CAS names are verbose. Rank normalized token overlap and text
                 # similarity, but require a clear winner to avoid importing the
                 # wrong scheme from a multi-scheme workbook.
-                ignored = {
-                    "fund", "plan", "option", "regular", "direct", "growth",
-                    "dividend", "scheme", "the", "of", "and",
-                }
-                wanted_tokens = {token for token in wanted.split("_") if token and token not in ignored}
                 ranked = []
                 for name in sheets:
-                    candidate = norm(name)
-                    candidate_tokens = {token for token in candidate.split("_") if token and token not in ignored}
-                    overlap = len(wanted_tokens & candidate_tokens) / max(1, len(wanted_tokens | candidate_tokens))
-                    similarity = difflib.SequenceMatcher(None, wanted, candidate).ratio()
-                    ranked.append((max(overlap, similarity), overlap, similarity, name))
+                    score, overlap, similarity = sheet_match_score(wanted, name)
+                    ranked.append((score, overlap, similarity, name))
                 ranked.sort(reverse=True)
                 best = ranked[0] if ranked else None
                 runner_up = ranked[1][0] if len(ranked) > 1 else 0.0

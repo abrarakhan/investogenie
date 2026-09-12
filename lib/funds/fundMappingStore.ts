@@ -27,6 +27,7 @@ interface FundRow {
   quantity: string | number;
   avg_cost: string | number | null;
   quote_price: string | number | null;
+  statement_value: string | number | null;
   category: string | null;
   mapped_scheme_code: string | null;
   mapping_status: "matched" | "rejected" | null;
@@ -53,15 +54,24 @@ const dateOnly = (value: Date | string | null): string | null => {
 export async function getFundMappingData(userId: string): Promise<FundMappingData> {
   const [fundRows, snapshotRows] = await Promise.all([
     query<FundRow>(
-      `select h.id holding_id, a.id asset_id, a.ticker, a.name,
+      `select h.id holding_id, a.id asset_id, a.ticker,
+              coalesce(amfi.scheme_name,a.name) name,
               coalesce(nullif(chd.isin, ''), nullif(m.amfi_code_in, '')) isin,
-              h.quantity, h.avg_cost, q.price quote_price, m.category,
+              h.quantity, h.avg_cost, q.price quote_price,chd.market_value statement_value,m.category,
               map.scheme_code mapped_scheme_code, map.status mapping_status
          from public.holdings h
          join public.assets a on a.id = h.asset_id
          left join public.mutual_fund_meta m on m.asset_id = a.id
          left join public.cas_holding_details chd on chd.holding_id = h.id and chd.user_id = h.user_id
          left join public.latest_quotes q on q.asset_id = a.id
+         left join lateral (
+           select master.scheme_name
+             from public.amfi_scheme_master master
+            where upper(master.isin_payout_or_growth)=upper(coalesce(nullif(chd.isin,''),nullif(m.amfi_code_in,'')))
+               or upper(master.isin_reinvestment)=upper(coalesce(nullif(chd.isin,''),nullif(m.amfi_code_in,'')))
+            order by master.is_active desc,master.nav_date desc nulls last
+            limit 1
+         ) amfi on true
          left join public.user_fund_mappings map on map.user_id = h.user_id and map.user_holding_id = h.id
         where h.user_id = $1 and a.asset_class = 'MUTUAL_FUND' and h.quantity > 0
         order by h.updated_at desc`,
@@ -125,7 +135,9 @@ export async function getFundMappingData(userId: string): Promise<FundMappingDat
       fundName: name,
       isin: row.isin ?? (/^INF|^INA/.test(row.ticker) ? row.ticker : null),
       amc: inferAmc(name, row.isin ?? row.ticker),
-      currentValue: Number(row.quantity) * (nav > 0 ? nav : 100),
+      currentValue: row.statement_value != null
+        ? Number(row.statement_value)
+        : Number(row.quantity) * (nav > 0 ? nav : 100),
       mappedSchemeCode: row.mapped_scheme_code,
       mappingStatus: row.mapping_status,
     };

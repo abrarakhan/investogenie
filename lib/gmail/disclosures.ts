@@ -239,8 +239,15 @@ async function readLimitedBody(response: Response): Promise<Buffer> {
 }
 
 export function extractDisclosureDownloadUrl(html: string): string | null {
-  const candidates = [...html.matchAll(/href\s*=\s*["']([^"']+)["']/gi)]
-    .map((match) => trustedDisclosureUrl(match[1]))
+  const decoded = html
+    .replace(/&amp;/gi, "&")
+    .replace(/&quot;|&#34;|&#x22;/gi, '"')
+    .replace(/&#x3d;/gi, "=")
+    .replace(/&#61;/g, "=");
+  const hrefs = [...decoded.matchAll(/href\s*=\s*["']([^"']+)["']/gi)].map((match) => match[1]);
+  const rawUrls = [...decoded.matchAll(/https?:\/\/[^\s"'<>]+/gi)].map((match) => match[0]);
+  const candidates = [...new Set([...hrefs, ...rawUrls])]
+    .map((value) => trustedDisclosureUrl(value))
     .filter((url): url is URL => Boolean(url))
     .filter((url) => !/\.(?:png|jpe?g|gif|svg|css)(?:$|\?)/i.test(url.pathname));
   const ranked = candidates.sort((a, b) => {
@@ -329,7 +336,10 @@ export async function scanGmailDisclosures(userId: string) {
        values ($1,$2,$3,$4,null,0,$5,$6,$7,$8,'amc_disclosure','link',$9)
        on conflict (user_id,message_id,part_id) do update set filename=excluded.filename,email_subject=excluded.email_subject,
          sender=excluded.sender,received_at=excluded.received_at,inferred_amc=excluded.inferred_amc,
-         document_type='amc_disclosure',source_kind='link',source_url_encrypted=excluded.source_url_encrypted,updated_at=now()`,
+         document_type='amc_disclosure',source_kind='link',source_url_encrypted=excluded.source_url_encrypted,
+         status=case when gmail_disclosure_attachments.status='imported' then 'imported' else 'discovered' end,
+         error_message=case when gmail_disclosure_attachments.status='imported' then gmail_disclosure_attachments.error_message else null end,
+         updated_at=now()`,
       [userId, message.id, partId, filename, subject, sender, receivedAt, amc, encryptCredential(sourceUrl)],
     );
     await query(
@@ -406,32 +416,49 @@ export async function downloadGmailDisclosureAttachment(userId: string, recordId
     const initialUrl = trustedDisclosureUrl(decryptCredential(record.source_url_encrypted));
     if (!initialUrl) throw new Error("Disclosure download link is not trusted");
     let url: URL = initialUrl;
-    let response: Response | null = null;
-    for (let redirects = 0; redirects < 6; redirects++) {
-      response = await fetch(url, { redirect: "manual", cache: "no-store", headers: { "user-agent": "InvestoGenie/1.0" } });
-      if (![301, 302, 303, 307, 308].includes(response.status)) break;
-      const location = response.headers.get("location");
-      const nextUrl = location ? trustedDisclosureUrl(new URL(location, url).toString()) : null;
-      if (!nextUrl) throw new Error("Disclosure link redirected outside trusted AMC domains");
-      url = nextUrl;
+    const visited = new Set<string>();
+    for (let step = 0; step < 8; step++) {
+      if (visited.has(url.toString())) throw new Error("Disclosure download entered a redirect loop");
+      visited.add(url.toString());
+      const response = await fetch(url, {
+        redirect: "manual",
+        cache: "no-store",
+        headers: {
+          accept: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv,application/pdf,text/html;q=0.8,*/*;q=0.5",
+          "accept-language": "en-IN,en;q=0.9",
+          "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/140 Safari/537.36",
+        },
+      });
+      if ([301, 302, 303, 307, 308].includes(response.status)) {
+        const location = response.headers.get("location");
+        const nextUrl = location ? trustedDisclosureUrl(new URL(location, url).toString()) : null;
+        if (!nextUrl) throw new Error("Disclosure link redirected outside trusted AMC domains");
+        url = nextUrl;
+        continue;
+      }
+      if (!response.ok) throw new Error(`Disclosure download failed (${response.status})`);
+      const contentLength = Number(response.headers.get("content-length") ?? 0);
+      if (contentLength > MAX_BYTES) throw new Error("Disclosure download exceeds the 25 MB import limit");
+      const bytes = await readLimitedBody(response);
+      const mimeType = response.headers.get("content-type")?.split(";")[0] ?? null;
+      if (/text\/html/i.test(mimeType ?? "")) {
+        const nextUrl = extractDisclosureDownloadUrl(bytes.toString("utf8"));
+        if (!nextUrl) throw new Error("Disclosure email link opened a web page without a trusted portfolio download");
+        url = new URL(nextUrl);
+        continue;
+      }
+      const disposition = response.headers.get("content-disposition") ?? "";
+      const dispositionName = disposition.match(/filename\*?=(?:UTF-8''|["']?)([^"';]+)/i)?.[1];
+      const pathName = decodeURIComponent(new URL(response.url || url.toString()).pathname.split("/").pop() ?? "");
+      const extension = mimeType?.includes("spreadsheetml") ? ".xlsx"
+        : mimeType?.includes("ms-excel") ? ".xls"
+          : mimeType?.includes("csv") ? ".csv"
+            : mimeType?.includes("pdf") ? ".pdf" : "";
+      const filename = decodeURIComponent(dispositionName ?? pathName) || record.filename.replace(/\.download$/, extension);
+      if (!SUPPORTED.test(filename)) throw new Error("Disclosure link did not return a supported portfolio file");
+      return { ...record, filename, mime_type: mimeType, size_bytes: bytes.length, bytes };
     }
-    if (!response?.ok) throw new Error(`Disclosure download failed (${response?.status ?? "no response"})`);
-    const contentLength = Number(response.headers.get("content-length") ?? 0);
-    if (contentLength > MAX_BYTES) throw new Error("Disclosure download exceeds the 25 MB import limit");
-    const bytes = await readLimitedBody(response);
-    const disposition = response.headers.get("content-disposition") ?? "";
-    const dispositionName = disposition.match(/filename\*?=(?:UTF-8''|["']?)([^"';]+)/i)?.[1];
-    const pathName = decodeURIComponent(new URL(response.url || url.toString()).pathname.split("/").pop() ?? "");
-    const mimeType = response.headers.get("content-type")?.split(";")[0] ?? null;
-    const extension = mimeType?.includes("spreadsheetml") ? ".xlsx"
-      : mimeType?.includes("ms-excel") ? ".xls"
-        : mimeType?.includes("csv") ? ".csv"
-          : mimeType?.includes("pdf") ? ".pdf" : "";
-    const filename = decodeURIComponent(dispositionName ?? pathName) || record.filename.replace(/\.download$/, extension);
-    if (/text\/html/i.test(mimeType ?? "") || !SUPPORTED.test(filename)) {
-      throw new Error("Disclosure email link opened a web page instead of a downloadable portfolio file");
-    }
-    return { ...record, filename, mime_type: mimeType, size_bytes: bytes.length, bytes };
+    throw new Error("Disclosure download exceeded the redirect limit");
   }
   let data: string | undefined;
   if (record.attachment_id) {

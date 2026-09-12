@@ -99,6 +99,10 @@ export async function importCasStatementBytes(input: { userId: string; bytes: Bu
   if (!portfolio) throw new Error("Could not create the user's portfolio");
 
   await tx(async (c) => {
+    await c.query(
+      "update public.cas_import_rejected_holdings set resolved_at=now() where user_id=$1 and resolved_at is null",
+      [input.userId],
+    );
     for (const row of rows) {
       const assetId = await upsertAsset(c, row);
       const currentPrice = row.price && row.price > 0 ? row.price : row.value / row.quantity;

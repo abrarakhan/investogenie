@@ -19,7 +19,7 @@ sudo -u "${APP_USER}" "${APP_DIR}/.venv/bin/pip" install -r "${APP_DIR}/pipeline
 sudo -u "${APP_USER}" "${APP_DIR}/.venv/bin/pip" install -r "${APP_DIR}/workers/requirements.txt"
 
 sudo -u "${APP_USER}" bash -lc \
-  "set -a; source /etc/investogenie/investogenie.env; set +a; cd '${APP_DIR}' && node scripts/apply-migration.mjs db/migrations/0033_breeze_credentials.sql && node scripts/apply-migration.mjs db/migrations/0034_swing_trade_partial_exits.sql && node scripts/apply-migration.mjs db/migrations/0035_gmail_auto_import.sql"
+  "set -a; source /etc/investogenie/investogenie.env; set +a; cd '${APP_DIR}' && node scripts/apply-migration.mjs db/migrations/0033_breeze_credentials.sql && node scripts/apply-migration.mjs db/migrations/0034_swing_trade_partial_exits.sql && node scripts/apply-migration.mjs db/migrations/0035_gmail_auto_import.sql && node scripts/apply-migration.mjs db/migrations/0036_gmail_disclosure_links.sql && node scripts/apply-migration.mjs db/migrations/0037_resolved_cas_rejections.sql"
 
 install -m 0644 "${APP_DIR}/deploy/oracle/investogenie.service" \
   /etc/systemd/system/investogenie.service
