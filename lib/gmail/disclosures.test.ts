@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildGmailAuthorizationUrl,
+  extractDisclosureDownloadUrl,
   GMAIL_READONLY_SCOPE,
   hashOAuthState,
 } from "@/lib/gmail/disclosures";
@@ -57,5 +58,23 @@ describe("Gmail investment document classification", () => {
   it("extracts a disclosure month and otherwise uses the prior received month", () => {
     expect(inferSnapshotMonth({ filename: "portfolio_August_2026.xlsx" })).toBe("2026-08-01");
     expect(inferSnapshotMonth({ filename: "portfolio.xlsx", receivedAt: "2026-09-10T10:00:00Z" })).toBe("2026-08-01");
+  });
+});
+
+describe("Gmail disclosure links", () => {
+  it("prefers a direct trusted workbook over decorative links", () => {
+    const html = `<a href="https://www.sbimf.com/logo.png">Logo</a>
+      <a href="https://www.sbimf.com/docs/portfolio-august-2026.xlsx">Portfolio</a>`;
+    expect(extractDisclosureDownloadUrl(html)).toBe("https://www.sbimf.com/docs/portfolio-august-2026.xlsx");
+  });
+
+  it("extracts the trusted workbook nested in a mail tracker", () => {
+    const html = `<a href="http://mailer.quant.in/path/~https://quantmutual.com/Admin/disclouser/quant_Infrastructure_31_Aug_2026.xlsx">Download</a>`;
+    expect(extractDisclosureDownloadUrl(html)).toBe("https://quantmutual.com/Admin/disclouser/quant_Infrastructure_31_Aug_2026.xlsx");
+  });
+
+  it("rejects untrusted and local download targets", () => {
+    expect(extractDisclosureDownloadUrl('<a href="http://127.0.0.1/private.xlsx">Download</a>')).toBeNull();
+    expect(extractDisclosureDownloadUrl('<a href="https://evil.example/portfolio.xlsx">Download</a>')).toBeNull();
   });
 });

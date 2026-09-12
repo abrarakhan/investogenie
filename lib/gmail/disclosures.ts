@@ -2,12 +2,19 @@ import { createHash, randomBytes } from "node:crypto";
 import { decryptCredential, encryptCredential } from "@/lib/crypto/credentials";
 import { query, queryOne } from "@/lib/db";
 import { inferAmc } from "@/lib/funds/fundMapping";
-import { classifyGmailDocument } from "@/lib/gmail/classification";
+import { classifyGmailDocument, inferSnapshotMonth } from "@/lib/gmail/classification";
 
 export const GMAIL_READONLY_SCOPE = "https://www.googleapis.com/auth/gmail.readonly";
 const API = "https://gmail.googleapis.com/gmail/v1/users/me";
 const MAX_BYTES = 25 * 1024 * 1024;
 const SUPPORTED = /\.(xlsx?|xlsm|csv|tsv|pdf)$/i;
+const TRUSTED_DISCLOSURE_DOMAINS = [
+  "camsonline.com", "kfintech.com", "sbimf.com", "quantmutual.com",
+  "motilaloswalmf.com", "canararobeco.com", "hdfcfund.com",
+  "icicipruamc.com", "nipponindiaim.com", "franklintempleton.com",
+  "franklintempletonindia.com", "adityabirlacapital.com", "widen.net",
+  "amazonaws.com", "cloudfront.net",
+];
 
 export interface GmailDisclosureAttachment {
   id: string;
@@ -188,26 +195,97 @@ const header = (part: GmailPart | undefined, name: string) =>
 const flatten = (part: GmailPart | undefined): GmailPart[] =>
   part ? [part, ...(part.parts ?? []).flatMap(flatten)] : [];
 
+const decodeBase64Url = (value: string) =>
+  Buffer.from(value.replace(/-/g, "+").replace(/_/g, "/"), "base64");
+
+function decodeHtmlAttribute(value: string) {
+  return value
+    .replace(/&amp;/gi, "&")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&#x([0-9a-f]+);/gi, (_, hex: string) => String.fromCodePoint(Number.parseInt(hex, 16)))
+    .replace(/&#(\d+);/g, (_, decimal: string) => String.fromCodePoint(Number(decimal)));
+}
+
+function trustedDisclosureUrl(value: string): URL | null {
+  try {
+    const nested = decodeHtmlAttribute(value).match(/~(https?:\/\/[^\s]+)$/i)?.[1];
+    const url = new URL(nested ?? decodeHtmlAttribute(value));
+    if (!/^https?:$/.test(url.protocol) || url.username || url.password) return null;
+    const host = url.hostname.toLowerCase();
+    if (!TRUSTED_DISCLOSURE_DOMAINS.some((domain) => host === domain || host.endsWith(`.${domain}`))) return null;
+    return url;
+  } catch {
+    return null;
+  }
+}
+
+async function readLimitedBody(response: Response): Promise<Buffer> {
+  if (!response.body) return Buffer.alloc(0);
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > MAX_BYTES) {
+      await reader.cancel();
+      throw new Error("Disclosure download exceeds the 25 MB import limit");
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks.map((chunk) => Buffer.from(chunk)), size);
+}
+
+export function extractDisclosureDownloadUrl(html: string): string | null {
+  const candidates = [...html.matchAll(/href\s*=\s*["']([^"']+)["']/gi)]
+    .map((match) => trustedDisclosureUrl(match[1]))
+    .filter((url): url is URL => Boolean(url))
+    .filter((url) => !/\.(?:png|jpe?g|gif|svg|css)(?:$|\?)/i.test(url.pathname));
+  const ranked = candidates.sort((a, b) => {
+    const score = (url: URL) => {
+      if (/\.(?:xlsx?|xlsm|csv|tsv|pdf)$/i.test(url.pathname)) return 3;
+      if (/^(?:delivery|scdelivery)\.(?:camsonline|kfintech)\.com$/i.test(url.hostname)) return 2;
+      if (/portfolio|disclos/i.test(url.pathname)) return 1;
+      return 0;
+    };
+    return score(b) - score(a);
+  });
+  return ranked[0]?.toString() ?? null;
+}
+
 // AMC mail subjects are inconsistent and often omit "portfolio disclosure".
 // Search broadly for attached spreadsheets, then apply our strict filename,
 // sender, and subject classifier before recording anything.
 const SEARCH =
   'has:attachment newer_than:24m {filename:xls filename:xlsx filename:xlsm filename:csv filename:tsv subject:"portfolio disclosure" subject:"monthly portfolio" subject:"monthly disclosure" subject:"portfolio statement" subject:"consolidated account statement" subject:"e-CAS" subject:"CAS statement"}';
+const LINK_SEARCH =
+  'newer_than:3m {subject:"monthly portfolio" subject:"portfolio disclosure"}';
 
-export async function scanGmailDisclosures(userId: string) {
+async function listMessageIds(userId: string, search: string, pages: number) {
   let pageToken: string | undefined;
-  const messageIds: string[] = [];
-  for (let page = 0; page < 3; page++) {
-    const params = new URLSearchParams({ q: SEARCH, maxResults: "100" });
+  const ids: string[] = [];
+  for (let page = 0; page < pages; page++) {
+    const params = new URLSearchParams({ q: search, maxResults: "100" });
     if (pageToken) params.set("pageToken", pageToken);
     const result = await gmailGet<{ messages?: Array<{ id: string }>; nextPageToken?: string }>(
       userId, "/messages?" + params.toString(),
     );
-    messageIds.push(...(result.messages ?? []).map((item) => item.id));
+    ids.push(...(result.messages ?? []).map((item) => item.id));
     pageToken = result.nextPageToken;
     if (!pageToken) break;
   }
+  return ids;
+}
+
+export async function scanGmailDisclosures(userId: string) {
+  const messageIds = [...new Set([
+    ...(await listMessageIds(userId, SEARCH, 3)),
+    ...(await listMessageIds(userId, LINK_SEARCH, 2)),
+  ])];
   let attachments = 0;
+  const linkedAmcs = new Set<string>();
   for (const messageId of messageIds) {
     const message = await gmailGet<GmailMessage>(userId, "/messages/" + encodeURIComponent(messageId) + "?format=full");
     const subject = header(message.payload, "Subject");
@@ -232,6 +310,36 @@ export async function scanGmailDisclosures(userId: string) {
       );
       attachments++;
     }
+
+    const amc = inferAmc((sender ?? "") + " " + (subject ?? ""), null);
+    if (!amc || linkedAmcs.has(amc) || !/(?:monthly\s+)?portfolio|portfolio\s+disclosure/i.test(subject ?? "")) continue;
+    const body = flatten(message.payload)
+      .filter((part) => /^text\/(?:html|plain)$/i.test(part.mimeType ?? "") && part.body?.data)
+      .map((part) => decodeBase64Url(part.body!.data!).toString("utf8"))
+      .join("\n");
+    const sourceUrl = extractDisclosureDownloadUrl(body);
+    if (!sourceUrl) continue;
+    linkedAmcs.add(amc);
+    const month = inferSnapshotMonth({ filename: "", subject, receivedAt });
+    const partId = "link:" + createHash("sha256").update(sourceUrl).digest("hex").slice(0, 24);
+    const filename = `${amc.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "")}-${month.slice(0, 7)}-portfolio.download`;
+    await query(
+      `insert into public.gmail_disclosure_attachments
+         (user_id,message_id,part_id,filename,mime_type,size_bytes,email_subject,sender,received_at,inferred_amc,document_type,source_kind,source_url_encrypted)
+       values ($1,$2,$3,$4,null,0,$5,$6,$7,$8,'amc_disclosure','link',$9)
+       on conflict (user_id,message_id,part_id) do update set filename=excluded.filename,email_subject=excluded.email_subject,
+         sender=excluded.sender,received_at=excluded.received_at,inferred_amc=excluded.inferred_amc,
+         document_type='amc_disclosure',source_kind='link',source_url_encrypted=excluded.source_url_encrypted,updated_at=now()`,
+      [userId, message.id, partId, filename, subject, sender, receivedAt, amc, encryptCredential(sourceUrl)],
+    );
+    await query(
+      `update public.gmail_disclosure_attachments
+          set status='ignored',error_message=null,updated_at=now()
+        where user_id=$1 and document_type='amc_disclosure' and inferred_amc=$2
+          and message_id<>$3 and source_kind='link' and status<>'imported'`,
+      [userId, amc, message.id],
+    );
+    attachments++;
   }
   await query("update public.gmail_connections set last_scan_at=now(),updated_at=now() where user_id=$1", [userId]);
   const { processPendingGmailAttachments } = await import("@/lib/gmail/processing");
@@ -282,19 +390,49 @@ export async function scanAllConnectedGmailDisclosures() {
   };
 }
 
-const decodeBase64Url = (value: string) =>
-  Buffer.from(value.replace(/-/g, "+").replace(/_/g, "/"), "base64");
-
 export async function downloadGmailDisclosureAttachment(userId: string, recordId: string) {
   const record = await queryOne<{
     message_id: string; attachment_id: string | null; part_id: string;
     filename: string; mime_type: string | null; size_bytes: number;
+    source_kind: "attachment" | "link"; source_url_encrypted: string | null;
   }>(
-    "select message_id,attachment_id,part_id,filename,mime_type,size_bytes from public.gmail_disclosure_attachments where id=$1 and user_id=$2 and status <> 'ignored'",
+    "select message_id,attachment_id,part_id,filename,mime_type,size_bytes,source_kind,source_url_encrypted from public.gmail_disclosure_attachments where id=$1 and user_id=$2 and status <> 'ignored'",
     [recordId, userId],
   );
   if (!record) throw new Error("Gmail disclosure attachment was not found");
   if (record.size_bytes > MAX_BYTES) throw new Error("Attachment exceeds the 25 MB import limit");
+  if (record.source_kind === "link") {
+    if (!record.source_url_encrypted) throw new Error("Disclosure download link is unavailable");
+    const initialUrl = trustedDisclosureUrl(decryptCredential(record.source_url_encrypted));
+    if (!initialUrl) throw new Error("Disclosure download link is not trusted");
+    let url: URL = initialUrl;
+    let response: Response | null = null;
+    for (let redirects = 0; redirects < 6; redirects++) {
+      response = await fetch(url, { redirect: "manual", cache: "no-store", headers: { "user-agent": "InvestoGenie/1.0" } });
+      if (![301, 302, 303, 307, 308].includes(response.status)) break;
+      const location = response.headers.get("location");
+      const nextUrl = location ? trustedDisclosureUrl(new URL(location, url).toString()) : null;
+      if (!nextUrl) throw new Error("Disclosure link redirected outside trusted AMC domains");
+      url = nextUrl;
+    }
+    if (!response?.ok) throw new Error(`Disclosure download failed (${response?.status ?? "no response"})`);
+    const contentLength = Number(response.headers.get("content-length") ?? 0);
+    if (contentLength > MAX_BYTES) throw new Error("Disclosure download exceeds the 25 MB import limit");
+    const bytes = await readLimitedBody(response);
+    const disposition = response.headers.get("content-disposition") ?? "";
+    const dispositionName = disposition.match(/filename\*?=(?:UTF-8''|["']?)([^"';]+)/i)?.[1];
+    const pathName = decodeURIComponent(new URL(response.url || url.toString()).pathname.split("/").pop() ?? "");
+    const mimeType = response.headers.get("content-type")?.split(";")[0] ?? null;
+    const extension = mimeType?.includes("spreadsheetml") ? ".xlsx"
+      : mimeType?.includes("ms-excel") ? ".xls"
+        : mimeType?.includes("csv") ? ".csv"
+          : mimeType?.includes("pdf") ? ".pdf" : "";
+    const filename = decodeURIComponent(dispositionName ?? pathName) || record.filename.replace(/\.download$/, extension);
+    if (/text\/html/i.test(mimeType ?? "") || !SUPPORTED.test(filename)) {
+      throw new Error("Disclosure email link opened a web page instead of a downloadable portfolio file");
+    }
+    return { ...record, filename, mime_type: mimeType, size_bytes: bytes.length, bytes };
+  }
   let data: string | undefined;
   if (record.attachment_id) {
     const body = await gmailGet<{ data?: string }>(

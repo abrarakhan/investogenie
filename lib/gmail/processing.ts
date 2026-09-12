@@ -128,7 +128,7 @@ export async function processPendingGmailAttachments(userId: string) {
         ))
       order by case when document_type='nsdl_cas' then 0 else 1 end,
                received_at desc nulls last
-      limit 5`, [userId],
+      limit 15`, [userId],
   );
   const result = { processed: 0, imported: 0, review: 0, errors: 0 };
   for (const item of candidates) {
