@@ -4,7 +4,7 @@ import { useMemo, useState, useTransition } from "react";
 import Link from "next/link";
 import MatchStatusBadge from "@/components/ui/MatchStatusBadge";
 import type { FundMappingData, SnapshotWithMapping, UserFundMappingRow } from "@/lib/funds/fundMappingStore";
-import type { PairwiseOverlap } from "@/lib/analytics/fundOverlap";
+import type { FundComposition, PairwiseOverlap, StockExposure } from "@/lib/analytics/fundOverlap";
 import { acceptFundSuggestion, autoAcceptIsinMatches, rejectFundSuggestion, unlinkFundMapping } from "./actions";
 import GmailDisclosurePanel from "@/components/funds/GmailDisclosurePanel";
 import type { GmailDisclosureData } from "@/lib/gmail/disclosures";
@@ -100,8 +100,12 @@ function SnapshotCard({ snapshot, selectedFund }: { snapshot: SnapshotWithMappin
  *  Lives here as well as on the terminal X-Ray because this is the screen where
  *  mapping decisions are made — seeing the overlap a mapping produced is the
  *  payoff for accepting it, and the reason to go find the next disclosure. */
-function OverlapPairs({ pairs, matched }: { pairs: PairwiseOverlap[]; matched: number }) {
+function OverlapPairs({ pairs, matched, compositions }: { pairs: PairwiseOverlap[]; matched: number; compositions: FundComposition[] }) {
   const [expanded, setExpanded] = useState<string | null>(pairs[0] ? `${pairs[0].fundA}|${pairs[0].fundB}` : null);
+  const weights = useMemo(() => new Map(compositions.map((fund) => [
+    fund.fundTicker,
+    new Map(fund.stocks.map((stock) => [stock.stockTicker, stock.weightPct])),
+  ])), [compositions]);
 
   return (
     <div className="rounded-lg border border-white/10 bg-white/[0.03] p-4">
@@ -154,15 +158,22 @@ function OverlapPairs({ pairs, matched }: { pairs: PairwiseOverlap[]; matched: n
                 </button>
                 {isOpen && (
                   <div className="border-t border-white/5 px-3 py-2.5">
-                    <div className="flex flex-wrap gap-1.5">
-                      {pair.sharedStocks.map((stock) => (
-                        <span
-                          key={stock}
-                          className="rounded-full border border-amber-300/20 bg-amber-300/10 px-2 py-0.5 text-[10px] text-amber-100"
-                        >
-                          {stock}
-                        </span>
-                      ))}
+                    <div className="mb-1 grid grid-cols-[minmax(0,1fr)_auto_auto_auto] gap-2 px-2 text-[9px] uppercase tracking-wide text-white/30">
+                      <span>Common stock</span><span>Fund A</span><span>Fund B</span><span>Overlap</span>
+                    </div>
+                    <div className="max-h-72 space-y-1 overflow-auto">
+                      {pair.sharedStocks.map((stock) => {
+                        const weightA = weights.get(pair.fundA)?.get(stock) ?? 0;
+                        const weightB = weights.get(pair.fundB)?.get(stock) ?? 0;
+                        return (
+                          <div key={stock} className="grid grid-cols-[minmax(0,1fr)_auto_auto_auto] gap-2 rounded-md border border-amber-300/15 bg-amber-300/[0.07] px-2 py-1.5 text-[10px]">
+                            <span className="truncate font-semibold text-amber-100" title={stock}>{stock}</span>
+                            <span className="font-mono text-white/65">{weightA.toFixed(2)}%</span>
+                            <span className="font-mono text-white/65">{weightB.toFixed(2)}%</span>
+                            <span className="font-mono text-cyan-100">{Math.min(weightA, weightB).toFixed(2)}%</span>
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
                 )}
@@ -175,16 +186,52 @@ function OverlapPairs({ pairs, matched }: { pairs: PairwiseOverlap[]; matched: n
   );
 }
 
+function SharedStocks({ stocks }: { stocks: StockExposure[] }) {
+  const shared = stocks
+    .filter((stock) => stock.contributingFunds.length > 1)
+    .sort((a, b) => b.effectiveWeightPct - a.effectiveWeightPct);
+  return (
+    <section className="rounded-lg border border-white/10 bg-white/[0.03] p-4">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-white/45">Common stocks across my funds</p>
+          <p className="mt-1 text-[11px] text-white/40">Combined percentage of your total mutual-fund portfolio exposed to each repeated stock.</p>
+        </div>
+        <span className="rounded-full border border-white/10 px-2 py-0.5 text-[10px] text-white/50">{shared.length} shared</span>
+      </div>
+      {shared.length === 0 ? (
+        <p className="text-sm text-white/45">No common stocks are available yet. More mapped AMC snapshots are required.</p>
+      ) : (
+        <div className="grid gap-2 md:grid-cols-2">
+          {shared.map((stock) => (
+            <div key={stock.stockTicker} className="rounded-lg border border-amber-300/15 bg-amber-300/[0.07] px-3 py-2">
+              <div className="flex items-center justify-between gap-3">
+                <span className="truncate text-xs font-semibold text-amber-100" title={stock.stockTicker}>{stock.stockTicker}</span>
+                <span className="font-mono text-xs font-bold text-cyan-100">{stock.effectiveWeightPct.toFixed(2)}%</span>
+              </div>
+              <p className="mt-1 truncate text-[10px] text-white/42" title={stock.contributingFunds.join(", ")}>{stock.contributingFunds.join(" · ")}</p>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
 export default function FundMappingClient({
   data,
   linkedStocks,
   pairwiseOverlaps = [],
+  fundCompositions = [],
+  stockExposure = [],
   gmail,
   gmailStatus,
 }: {
   data: FundMappingData;
   linkedStocks?: string | null;
   pairwiseOverlaps?: PairwiseOverlap[];
+  fundCompositions?: FundComposition[];
+  stockExposure?: StockExposure[];
   gmail: GmailDisclosureData;
   gmailStatus?: string | null;
 }) {
@@ -218,16 +265,16 @@ export default function FundMappingClient({
         </div>
       )}
 
-      <GmailDisclosurePanel gmail={gmail} funds={data.funds} />
-
-      <div className="grid gap-3 md:grid-cols-4">
-        <div className="rounded-lg border border-white/10 bg-white/[0.03] p-4"><p className="text-[10px] uppercase tracking-[0.16em] text-white/35">Imported</p><p className="mt-1 text-2xl font-black">{data.summary.imported}</p></div>
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+        <div className="rounded-lg border border-[var(--ig-accent)]/25 bg-[var(--ig-accent)]/[0.07] p-4 sm:col-span-2 xl:col-span-1"><p className="text-[10px] uppercase tracking-[0.16em] text-white/40">Overall fund value</p><p className="mt-1 text-2xl font-black text-white">{money(data.summary.totalValue)}</p></div>
+        <div className="rounded-lg border border-white/10 bg-white/[0.03] p-4"><p className="text-[10px] uppercase tracking-[0.16em] text-white/35">Funds</p><p className="mt-1 text-2xl font-black">{data.summary.imported}</p></div>
         <div className="rounded-lg border border-white/10 bg-white/[0.03] p-4"><p className="text-[10px] uppercase tracking-[0.16em] text-white/35">Matched</p><p className="mt-1 text-2xl font-black text-emerald-300">{data.summary.matched}</p></div>
         <div className="rounded-lg border border-white/10 bg-white/[0.03] p-4"><p className="text-[10px] uppercase tracking-[0.16em] text-white/35">Pending</p><p className="mt-1 text-2xl font-black text-amber-300">{data.summary.pending}</p></div>
-        <div className="rounded-lg border border-white/10 bg-white/[0.03] p-4"><p className="text-[10px] uppercase tracking-[0.16em] text-white/35">Rejected</p><p className="mt-1 text-2xl font-black text-rose-300">{data.summary.rejected}</p></div>
+        <div className="rounded-lg border border-white/10 bg-white/[0.03] p-4"><p className="text-[10px] uppercase tracking-[0.16em] text-white/35">Common stocks</p><p className="mt-1 text-2xl font-black text-amber-200">{stockExposure.filter((stock) => stock.contributingFunds.length > 1).length}</p></div>
       </div>
 
-      <OverlapPairs pairs={pairwiseOverlaps} matched={data.summary.matched} />
+      <SharedStocks stocks={stockExposure} />
+      <OverlapPairs pairs={pairwiseOverlaps} matched={data.summary.matched} compositions={fundCompositions} />
 
       <div className="flex flex-wrap items-center gap-3">
         <button
@@ -311,6 +358,8 @@ export default function FundMappingClient({
           </div>
         </section>
       </div>
+
+      <GmailDisclosurePanel gmail={gmail} funds={data.funds} />
     </div>
   );
 }

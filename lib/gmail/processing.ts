@@ -22,12 +22,21 @@ async function heldFunds(userId: string): Promise<HeldFund[]> {
 
 async function processCas(userId: string, id: string, passwordEncrypted: string | null) {
   const attachment = await downloadGmailDisclosureAttachment(userId, id);
-  return importCasStatementBytes({
+  const result = await importCasStatementBytes({
     userId,
     bytes: attachment.bytes,
     filename: attachment.filename,
     password: passwordEncrypted ? decryptCredential(passwordEncrypted) : undefined,
   });
+  // Retain the latest successful CAS as the only actionable record. Historical
+  // failures are no longer useful once a newer cumulative statement imports.
+  await query(
+    `update public.gmail_disclosure_attachments
+        set status='ignored',error_message=null,updated_at=now()
+      where user_id=$1 and document_type='nsdl_cas' and id<>$2`,
+    [userId, id],
+  );
+  return result;
 }
 
 async function processDisclosure(userId: string, id: string, meta: { inferred_amc: string | null; filename: string; email_subject: string | null; received_at: Date | string | null }) {

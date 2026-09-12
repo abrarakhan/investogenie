@@ -42,6 +42,14 @@ describe("Gmail investment document classification", () => {
     })).toBe("amc_disclosure");
   });
 
+  it("recognizes a generically named AMC workbook from its sender", () => {
+    expect(classifyGmailDocument({
+      filename: "Monthly_Portfolio_2026_08.xlsm",
+      subject: "Your latest statutory document",
+      sender: "HDFC Mutual Fund <statutory@hdfcfund.com>",
+    })).toBe("amc_disclosure");
+  });
+
   it("ignores unrelated Gmail attachments", () => {
     expect(classifyGmailDocument({ filename: "invoice.pdf", subject: "Your electricity bill" })).toBe("unknown");
   });

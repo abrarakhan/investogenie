@@ -15,7 +15,7 @@ export interface UserFundMappingRow extends UserFundForMapping {
 export interface FundMappingData {
   funds: UserFundMappingRow[];
   snapshots: SnapshotWithMapping[];
-  summary: { imported: number; matched: number; rejected: number; pending: number };
+  summary: { imported: number; matched: number; rejected: number; pending: number; totalValue: number };
 }
 
 interface FundRow {
@@ -136,7 +136,14 @@ export async function getFundMappingData(userId: string): Promise<FundMappingDat
     return order[a.displayStatus] - order[b.displayStatus] || b.currentValue - a.currentValue;
   });
 
-  return { funds, snapshots, summary: summarizeMapping(funds) };
+  return {
+    funds,
+    snapshots,
+    summary: {
+      ...summarizeMapping(funds),
+      totalValue: funds.reduce((sum, fund) => sum + fund.currentValue, 0),
+    },
+  };
 }
 
 export async function countSnapshotStocks(schemeCode: string): Promise<number> {

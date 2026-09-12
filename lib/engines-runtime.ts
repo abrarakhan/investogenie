@@ -132,10 +132,11 @@ export async function getFundOverlap(): Promise<OverlapReport | null> {
   if (!user) return null;
 
   const heldFunds = (
-    await query<{ holding_id: string; id: string; ticker: string; name: string | null; display_name: string | null; asset_class: string; quantity: string | number; avg_cost: string | number | null }>(
-      `select h.id as holding_id, a.id, a.ticker, a.name, fs.name as display_name, a.asset_class, h.quantity, h.avg_cost
+    await query<{ holding_id: string; id: string; ticker: string; name: string | null; display_name: string | null; asset_class: string; quantity: string | number; avg_cost: string | number | null; quote_price: string | number | null }>(
+      `select h.id as holding_id, a.id, a.ticker, a.name, fs.name as display_name, a.asset_class, h.quantity, h.avg_cost,q.price quote_price
          from public.holdings h
          join public.assets a on a.id = h.asset_id
+         left join public.latest_quotes q on q.asset_id=a.id
          left join lateral (
            select fs.name
              from public.user_fund_mappings map
@@ -148,7 +149,7 @@ export async function getFundOverlap(): Promise<OverlapReport | null> {
       [user.id],
     )
   )
-    .map((h) => ({ holdingId: h.holding_id, id: h.id, ticker: h.ticker, name: h.name, displayName: h.display_name ?? h.name ?? h.ticker, assetClass: h.asset_class, units: Number(h.quantity), nav: Number(h.avg_cost ?? 0) }))
+    .map((h) => ({ holdingId: h.holding_id, id: h.id, ticker: h.ticker, name: h.name, displayName: h.display_name ?? h.name ?? h.ticker, assetClass: h.asset_class, units: Number(h.quantity), nav: Number(h.quote_price ?? h.avg_cost ?? 0) }))
     .filter((h) => h.assetClass === "MUTUAL_FUND" && h.ticker && h.units > 0);
   if (heldFunds.length === 0) return null;
 

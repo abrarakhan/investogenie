@@ -33,6 +33,8 @@ export default async function FundMappingPage({ searchParams }: { searchParams: 
         data={data}
         linkedStocks={params.linked ?? null}
         pairwiseOverlaps={overlap?.pairwiseOverlaps ?? []}
+        fundCompositions={overlap?.fundCompositions ?? []}
+        stockExposure={overlap?.stockExposure ?? []}
         gmail={gmail}
         gmailStatus={params.gmail ?? null}
       />

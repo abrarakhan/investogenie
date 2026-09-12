@@ -7,7 +7,7 @@ import { classifyGmailDocument } from "@/lib/gmail/classification";
 export const GMAIL_READONLY_SCOPE = "https://www.googleapis.com/auth/gmail.readonly";
 const API = "https://gmail.googleapis.com/gmail/v1/users/me";
 const MAX_BYTES = 25 * 1024 * 1024;
-const SUPPORTED = /\.(xlsx?|csv|tsv|pdf)$/i;
+const SUPPORTED = /\.(xlsx?|xlsm|csv|tsv|pdf)$/i;
 
 export interface GmailDisclosureAttachment {
   id: string;
@@ -188,8 +188,11 @@ const header = (part: GmailPart | undefined, name: string) =>
 const flatten = (part: GmailPart | undefined): GmailPart[] =>
   part ? [part, ...(part.parts ?? []).flatMap(flatten)] : [];
 
+// AMC mail subjects are inconsistent and often omit "portfolio disclosure".
+// Search broadly for attached spreadsheets, then apply our strict filename,
+// sender, and subject classifier before recording anything.
 const SEARCH =
-  'has:attachment newer_than:24m {subject:"portfolio disclosure" subject:"monthly portfolio" subject:"monthly disclosure" subject:"portfolio statement" subject:"consolidated account statement" subject:"e-CAS" subject:"CAS statement"}';
+  'has:attachment newer_than:24m {filename:xls filename:xlsx filename:xlsm filename:csv filename:tsv subject:"portfolio disclosure" subject:"monthly portfolio" subject:"monthly disclosure" subject:"portfolio statement" subject:"consolidated account statement" subject:"e-CAS" subject:"CAS statement"}';
 
 export async function scanGmailDisclosures(userId: string) {
   let pageToken: string | undefined;
