@@ -10,10 +10,15 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 function settingsRedirect(request: NextRequest, status: string) {
+  const configuredOrigin = process.env.NEXT_PUBLIC_APP_URL?.trim().replace(/\/+$/, "");
+  const forwardedHost = request.headers.get("x-forwarded-host") ?? request.headers.get("host");
+  const forwardedProtocol = request.headers.get("x-forwarded-proto") ?? request.nextUrl.protocol.replace(":", "");
+  const publicOrigin = configuredOrigin
+    || (forwardedHost ? `${forwardedProtocol}://${forwardedHost}` : request.nextUrl.origin);
   // ICICI may submit the callback as POST. A 303 ensures the browser follows
   // with a normal GET instead of replaying that POST against the Settings page.
   const response = NextResponse.redirect(
-    new URL(`/settings?market=in&breeze=${status}`, request.url),
+    new URL(`/settings?market=in&breeze=${status}`, `${publicOrigin}/`),
     303,
   );
   response.cookies.delete(BREEZE_CONNECT_COOKIE);
