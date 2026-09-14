@@ -29,6 +29,24 @@ const blockedBuyLabel: Record<Exclude<StrongSwingStatus, "EXECUTION_READY">, str
 const fmt = (value: number | null, digits = 2) =>
   value === null || !Number.isFinite(value) ? "-" : value.toFixed(digits);
 
+function rankMovement(candidate: StrongSwingCandidate): string {
+  const delta = candidate.baseSwingRank - candidate.strongSwingRank;
+  if (delta > 0) return `Up ${delta} after confirmation checks`;
+  if (delta < 0) return `Down ${Math.abs(delta)} after confirmation checks`;
+  return "Rank unchanged after confirmation checks";
+}
+
+function rankReason(candidate: StrongSwingCandidate): string {
+  if (candidate.status === "EXECUTION_READY") return "Every technical and execution gate passed.";
+  const failed = candidate.gates.filter((gate) => !gate.passed);
+  const technical = failed.filter((gate) => gate.category === "technical").slice(0, 2);
+  const execution = failed.filter((gate) => gate.category === "execution").slice(0, 2);
+  const reasons = [...technical, ...execution].map((gate) => gate.label);
+  return reasons.length
+    ? `Held back by ${reasons.join(", ")}.`
+    : "Strong score reflects the confirmation gates passed.";
+}
+
 function CandidateCard({ candidate }: { candidate: StrongSwingCandidate }) {
   const passed = candidate.gates.filter((gate) => gate.passed).length;
   const ledgerParams = new URLSearchParams({
@@ -72,6 +90,25 @@ function CandidateCard({ candidate }: { candidate: StrongSwingCandidate }) {
             <div className={`mt-1 font-mono text-sm ${color}`}>{fmt(Number(value))}</div>
           </div>
         ))}
+      </div>
+
+      <div className="mt-3 grid gap-2 rounded-md border border-white/8 bg-black/20 px-3 py-3 sm:grid-cols-[auto_auto_1fr] sm:items-center sm:gap-5">
+        <div>
+          <div className="text-[10px] uppercase tracking-wide text-white/35">Base Swing</div>
+          <div className="mt-0.5 font-mono text-sm font-bold text-white/75">
+            #{candidate.baseSwingRank} · {Math.round(candidate.score * 100)}/100
+          </div>
+        </div>
+        <div>
+          <div className="text-[10px] uppercase tracking-wide text-white/35">Strong Swing</div>
+          <div className="mt-0.5 font-mono text-sm font-bold text-cyan-200">
+            #{candidate.strongSwingRank} · {candidate.strengthScore}/100
+          </div>
+        </div>
+        <div className="text-xs leading-relaxed text-white/48">
+          <span className="font-semibold text-white/68">{rankMovement(candidate)}.</span>{" "}
+          {rankReason(candidate)}
+        </div>
       </div>
 
       <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
@@ -141,6 +178,9 @@ export default function StrongSwingCandidates({ candidates }: { candidates: Stro
 
   return (
     <div className="space-y-8">
+      <div className="rounded-lg border border-cyan-400/15 bg-cyan-400/[0.035] px-4 py-3 text-xs leading-relaxed text-cyan-50/65">
+        Strong Swing starts with the same base Swing classifier. Base rank is its position in the 100-candidate input pool; Strong rank is recalculated after confirmation, liquidity, volatility, circuit-behaviour and entry-safety gates.
+      </div>
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-5 sm:gap-3">
         {[
           ["Execution ready", executionReady.length, "text-emerald-300"],

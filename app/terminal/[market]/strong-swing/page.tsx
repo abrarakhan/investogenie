@@ -41,9 +41,9 @@ export default async function StrongSwingPage({
       {market === "IN" && <MomentumIgnitionCandidates result={momentumIgnition} />}
       <section className={market === "IN" ? "mt-12 border-t border-white/10 pt-8" : ""}>
         {market === "IN" && <div className="mb-6">
-          <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-emerald-300">Confirmed execution engine</div>
+          <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-emerald-300">Base Swing lineage · confirmed execution engine</div>
           <h2 className="mt-1 text-2xl font-black">Strong Swing Confirmation</h2>
-          <p className="mt-1 text-sm text-white/45">The existing calculations and two-close execution gates are unchanged.</p>
+          <p className="mt-1 text-sm text-white/45">The same base Swing signals are re-ranked only after the two-close confirmation and execution-safety gates.</p>
         </div>}
         <StrongSwingCandidates candidates={candidates} />
       </section>

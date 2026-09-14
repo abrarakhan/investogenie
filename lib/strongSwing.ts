@@ -24,6 +24,8 @@ interface SignalContext {
 }
 
 export interface StrongSwingCandidate extends ScreenRow, StrongSwingAssessment {
+  baseSwingRank: number;
+  strongSwingRank: number;
   strongEntry: number;
   strongTarget: number;
   strongStop: number;
@@ -123,6 +125,10 @@ export async function getStrongSwingCandidates(
   );
   if (!base.length) return [];
 
+  // runScreener returns the base classifier order. Preserve that lineage before
+  // Strong Swing applies its additional confirmation and execution gates.
+  const baseRankByAsset = new Map(base.map((row, index) => [row.assetId, index + 1]));
+
   const ids = base.map((row) => row.assetId);
   const [barRows, contexts, benchmarkRows] = await Promise.all([
     query<BarRow>(
@@ -207,6 +213,8 @@ export async function getStrongSwingCandidates(
     candidates.push({
       ...row,
       ...assessment,
+      baseSwingRank: baseRankByAsset.get(row.assetId) ?? 0,
+      strongSwingRank: 0,
       strongEntry: assessment.confirmationEntry,
       strongTarget: levels.target,
       strongStop: levels.stopLoss,
@@ -215,7 +223,10 @@ export async function getStrongSwingCandidates(
     });
   }
 
-  const ranked = rankStrongSwingCandidates(candidates);
+  const ranked = rankStrongSwingCandidates(candidates).map((candidate, index) => ({
+    ...candidate,
+    strongSwingRank: index + 1,
+  }));
   try {
     await captureStrongSwingSnapshot(market, ranked);
   } catch (error) {

@@ -104,7 +104,7 @@ export default function MomentumIgnitionCandidates({ result }: { result: Momentu
     <section className="space-y-4">
       <div className="flex flex-wrap items-end justify-between gap-3 border-b border-white/10 pb-4">
         <div>
-          <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-cyan-300">Full-universe discovery</div>
+          <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-cyan-300">Separate discovery engine · not the base Swing ranking</div>
           <h2 className="mt-1 text-2xl font-black">Momentum Ignition</h2>
           <p className="mt-1 max-w-3xl text-sm leading-relaxed text-white/45">
             Finds liquid NSE trend leaders approaching expansion before the confirmed Strong Swing engine acts.
