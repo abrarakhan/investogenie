@@ -63,7 +63,7 @@ async function fetchNSE() {
     for (let k = 1; k < lines.length; k++) {
       const p = parseCsvLine(lines[k]);
       if (!NSE_EQUITY_SERIES.has(p[iSer])) continue;
-      const price = num(p[iLast]) ?? num(p[iClose]); if (price === null || price === 0) continue;
+      const price = num(p[iClose]) ?? num(p[iLast]); if (price === null || price === 0) continue;
       const prev = num(p[iPrev]);
       const [dd, mon, yyyy] = p[iDate].split("-");
       asOf = `${yyyy}-${String(MON[mon]+1).padStart(2,"0")}-${dd.padStart(2,"0")}`;
@@ -93,7 +93,7 @@ async function fetchBSE() {
     for (let k = 1; k < lines.length; k++) {
       const p = parseCsvLine(lines[k]);
       if (p[iTp] !== "STK") continue; // equities only
-      const price = num(p[iLast]) ?? num(p[iClose]); if (price === null || price === 0) continue;
+      const price = num(p[iClose]) ?? num(p[iLast]); if (price === null || price === 0) continue;
       const prev = num(p[iPrev]);
       asOf = p[iDate];
       quotes.set(p[iSym].toUpperCase(), { price, changePct: prev ? ((price - prev) / prev) * 100 : null });

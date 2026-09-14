@@ -359,7 +359,7 @@ async function fetchBhavSeries(
   return { quotes: new Map(), asOf: null };
 }
 
-function buildNSE(text: string) {
+export function buildNSE(text: string) {
   if (!text.includes("SERIES")) return null;
   const lines = text.split(/\r?\n/).filter(Boolean);
   const h = parseCsvLine(lines[0]); const col = (n: string) => h.indexOf(n);
@@ -369,7 +369,7 @@ function buildNSE(text: string) {
   for (let k = 1; k < lines.length; k++) {
     const p = parseCsvLine(lines[k]);
     if (!NSE_EQUITY_SERIES.has(p[iSer])) continue;
-    const price = num(p[iLast]) ?? num(p[iClose]); if (price === null || price === 0) continue;
+    const price = num(p[iClose]) ?? num(p[iLast]); if (price === null || price === 0) continue;
     const prev = num(p[iPrev]);
     const [dd, mon, yyyy] = p[iDate].split("-");
     asOf = `${yyyy}-${String(MON[mon]+1).padStart(2,"0")}-${dd.padStart(2,"0")}`;
@@ -378,7 +378,7 @@ function buildNSE(text: string) {
   return { quotes, asOf };
 }
 
-function buildBSE(text: string) {
+export function buildBSE(text: string) {
   if (!text.includes("TckrSymb")) return null;
   const lines = text.split(/\r?\n/).filter(Boolean);
   const h = parseCsvLine(lines[0]); const col = (n: string) => h.indexOf(n);
@@ -388,7 +388,7 @@ function buildBSE(text: string) {
   for (let k = 1; k < lines.length; k++) {
     const p = parseCsvLine(lines[k]);
     if (p[iTp] !== "STK") continue;
-    const price = num(p[iLast]) ?? num(p[iClose]); if (price === null || price === 0) continue;
+    const price = num(p[iClose]) ?? num(p[iLast]); if (price === null || price === 0) continue;
     const prev = num(p[iPrev]);
     asOf = p[iDate];
     quotes.set(p[iSym].toUpperCase(), { price, changePct: prev ? ((price - prev) / prev) * 100 : null });
