@@ -99,6 +99,24 @@ describe("classifyCoverageGaps", () => {
     expect(gaps).toContainEqual(expect.objectContaining({ issueType: "History stale" }));
   });
 
+  it("keeps Friday quotes and history current on the 14 September exchange holiday", () => {
+    const gaps = classifyCoverageGaps({
+      symbol: "RELIANCE",
+      market: "IN",
+      hasQuote: true,
+      quoteUpdatedAt: "2026-09-11T10:00:00Z",
+      quoteAsOf: "2026-09-11",
+      hasHistory: true,
+      latestHistoryDate: "2026-09-11",
+      activeSwingSignal: true,
+      now: "2026-09-14T13:15:00Z",
+    });
+
+    expect(gaps).not.toContainEqual(expect.objectContaining({ issueType: "Quote age" }));
+    expect(gaps).not.toContainEqual(expect.objectContaining({ issueType: "History stale" }));
+    expect(gaps).not.toContainEqual(expect.objectContaining({ issueType: "Swing signal on stale data" }));
+  });
+
   it("detects universe assets with missing and stale fundamentals", () => {
     const missing = classifyCoverageGaps({ symbol: "AAPL", market: "US", inUniverse: true, hasFundamentals: false, now: "2026-07-20T10:00:00Z" });
     const stale = classifyCoverageGaps({ symbol: "MSFT", market: "US", inUniverse: true, hasFundamentals: true, latestFundamentalsDate: "2025-12-01", now: "2026-07-20T10:00:00Z" });
@@ -140,6 +158,11 @@ describe("classifySourceFreshness — NSE/BSE OHLCV History source cards", () =>
   it("only fails after a genuinely stuck multi-day gap", () => {
     const staleRow: SourceRow = { ...fridayRow, quote_as_of: "2026-07-10" };
     expect(classifySourceFreshness(staleRow, new Date("2026-07-27T13:30:00Z"), "")).toBe("failed");
+  });
+
+  it("keeps the 11 September close fresh on the 14 September holiday", () => {
+    const row = { ...fridayRow, quote_as_of: "2026-09-11" };
+    expect(classifySourceFreshness(row, new Date("2026-09-14T13:15:00Z"), "")).toBe("fresh");
   });
 });
 

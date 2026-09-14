@@ -3,6 +3,7 @@ import type { FreshnessStatus } from "@/lib/status";
 import { getBackfillStatusSummary } from "@/lib/backfill/queue";
 import type { BackfillStatusSummary } from "@/lib/backfill/types";
 import { isMarketOpen } from "@/lib/backfill/classifier";
+import { isMarketHoliday, latestExpectedSessionDate, tradingSessionLag } from "@/lib/market-calendar.mjs";
 
 export type HealthSeverity = "critical" | "high" | "medium" | "low";
 export type HealthMarket = "IN" | "US" | "ALL";
@@ -119,27 +120,23 @@ export function classifyCoverageGaps(input: CoverageGapInput): CoverageGap[] {
   const indianQuoteAsOf = input.market === "IN" ? input.quoteAsOf?.slice(0, 10) ?? null : null;
   const expectedIndianAsOf = input.market === "IN" ? expectedIndianBhavcopyDate(asDate(now) ?? new Date()) : null;
   const indianQuoteLagDays = expectedIndianAsOf && indianQuoteAsOf
-    ? daysBetween(`${expectedIndianAsOf}T00:00:00.000Z`, `${indianQuoteAsOf}T00:00:00.000Z`)
+    ? tradingSessionLag("IN", indianQuoteAsOf, expectedIndianAsOf)
     : null;
   const marketOpen = isMarketOpen(input.market, nowDate);
   const staleQuote = input.market === "IN"
     ? !!input.hasQuote && (marketOpen
       ? quoteAge === null || quoteAge > 1
-      : indianQuoteLagDays === null || indianQuoteLagDays > 3)
+      : indianQuoteLagDays === null || indianQuoteLagDays > 0)
     : !!input.hasQuote && marketOpen && (quoteAge === null || quoteAge > 1);
-  // NSE/BSE are closed Sat/Sun, so Friday's close is the correct, current data
-  // all weekend — a flat "days since now" count would otherwise call it stale
-  // by Saturday and call it failed by Monday. Measure the lag against the most
-  // recently EXPECTED trading session instead (same helper the quote check
-  // uses), so Friday's data stays fresh through the weekend and only becomes
-  // stale once it falls behind Monday's own expected session.
+  // Measure lag in exchange sessions. Weekends and declared holidays do not
+  // make the last valid NSE/BSE close stale.
   const indianHistoryAsOf = input.market === "IN" ? input.latestHistoryDate?.slice(0, 10) ?? null : null;
   const expectedIndianHistoryAsOf = input.market === "IN" ? expectedIndianBhavcopyDate(asDate(now) ?? new Date()) : null;
   const indianHistoryLagDays = expectedIndianHistoryAsOf && indianHistoryAsOf
-    ? daysBetween(`${expectedIndianHistoryAsOf}T00:00:00.000Z`, `${indianHistoryAsOf}T00:00:00.000Z`)
+    ? tradingSessionLag("IN", indianHistoryAsOf, expectedIndianHistoryAsOf)
     : null;
   const staleHistory = input.market === "IN"
-    ? input.hasHistory && (indianHistoryLagDays === null || indianHistoryLagDays > 2)
+    ? input.hasHistory && (indianHistoryLagDays === null || indianHistoryLagDays > 0)
     : input.hasHistory && (historyGap === null || historyGap > 3);
 
   if (input.hasQuote && !input.hasHistory) {
@@ -263,38 +260,8 @@ export function classifyCoverageFreshness(currentCount: number, totalCount: numb
   return "fresh";
 }
 
-function istParts(now: Date) {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Kolkata",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    weekday: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23",
-  }).formatToParts(now);
-  const get = (type: string) => parts.find((part) => part.type === type)?.value ?? "";
-  return {
-    date: `${get("year")}-${get("month")}-${get("day")}`,
-    weekday: get("weekday"),
-    minutes: Number(get("hour")) * 60 + Number(get("minute")),
-  };
-}
-
-function previousWeekday(dateIso: string): string {
-  const d = new Date(`${dateIso}T00:00:00Z`);
-  do {
-    d.setUTCDate(d.getUTCDate() - 1);
-  } while (d.getUTCDay() === 0 || d.getUTCDay() === 6);
-  return d.toISOString().slice(0, 10);
-}
-
 function expectedIndianBhavcopyDate(now: Date): string {
-  const ist = istParts(now);
-  const weekend = ist.weekday === "Sat" || ist.weekday === "Sun";
-  const afterEodPublicationWindow = ist.minutes >= 18 * 60;
-  return !weekend && afterEodPublicationWindow ? ist.date : previousWeekday(ist.date);
+  return latestExpectedSessionDate("IN", now, 18 * 60);
 }
 
 function isIndianQuoteSource(source: string): boolean {
@@ -328,15 +295,13 @@ export function classifySourceFreshness(row: SourceRow, now: Date, nowIso: strin
     const barAsOf = row.quote_as_of?.slice(0, 10) ?? null;
     if (barAsOf) {
       if (barAsOf >= expectedAsOf) return "fresh";
-      const lagDays = daysBetween(`${expectedAsOf}T00:00:00.000Z`, `${barAsOf}T00:00:00.000Z`);
-      // A lag of 3 is the expected reading right after Monday's own cutoff
-      // passes with no Monday bar posted yet (normal same-evening publication
-      // lag, not a real outage) — matches the >2 threshold classifyCoverageGaps
-      // uses for the per-symbol "History stale" gap. Reserve "failed" for a
-      // clearly stuck pipeline: two-plus full trading sessions missed beyond
-      // what a single evening's delay would explain.
-      return lagDays !== null && lagDays <= 4 ? "stale" : "failed";
+      const lagDays = tradingSessionLag("IN", barAsOf, expectedAsOf);
+      // One missed trading session is stale; two or more is a failed feed.
+      return lagDays <= 1 ? "stale" : "failed";
     }
+  }
+  if ((isIndianQuoteSource(row.source) || isIndianHistorySource(row.source)) && isMarketHoliday("IN", now)) {
+    return "off_hours";
   }
   return classifyFreshness({
     lastSuccessAt: iso(row.last_success_at),

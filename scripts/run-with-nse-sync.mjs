@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
+import { isMarketOpenNow, isTradingDay, latestExpectedSessionDate } from "../lib/market-calendar.mjs";
 
 const mode = process.argv[2];
 if (mode !== "dev" && mode !== "start") {
@@ -460,33 +461,12 @@ function istClock() {
   };
 }
 
-function isIndiaMarketOpen(clock = istClock()) {
-  if (clock.day === 0 || clock.day === 6) return false;
-  const minutes = clock.hour * 60 + clock.minute;
-  return minutes >= 9 * 60 + 15 && minutes <= 15 * 60 + 30;
+function isIndiaMarketOpen() {
+  return isMarketOpenNow("IN");
 }
 
-function zonedClock(timeZone, now = new Date()) {
-  const values = Object.fromEntries(
-    new Intl.DateTimeFormat("en-US", {
-      timeZone,
-      weekday: "short",
-      hour: "2-digit",
-      minute: "2-digit",
-      hourCycle: "h23",
-    }).formatToParts(now).map((part) => [part.type, part.value]),
-  );
-  return {
-    day: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(values.weekday),
-    hour: Number(values.hour),
-    minute: Number(values.minute),
-  };
-}
-
-function isUsMarketOpen(clock = zonedClock("America/New_York")) {
-  if (clock.day === 0 || clock.day === 6) return false;
-  const minutes = clock.hour * 60 + clock.minute;
-  return minutes >= 9 * 60 + 30 && minutes <= 16 * 60;
+function isUsMarketOpen() {
+  return isMarketOpenNow("US");
 }
 
 async function runQuoteRefreshRequest(trigger) {
@@ -1204,27 +1184,16 @@ function scheduleDailySync() {
     `[nse-sync] next daily update: ${nextRun.toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })} IST`,
   );
   dailyTimer = setTimeout(() => {
-    runSync("daily");
+    const tradingDate = istClock().date;
+    if (isTradingDay("IN", tradingDate)) runSync("daily");
+    else console.log(`[nse-sync] skipping daily update; ${tradingDate} is not an NSE/BSE trading day`);
     scheduleDailySync();
   }, delay);
 }
 
-/** Most recent NSE/BSE trading date expected to be in daily_ohlcv by now:
- *  today once past the same syncHour:syncMinute IST publication window the
- *  daily job itself checks at, otherwise the previous weekday. Weekends never
- *  expect same-day data. Mirrors expectedIndianBhavcopyDate() in
- *  lib/dataHealth.ts, reimplemented here since this script can't import that
- *  TS module directly. */
+/** Most recent NSE/BSE trading date expected to be in daily_ohlcv by now. */
 function expectedNseBseTradingDate() {
-  const clock = istClock();
-  const weekend = clock.day === 0 || clock.day === 6;
-  const afterCutoff = clock.hour * 60 + clock.minute >= syncHour * 60 + syncMinute;
-  if (!weekend && afterCutoff) return clock.date;
-  const d = new Date(`${clock.date}T00:00:00Z`);
-  do {
-    d.setUTCDate(d.getUTCDate() - 1);
-  } while (d.getUTCDay() === 0 || d.getUTCDay() === 6);
-  return d.toISOString().slice(0, 10);
+  return latestExpectedSessionDate("IN", new Date(), syncHour * 60 + syncMinute);
 }
 
 /** Earliest of the NSE/BSE latest OHLCV bar dates, or null if either has no rows. */
