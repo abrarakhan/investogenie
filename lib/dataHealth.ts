@@ -123,10 +123,12 @@ export function classifyCoverageGaps(input: CoverageGapInput): CoverageGap[] {
     ? tradingSessionLag("IN", indianQuoteAsOf, expectedIndianAsOf)
     : null;
   const marketOpen = isMarketOpen(input.market, nowDate);
+  const requiresCurrentSession = !!(input.inUniverse || input.activeSwingSignal || input.openForwardTest);
+  const toleratedInactiveSessions = requiresCurrentSession ? 0 : 2;
   const staleQuote = input.market === "IN"
     ? !!input.hasQuote && (marketOpen
       ? quoteAge === null || quoteAge > 1
-      : indianQuoteLagDays === null || indianQuoteLagDays > 0)
+      : indianQuoteLagDays === null || indianQuoteLagDays > toleratedInactiveSessions)
     : !!input.hasQuote && marketOpen && (quoteAge === null || quoteAge > 1);
   // Measure lag in exchange sessions. Weekends and declared holidays do not
   // make the last valid NSE/BSE close stale.
@@ -136,7 +138,7 @@ export function classifyCoverageGaps(input: CoverageGapInput): CoverageGap[] {
     ? tradingSessionLag("IN", indianHistoryAsOf, expectedIndianHistoryAsOf)
     : null;
   const staleHistory = input.market === "IN"
-    ? input.hasHistory && (indianHistoryLagDays === null || indianHistoryLagDays > 0)
+    ? input.hasHistory && (indianHistoryLagDays === null || indianHistoryLagDays > toleratedInactiveSessions)
     : input.hasHistory && (historyGap === null || historyGap > 3);
 
   if (input.hasQuote && !input.hasHistory) {
@@ -152,13 +154,18 @@ export function classifyCoverageGaps(input: CoverageGapInput): CoverageGap[] {
   }
 
   if (staleHistory) {
+    const indianLagLabel = indianHistoryLagDays === null
+      ? "an unknown number of trading sessions"
+      : `${indianHistoryLagDays} trading ${indianHistoryLagDays === 1 ? "session" : "sessions"}`;
     gaps.push({
       symbol: input.symbol,
       market: input.market,
       issueType: "History stale",
-      detail: `Latest OHLCV bar is ${historyGap ?? "unknown"} days old. This asset is excluded from strategy calculations until refreshed.`,
+      detail: input.market === "IN"
+        ? `Latest OHLCV bar is ${indianLagLabel} behind. This asset is excluded from strategy calculations until refreshed.`
+        : `Latest OHLCV bar is ${historyGap ?? "unknown"} days old. This asset is excluded from strategy calculations until refreshed.`,
       severity: "medium",
-      gapDays: historyGap,
+      gapDays: input.market === "IN" ? indianHistoryLagDays : historyGap,
       action: "Backfill history",
     });
   }

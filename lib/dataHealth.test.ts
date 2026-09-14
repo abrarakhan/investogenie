@@ -90,13 +90,31 @@ describe("classifyCoverageGaps", () => {
     expect(mondayMorning).not.toContainEqual(expect.objectContaining({ issueType: "History stale" }));
   });
 
-  it("calls Friday's NSE/BSE history stale once Monday's own session has closed", () => {
+  it("allows thin listings two missed sessions before reporting stale history", () => {
+    const monday = classifyCoverageGaps({
+      symbol: "THINLYTRADED", market: "IN", hasHistory: true, latestHistoryDate: "2026-07-24",
+      now: "2026-07-27T13:30:00Z",
+    });
     const gaps = classifyCoverageGaps({
-      symbol: "RELIANCE", market: "IN", hasHistory: true, latestHistoryDate: "2026-07-24",
-      now: "2026-07-27T13:30:00Z", // Monday 19:00 IST, after the bhavcopy publication window
+      symbol: "THINLYTRADED", market: "IN", hasHistory: true, latestHistoryDate: "2026-07-24",
+      now: "2026-07-30T13:30:00Z",
     });
 
+    expect(monday).not.toContainEqual(expect.objectContaining({ issueType: "History stale" }));
     expect(gaps).toContainEqual(expect.objectContaining({ issueType: "History stale" }));
+  });
+
+  it("requires current-session data for strategy and universe stocks", () => {
+    const gaps = classifyCoverageGaps({
+      symbol: "RELIANCE", market: "IN", hasHistory: true, latestHistoryDate: "2026-07-24",
+      inUniverse: true,
+      now: "2026-07-27T13:30:00Z",
+    });
+
+    expect(gaps).toContainEqual(expect.objectContaining({
+      issueType: "History stale",
+      detail: expect.stringContaining("1 trading session behind"),
+    }));
   });
 
   it("keeps Friday quotes and history current on the 14 September exchange holiday", () => {
