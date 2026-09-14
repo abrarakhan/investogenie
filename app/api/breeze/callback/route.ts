@@ -10,12 +10,17 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 function settingsRedirect(request: NextRequest, status: string) {
-  const response = NextResponse.redirect(new URL(`/settings?market=in&breeze=${status}`, request.url));
+  // ICICI may submit the callback as POST. A 303 ensures the browser follows
+  // with a normal GET instead of replaying that POST against the Settings page.
+  const response = NextResponse.redirect(
+    new URL(`/settings?market=in&breeze=${status}`, request.url),
+    303,
+  );
   response.cookies.delete(BREEZE_CONNECT_COOKIE);
   return response;
 }
 
-export async function GET(request: NextRequest) {
+async function handleCallback(request: NextRequest) {
   const userId = await readBreezeConnectState(
     request.cookies.get(BREEZE_CONNECT_COOKIE)?.value,
   );
@@ -32,3 +37,6 @@ export async function GET(request: NextRequest) {
     return settingsRedirect(request, "failed");
   }
 }
+
+export const GET = handleCallback;
+export const POST = handleCallback;
