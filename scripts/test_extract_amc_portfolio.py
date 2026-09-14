@@ -22,6 +22,36 @@ class SheetMatchingTests(unittest.TestCase):
         score = MODULE.sheet_match_score("Quant Infrastructure Fund - Direct Growth", "quant_Infrastructure_Fund")[0]
         self.assertGreaterEqual(score, 0.8)
 
+    def test_franklin_title_inside_abbreviated_sheet(self):
+        import pandas as pd
+
+        frame = pd.DataFrame([
+            ["Franklin India Focused Equity Fund", ""],
+            ["Portfolio Statement as on August 31, 2026", ""],
+        ])
+        score = MODULE.sheet_content_match_score(
+            "Franklin India Focused Equity Fund - Growth",
+            frame,
+        )
+        self.assertGreaterEqual(score, 0.85)
+
+    def test_franklin_cash_line_in_first_column_completes_full_snapshot(self):
+        import pandas as pd
+
+        frame = pd.DataFrame([
+            ["ISIN Number", "Name of the Instrument", "% to Net Assets"],
+            ["INE090A01021", "ICICI Bank Ltd", "96.1"],
+            ["", "Total", "96.1"],
+            ["Call, Cash & Other Assets", "", "3.9"],
+            ["", "Net Assets", "100"],
+        ])
+        rows = MODULE.parse_frame(frame, full=True)
+        self.assertEqual([row["stock_name"] for row in rows], [
+            "ICICI Bank Ltd",
+            "Call, Cash & Other Assets",
+        ])
+        self.assertAlmostEqual(sum(row["weight_percentage"] for row in rows), 100.0)
+
 
 if __name__ == "__main__":
     unittest.main()

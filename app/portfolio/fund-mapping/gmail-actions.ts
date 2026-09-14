@@ -10,6 +10,7 @@ import {
   scanGmailDisclosures,
 } from "@/lib/gmail/disclosures";
 import { inferAmc } from "@/lib/funds/fundMapping";
+import { fundDisplayIdentity } from "@/lib/funds/displayName";
 import {
   AmcDisclosureProvider,
   parseDisclosureSource,
@@ -131,12 +132,13 @@ export async function importGmailDisclosure(formData: FormData) {
     if (typeof parsed === "string" || parsed.rows.length === 0) {
       throw new Error("No portfolio rows were detected for the selected fund");
     }
+    const identity = fundDisplayIdentity(fund.name, inferAmc(fund.name, fund.isin), fund.isin);
     await new AmcDisclosureProvider().ingestSnapshot({
       meta: {
         schemeCode: fund.ticker,
-        name: fund.name,
+        name: identity.scheme,
         isin: fund.isin,
-        amc: inferAmc(fund.name, fund.isin),
+        amc: identity.amc,
         category: null,
         subCategory: null,
       },

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import type { GmailDisclosureData } from "@/lib/gmail/disclosures";
 import { sameAmc } from "@/lib/funds/fundMapping";
 import type { UserFundMappingRow } from "@/lib/funds/fundMappingStore";
+import { fundDisplayIdentity } from "@/lib/funds/displayName";
 import {
   disconnectGmailDisclosureInbox,
   clearGmailCasPassword,
@@ -230,7 +231,9 @@ export default function GmailDisclosurePanel({
                     <select name="holdingId" required defaultValue={defaultHolding} className="field bg-[#090c12]">
                       <option value="" disabled>Choose matching CAS fund</option>
                       {(matchingFunds.length > 0 ? matchingFunds : funds).map((fund) => (
-                        <option key={fund.holdingId} value={fund.holdingId}>{fund.fundName}</option>
+                        <option key={fund.holdingId} value={fund.holdingId}>
+                          {fundDisplayIdentity(fund.fundName, fund.amc, fund.isin).label}
+                        </option>
                       ))}
                     </select>
                     <input name="snapshotMonth" aria-label="Snapshot month" type="date" required defaultValue={priorMonth(attachment.receivedAt)} className="field" />

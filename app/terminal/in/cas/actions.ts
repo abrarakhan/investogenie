@@ -18,6 +18,8 @@ import {
   SnapshotRejectedError,
   type ParsedDisclosureRow,
 } from "@/lib/funds/amcProvider";
+import { fundDisplayIdentity } from "@/lib/funds/displayName";
+import { inferAmc } from "@/lib/funds/fundMapping";
 
 const execFileAsync = promisify(execFile);
 
@@ -317,12 +319,14 @@ export async function importAmcDisclosure(formData: FormData): Promise<void> {
       if (typeof fullParsed === "string") {
         console.warn(`AMC snapshot skipped: full-mode parse returned ${fullParsed}`);
       } else {
+        const isin = /^IN[A-Z0-9]{10}$/.test(fund.ticker) ? fund.ticker : null;
+        const identity = fundDisplayIdentity(fund.name, inferAmc(fund.name, isin), isin);
         await new AmcDisclosureProvider().ingestSnapshot({
           meta: {
             schemeCode: fund.ticker,
-            name: fund.name,
-            isin: /^IN[A-Z0-9]{10}$/.test(fund.ticker) ? fund.ticker : null,
-            amc: null,
+            name: identity.scheme,
+            isin,
+            amc: identity.amc,
             category: null,
             subCategory: null,
           },

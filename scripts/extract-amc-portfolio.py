@@ -61,6 +61,19 @@ def sheet_match_score(wanted: Any, candidate: Any) -> tuple[float, float, float]
     return max(alias_match, overlap, similarity), overlap, similarity
 
 
+def sheet_content_match_score(wanted: Any, frame: Any) -> float:
+    """Match a verbose scheme name against title cells inside an AMC sheet."""
+    best = 0.0
+    for row in frame.head(12).itertuples(index=False, name=None):
+        for value in row[:6]:
+            text = clean(value)
+            if len(text) < 5:
+                continue
+            score, _, _ = sheet_match_score(wanted, text)
+            best = max(best, score)
+    return best
+
+
 def to_number(value: Any) -> float | None:
     if value is None:
         return None
@@ -178,6 +191,21 @@ def parse_frame(frame: Any, full: bool = False) -> list[dict[str, Any]]:
         if len(cells) <= max(name_col, weight_col):
             continue
         stock_name = clean(cells[name_col])
+        # Franklin and a few other AMCs put the residual cash label in the
+        # first column while instrument names live in the second column.
+        # Preserve that weighted line in full mode so a valid snapshot totals
+        # 100%; section headings have no weight and remain excluded.
+        if full and not stock_name and name_col != 0 and cells:
+            alternate_name = clean(cells[0])
+            alternate_weight = to_number(cells[weight_col])
+            if alternate_weight is not None and NON_EQUITY_RE.search(alternate_name):
+                rows.append({
+                    "stock_name": alternate_name,
+                    "isin": None,
+                    "ticker": None,
+                    "weight_percentage": round(alternate_weight, 6),
+                })
+                continue
         if not stock_name or len(stock_name) < 3 or excluded_name(stock_name, full):
             continue
         weight = to_number(cells[weight_col])
@@ -221,14 +249,19 @@ def read_tabular(path: Path, full: bool = False, sheet: str = "") -> list[dict[s
             # selector every scheme would merge into one bogus snapshot.
             wanted = norm(sheet)
             matched = {name: f for name, f in sheets.items() if wanted in norm(name)}
+            if not matched and len(sheets) == 1:
+                # Several AMCs use a short internal code (for example Franklin's
+                # FIFEF) even though the full scheme title is inside cell A1.
+                matched = dict(sheets)
             if not matched:
                 # AMC tabs are commonly abbreviated ("Flexi Cap Reg Gr") while
                 # CAS names are verbose. Rank normalized token overlap and text
                 # similarity, but require a clear winner to avoid importing the
                 # wrong scheme from a multi-scheme workbook.
                 ranked = []
-                for name in sheets:
-                    score, overlap, similarity = sheet_match_score(wanted, name)
+                for name, frame in sheets.items():
+                    name_score, overlap, similarity = sheet_match_score(wanted, name)
+                    score = max(name_score, sheet_content_match_score(wanted, frame))
                     ranked.append((score, overlap, similarity, name))
                 ranked.sort(reverse=True)
                 best = ranked[0] if ranked else None

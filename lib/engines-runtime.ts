@@ -17,6 +17,7 @@ import {
 import type { MarketId, FundStockWeight, UserFundHolding } from "@/lib/types";
 import { deriveLevels, type SwingSetup, type TradeDirection } from "@/lib/analytics/swingClassifier";
 import { DEFAULT_SETTINGS, type SwingSettings } from "@/lib/settings";
+import { fundDisplayIdentity } from "@/lib/funds/displayName";
 
 export interface TopSetup {
   ticker: string;
@@ -132,9 +133,10 @@ export async function getFundOverlap(): Promise<OverlapReport | null> {
   if (!user) return null;
 
   const heldFunds = (
-    await query<{ holding_id: string; id: string; ticker: string; name: string | null; display_name: string | null; asset_class: string; quantity: string | number; avg_cost: string | number | null; quote_price: string | number | null; statement_value: string | number | null }>(
+    await query<{ holding_id: string; id: string; ticker: string; name: string | null; display_name: string | null; display_amc: string | null; isin: string | null; asset_class: string; quantity: string | number; avg_cost: string | number | null; quote_price: string | number | null; statement_value: string | number | null }>(
       `select h.id as holding_id, a.id, a.ticker,a.name,
               coalesce(fs.name,amfi.scheme_name,a.name) as display_name,
+              fs.amc as display_amc, coalesce(nullif(chd.isin,''),nullif(m.amfi_code_in,'')) as isin,
               a.asset_class,h.quantity,h.avg_cost,q.price quote_price,chd.market_value statement_value
          from public.holdings h
          join public.assets a on a.id = h.asset_id
@@ -161,7 +163,10 @@ export async function getFundOverlap(): Promise<OverlapReport | null> {
       [user.id],
     )
   )
-    .map((h) => ({ holdingId: h.holding_id, id: h.id, ticker: h.ticker, name: h.name, displayName: h.display_name ?? h.name ?? h.ticker, assetClass: h.asset_class, units: Number(h.quantity), nav: Number(h.quote_price ?? h.avg_cost ?? 0), statementValue: h.statement_value == null ? null : Number(h.statement_value) }))
+    .map((h) => {
+      const rawName = h.display_name ?? h.name ?? h.ticker;
+      return { holdingId: h.holding_id, id: h.id, ticker: h.ticker, name: h.name, displayName: fundDisplayIdentity(rawName, h.display_amc, h.isin).label, assetClass: h.asset_class, units: Number(h.quantity), nav: Number(h.quote_price ?? h.avg_cost ?? 0), statementValue: h.statement_value == null ? null : Number(h.statement_value) };
+    })
     .filter((h) => h.assetClass === "MUTUAL_FUND" && h.ticker && h.units > 0);
   if (heldFunds.length === 0) return null;
 
@@ -191,8 +196,8 @@ export async function getFundOverlap(): Promise<OverlapReport | null> {
   const mfhCoveredIds = new Set(mfh.map((r) => r.fund_asset_id));
   const snapshotHoldingIds = heldFunds.filter((h) => !mfhCoveredIds.has(h.id)).map((h) => h.holdingId);
   const snapRows = snapshotHoldingIds.length
-    ? await query<{ asset_id: string; scheme_name: string; instrument_isin: string; instrument_name: string; weight_pct: number }>(
-        `select h.asset_id, fs.name as scheme_name,
+    ? await query<{ asset_id: string; scheme_name: string; scheme_amc: string | null; instrument_isin: string; instrument_name: string; weight_pct: number }>(
+        `select h.asset_id, fs.name as scheme_name, fs.amc as scheme_amc,
                 fhs.instrument_isin, fhs.instrument_name, fhs.weight_pct::float8 as weight_pct
            from public.user_fund_mappings map
            join public.holdings h on h.id = map.user_holding_id
@@ -215,12 +220,13 @@ export async function getFundOverlap(): Promise<OverlapReport | null> {
   // A name collision falls back to the ticker so two funds never merge.
   const fundLabel = new Map<string, string>();
   {
-    const usedFundLabels = new Set<string>();
+    const labelCounts = new Map<string, number>();
     for (const r of snapRows) {
       if (fundLabel.has(r.asset_id)) continue;
-      const unique = !usedFundLabels.has(r.scheme_name);
-      usedFundLabels.add(r.scheme_name);
-      if (unique) fundLabel.set(r.asset_id, r.scheme_name);
+      const baseLabel = fundDisplayIdentity(r.scheme_name, r.scheme_amc).label;
+      const count = (labelCounts.get(baseLabel) ?? 0) + 1;
+      labelCounts.set(baseLabel, count);
+      fundLabel.set(r.asset_id, count === 1 ? baseLabel : `${baseLabel} · holding ${count}`);
     }
   }
 

@@ -8,6 +8,7 @@ import type { FundComposition, PairwiseOverlap, StockExposure } from "@/lib/anal
 import { acceptFundSuggestion, autoAcceptIsinMatches, rejectFundSuggestion, unlinkFundMapping } from "./actions";
 import GmailDisclosurePanel from "@/components/funds/GmailDisclosurePanel";
 import type { GmailDisclosureData } from "@/lib/gmail/disclosures";
+import { fundDisplayIdentity } from "@/lib/funds/displayName";
 
 function money(value: number) {
   return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(value);
@@ -19,6 +20,7 @@ function field(value: string | null | undefined) {
 
 function FundCard({ fund, selected, onSelect }: { fund: UserFundMappingRow; selected: boolean; onSelect: () => void }) {
   const suggestion = fund.suggestion.candidates[0];
+  const identity = fundDisplayIdentity(fund.fundName, fund.amc, fund.isin);
   return (
     <button
       type="button"
@@ -27,8 +29,9 @@ function FundCard({ fund, selected, onSelect }: { fund: UserFundMappingRow; sele
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="truncate text-sm font-bold text-white" title={fund.fundName}>{fund.fundName}</p>
-          <p className="mt-1 text-xs text-white/42">ISIN {field(fund.isin)} · AMC {field(fund.amc)}</p>
+          <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-cyan-200/65">{identity.amc}</p>
+          <p className="mt-1 truncate text-sm font-bold text-white" title={fund.fundName}>{identity.scheme}</p>
+          <p className="mt-1 text-xs text-white/42">ISIN {field(fund.isin)}</p>
         </div>
         <MatchStatusBadge status={fund.displayStatus} />
       </div>
@@ -63,12 +66,14 @@ function ActionButton({ children, formAction, pendingLabel, confirm }: { childre
 }
 
 function SnapshotCard({ snapshot, selectedFund }: { snapshot: SnapshotWithMapping; selectedFund: UserFundMappingRow | null }) {
+  const identity = fundDisplayIdentity(snapshot.name, snapshot.amc, snapshot.isin);
   return (
     <div className="rounded-lg border border-white/10 bg-black/20 p-4">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="truncate text-sm font-bold text-white/86" title={snapshot.name}>{snapshot.name}</p>
-          <p className="mt-1 text-xs text-white/42">{field(snapshot.amc)} · {field(snapshot.category)}</p>
+          <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-cyan-200/60">{identity.amc}</p>
+          <p className="mt-1 truncate text-sm font-bold text-white/86" title={snapshot.name}>{identity.scheme}</p>
+          <p className="mt-1 text-xs text-white/42">{field(snapshot.category)}</p>
         </div>
         <span className="shrink-0 rounded-full border border-white/10 px-2 py-0.5 text-[10px] text-white/45">{snapshot.holdingCount} rows</span>
       </div>
