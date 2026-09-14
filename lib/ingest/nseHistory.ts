@@ -260,8 +260,8 @@ async function fetchBseBhavcopy(
   return isoDate && rows.length ? { date: isoDate, rows } : null;
 }
 
-async function upsertBars(client: Client, rows: BhavRow[]): Promise<number> {
-  const cols = 7;
+async function upsertBars(client: Client, rows: BhavRow[], source: string): Promise<number> {
+  const cols = 8;
   let upserted = 0;
   for (let i = 0; i < rows.length; i += 900) {
     const batch = rows.slice(i, i + 900);
@@ -270,19 +270,21 @@ async function upsertBars(client: Client, rows: BhavRow[]): Promise<number> {
     batch.forEach((r, j) => {
       const b = j * cols;
       values.push(
-        `($${b + 1},$${b + 2},$${b + 3},$${b + 4},$${b + 5},$${b + 6},$${b + 7})`,
+        `($${b + 1},$${b + 2},$${b + 3},$${b + 4},$${b + 5},$${b + 6},$${b + 7},$${b + 8})`,
       );
-      params.push(r.assetId, r.date, r.open, r.high, r.low, r.close, r.volume);
+      params.push(r.assetId, r.date, r.open, r.high, r.low, r.close, r.volume, source);
     });
     await client.query(
-      `insert into public.daily_ohlcv (asset_id,date,open,high,low,close,volume)
+      `insert into public.daily_ohlcv (asset_id,date,open,high,low,close,volume,source)
        values ${values.join(",")}
        on conflict (asset_id,date) do update set
          open=excluded.open,
          high=excluded.high,
          low=excluded.low,
          close=excluded.close,
-         volume=excluded.volume`,
+         volume=excluded.volume,
+         source=excluded.source
+       where coalesce(public.daily_ohlcv.source, '') not like 'BREEZE_%'`,
       params,
     );
     upserted += batch.length;
@@ -347,7 +349,7 @@ async function backfillIndianExchangeHistory(
         skipped.push({ date, reason: "bhavcopy not available" });
         continue;
       }
-      const count = await upsertBars(client, data.rows);
+      const count = await upsertBars(client, data.rows, `${exchange}_BHAVCOPY`);
       sessionsFetched++;
       barsUpserted += count;
     }

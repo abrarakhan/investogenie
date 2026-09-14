@@ -15,6 +15,7 @@ if (existsSync(envFile)) process.loadEnvFile(envFile);
 const nextCli = resolve(root, "node_modules/next/dist/bin/next");
 const pipeline = resolve(root, "pipelines/nse_yfinance_sync.py");
 const indiaQuotePipeline = resolve(root, "pipelines/india_quotes_sync.py");
+const breezeHistoryPipeline = resolve(root, "pipelines/breeze_ohlcv_sync.py");
 const breezeMarketWorker = resolve(root, "workers/breeze_market_daemon.py");
 const usPipeline = resolve(root, "pipelines/us_market_sync.py");
 const usHistoryPipeline = resolve(root, "pipelines/us_history_sync.py");
@@ -41,6 +42,9 @@ const syncDisabled = process.env.NSE_SYNC_DISABLED === "1";
 const startupSyncDisabled = process.env.STARTUP_SYNC_DISABLED === "1";
 const nseSyncProvider = (process.env.NSE_SYNC_PROVIDER ?? "bhavcopy").toLowerCase();
 const nseBhavcopyMaxSessions = process.env.NSE_BHAVCOPY_MAX_SESSIONS ?? "20";
+const breezeHistoryLimit = process.env.BREEZE_HISTORY_LIMIT ?? "750";
+const breezeHistoryDays = process.env.BREEZE_HISTORY_DAYS ?? "10";
+const breezeHistorySleep = process.env.BREEZE_HISTORY_SLEEP_SECONDS ?? "0.2";
 // The single scheduleDailySync() attempt at syncHour:syncMinute IST treats a
 // 200-response "bhavcopy not available" as a normal, successful run (it's a
 // legitimate outcome on a market holiday) and does not retry — the next
@@ -868,6 +872,35 @@ function runYahooNseSync(trigger) {
   });
 }
 
+function runBreezeHistoryFirst(trigger) {
+  if (!python || process.env.BREEZE_HISTORY_DISABLED === "1") {
+    console.log(`[breeze-history] ${trigger} primary unavailable; continuing to Bhavcopy fallback`);
+    return Promise.resolve(false);
+  }
+  return new Promise((resolveRun) => {
+    console.log(`[breeze-history] starting ${trigger} primary OHLCV update`);
+    const child = spawn(python, [
+      breezeHistoryPipeline,
+      "--limit", breezeHistoryLimit,
+      "--days", breezeHistoryDays,
+      "--sleep", breezeHistorySleep,
+    ], { cwd: root, env: process.env, stdio: "inherit" });
+    child.once("error", (error) => {
+      console.error(`[breeze-history] unable to start: ${error.message}; continuing to Bhavcopy fallback`);
+      resolveRun(false);
+    });
+    child.once("close", (code, signal) => {
+      if (signal || code !== 0) {
+        console.warn(`[breeze-history] primary unavailable (${signal ?? `exit ${code}`}); continuing to Bhavcopy fallback`);
+        resolveRun(false);
+        return;
+      }
+      console.log(`[breeze-history] ${trigger} primary OHLCV update completed`);
+      resolveRun(true);
+    });
+  });
+}
+
 async function runBhavcopyNseSyncWithRetry(trigger, maxRetries = 2) {
   const t0 = Date.now();
   let lastError = null;
@@ -891,8 +924,9 @@ async function runBhavcopyNseSyncWithRetry(trigger, maxRetries = 2) {
         console.log(`[nse-sync] ${trigger} ${exchange} bhavcopy update completed: ${body}`);
       };
 
+      await runBreezeHistoryFirst(trigger);
       console.log(
-        `[nse-sync] ${trigger} India OHLCV standard provider: bhavcopy; Yahoo/Google remain queued repair fallback`,
+        `[nse-sync] ${trigger} India OHLCV fallback: Bhavcopy fills instruments not resolved by Breeze; Yahoo/Google remain queued repair fallback`,
       );
       await runExchangeBhavcopy("NSE", "/api/cron/backfill-nse");
       await runExchangeBhavcopy("BSE", "/api/cron/backfill-bse");

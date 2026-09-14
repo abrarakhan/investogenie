@@ -296,16 +296,17 @@ class MarketBatcher:
                     cur,
                     """
                     insert into public.daily_ohlcv
-                      (asset_id,date,open,high,low,close,volume)
+                      (asset_id,date,open,high,low,close,volume,source)
                     values %s
                     on conflict (asset_id,date) do update set
                       open=coalesce(public.daily_ohlcv.open,excluded.open),
                       high=case when excluded.high is null then public.daily_ohlcv.high when public.daily_ohlcv.high is null then excluded.high else greatest(public.daily_ohlcv.high,excluded.high) end,
                       low=case when excluded.low is null then public.daily_ohlcv.low when public.daily_ohlcv.low is null then excluded.low else least(public.daily_ohlcv.low,excluded.low) end,
                       close=excluded.close,
-                      volume=case when excluded.volume is null then public.daily_ohlcv.volume when public.daily_ohlcv.volume is null then excluded.volume else greatest(public.daily_ohlcv.volume,excluded.volume) end
+                      volume=case when excluded.volume is null then public.daily_ohlcv.volume when public.daily_ohlcv.volume is null then excluded.volume else greatest(public.daily_ohlcv.volume,excluded.volume) end,
+                      source=excluded.source
                     """,
-                    [(r["asset_id"], r["date"], r["open"], r["high"], r["low"], r["price"], r["volume"]) for r in rows],
+                    [(r["asset_id"], r["date"], r["open"], r["high"], r["low"], r["price"], r["volume"], "BREEZE_LIVE") for r in rows],
                     page_size=500,
                 )
             self.conn.commit()

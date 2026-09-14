@@ -65,6 +65,7 @@ def load_assets(conn, exchange: str, limit: int | None) -> list[Asset]:
                       where l.asset_id=a.id and l.status='OPEN'
                    ) ledger_open
               from public.assets a
+              left join public.latest_quotes q on q.asset_id=a.id
               left join lateral (
                 select o.close
                   from public.daily_ohlcv o
@@ -84,6 +85,10 @@ def load_assets(conn, exchange: str, limit: int | None) -> list[Asset]:
                and a.ticker !~ '-RE[0-9]*$'
                and not exists (
                  select 1 from public.asset_tracking_exclusions x where x.asset_id=a.id
+               )
+               and not (
+                 q.source='BREEZE_LIVE'
+                 and q.updated_at >= now() - interval '20 minutes'
                )
              order by ledger_open desc,(signal.score is not null) desc,
                       signal.score desc nulls last,a.ticker
@@ -196,17 +201,19 @@ def upsert_market_data(conn, rows: list[tuple]) -> int:
             cur,
             """
             insert into public.daily_ohlcv
-              (asset_id,date,open,high,low,close,volume)
+              (asset_id,date,open,high,low,close,volume,source)
             values %s
             on conflict (asset_id,date) do update set
               open=excluded.open,
               high=excluded.high,
               low=excluded.low,
               close=excluded.close,
-              volume=excluded.volume
+              volume=excluded.volume,
+              source=excluded.source
+            where coalesce(public.daily_ohlcv.source, '') not like 'BREEZE_%'
             """,
             [
-                (asset_id, as_of, open_price, high, low, price, volume)
+                (asset_id, as_of, open_price, high, low, price, volume, "YAHOO_FINANCE_LIVE")
                 for asset_id, price, _change_pct, _currency, as_of, _source,
                     open_price, high, low, volume in rows
             ],
@@ -262,13 +269,14 @@ def sync_nifty_history(conn, dry_run: bool) -> int:
         execute_values(
             cur,
             """
-            insert into public.daily_ohlcv (asset_id,date,open,high,low,close,volume)
+            insert into public.daily_ohlcv (asset_id,date,open,high,low,close,volume,source)
             values %s
             on conflict (asset_id,date) do update set
               open=excluded.open,high=excluded.high,low=excluded.low,
-              close=excluded.close,volume=excluded.volume
+              close=excluded.close,volume=excluded.volume,source=excluded.source
+            where coalesce(public.daily_ohlcv.source, '') not like 'BREEZE_%'
             """,
-            payload,
+            [(*row, "YAHOO_FINANCE_LIVE") for row in payload],
         )
     conn.commit()
     return len(payload)
