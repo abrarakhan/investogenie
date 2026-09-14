@@ -45,7 +45,7 @@ export default async function SettingsPage({ searchParams }: {
   const breezeParam = Array.isArray(raw.breeze) ? raw.breeze[0] : raw.breeze;
   const host = requestHeaders.get("x-forwarded-host") ?? requestHeaders.get("host");
   const protocol = requestHeaders.get("x-forwarded-proto") ?? (process.env.NODE_ENV === "production" ? "https" : "http");
-  const breezeCallbackUrl = host ? `${protocol}://${host}/api/breeze/callback` : "/api/breeze/callback";
+  const breezeCallbackUrl = host ? `${protocol}://${host}/b` : "/b";
   const market = normalizeMarket(marketParam ?? "in") ?? "IN";
   const s = await getUserSwingSettings();
   const emailPrefs = await getEmailPreferences();
