@@ -13,3 +13,4 @@ export function latestExpectedSessionDate(market: CalendarMarket, at?: Date, pub
 export function tradingSessionLag(market: CalendarMarket, observedDate: string | null | undefined, expectedDate: string): number;
 export function isMarketOpenNow(market: CalendarMarket, at?: Date): boolean;
 export function isMarketHoliday(market: CalendarMarket, at?: Date): boolean;
+export function refreshMarketHolidays(market?: CalendarMarket, force?: boolean): Promise<boolean>;

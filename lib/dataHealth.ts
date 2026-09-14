@@ -3,7 +3,7 @@ import type { FreshnessStatus } from "@/lib/status";
 import { getBackfillStatusSummary } from "@/lib/backfill/queue";
 import type { BackfillStatusSummary } from "@/lib/backfill/types";
 import { isMarketOpen } from "@/lib/backfill/classifier";
-import { isMarketHoliday, latestExpectedSessionDate, tradingSessionLag } from "@/lib/market-calendar.mjs";
+import { isMarketHoliday, latestExpectedSessionDate, refreshMarketHolidays, tradingSessionLag } from "@/lib/market-calendar.mjs";
 
 export type HealthSeverity = "critical" | "high" | "medium" | "low";
 export type HealthMarket = "IN" | "US" | "ALL";
@@ -319,6 +319,7 @@ export function classifySourceFreshness(row: SourceRow, now: Date, nowIso: strin
 }
 
 export async function getDataHealthSummary(now = new Date()): Promise<SourceHealthCard[]> {
+  await refreshMarketHolidays("IN");
   const nowIso = now.toISOString();
   const expectedIndianDate = expectedIndianBhavcopyDate(now);
   const [rows, coverageRows] = await Promise.all([query<SourceRow>(
@@ -465,6 +466,7 @@ function parseDetail(value: Record<string, unknown> | string | null): Record<str
 }
 
 export async function getCoverageGaps(userId: string, now = new Date()): Promise<CoverageGap[]> {
+  await refreshMarketHolidays("IN");
   const rows = await query<AssetGapRow>(
     `with uni as (select distinct asset_id from public.universe_members where universe in ('NIFTY_500','SP_500')),
           latest_signal_scan as (

@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
-import { isMarketOpenNow, isTradingDay, latestExpectedSessionDate } from "../lib/market-calendar.mjs";
+import { isMarketOpenNow, isTradingDay, latestExpectedSessionDate, refreshMarketHolidays } from "../lib/market-calendar.mjs";
 
 const mode = process.argv[2];
 if (mode !== "dev" && mode !== "start") {
@@ -1326,6 +1326,8 @@ nextChild.on("close", (code, signal) => {
   process.exitCode = signal ? 1 : (code ?? 1);
 });
 
+const refreshedNseCalendar = await refreshMarketHolidays("IN");
+console.log(`[market-calendar] NSE capital-market holidays ${refreshedNseCalendar ? "refreshed" : "using bundled fallback"}`);
 scheduleDailySync();
 scheduleDailyAmfiSync();
 scheduleNseCatchup();
