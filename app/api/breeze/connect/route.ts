@@ -25,7 +25,10 @@ export async function GET(request: NextRequest) {
   response.cookies.set(BREEZE_CONNECT_COOKIE, state, {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
+    // ICICI returns API sessions using a cross-site form POST. Lax cookies are
+    // withheld on that request, which makes an otherwise valid callback lose
+    // its signed user state and appear expired.
+    sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
     path: "/",
     maxAge: BREEZE_CONNECT_MAX_AGE,
   });
