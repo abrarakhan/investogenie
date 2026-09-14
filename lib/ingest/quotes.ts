@@ -420,6 +420,7 @@ function dateInTimeZone(timeZone: string): string {
 
 export async function refreshQuotes(databaseUrl: string, startISO = localToday()): Promise<RefreshSummary> {
   const t0 = Date.now();
+  const indiaMarketOpen = isMarketOpen("IN");
   const [usQuotes, nseIndices, directBenchmarks, nse, bse] = await Promise.all([
     fetchUS(),
     fetchNSEIndices(),
@@ -452,7 +453,7 @@ export async function refreshQuotes(databaseUrl: string, startISO = localToday()
     // before EOD. Keep this overlay bounded to the highest-ranked actionable
     // names per Indian exchange so the 15-minute job remains bounded while
     // both NSE and BSE candidates receive a live eligibility check.
-    const liveAssets = (await client.query<IndiaLiveAsset>(
+    const liveAssets = indiaMarketOpen ? (await client.query<IndiaLiveAsset>(
       `select "assetId",ticker,exchange
          from (
            select s.asset_id "assetId",s.ticker,s.exchange,s.score,
@@ -471,7 +472,7 @@ export async function refreshQuotes(databaseUrl: string, startISO = localToday()
          ) ranked
         where exchange_rank <= 50
         order by score desc,ticker`,
-    )).rows;
+    )).rows : [];
     const indiaLive = await fetchIndiaLiveCandidates(liveAssets);
 
     type QuoteRow = { assetId: string; price: number; changePct: number | null; currency: string; asOf: string | null; source: string };
@@ -482,7 +483,7 @@ export async function refreshQuotes(databaseUrl: string, startISO = localToday()
     for (const [t, q] of directBenchmarks) { const id = directMap.get(t); if (id) put({ assetId: id, price: q.price, changePct: q.changePct, currency: "INR", asOf: startISO, source: q.source ?? "DIRECT_QUOTE" }); }
     for (const [t, q] of nse.quotes) { const id = nseMap.get(t); if (id) put({ assetId: id, price: q.price, changePct: q.changePct, currency: "INR", asOf: nse.asOf, source: "NSE_BHAVCOPY" }); }
     for (const [t, q] of bse.quotes) { const id = bseMap.get(t); if (id) put({ assetId: id, price: q.price, changePct: q.changePct, currency: "INR", asOf: bse.asOf, source: "BSE_BHAVCOPY" }); }
-    if (isMarketOpen("IN")) {
+    if (indiaMarketOpen) {
       const recentLive = await client.query<{ assetId: string; source: string }>(
         `select asset_id "assetId",source
            from public.latest_quotes
@@ -505,8 +506,6 @@ export async function refreshQuotes(databaseUrl: string, startISO = localToday()
           put({ assetId, price: q.price, changePct: q.changePct, currency: "INR", asOf: startISO, source: q.source ?? "GOOGLE_FINANCE_LIVE" });
         }
       }
-    } else {
-      for (const [assetId, q] of indiaLive) put({ assetId, price: q.price, changePct: q.changePct, currency: "INR", asOf: startISO, source: q.source ?? "GOOGLE_FINANCE_LIVE" });
     }
     const rows = [...rowsByAsset.values()];
 
