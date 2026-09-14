@@ -152,7 +152,7 @@ export async function getFundOverlap(): Promise<OverlapReport | null> {
             limit 1
          ) amfi on true
          left join lateral (
-           select fs.name
+           select fs.name, fs.amc
              from public.user_fund_mappings map
              join public.fund_schemes fs on fs.scheme_code = map.scheme_code
             where map.user_id = h.user_id and map.user_holding_id = h.id and map.status = 'matched'
