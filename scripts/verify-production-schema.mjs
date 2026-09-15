@@ -10,6 +10,9 @@ const requiredRelations = [
   "public.breeze_broker_syncs",
   "public.breeze_broker_snapshots",
   "public.breeze_instrument_map",
+  "public.news_sources",
+  "public.news_sync_state",
+  "public.event_stock_map",
 ];
 const client = new pg.Client({
   connectionString: url,
