@@ -81,6 +81,18 @@ describe("assessStrongSwing", () => {
     expect(result.gates.every((gate) => gate.passed)).toBe(true);
   });
 
+  it("blocks execution when a live Breeze spread is too wide", () => {
+    const { bars, entry } = cleanConfirmedBars();
+    const result = assessStrongSwing({
+      market: "IN", verdict: "LONG_BREAKOUT", isBreakout: true,
+      trigger: entry, atr: 2, trailingStop: null, currentPrice: entry + 0.2,
+      stopAtrMult: 1.5, bars, benchmarkBars: benchmark(),
+      microstructure: { bestBid: 100, bestAsk: 101, lowerCircuit: 90, quoteFresh: true },
+    });
+    expect(result.status).toBe("RISK_OFF");
+    expect(result.gates.find((gate) => gate.key === "live_spread")?.passed).toBe(false);
+  });
+
   it("does not reprice a missed breakout into a new entry", () => {
     const { bars, entry } = cleanConfirmedBars();
     const result = assessStrongSwing({

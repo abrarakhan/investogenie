@@ -21,6 +21,8 @@ interface SignalContext {
   asset_id: string;
   long_trigger: string | number;
   atr: string | number;
+  best_bid: string | number | null; best_ask: string | number | null;
+  lower_circuit: string | number | null; quote_updated_at: string | null; quote_source: string | null;
 }
 
 export interface StrongSwingCandidate extends ScreenRow, StrongSwingAssessment {
@@ -141,7 +143,7 @@ export async function getStrongSwingCandidates(
       [ids],
     ),
     query<SignalContext>(
-      `select asset_id,long_trigger,atr from public.swing_signals where asset_id = any($1::uuid[])`,
+      `select s.asset_id,s.long_trigger,s.atr,q.best_bid,q.best_ask,q.lower_circuit,q.updated_at::text quote_updated_at,q.source quote_source from public.swing_signals s left join public.latest_quotes q on q.asset_id=s.asset_id where s.asset_id = any($1::uuid[])`,
       [ids],
     ),
     query<BarRow>(
@@ -195,6 +197,7 @@ export async function getStrongSwingCandidates(
       stopAtrMult: settings.stopAtrMult,
       bars,
       benchmarkBars,
+      microstructure: context.quote_source === "BREEZE_LIVE" ? { bestBid: context.best_bid === null ? null : Number(context.best_bid), bestAsk: context.best_ask === null ? null : Number(context.best_ask), lowerCircuit: context.lower_circuit === null ? null : Number(context.lower_circuit), quoteFresh: Boolean(context.quote_updated_at) && Date.now() - Date.parse(context.quote_updated_at!) <= 10 * 60 * 1000 } : undefined,
     });
     const recent = bars.slice(-22);
     // Strong Swing freezes the confirmed breakout entry. Repricing entry to a

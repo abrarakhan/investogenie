@@ -26,6 +26,7 @@ export interface StrongSwingInput {
   stopAtrMult?: number;
   bars: OHLCV[];
   benchmarkBars: OHLCV[];
+  microstructure?: { bestBid: number | null; bestAsk: number | null; lowerCircuit: number | null; quoteFresh: boolean };
 }
 
 export interface StrongSwingAssessment {
@@ -269,6 +270,9 @@ export function assessStrongSwing(input: StrongSwingInput): StrongSwingAssessmen
       `Technical stop requires ${stopRiskPct.toFixed(1)}% risk; maximum 7%.`, "execution"),
     gate("circuit_behaviour", "Circuit behaviour", circuitLikeSessions20 < 2,
       `${circuitLikeSessions20} circuit-like closes in 20 sessions; maximum 1.`, "execution"),
+    gate("live_quote", "Live broker quote", input.market !== "IN" || !input.microstructure || Boolean(input.microstructure.quoteFresh), input.microstructure?.quoteFresh ? "Breeze quote is current." : "No Breeze execution quote; existing safety gates apply.", "execution"),
+    gate("live_spread", "Live bid-ask spread", input.market !== "IN" || !input.microstructure || Boolean(input.microstructure.bestBid && input.microstructure.bestAsk && ((input.microstructure.bestAsk-input.microstructure.bestBid)/input.microstructure.bestAsk)*100 <= 0.75), input.microstructure?.bestBid && input.microstructure?.bestAsk ? `${(((input.microstructure.bestAsk-input.microstructure.bestBid)/input.microstructure.bestAsk)*100).toFixed(2)}% spread; maximum 0.75%.` : "Live market depth unavailable.", "execution"),
+    gate("live_circuit", "Circuit exit room", input.market !== "IN" || !input.microstructure || Boolean(input.microstructure.lowerCircuit && currentPrice > input.microstructure.lowerCircuit * 1.03), input.microstructure?.lowerCircuit ? `${(((currentPrice/input.microstructure.lowerCircuit)-1)*100).toFixed(1)}% above lower circuit; requires 3%.` : "Live circuit band unavailable.", "execution"),
   ];
 
   const passed = gates.filter((item) => item.passed).length;
@@ -280,7 +284,7 @@ export function assessStrongSwing(input: StrongSwingInput): StrongSwingAssessmen
   const breakoutFailed = input.isBreakout && atr > 0 && latest.close < breakoutLevel - atr;
   const hardRiskKeys = new Set([
     "extension_5d", "extension_10d", "sma20_extension", "atr_risk",
-    "stop_width", "circuit_behaviour", "freshness", "price", "liquidity",
+    "stop_width", "circuit_behaviour", "freshness", "price", "liquidity", "live_quote", "live_spread", "live_circuit",
   ]);
   const hardRiskFailed = gates.some((item) => hardRiskKeys.has(item.key) && !item.passed);
   const entryZoneFailed = gates.some((item) => item.key === "entry_zone" && !item.passed);

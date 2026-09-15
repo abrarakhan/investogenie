@@ -279,6 +279,12 @@ class MarketBatcher:
             "high": number(tick.get("high")),
             "low": number(tick.get("low")),
             "volume": integer(tick.get("ttq") or tick.get("volume") or tick.get("total_quantity_traded")),
+            "bid": number(tick.get("bPrice") or tick.get("best_bid_price")),
+            "ask": number(tick.get("sPrice") or tick.get("best_offer_price")),
+            "bid_qty": integer(tick.get("bQty") or tick.get("best_bid_quantity")),
+            "ask_qty": integer(tick.get("sQty") or tick.get("best_offer_quantity")),
+            "lower_circuit": number(tick.get("lowerCktLM") or tick.get("lower_circuit")),
+            "upper_circuit": number(tick.get("upperCktLM") or tick.get("upper_circuit")),
         }
         with self.lock:
             self.pending[instrument.asset_id] = row
@@ -302,15 +308,15 @@ class MarketBatcher:
                     cur,
                     """
                     insert into public.latest_quotes
-                      (asset_id,price,change_pct,currency,as_of,source,updated_at)
+                      (asset_id,price,change_pct,currency,as_of,source,updated_at,best_bid,best_ask,bid_quantity,ask_quantity,lower_circuit,upper_circuit)
                     values %s
                     on conflict (asset_id) do update set
                       price=excluded.price,change_pct=excluded.change_pct,
                       currency=excluded.currency,as_of=excluded.as_of,
-                      source=excluded.source,updated_at=excluded.updated_at
+                      source=excluded.source,updated_at=excluded.updated_at,best_bid=excluded.best_bid,best_ask=excluded.best_ask,bid_quantity=excluded.bid_quantity,ask_quantity=excluded.ask_quantity,lower_circuit=excluded.lower_circuit,upper_circuit=excluded.upper_circuit
                     where public.latest_quotes.as_of is null or public.latest_quotes.as_of <= excluded.as_of
                     """,
-                    [(r["asset_id"], r["price"], r["change_pct"], "INR", r["timestamp"], "BREEZE_LIVE", dt.datetime.now(dt.timezone.utc)) for r in rows],
+                    [(r["asset_id"], r["price"], r["change_pct"], "INR", r["timestamp"], "BREEZE_LIVE", dt.datetime.now(dt.timezone.utc),r["bid"],r["ask"],r["bid_qty"],r["ask_qty"],r["lower_circuit"],r["upper_circuit"]) for r in rows],
                     page_size=500,
                 )
                 execute_values(
