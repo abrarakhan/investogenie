@@ -12,6 +12,9 @@ class BreezeAccountSyncTest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "expired"):
             response_rows({"Success": None, "Error": "Session expired"})
 
+    def test_no_data_found_is_a_successful_empty_snapshot(self):
+        self.assertEqual(response_rows({"Success": None, "Error": "No Data Found"}), [])
+
     def test_external_keys_keep_distinct_orders(self):
         first = external_key("ORDER", {"order_id": "101"}, 0)
         second = external_key("ORDER", {"order_id": "102"}, 1)

@@ -41,6 +41,8 @@ def response_rows(response: Any) -> list[dict[str, Any]]:
         raise RuntimeError("Breeze returned a non-object response")
     error = response.get("Error") or response.get("error")
     if error:
+        if "no data found" in str(error).lower():
+            return []
         raise RuntimeError(str(error))
     success = response.get("Success", response.get("success"))
     if success is None:
