@@ -26,12 +26,16 @@ export interface ClassifiedImpact {
   rationale: string;
   analysisSource: string;
   model: string | null;
+  verifiedEvidence: boolean;
 }
 
 const POSITIVE = ["beats estimates", "record profit", "raises guidance", "rate cut", "approval", "wins order", "contract win", "upgrade", "buyback", "dividend increase", "ceasefire"];
 const NEGATIVE = ["war", "attack", "market crash", "rate hike", "repo rate hike", "misses estimates", "cuts guidance", "fraud", "investigation", "default", "bankruptcy", "downgrade", "sanction", "recall"];
 
 const clamp = (value: unknown, min: number, max: number) => Math.min(max, Math.max(min, Number(value) || 0));
+const evidenceConfidenceCap = (article: NormalizedNewsArticle) => article.verifiedEvidence
+  ? 1
+  : (article.trustScore ?? 40) >= 85 ? 0.65 : 0.45;
 
 function directionFromText(text: string): { direction: NewsDirection; score: number; eventType: string } {
   const lower = text.toLowerCase();
@@ -71,10 +75,11 @@ export function classifyDeterministically(
           articleIndex, market, assetId: asset.assetId, sector: asset.sector, scope: "ASSET",
           eventType: basic.eventType,
           direction: score > 0.08 ? "POSITIVE" : score < -0.08 ? "NEGATIVE" : basic.direction,
-          sentimentScore: clamp(score, -1, 1), confidence: clamp(relevance ?? 0.55, 0, 1),
+          sentimentScore: clamp(score, -1, 1), confidence: Math.min(clamp(relevance ?? 0.55, 0, 1), evidenceConfidenceCap(article)),
           severity: basic.direction === "NEUTRAL" ? 0.25 : 0.55, horizon: "SWING",
           rationale: `Headline matched ${asset.ticker}; deterministic keyword/provider sentiment, pending AI interpretation.`,
           analysisSource: article.tickerSentiments.length ? "provider_sentiment" : "deterministic_fallback", model: null,
+          verifiedEvidence: article.verifiedEvidence ?? false,
         });
       }
     } else if (basic.direction !== "NEUTRAL") {
@@ -84,6 +89,7 @@ export function classifyDeterministically(
         severity: Math.abs(basic.score), horizon: "SWING",
         rationale: "Broad market event detected by deterministic keyword fallback.",
         analysisSource: "deterministic_fallback", model: null,
+        verifiedEvidence: article.verifiedEvidence ?? false,
       });
     }
   });
@@ -92,7 +98,7 @@ export function classifyDeterministically(
 
 function promptFor(market: MarketId, articles: NormalizedNewsArticle[], assets: NewsAssetRef[]): string {
   const compactAssets = assets.map((a) => ({ ticker: a.ticker, name: a.name, sector: a.sector }));
-  const compactArticles = articles.map((a, index) => ({ index, title: a.title, description: a.description, source: a.sourceName, publishedAt: a.publishedAt }));
+  const compactArticles = articles.map((a, index) => ({ index, title: a.title, description: a.description, source: a.sourceName, publishedAt: a.publishedAt, trustScore: a.trustScore, corroborationCount: a.corroborationCount, verifiedEvidence: a.verifiedEvidence }));
   return `You are a conservative financial-news event classifier for ${market === "IN" ? "Indian" : "US"} equities.
 Classify only impacts directly supported by the supplied headline/description. Assess likely directional pressure and its time horizon, but do not invent facts, price targets, or certainty.
 Return JSON only: {"impacts":[{"articleIndex":0,"scope":"MARKET|SECTOR|ASSET","ticker":null,"sector":null,"eventType":"...","direction":"POSITIVE|NEGATIVE|NEUTRAL","sentimentScore":-1.0,"confidence":0.0,"severity":0.0,"horizon":"INTRADAY|SWING|MEDIUM_TERM","rationale":"one short sentence"}]}.
@@ -176,9 +182,10 @@ export async function classifyNews(
         sector: scope === "SECTOR" ? String(item.sector ?? "") || null : asset?.sector ?? null,
         scope, eventType: String(item.eventType ?? "GENERAL_NEWS").slice(0, 80), direction,
         sentimentScore: direction === "NEGATIVE" ? -Math.abs(signed) : direction === "POSITIVE" ? Math.abs(signed) : 0,
-        confidence: clamp(item.confidence, 0, 1), severity: clamp(item.severity, 0, 1), horizon,
+        confidence: Math.min(clamp(item.confidence, 0, 1), evidenceConfidenceCap(articles[articleIndex])), severity: clamp(item.severity, 0, 1), horizon,
         rationale: String(item.rationale ?? "AI-classified event impact.").slice(0, 400),
         analysisSource: `ai:${ai.provider}`, model: ai.model,
+        verifiedEvidence: articles[articleIndex].verifiedEvidence ?? false,
       }];
     });
   } catch (error) {

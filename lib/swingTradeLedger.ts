@@ -299,12 +299,13 @@ export async function getSwingTradeLedger(userId: string, market: "IN" | "US"): 
     url: string;
     rationale: string;
     published_at: Date | string;
+    verified_evidence: boolean;
   };
   const openRows = rows.filter((row) => String(row.status) === "OPEN");
   const assetIds = openRows.map((row) => String(row.asset_id));
   const impacts = assetIds.length ? await query<ImpactRow>(
     `select i.asset_id,i.sector,i.scope,i.direction,i.sentiment_score "sentimentScore",
-            i.confidence,i.severity,a.title,a.url,i.rationale,a.published_at
+            i.confidence,i.severity,i.verified_evidence,a.title,a.url,i.rationale,a.published_at
        from public.news_impacts i
        join public.news_articles a on a.id=i.article_id
       where i.market=$1
@@ -434,6 +435,7 @@ export async function getSwingTradeLedger(userId: string, market: "IN" | "US"): 
       stockMove2dPct,
       newsScore,
       assetNewsScore,
+      assetNewsVerified: assetImpacts.some((impact) => impact.verified_evidence),
       newsFresh,
     });
     return {

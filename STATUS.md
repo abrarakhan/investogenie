@@ -1,6 +1,6 @@
 # InvestoGenie Status
 
-_Last updated: 2026-08-26 (added Strong Swing and News & AI Swing workspaces; added DeepSeek V4 as a first-class encrypted AI provider; serialized GNews requests with 429 retry and honest empty-result handling; hardened OHLCV retirement so recently quoted stocks stay trackable; refreshed local coverage figures; 146 tests, lint, typecheck and production build clean)_
+_Last updated: 2026-09-15 (added Marketaux, incremental news watermarks, canonical article identity, source trust, independent corroboration, event-map schema, and verified-evidence gating for Trade Ledger exits)_
 
 This file summarizes what has been built so far, what is currently working, what is partial, and what to build next.
 
@@ -192,6 +192,21 @@ Portfolio/fund figures below were refreshed on 2026-07-25 where the current DB e
 - The personal deployment can use the owner's encrypted GNews and DeepSeek keys for unattended
   hourly refreshes during each market's trading hours when deployment environment keys are absent. DeepSeek V4 classification
   uses non-thinking JSON mode, and successful AI passes remove superseded keyword fallbacks.
+- Marketaux is available as an encrypted provider in Settings. Its entity-aware feed uses
+  `published_after`, entity filtering, and grouped similar stories; GNews, NewsAPI, and Alpha
+  Vantage remain available.
+- Provider/market watermarks fetch only newly published evidence with a 15-minute overlap.
+  Canonical URLs and title fingerprints prevent tracking-link duplicates, while event clusters
+  count independent publisher domains.
+- Source trust and corroboration are stored with each article. Official sources can verify an
+  event directly; reputable reporting requires at least two independent domains. Unknown or
+  single-source claims remain visible but advisory.
+- A severe stock-specific AI classification can independently trigger a ledger `EXIT` only when
+  its evidence is verified. Otherwise the same evidence produces `STAY_CAUTION`. Stops, trailing
+  stops, targets, price shocks, and frozen strategy plans are unchanged.
+- Migration `0042_news_evidence_quality.sql` also creates the versionable `news_sources` and
+  `event_stock_map` registries. Deterministic transmission templates and the Market Intelligence
+  UI remain the next phase; they are not silently applied before calibration.
 
 ### Startup / Recurring Wrapper
 

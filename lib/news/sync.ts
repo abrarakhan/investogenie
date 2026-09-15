@@ -3,6 +3,7 @@ import type { ActiveAIConfig, ActiveNewsConfig } from "@/lib/credentials-actions
 import type { MarketId } from "@/lib/types";
 import { classifyNews, type NewsAssetRef } from "./classifier";
 import { fetchNews } from "./providers";
+import { enrichEvidence } from "./evidence";
 
 interface CandidateRow {
   asset_id: string;
@@ -77,7 +78,15 @@ export async function refreshNewsIntelligence(
   const assets: NewsAssetRef[] = [...tracked.values()].map((row) => ({
     assetId: row.asset_id, ticker: row.ticker, name: row.name, sector: row.sector,
   }));
-  const fetched = await fetchNews(news, market, assets, ledgerRows.length);
+  const syncState = await query<{ last_published_at: Date | string | null }>(
+    `select last_published_at from public.news_sync_state where provider=$1 and market=$2`,
+    [news.provider, market],
+  );
+  const since = syncState[0]?.last_published_at
+    ? new Date(syncState[0].last_published_at).toISOString()
+    : undefined;
+  const enriched = enrichEvidence(await fetchNews(news, market, assets, ledgerRows.length, since));
+  const fetched = [...new Map(enriched.map((article) => [article.canonicalUrl ?? article.url, article])).values()];
   if (!fetched.length) {
     throw new Error(`No ${market} news articles were returned from ${news.provider} for the last 72 hours.`);
   }
@@ -90,17 +99,21 @@ export async function refreshNewsIntelligence(
     for (const article of articles) {
       const result = await client.query<{ id: string }>(
         `insert into public.news_articles
-           (provider,provider_article_id,url,title,description,source_name,image_url,published_at,raw_payload)
-         values ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb)
+           (provider,provider_article_id,url,title,description,source_name,image_url,published_at,raw_payload,
+            canonical_url,content_fingerprint,event_cluster_key,trust_score,corroboration_count)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12,$13,$14)
          on conflict (url) do update set
            title=excluded.title, description=excluded.description, source_name=excluded.source_name,
            image_url=excluded.image_url, published_at=excluded.published_at,
-           fetched_at=now(), raw_payload=excluded.raw_payload
+           fetched_at=now(), raw_payload=excluded.raw_payload,canonical_url=excluded.canonical_url,
+           content_fingerprint=excluded.content_fingerprint,event_cluster_key=excluded.event_cluster_key,
+           trust_score=excluded.trust_score,corroboration_count=excluded.corroboration_count
          returning id`,
         [
           article.provider, article.providerArticleId, article.url, article.title,
           article.description, article.sourceName, article.imageUrl, article.publishedAt,
-          JSON.stringify(article.rawPayload ?? {}),
+          JSON.stringify(article.rawPayload ?? {}), article.canonicalUrl, article.contentFingerprint,
+          article.eventClusterKey, article.trustScore ?? 40, article.corroborationCount ?? 1,
         ],
       );
       ids.push(result.rows[0].id);
@@ -131,15 +144,24 @@ export async function refreshNewsIntelligence(
       await client.query(
         `insert into public.news_impacts
            (article_id,market,asset_id,sector,scope,event_type,direction,sentiment_score,
-            confidence,severity,horizon,rationale,analysis_source,model)
-         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+            confidence,severity,horizon,rationale,analysis_source,model,verified_evidence)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
         [
           articleId, impact.market, impact.assetId, impact.sector, impact.scope,
           impact.eventType, impact.direction, impact.sentimentScore, impact.confidence,
           impact.severity, impact.horizon, impact.rationale, impact.analysisSource, impact.model,
+          impact.verifiedEvidence,
         ],
       );
     }
+    const newest = articles.reduce<string | null>((latest, article) =>
+      !latest || article.publishedAt > latest ? article.publishedAt : latest, null);
+    await client.query(
+      `insert into public.news_sync_state(provider,market,last_published_at,last_success_at)
+       values($1,$2,$3,now()) on conflict(provider,market) do update set
+       last_published_at=greatest(public.news_sync_state.last_published_at,excluded.last_published_at),last_success_at=now()`,
+      [news.provider, market, newest],
+    );
     return ids;
   });
 

@@ -45,8 +45,8 @@ export interface CredentialsInput {
   breezeSessionToken?: string;
 }
 
-export type NewsProvider = "alpha_vantage" | "gnews" | "newsapi";
-const NEWS_PROVIDERS = new Set<NewsProvider>(["alpha_vantage", "gnews", "newsapi"]);
+export type NewsProvider = "alpha_vantage" | "gnews" | "newsapi" | "marketaux";
+const NEWS_PROVIDERS = new Set<NewsProvider>(["alpha_vantage", "gnews", "newsapi", "marketaux"]);
 
 interface CredsRow {
   id: string;
@@ -273,6 +273,7 @@ export async function getSystemNewsConfig(): Promise<ActiveNewsConfig | null> {
 }
 
 function getEnvironmentNewsConfig(): ActiveNewsConfig | null {
+  if (process.env.MARKETAUX_API_KEY) return { provider: "marketaux", apiKey: process.env.MARKETAUX_API_KEY };
   if (process.env.ALPHA_VANTAGE_API_KEY) return { provider: "alpha_vantage", apiKey: process.env.ALPHA_VANTAGE_API_KEY };
   if (process.env.GNEWS_API_KEY) return { provider: "gnews", apiKey: process.env.GNEWS_API_KEY };
   if (process.env.NEWS_API_KEY) return { provider: "newsapi", apiKey: process.env.NEWS_API_KEY };

@@ -20,6 +20,7 @@ const BREEZE_STATUS: Record<string, { type: "success" | "error"; text: string }>
 
 const CUSTOM = "__custom__";
 const NEWS_PROVIDERS: Array<{ key: NewsProvider; label: string; hint: string }> = [
+  { key: "marketaux", label: "Marketaux", hint: "Entity-aware global financial news with India company and exchange metadata." },
   { key: "alpha_vantage", label: "Alpha Vantage News Sentiment", hint: "Finance-native sentiment and ticker relevance. Best first choice for US coverage." },
   { key: "gnews", label: "GNews", hint: "Broad India and US business-news search with country filtering." },
   { key: "newsapi", label: "NewsAPI", hint: "Broad publisher coverage and advanced keyword search." },

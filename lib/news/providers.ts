@@ -23,6 +23,12 @@ export interface NormalizedNewsArticle {
   publishedAt: string;
   tickerSentiments: ProviderTickerSentiment[];
   rawPayload: unknown;
+  canonicalUrl?: string;
+  contentFingerprint?: string;
+  eventClusterKey?: string;
+  trustScore?: number;
+  corroborationCount?: number;
+  verifiedEvidence?: boolean;
 }
 
 const MACRO_QUERY: Record<MarketId, string> = {
@@ -37,6 +43,13 @@ const GNEWS_MACRO_QUERY: Record<MarketId, string> = {
 
 function dateFrom(hours: number): string {
   return new Date(Date.now() - hours * 3_600_000).toISOString();
+}
+
+function effectiveSince(since?: string): string {
+  const fallback = dateFrom(72);
+  if (!since || !Number.isFinite(Date.parse(since))) return fallback;
+  const overlap = new Date(Date.parse(since) - 15 * 60_000).toISOString();
+  return overlap > fallback ? overlap : fallback;
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -137,11 +150,12 @@ function validIso(value: unknown): string {
 async function fetchAlphaVantage(
   apiKey: string,
   market: MarketId,
+  since?: string,
 ): Promise<NormalizedNewsArticle[]> {
   const url = new URL("https://www.alphavantage.co/query");
   url.searchParams.set("function", "NEWS_SENTIMENT");
   url.searchParams.set("topics", "financial_markets,economy_monetary,economy_macro");
-  url.searchParams.set("time_from", dateFrom(72).replace(/[-:]/g, "").slice(0, 13));
+  url.searchParams.set("time_from", effectiveSince(since).replace(/[-:]/g, "").slice(0, 13));
   url.searchParams.set("sort", "LATEST");
   url.searchParams.set("limit", "200");
   url.searchParams.set("apikey", apiKey);
@@ -172,6 +186,7 @@ async function fetchGNews(
   market: MarketId,
   candidates: NewsCandidateRef[],
   priorityCount = 0,
+  since?: string,
 ): Promise<NormalizedNewsArticle[]> {
   const queries = buildPrioritizedGNewsQueries(market, candidates, priorityCount);
   const batches: Array<Array<Record<string, unknown>>> = [];
@@ -182,7 +197,7 @@ async function fetchGNews(
       url.searchParams.set("q", query);
       url.searchParams.set("lang", "en");
       url.searchParams.set("country", market === "IN" ? "in" : "us");
-      url.searchParams.set("from", dateFrom(72));
+      url.searchParams.set("from", effectiveSince(since));
       url.searchParams.set("sortby", "publishedAt");
       url.searchParams.set("max", "10");
       url.searchParams.set("apikey", apiKey);
@@ -221,6 +236,7 @@ async function fetchNewsApi(
   market: MarketId,
   candidates: NewsCandidateRef[],
   priorityCount = 0,
+  since?: string,
 ): Promise<NormalizedNewsArticle[]> {
   const priority = candidates.slice(0, priorityCount).map((candidate) => candidateQueries([candidate], 450)[0]).filter(Boolean);
   const queries = [...priority, MACRO_QUERY[market], ...candidateQueries(candidates.slice(priorityCount), 450)].slice(0, 6);
@@ -228,7 +244,7 @@ async function fetchNewsApi(
     const url = new URL("https://newsapi.org/v2/everything");
     url.searchParams.set("q", query);
     url.searchParams.set("language", "en");
-    url.searchParams.set("from", dateFrom(72));
+    url.searchParams.set("from", effectiveSince(since));
     url.searchParams.set("sortBy", "publishedAt");
     url.searchParams.set("pageSize", "25");
     const data = await jsonFetch(url, { headers: { "X-Api-Key": apiKey } }) as {
@@ -256,17 +272,49 @@ async function fetchNewsApi(
   }).filter((item) => item.url);
 }
 
+async function fetchMarketaux(
+  apiKey: string,
+  market: MarketId,
+  candidates: NewsCandidateRef[],
+  since?: string,
+): Promise<NormalizedNewsArticle[]> {
+  const url = new URL("https://api.marketaux.com/v1/news/all");
+  url.searchParams.set("api_token", apiKey);
+  url.searchParams.set("language", "en");
+  url.searchParams.set("must_have_entities", "true");
+  url.searchParams.set("filter_entities", "true");
+  url.searchParams.set("group_similar", "true");
+  url.searchParams.set("published_after", effectiveSince(since));
+  url.searchParams.set("limit", "100");
+  if (market === "IN") url.searchParams.set("countries", "in");
+  const symbols = candidates.slice(0, 30).map((item) => item.ticker).join(",");
+  if (symbols) url.searchParams.set("symbols", symbols);
+  const payload = await jsonFetch(url) as { data?: Array<Record<string, unknown>> };
+  return (payload.data ?? []).map((item) => ({
+    provider: "marketaux" as const,
+    providerArticleId: item.uuid ? String(item.uuid) : null,
+    url: String(item.url ?? ""), title: String(item.title ?? "Untitled market update"),
+    description: item.description ? String(item.description) : item.snippet ? String(item.snippet) : null,
+    sourceName: item.source ? String(item.source) : null,
+    imageUrl: item.image_url ? String(item.image_url) : null,
+    publishedAt: validIso(item.published_at), tickerSentiments: [], rawPayload: item,
+  })).filter((item) => item.url);
+}
+
 export async function fetchNews(
   config: ActiveNewsConfig,
   market: MarketId,
   candidates: NewsCandidateRef[],
   priorityCount = 0,
+  since?: string,
 ): Promise<NormalizedNewsArticle[]> {
   const articles = config.provider === "alpha_vantage"
-    ? await fetchAlphaVantage(config.apiKey, market)
+    ? await fetchAlphaVantage(config.apiKey, market, since)
     : config.provider === "gnews"
-      ? await fetchGNews(config.apiKey, market, candidates, priorityCount)
-      : await fetchNewsApi(config.apiKey, market, candidates, priorityCount);
+      ? await fetchGNews(config.apiKey, market, candidates, priorityCount, since)
+      : config.provider === "marketaux"
+        ? await fetchMarketaux(config.apiKey, market, candidates, since)
+        : await fetchNewsApi(config.apiKey, market, candidates, priorityCount, since);
   const unique = new Map(articles.map((article) => [article.url, article]));
   return [...unique.values()].sort((a, b) => b.publishedAt.localeCompare(a.publishedAt));
 }
