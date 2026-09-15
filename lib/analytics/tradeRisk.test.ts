@@ -10,6 +10,7 @@ const base = {
   stockMove1dPct: 0,
   stockMove2dPct: 0,
   newsScore: { technicalScore: 70, newsAdjustment: 0, combinedScore: 70, state: "NEUTRAL" as const },
+  assetNewsScore: { technicalScore: 70, newsAdjustment: 0, combinedScore: 70, state: "NEUTRAL" as const },
   newsFresh: true,
 };
 
@@ -40,6 +41,16 @@ describe("trade risk assessment", () => {
 
   it("recommends staying when the plan, movement, and news remain healthy", () => {
     expect(assessTradeRisk(base).recommendation).toBe("STAY");
+  });
+
+  it("does not issue a stock exit from broad-market news alone", () => {
+    const result = assessTradeRisk({ ...base, newsScore: { ...base.newsScore, newsAdjustment: -12, state: "RISK_OFF" } });
+    expect(result.recommendation).toBe("STAY_CAUTION");
+  });
+
+  it("issues an exit for severe stock-specific news", () => {
+    const result = assessTradeRisk({ ...base, assetNewsScore: { ...base.assetNewsScore, newsAdjustment: -12, state: "RISK_OFF" } });
+    expect(result.recommendation).toBe("EXIT");
   });
 
   it("recommends staying with caution when evidence is incomplete", () => {

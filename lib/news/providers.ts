@@ -92,6 +92,22 @@ export function buildGNewsQueries(candidates: NewsCandidateRef[]): string[] {
   return queries.slice(0, 4);
 }
 
+export function buildPrioritizedGNewsQueries(
+  market: MarketId,
+  candidates: NewsCandidateRef[],
+  priorityCount = 0,
+): string[] {
+  const priority = candidates
+    .slice(0, priorityCount)
+    .map((candidate) => buildGNewsQueries([candidate])[0])
+    .filter(Boolean);
+  return [
+    ...priority,
+    GNEWS_MACRO_QUERY[market],
+    ...buildGNewsQueries(candidates.slice(priorityCount)),
+  ].slice(0, 6);
+}
+
 async function jsonFetch(url: URL, init?: RequestInit, retries = 2): Promise<unknown> {
   for (let attempt = 0; ; attempt++) {
     const response = await fetch(url, { ...init, signal: AbortSignal.timeout(20_000) });
@@ -155,8 +171,9 @@ async function fetchGNews(
   apiKey: string,
   market: MarketId,
   candidates: NewsCandidateRef[],
+  priorityCount = 0,
 ): Promise<NormalizedNewsArticle[]> {
-  const queries = [GNEWS_MACRO_QUERY[market], ...buildGNewsQueries(candidates)];
+  const queries = buildPrioritizedGNewsQueries(market, candidates, priorityCount);
   const batches: Array<Array<Record<string, unknown>>> = [];
   const failures: unknown[] = [];
   for (const [index, query] of queries.entries()) {
@@ -203,8 +220,10 @@ async function fetchNewsApi(
   apiKey: string,
   market: MarketId,
   candidates: NewsCandidateRef[],
+  priorityCount = 0,
 ): Promise<NormalizedNewsArticle[]> {
-  const queries = [MACRO_QUERY[market], ...candidateQueries(candidates, 450)];
+  const priority = candidates.slice(0, priorityCount).map((candidate) => candidateQueries([candidate], 450)[0]).filter(Boolean);
+  const queries = [...priority, MACRO_QUERY[market], ...candidateQueries(candidates.slice(priorityCount), 450)].slice(0, 6);
   const batches = await Promise.all(queries.map(async (query) => {
     const url = new URL("https://newsapi.org/v2/everything");
     url.searchParams.set("q", query);
@@ -241,12 +260,13 @@ export async function fetchNews(
   config: ActiveNewsConfig,
   market: MarketId,
   candidates: NewsCandidateRef[],
+  priorityCount = 0,
 ): Promise<NormalizedNewsArticle[]> {
   const articles = config.provider === "alpha_vantage"
     ? await fetchAlphaVantage(config.apiKey, market)
     : config.provider === "gnews"
-      ? await fetchGNews(config.apiKey, market, candidates)
-      : await fetchNewsApi(config.apiKey, market, candidates);
+      ? await fetchGNews(config.apiKey, market, candidates, priorityCount)
+      : await fetchNewsApi(config.apiKey, market, candidates, priorityCount);
   const unique = new Map(articles.map((article) => [article.url, article]));
   return [...unique.values()].sort((a, b) => b.publishedAt.localeCompare(a.publishedAt));
 }

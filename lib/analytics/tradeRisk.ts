@@ -12,6 +12,7 @@ export interface TradeRiskInput {
   stockMove1dPct: number | null;
   stockMove2dPct: number | null;
   newsScore: NewsSwingScore;
+  assetNewsScore: NewsSwingScore;
   newsFresh: boolean;
 }
 
@@ -45,9 +46,12 @@ export function assessTradeRisk(input: TradeRiskInput): TradeRiskAssessment {
     state = "CAUTION";
     reasons.push("No current quote is available, so the trade cannot be assessed reliably.");
   }
-  if (input.newsScore.state === "RISK_OFF") {
+  if (input.assetNewsScore.state === "RISK_OFF") {
     state = "RISK_OFF";
-    reasons.push("A recent severe, high-confidence negative event triggered the News & AI risk-off veto.");
+    reasons.push("A recent severe, high-confidence event specific to this stock triggered the News & AI risk-off veto.");
+  } else if (input.newsScore.state === "RISK_OFF" && state !== "RISK_OFF") {
+    state = "CAUTION";
+    reasons.push("Broad-market news is adverse; the stock-specific exit veto has not triggered.");
   } else if (input.newsScore.state === "CAUTION" && state !== "RISK_OFF") {
     state = "CAUTION";
     reasons.push(`Recent news reduced the trade score by ${Math.abs(input.newsScore.newsAdjustment).toFixed(1)} points.`);

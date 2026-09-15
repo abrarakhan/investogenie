@@ -77,7 +77,7 @@ export async function refreshNewsIntelligence(
   const assets: NewsAssetRef[] = [...tracked.values()].map((row) => ({
     assetId: row.asset_id, ticker: row.ticker, name: row.name, sector: row.sector,
   }));
-  const fetched = await fetchNews(news, market, assets);
+  const fetched = await fetchNews(news, market, assets, ledgerRows.length);
   if (!fetched.length) {
     throw new Error(`No ${market} news articles were returned from ${news.provider} for the last 72 hours.`);
   }

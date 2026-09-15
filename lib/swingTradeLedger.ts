@@ -414,6 +414,13 @@ export async function getSwingTradeLedger(userId: string, market: "IN" | "US"): 
       publishedAt: new Date(impact.published_at).toISOString(),
       scope: impact.scope as NewsScope,
     })));
+    const assetImpacts = relevantImpacts.filter((impact) => impact.scope === "ASSET" && impact.asset_id === trade.assetId);
+    const assetNewsScore = scoreNewsSwing(trade.signalScore ?? 50, assetImpacts.map((impact) => ({
+      direction: impact.direction as NewsDirection,
+      sentimentScore: Number(impact.sentimentScore), confidence: Number(impact.confidence),
+      severity: Number(impact.severity), publishedAt: new Date(impact.published_at).toISOString(),
+      scope: "ASSET" as const,
+    })));
     const distanceToStopPct = currentPrice && effectiveTrailingStop !== null
       ? ((currentPrice / effectiveTrailingStop) - 1) * 100
       : currentPrice ? ((currentPrice / trade.projectedStop) - 1) * 100 : null;
@@ -426,6 +433,7 @@ export async function getSwingTradeLedger(userId: string, market: "IN" | "US"): 
       stockMove1dPct,
       stockMove2dPct,
       newsScore,
+      assetNewsScore,
       newsFresh,
     });
     return {
@@ -439,7 +447,7 @@ export async function getSwingTradeLedger(userId: string, market: "IN" | "US"): 
         stockMove1dPct,
         stockMove2dPct,
         newsAsOf,
-        evidence: relevantImpacts.slice(0, 3).map((impact) => ({
+        evidence: [...assetImpacts, ...relevantImpacts.filter((impact) => impact.scope !== "ASSET")].slice(0, 3).map((impact) => ({
           title: impact.title,
           url: impact.url,
           direction: impact.direction as NewsDirection,

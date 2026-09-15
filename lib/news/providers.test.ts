@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { buildGNewsQueries, fetchNews } from "./providers";
+import { buildGNewsQueries, buildPrioritizedGNewsQueries, fetchNews } from "./providers";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -26,6 +26,21 @@ describe("GNews query generation", () => {
   it("removes embedded quotes and control characters", () => {
     const [query] = buildGNewsQueries([{ ticker: 'A"B', name: "Line\nBreak Corp" }]);
     expect(query).toBe('(\"Line Break Corp\" OR \"A B\")');
+  });
+
+  it("gives every open-ledger stock its own priority query", () => {
+    const queries = buildPrioritizedGNewsQueries("IN", [
+      { ticker: "BODALCHEM", name: "Bodal Chemicals Limited" },
+      { ticker: "FEDFINA", name: "Fedbank Financial Services Limited" },
+      { ticker: "RELIANCE", name: "Reliance Industries Limited" },
+    ], 2);
+
+    expect(queries[0]).toContain('"BODALCHEM"');
+    expect(queries[0]).not.toContain('"FEDFINA"');
+    expect(queries[1]).toContain('"FEDFINA"');
+    expect(queries[1]).not.toContain('"BODALCHEM"');
+    expect(queries[2]).toContain("RBI");
+    expect(queries[3]).toContain('"RELIANCE"');
   });
 
   it("retries a rate-limited GNews request", async () => {
