@@ -219,6 +219,24 @@ def load_cash_instruments(conn, archive: ZipFile, exchanges: list[str], limit: i
         instruments.append(CashInstrument(asset_id, ticker, exchange, breeze_code, token, company_name))
         if limit > 0 and len(instruments) >= limit:
             break
+    if instruments:
+        with conn.cursor() as cur:
+            execute_values(
+                cur,
+                """
+                insert into public.breeze_instrument_map
+                  (asset_id,exchange_code,stock_code,token,updated_at)
+                values %s
+                on conflict (asset_id) do update set
+                  exchange_code=excluded.exchange_code,
+                  stock_code=excluded.stock_code,
+                  token=excluded.token,
+                  updated_at=excluded.updated_at
+                """,
+                [(item.asset_id, item.exchange, item.breeze_code, item.token, dt.datetime.now(dt.timezone.utc)) for item in instruments],
+                page_size=500,
+            )
+        conn.commit()
     return instruments
 
 

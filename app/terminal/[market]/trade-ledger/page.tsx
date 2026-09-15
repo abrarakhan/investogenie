@@ -8,6 +8,8 @@ import { getActiveNewsConfig } from "@/lib/credentials-actions";
 import { normalizeMarket } from "@/lib/markets";
 import { getSwingTradeLedger } from "@/lib/swingTradeLedger";
 import { markLiveMarketTargets } from "@/lib/liveMarketTargets";
+import { getBreezeReconciliation } from "@/lib/breeze/broker";
+import BreezeReconciliationPanel from "@/components/trade-ledger/BreezeReconciliationPanel";
 
 export const dynamic = "force-dynamic";
 
@@ -22,9 +24,10 @@ export default async function SwingTradeLedgerPage({ params, searchParams }: {
   if (!user) redirect("/login");
   const raw = await searchParams;
   const defaults = Object.fromEntries(Object.entries(raw).map(([key, value]) => [key, Array.isArray(value) ? value[0] : value]));
-  const [trades, newsConfig] = await Promise.all([
+  const [trades, newsConfig, breeze] = await Promise.all([
     getSwingTradeLedger(user.id, market),
     getActiveNewsConfig(),
+    market === "IN" ? getBreezeReconciliation(user.id) : Promise.resolve(null),
   ]);
   if (market === "IN") {
     await markLiveMarketTargets(
@@ -43,6 +46,7 @@ export default async function SwingTradeLedgerPage({ params, searchParams }: {
       actions={<NewsRefreshButton market={market} configured={Boolean(newsConfig)} />}
     >
       <LedgerAutoRefresh market={market} />
+      {breeze && <BreezeReconciliationPanel data={breeze} />}
       <SwingTradeLedger market={market} trades={trades} defaults={defaults} />
     </AppShell>
   );

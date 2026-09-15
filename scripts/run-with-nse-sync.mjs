@@ -18,6 +18,7 @@ const pipeline = resolve(root, "pipelines/nse_yfinance_sync.py");
 const indiaQuotePipeline = resolve(root, "pipelines/india_quotes_sync.py");
 const breezeHistoryPipeline = resolve(root, "pipelines/breeze_ohlcv_sync.py");
 const breezeMarketWorker = resolve(root, "workers/breeze_market_daemon.py");
+const breezeAccountWorker = resolve(root, "workers/breeze_account_sync.py");
 const usPipeline = resolve(root, "pipelines/us_market_sync.py");
 const usHistoryPipeline = resolve(root, "pipelines/us_history_sync.py");
 const macroPipeline = resolve(root, "pipelines/macro_sync.py");
@@ -79,6 +80,8 @@ const indiaQuoteBatchSize = process.env.INDIA_LIVE_QUOTE_BATCH_SIZE ?? "100";
 const indiaQuoteSleep = process.env.INDIA_LIVE_QUOTE_SLEEP_SECONDS ?? "0.2";
 const newsRefreshIntervalMinutes = Number(process.env.NEWS_REFRESH_INTERVAL_MINUTES ?? 60);
 const newsRefreshDisabled = process.env.NEWS_REFRESH_DISABLED === "1";
+const breezeAccountSyncIntervalMinutes = Number(process.env.BREEZE_ACCOUNT_SYNC_INTERVAL_MINUTES ?? 5);
+const breezeAccountSyncDisabled = process.env.BREEZE_ACCOUNT_SYNC_DISABLED === "1";
 const gmailDisclosureSyncIntervalHours = Number(process.env.GMAIL_DISCLOSURE_SYNC_INTERVAL_HOURS ?? 24);
 const gmailDisclosureSyncDisabled = process.env.GMAIL_DISCLOSURE_SYNC_DISABLED === "1";
 const usSyncSleep = process.env.US_SYNC_SLEEP_SECONDS ?? "0.4";
@@ -133,6 +136,8 @@ let marketHoursQuoteRefreshPromise = null;
 let indiaLiveQuoteChild = null;
 let breezeChild = null;
 let breezeRestartTimer = null;
+let breezeAccountChild = null;
+let breezeAccountTimer = null;
 let newsRefreshTimer = null;
 let newsRefreshPromise = null;
 let gmailDisclosureTimer = null;
@@ -174,6 +179,41 @@ function startEmbeddedBreezeWorker() {
     console.warn(`[breeze-market] embedded worker exited (${signal ?? code}); retrying in 20 seconds`);
     breezeRestartTimer = setTimeout(startEmbeddedBreezeWorker, 20_000);
   });
+}
+
+function runBreezeAccountSync(trigger) {
+  if (breezeAccountSyncDisabled || !python || !existsSync(breezeAccountWorker)) return;
+  if (!isIndiaMarketOpen() && trigger !== "startup") return;
+  if (breezeAccountChild) {
+    console.log(`[breeze-account] skipping ${trigger}; prior reconciliation still running`);
+    return;
+  }
+  console.log(`[breeze-account] starting ${trigger} read-only reconciliation`);
+  breezeAccountChild = spawn(python, [breezeAccountWorker], {
+    cwd: root,
+    env: process.env,
+    stdio: "inherit",
+  });
+  breezeAccountChild.once("error", (error) => {
+    console.error(`[breeze-account] failed to start: ${error.message}`);
+  });
+  breezeAccountChild.once("close", (code, signal) => {
+    breezeAccountChild = null;
+    if (code !== 0 || signal) console.error(`[breeze-account] failed (${signal ?? `exit ${code}`})`);
+  });
+}
+
+function scheduleBreezeAccountSync() {
+  if (breezeAccountSyncDisabled || !Number.isFinite(breezeAccountSyncIntervalMinutes) || breezeAccountSyncIntervalMinutes <= 0) {
+    console.log("[breeze-account] recurring reconciliation disabled");
+    return;
+  }
+  console.log(`[breeze-account] read-only reconciliation every ${breezeAccountSyncIntervalMinutes} minutes during India market hours`);
+  breezeAccountTimer = setInterval(
+    () => runBreezeAccountSync("market-hours"),
+    breezeAccountSyncIntervalMinutes * 60 * 1000,
+  );
+  setTimeout(() => runBreezeAccountSync("startup"), 10_000);
 }
 
 import { Client } from "pg";
@@ -1288,6 +1328,7 @@ function shutdown(signal) {
   if (backfillTimer) clearInterval(backfillTimer);
   if (emailDigestTimer) clearInterval(emailDigestTimer);
   if (breezeRestartTimer) clearTimeout(breezeRestartTimer);
+  if (breezeAccountTimer) clearInterval(breezeAccountTimer);
   if (syncChild) syncChild.kill(signal);
   if (fundamentalsChild) fundamentalsChild.kill(signal);
   if (usFundamentalsChild) usFundamentalsChild.kill(signal);
@@ -1297,6 +1338,7 @@ function shutdown(signal) {
   if (marketRefreshChild) marketRefreshChild.kill(signal);
   if (indiaLiveQuoteChild) indiaLiveQuoteChild.kill(signal);
   if (breezeChild) breezeChild.kill(signal);
+  if (breezeAccountChild) breezeAccountChild.kill(signal);
 
   // Print startup summary before killing Next.js
   if (syncStats.attempted > 0) {
@@ -1331,7 +1373,9 @@ nextChild.on("close", (code, signal) => {
   if (marketRefreshChild) marketRefreshChild.kill("SIGTERM");
   if (indiaLiveQuoteChild) indiaLiveQuoteChild.kill("SIGTERM");
   if (breezeRestartTimer) clearTimeout(breezeRestartTimer);
+  if (breezeAccountTimer) clearInterval(breezeAccountTimer);
   if (breezeChild) breezeChild.kill("SIGTERM");
+  if (breezeAccountChild) breezeAccountChild.kill("SIGTERM");
   process.exitCode = signal ? 1 : (code ?? 1);
 });
 
@@ -1347,6 +1391,7 @@ scheduleGmailDisclosureSync();
 scheduleBackfillCron();
 scheduleEmailDigest();
 startEmbeddedBreezeWorker();
+scheduleBreezeAccountSync();
 if (startupSyncDisabled) {
   console.log("[startup] immediate maintenance jobs disabled; recurring schedules remain active");
 } else {
