@@ -1,6 +1,6 @@
 import unittest
 
-from breeze_account_sync import as_number, external_key, response_rows
+from breeze_account_sync import INVESTOGENIE_ACTIVITY_START, as_number, external_key, response_rows
 
 
 class BreezeAccountSyncTest(unittest.TestCase):
@@ -14,6 +14,9 @@ class BreezeAccountSyncTest(unittest.TestCase):
 
     def test_no_data_found_is_a_successful_empty_snapshot(self):
         self.assertEqual(response_rows({"Success": None, "Error": "No Data Found"}), [])
+
+    def test_reconciliation_starts_with_investogenie_activity(self):
+        self.assertEqual(INVESTOGENIE_ACTIVITY_START.date().isoformat(), "2026-08-01")
 
     def test_external_keys_keep_distinct_orders(self):
         first = external_key("ORDER", {"order_id": "101"}, 0)

@@ -20,6 +20,9 @@ from psycopg2.extras import Json, execute_values
 from breeze_market_daemon import database_url, decrypt_credential, env
 
 
+INVESTOGENIE_ACTIVITY_START = dt.datetime(2026, 8, 1, tzinfo=dt.timezone.utc)
+
+
 def as_number(*values: Any) -> Decimal | None:
     for value in values:
         if value in (None, "", "--", "-"):
@@ -150,7 +153,7 @@ def sync_account(conn, user_id: str, api_key: str, api_secret: str, session_toke
     try:
         breeze.generate_session(api_secret=api_secret, session_token=session_token)
         now = dt.datetime.now(dt.timezone.utc)
-        start = now - dt.timedelta(days=7)
+        start = INVESTOGENIE_ACTIVITY_START
         from_date = start.isoformat(timespec="milliseconds").replace("+00:00", "Z")
         to_date = now.isoformat(timespec="milliseconds").replace("+00:00", "Z")
         jobs: list[tuple[str, Callable[[], Any]]] = [

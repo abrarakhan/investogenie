@@ -12,7 +12,7 @@ export default function BreezeReconciliationPanel({ data }: { data: BreezeReconc
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div>
         <h2 className="font-bold">ICICI Breeze reconciliation</h2>
-        <p className="mt-1 text-xs text-white/45">Read-only broker check. InvestoGenie never changes orders or ledger entries automatically.</p>
+        <p className="mt-1 text-xs text-white/45">Read-only broker check for InvestoGenie trades since {new Intl.DateTimeFormat("en-IN", { dateStyle: "medium", timeZone: "Asia/Kolkata" }).format(new Date(`${data.scopeStart}T00:00:00+05:30`))}. Older long-term holdings are excluded.</p>
       </div>
       <span className={`rounded-full border px-3 py-1 text-[10px] font-bold uppercase tracking-wide ${healthy ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300" : "border-amber-500/30 bg-amber-500/10 text-amber-200"}`}>
         {data.status ?? "Awaiting first sync"}
