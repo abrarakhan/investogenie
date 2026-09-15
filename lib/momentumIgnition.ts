@@ -2,6 +2,7 @@ import { assessMomentumIgnition, type MomentumIgnitionAssessment } from "@/lib/a
 import { query } from "@/lib/db";
 import type { SwingSettings } from "@/lib/settings";
 import type { OHLCV } from "@/lib/types";
+import { isMarketOpenNow, latestExpectedSessionDate, refreshMarketHolidays } from "@/lib/market-calendar.mjs";
 
 interface PreliminaryRow {
   asset_id: string;
@@ -124,18 +125,9 @@ const PRELIMINARY_SQL = `
      and q.price>st.sma20 and st.sma20>st.sma50 and st.sma50>st.sma200
      and q.price>=st.breakout_level*0.90
      and st.traded_value20>=10000000
-     and st.latest_date >= case
-       when extract(isodow from now() at time zone 'Asia/Kolkata') between 1 and 5
-        and (now() at time zone 'Asia/Kolkata')::time between time '09:15' and time '15:30'
-         then (now() at time zone 'Asia/Kolkata')::date
-       else current_date-4
-     end
-     and q.as_of >= case
-       when extract(isodow from now() at time zone 'Asia/Kolkata') between 1 and 5
-        and (now() at time zone 'Asia/Kolkata')::time between time '09:15' and time '15:30'
-         then (now() at time zone 'Asia/Kolkata')::date
-       else current_date-4
-     end
+     and st.latest_date >= $1::date
+     and q.as_of::date >= $1::date
+     and (not $2::boolean or q.updated_at >= now() - interval '7 minutes')
    order by
      case when q.price>=st.breakout_level then 0 else 1 end,
      abs((q.price/st.breakout_level)-1),
@@ -155,6 +147,9 @@ export async function getMomentumIgnitionCandidates(
   if (market !== "IN") {
     return { market, universeScanned: 0, detailedAssessments: 0, candidates: [] };
   }
+  await refreshMarketHolidays("IN");
+  const expectedSessionDate = latestExpectedSessionDate("IN");
+  const marketOpen = isMarketOpenNow("IN");
 
   const [countRows, preliminary, benchmarkRows] = await Promise.all([
     query<{ count: string | number }>(
@@ -162,7 +157,7 @@ export async function getMomentumIgnitionCandidates(
         where a.country='IN' and a.exchange='NSE' and a.asset_class='STOCK' and a.is_active
           and not exists (select 1 from public.asset_tracking_exclusions x where x.asset_id=a.id)`,
     ),
-    query<PreliminaryRow>(PRELIMINARY_SQL),
+    query<PreliminaryRow>(PRELIMINARY_SQL, [expectedSessionDate, marketOpen]),
     query<BarRow>(
       `with chosen as (
          select a.id from public.assets a

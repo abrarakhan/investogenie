@@ -46,12 +46,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--limit", type=int)
     parser.add_argument("--sleep", type=float, default=0.2)
     parser.add_argument("--retries", type=int, default=2)
+    parser.add_argument("--priority-only", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
 
 
-def load_assets(conn, exchange: str, limit: int | None) -> list[Asset]:
-    params: list[object] = [exchange]
+def load_assets(conn, exchange: str, limit: int | None, priority_only: bool = False) -> list[Asset]:
+    params: list[object] = [exchange, priority_only, exchange]
     limit_sql = ""
     if limit is not None:
         params.append(max(1, limit))
@@ -79,6 +80,12 @@ def load_assets(conn, exchange: str, limit: int | None) -> list[Asset]:
                  where s.asset_id=a.id
                    and s.verdict <> 'NO_SETUP'
               ) signal on true
+              left join lateral (
+                select max(t.last_seen_at) last_seen_at
+                  from public.live_market_targets t
+                 where t.asset_id=a.id
+                   and t.last_seen_at >= now() - interval '1 day'
+              ) priority on true
              where a.exchange=%s
                and a.asset_class='STOCK'
                and a.is_active
@@ -86,11 +93,28 @@ def load_assets(conn, exchange: str, limit: int | None) -> list[Asset]:
                and not exists (
                  select 1 from public.asset_tracking_exclusions x where x.asset_id=a.id
                )
+               and (
+                 not %s
+                 or exists (
+                   select 1 from public.swing_trade_ledger l
+                    where l.asset_id=a.id and l.status='OPEN'
+                 )
+                 or exists (
+                   select 1 from public.live_market_targets t
+                    where t.asset_id=a.id and t.last_seen_at >= now() - interval '1 day'
+                 )
+                 or a.id in (
+                   select s.asset_id from public.swing_signals s
+                    where s.country='IN' and s.exchange=%s and s.verdict <> 'NO_SETUP'
+                    order by s.score desc,s.ticker limit 120
+                 )
+               )
                and not (
                  q.source='BREEZE_LIVE'
                  and q.updated_at >= now() - interval '20 minutes'
                )
-             order by ledger_open desc,(signal.score is not null) desc,
+             order by ledger_open desc,(priority.last_seen_at is not null) desc,
+                      priority.last_seen_at desc nulls last,(signal.score is not null) desc,
                       signal.score desc nulls last,a.ticker
              {limit_sql}
             """,
@@ -291,11 +315,12 @@ def main() -> None:
         benchmark_rows = sync_nifty_history(conn, args.dry_run) if "NSE" in exchanges else 0
         print(f"Nifty market-regime history: {benchmark_rows} session(s) refreshed.")
         for exchange in exchanges:
-            assets = load_assets(conn, exchange, args.limit)
+            assets = load_assets(conn, exchange, args.limit, args.priority_only)
             batch_size = max(1, args.batch_size)
             resolved_count = 0
             written = 0
-            print(f"Refreshing live quotes and OHLCV for {len(assets)} active {exchange} stocks.")
+            scope = "priority" if args.priority_only else "active"
+            print(f"Refreshing live quotes and OHLCV for {len(assets)} {scope} {exchange} stocks.")
             for start in range(0, len(assets), batch_size):
                 batch = assets[start : start + batch_size]
                 resolved = fetch_batch(batch, exchange, max(1, args.retries), today)

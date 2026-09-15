@@ -136,7 +136,7 @@ export default function ScreenerTable({
   const [maxPe, setMaxPe] = useState("");
   const activeStrategy: StrategyKey | null = strategy === "ALL" ? null : strategy;
 
-  // The server refreshes ranked India quotes every 15 minutes during market
+  // The server refreshes ranked India quotes every 5 minutes during market
   // hours. Re-read that lightweight server snapshot while this page is open,
   // and immediately after a mobile browser tab returns to the foreground.
   useEffect(() => {

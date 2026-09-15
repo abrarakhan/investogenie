@@ -7,6 +7,7 @@ import { getSessionUser } from "@/lib/auth";
 import { getActiveNewsConfig } from "@/lib/credentials-actions";
 import { normalizeMarket } from "@/lib/markets";
 import { getSwingTradeLedger } from "@/lib/swingTradeLedger";
+import { markLiveMarketTargets } from "@/lib/liveMarketTargets";
 
 export const dynamic = "force-dynamic";
 
@@ -25,6 +26,12 @@ export default async function SwingTradeLedgerPage({ params, searchParams }: {
     getSwingTradeLedger(user.id, market),
     getActiveNewsConfig(),
   ]);
+  if (market === "IN") {
+    await markLiveMarketTargets(
+      trades.filter((trade) => trade.status === "OPEN").map((trade) => trade.assetId),
+      "trade_ledger",
+    );
+  }
   return (
     <AppShell
       email={user.email}

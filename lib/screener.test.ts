@@ -9,6 +9,11 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/db", () => ({ query: mocks.query }));
 vi.mock("@/lib/quotes", () => ({ getQuotesByAssetIds: mocks.getQuotesByAssetIds }));
 vi.mock("@/lib/fundamentals", () => ({ getFundamentalsByAssetIds: mocks.getFundamentalsByAssetIds }));
+vi.mock("@/lib/market-calendar.mjs", () => ({
+  isMarketOpenNow: () => true,
+  latestExpectedSessionDate: () => "2026-09-15",
+  refreshMarketHolidays: async () => true,
+}));
 
 import { runScreener } from "@/lib/screener";
 import { DEFAULT_SETTINGS } from "@/lib/settings";
@@ -25,8 +30,9 @@ describe("runScreener selection", () => {
 
     const [sql, params] = mocks.query.mock.calls[0];
     expect(sql).toContain("bias <> 'SHORT'");
-    expect(sql).toContain("limit $3");
-    expect(params).toEqual(["IN", "NSE", 20]);
+    expect(sql).toContain("q.updated_at >= now() - interval '7 minutes'");
+    expect(sql).toContain("limit $4");
+    expect(params).toEqual(["2026-09-15", "IN", "NSE", 20]);
   });
 
   it("does not exclude shorts when they are enabled", async () => {

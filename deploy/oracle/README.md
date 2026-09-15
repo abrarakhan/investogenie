@@ -142,7 +142,7 @@ Then connect the desktop database tool to `127.0.0.1:5433`.
 The optional Breeze worker makes ICICI WebSocket ticks the primary intraday
 source for up to 750 priority NSE/BSE cash stocks: open ledger trades, active
 swing signals, then Nifty 500 members. Yahoo/Google still refresh the broader
-active universe every 15 minutes, and Bhavcopy stays enabled for official EOD
+priority trading surfaces every 5 minutes, and Bhavcopy stays enabled for official EOD
 reconciliation and corporate-action continuity.
 
 1. Allowlist the server's static public IP in the ICICI Breeze app settings.

@@ -70,7 +70,7 @@ const marketRefreshIntervalMinutes = Number(process.env.MARKET_REFRESH_INTERVAL_
 const marketHoursQuoteRefreshIntervalMinutes = Number(
   process.env.MARKET_HOURS_QUOTE_REFRESH_INTERVAL_MINUTES
     ?? process.env.INDIA_MARKET_QUOTE_REFRESH_INTERVAL_MINUTES
-    ?? 15,
+    ?? 5,
 );
 const marketHoursQuoteRefreshDisabled =
   process.env.MARKET_HOURS_QUOTE_REFRESH_DISABLED === "1"
@@ -493,6 +493,7 @@ function runIndiaLiveQuoteSync(trigger) {
     "--exchange", "ALL",
     "--batch-size", indiaQuoteBatchSize,
     "--sleep", indiaQuoteSleep,
+    "--priority-only",
   ];
   if (process.env.INDIA_LIVE_QUOTE_LIMIT) {
     args.push("--limit", process.env.INDIA_LIVE_QUOTE_LIMIT);
@@ -534,8 +535,16 @@ async function runMarketHoursQuoteRefresh(trigger) {
   const openMarkets = [indiaOpen ? "NSE/BSE" : null, usOpen ? "US" : null].filter(Boolean).join(" + ");
   marketHoursQuoteRefreshPromise = (async () => {
     console.log(`[market-hours-quotes] starting ${trigger} ${openMarkets} quote refresh`);
-    if (indiaOpen) await runIndiaLiveQuoteSync(trigger);
-    await runQuoteRefreshRequest(trigger);
+    if (indiaOpen) {
+      try {
+        await runQuoteRefreshRequest(`${trigger}-priority`);
+      } catch (error) {
+        console.error(`[market-hours-quotes] ${trigger} priority fallback failed: ${error.message}`);
+      }
+      await runIndiaLiveQuoteSync(trigger);
+    } else {
+      await runQuoteRefreshRequest(trigger);
+    }
   })()
     .catch((error) => console.error(`[market-hours-quotes] ${trigger} failed: ${error.message}`))
     .finally(() => {
@@ -546,7 +555,7 @@ async function runMarketHoursQuoteRefresh(trigger) {
 
 function scheduleMarketHoursQuoteRefresh() {
   if (marketHoursQuoteRefreshDisabled) {
-    console.log("[market-hours-quotes] 15-minute refresh disabled");
+    console.log("[market-hours-quotes] market-hours refresh disabled");
     return;
   }
   if (!Number.isFinite(marketHoursQuoteRefreshIntervalMinutes) || marketHoursQuoteRefreshIntervalMinutes <= 0) {

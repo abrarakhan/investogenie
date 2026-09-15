@@ -5,6 +5,7 @@ import ScreenerTable from "@/components/screener/ScreenerTable";
 import AppShell from "@/components/app/AppShell";
 import { getSessionUser } from "@/lib/auth";
 import { MARKET_COUNTRY, normalizeMarket } from "@/lib/markets";
+import { markLiveMarketTargets } from "@/lib/liveMarketTargets";
 
 export const dynamic = "force-dynamic";
 
@@ -29,6 +30,7 @@ export default async function TerminalScreener({
     buyOnlySettings,
     isUS ? {} : { exchange: "NSE", limit: 20 },
   );
+  if (marketId === "IN") await markLiveMarketTargets(rows.map((row) => row.assetId), "swing");
 
   return (
     <AppShell

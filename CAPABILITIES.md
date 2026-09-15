@@ -421,7 +421,7 @@ is not exposed. `npm run service:install` rebuilds/reinstalls the service after 
 The wrapper's recurring loop does:
 
 - security listings refresh,
-- market quote refresh (15-minute India market-hours cadence),
+- priority market quote and intraday OHLCV refresh (5-minute India market-hours cadence),
 - US quote/fundamental/history sync hooks — US history via free Yahoo Finance (`yfinance`),
   150 symbols/hour. Batch selection rotates by **attempt time** (`us_history_sync_state.last_attempt_at`),
   not by data staleness: attempting a symbol always moves it to the back of the queue, so no

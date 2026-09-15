@@ -201,7 +201,7 @@ The wrapper currently handles:
 
 - Official NSE/BSE bhavcopy OHLCV catch-up on startup.
 - Daily NSE/BSE bhavcopy history sync scheduling by IST time.
-- NSE/BSE latest quote refresh every 15 minutes during Indian market hours
+- Priority NSE/BSE quote and intraday OHLCV refresh every 5 minutes during Indian market hours for Swing Candidates, Strong Swing, News & AI Swing, and open Trade Ledger positions
   (`09:15-15:30 IST`, Monday-Friday), configurable with
   `MARKET_HOURS_QUOTE_REFRESH_INTERVAL_MINUTES` and disabled with
   `MARKET_HOURS_QUOTE_REFRESH_DISABLED=1`; it runs during India 09:15-15:30
@@ -231,7 +231,7 @@ The wrapper currently handles:
 
 Known issue:
 
-- NSE/BSE bhavcopy remains end-of-day data. The new 15-minute scheduler keeps
+- NSE/BSE bhavcopy remains end-of-day data. The 5-minute priority scheduler keeps
   the app refreshed from the configured source, but true live intraday
   all-stock quotes require an intraday provider beyond bhavcopy.
 - Some long-tail Yahoo/Google symbols still emit provider 404/delisted noise.
@@ -1108,7 +1108,7 @@ Committed app work now includes:
 - Data Health dashboard and status badges.
 - Bhavcopy startup automation.
 - TradingView-style charting with `lightweight-charts`.
-- 15-minute market-hours NSE/BSE quote refresh.
+- 5-minute market-hours NSE/BSE priority quote and intraday OHLCV refresh.
 
 Uncommitted at the time of this snapshot: only this STATUS.md/CAPABILITIES.md refresh itself.
 

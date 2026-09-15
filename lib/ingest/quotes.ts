@@ -451,27 +451,37 @@ export async function refreshQuotes(databaseUrl: string, startISO = localToday()
     // The market-hours refresh needs an intraday source. Bhavcopy is still the
     // authoritative universe-wide close, but it cannot update candidate cards
     // before EOD. Keep this overlay bounded to the highest-ranked actionable
-    // names per Indian exchange so the 15-minute job remains bounded while
+    // names per Indian exchange so the market-hours job remains bounded while
     // both NSE and BSE candidates receive a live eligibility check.
     const liveAssets = indiaMarketOpen ? (await client.query<IndiaLiveAsset>(
-      `select "assetId",ticker,exchange
+      `with ranked_signals as (
+         select s.asset_id,s.score,
+                row_number() over(partition by s.exchange order by s.score desc,s.ticker) exchange_rank
+           from public.swing_signals s
+          where s.country='IN' and s.exchange in ('NSE','BSE') and s.verdict <> 'NO_SETUP'
+       ), selected as (
+         select t.asset_id,0 priority
+           from public.live_market_targets t
+          where t.last_seen_at >= now() - interval '1 day'
+         union
+         select l.asset_id,0 priority
+           from public.swing_trade_ledger l
+          where l.market='IN' and l.status='OPEN'
+         union
+         select r.asset_id,1 priority
+           from ranked_signals r where r.exchange_rank <= 50
+       )
+       select "assetId",ticker,exchange
          from (
-           select s.asset_id "assetId",s.ticker,s.exchange,s.score,
-                  row_number() over(partition by s.exchange order by s.score desc,s.ticker) exchange_rank
-             from public.swing_signals s
-            where s.country='IN'
-              and s.exchange in ('NSE','BSE')
-              and s.verdict <> 'NO_SETUP'
-              and exists (select 1 from public.assets a where a.id=s.asset_id and a.is_active)
-              and not exists (select 1 from public.asset_tracking_exclusions x where x.asset_id=s.asset_id)
-              and exists (
-                select 1 from public.daily_ohlcv o
-                 where o.asset_id=s.asset_id
-                   and o.date >= current_date - interval '4 days'
-              )
-         ) ranked
-        where exchange_rank <= 50
-        order by score desc,ticker`,
+           select distinct on (a.id) a.id "assetId",a.ticker,a.exchange,s.priority
+             from selected s
+             join public.assets a on a.id=s.asset_id
+            where a.country='IN' and a.exchange in ('NSE','BSE') and a.asset_class='STOCK' and a.is_active
+              and not exists (select 1 from public.asset_tracking_exclusions x where x.asset_id=a.id)
+              and exists (select 1 from public.daily_ohlcv o where o.asset_id=a.id and o.date >= current_date - interval '4 days')
+            order by a.id,s.priority
+         ) picked
+        order by priority,ticker`,
     )).rows : [];
     const indiaLive = await fetchIndiaLiveCandidates(liveAssets);
 

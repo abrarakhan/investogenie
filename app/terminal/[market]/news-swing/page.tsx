@@ -8,6 +8,8 @@ import { getActiveAIConfig, getActiveNewsConfig } from "@/lib/credentials-action
 import { normalizeMarket } from "@/lib/markets";
 import { getNewsSwingWorkspace } from "@/lib/newsSwing";
 import { getUserSwingSettings } from "@/lib/settings";
+import MarketDataAutoRefresh from "@/components/app/MarketDataAutoRefresh";
+import { markLiveMarketTargets } from "@/lib/liveMarketTargets";
 
 export const dynamic = "force-dynamic";
 
@@ -21,6 +23,7 @@ export default async function NewsSwingPage({ params }: { params: Promise<{ mark
     getUserSwingSettings(), getActiveNewsConfig(), getActiveAIConfig(),
   ]);
   const workspace = await getNewsSwingWorkspace(market, settings);
+  if (market === "IN") await markLiveMarketTargets(workspace.candidates.map((candidate) => candidate.assetId), "news_swing");
   const lastSync = workspace.lastFetchedAt
     ? new Intl.DateTimeFormat("en-IN", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Kolkata" }).format(new Date(workspace.lastFetchedAt))
     : "Never";
@@ -34,6 +37,7 @@ export default async function NewsSwingPage({ params }: { params: Promise<{ mark
       subtitle="Existing swing calculations, ranked through a time-decayed and source-linked event-risk overlay."
       actions={<NewsRefreshButton market={market} configured={Boolean(newsConfig)} />}
     >
+      <MarketDataAutoRefresh market={market} />
       <div className="mb-6 grid gap-3 lg:grid-cols-[1fr_auto] lg:items-start">
         <div className="border-l-2 border-[var(--ig-accent)] pl-4 text-sm leading-relaxed text-white/52">
           News can adjust rank by at most 20 points. It never creates a setup or changes technical entry, target, stop, OI, volume, or breakout calculations. Severe verified negatives can mark a candidate Risk-off.

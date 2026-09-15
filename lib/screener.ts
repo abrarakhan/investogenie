@@ -9,6 +9,7 @@ import { getFundamentalsByAssetIds } from "@/lib/fundamentals";
 import { deriveLevels, type SwingSetup, type TradeDirection } from "@/lib/analytics/swingClassifier";
 import type { StrategyKey, StrategyScore } from "@/lib/analytics/legendaryStrategies";
 import { DEFAULT_SETTINGS, type SwingSettings } from "@/lib/settings";
+import { isMarketOpenNow, latestExpectedSessionDate, refreshMarketHolidays } from "@/lib/market-calendar.mjs";
 
 /** Trade levels for one legendary strategy, derived from its custom entry line
  *  through the user's read-time risk parameters. */
@@ -66,27 +67,28 @@ export async function runScreener(
   settings: SwingSettings = DEFAULT_SETTINGS,
   opts: { exchange?: string; limit?: number } = {},
 ): Promise<ScreenRow[]> {
+  if (country === "IN") await refreshMarketHolidays("IN");
+  const market = country === "IN" || country === "US" ? country : null;
+  const marketOpen = market ? isMarketOpenNow(market) : false;
+  const params: unknown[] = [];
   const conds: string[] = [
     `exists (select 1 from public.assets a where a.id = swing_signals.asset_id and a.is_active)`,
     `not exists (select 1 from public.asset_tracking_exclusions x where x.asset_id = swing_signals.asset_id)`,
-    `exists (select 1 from public.daily_ohlcv o where o.asset_id = swing_signals.asset_id and o.date >= current_date - interval '4 days')`,
-    `exists (
-      select 1 from public.latest_quotes q
-       where q.asset_id = swing_signals.asset_id
-         and q.as_of::date >= case
-           when swing_signals.country='IN'
-            and extract(isodow from now() at time zone 'Asia/Kolkata') between 1 and 5
-            and (now() at time zone 'Asia/Kolkata')::time between time '09:15' and time '15:30'
-             then (now() at time zone 'Asia/Kolkata')::date
-           when swing_signals.country='US'
-            and extract(isodow from now() at time zone 'America/New_York') between 1 and 5
-            and (now() at time zone 'America/New_York')::time between time '09:30' and time '16:00'
-             then (now() at time zone 'America/New_York')::date
-           else current_date - 4
-         end
-    )`,
   ];
-  const params: unknown[] = [];
+  if (market) {
+    params.push(latestExpectedSessionDate(market));
+    const expectedSessionParam = `$${params.length}::date`;
+    conds.push(`exists (select 1 from public.daily_ohlcv o where o.asset_id=swing_signals.asset_id and o.date >= ${expectedSessionParam})`);
+    conds.push(`exists (
+      select 1 from public.latest_quotes q
+       where q.asset_id=swing_signals.asset_id
+         and q.as_of::date >= ${expectedSessionParam}
+         ${marketOpen ? "and q.updated_at >= now() - interval '7 minutes'" : ""}
+    )`);
+  } else {
+    conds.push(`exists (select 1 from public.daily_ohlcv o where o.asset_id=swing_signals.asset_id and o.date >= current_date - interval '4 days')`);
+    conds.push(`exists (select 1 from public.latest_quotes q where q.asset_id=swing_signals.asset_id and q.as_of::date >= current_date - interval '4 days')`);
+  }
   if (country) { params.push(country); conds.push(`country = $${params.length}`); }
   if (opts.exchange) { params.push(opts.exchange); conds.push(`exchange = $${params.length}`); }
   if (opts.limit) conds.push(`verdict <> 'NO_SETUP'`);

@@ -252,7 +252,7 @@ export default function CredentialsForm({ initialCreds, breezeStatus, breezeCall
       <div className="rounded-xl border border-white/10 bg-white/[0.03] p-6">
         <h3 className="mb-1 text-lg font-semibold">ICICI Breeze market data</h3>
         <p className="mb-4 text-sm text-white/50">
-          Optional primary live feed for priority NSE/BSE stocks. Yahoo and Google remain active as the 15-minute fallback, and Bhavcopy remains the end-of-day authority. Generate a fresh Breeze session token before each trading day.
+          Optional primary live feed for priority NSE/BSE stocks. Yahoo and Google remain active as the 5-minute fallback, and Bhavcopy remains the end-of-day authority. Generate a fresh Breeze session token before each trading day.
         </p>
         {breezeStatus && BREEZE_STATUS[breezeStatus] && (
           <p className={`mb-4 rounded-lg border px-3 py-2 text-sm ${BREEZE_STATUS[breezeStatus].type === "success" ? "border-emerald-400/25 bg-emerald-400/10 text-emerald-200" : "border-rose-400/25 bg-rose-400/10 text-rose-200"}`}>

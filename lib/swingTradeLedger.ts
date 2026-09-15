@@ -1,6 +1,7 @@
 import { query } from "@/lib/db";
 import { scoreNewsSwing, type NewsDirection, type NewsScope } from "@/lib/analytics/newsSwing";
 import { assessTradeRisk, type TradeRiskAssessment, type TradeRiskState } from "@/lib/analytics/tradeRisk";
+import { isMarketOpenNow, refreshMarketHolidays } from "@/lib/market-calendar.mjs";
 
 export type SwingTradeState =
   | "ON_TRACK"
@@ -231,6 +232,8 @@ function parseExits(value: LedgerValue, buyPrice: number): SwingTradeExit[] {
 }
 
 export async function getSwingTradeLedger(userId: string, market: "IN" | "US"): Promise<SwingLedgerTrade[]> {
+  if (market === "IN") await refreshMarketHolidays("IN");
+  const marketOpen = isMarketOpenNow(market);
   const rows = await query<LedgerRow>(
     `select l.*, a.ticker, a.name asset_name, a.exchange, a.sector asset_sector,
             q.price current_price, q.as_of quote_as_of, q.updated_at quote_updated_at,
@@ -321,8 +324,8 @@ export async function getSwingTradeLedger(userId: string, market: "IN" | "US"): 
   const newsFresh = Boolean(newsAsOf && Date.now() - Date.parse(newsAsOf) <= 2 * 60 * 60 * 1000);
 
   const benchmarkTicker = market === "IN" ? "NIFTY" : "SPX";
-  const benchmark = await query<{ price: string | number | null; change_pct: string | number | null; two_session_reference: string | number | null }>(
-    `select q.price,q.change_pct,h.two_session_reference
+  const benchmark = await query<{ price: string | number | null; change_pct: string | number | null; updated_at: Date | string | null; two_session_reference: string | number | null }>(
+    `select q.price,q.change_pct,q.updated_at,h.two_session_reference
        from public.assets a
        left join public.latest_quotes q on q.asset_id=a.id
        left join lateral (
@@ -336,8 +339,10 @@ export async function getSwingTradeLedger(userId: string, market: "IN" | "US"): 
       limit 1`,
     [benchmarkTicker, market],
   );
-  const benchmarkPrice = nullableNumber(benchmark[0]?.price ?? null);
-  const marketMove1dPct = nullableNumber(benchmark[0]?.change_pct ?? null);
+  const benchmarkUpdatedAt = benchmark[0]?.updated_at ? new Date(benchmark[0].updated_at).getTime() : 0;
+  const benchmarkFresh = !marketOpen || benchmarkUpdatedAt >= Date.now() - 7 * 60 * 1000;
+  const benchmarkPrice = benchmarkFresh ? nullableNumber(benchmark[0]?.price ?? null) : null;
+  const marketMove1dPct = benchmarkFresh ? nullableNumber(benchmark[0]?.change_pct ?? null) : null;
   const twoSessionReference = nullableNumber(benchmark[0]?.two_session_reference ?? null);
   const marketMove2dPct = benchmarkPrice !== null && twoSessionReference && twoSessionReference > 0
     ? ((benchmarkPrice / twoSessionReference) - 1) * 100
@@ -357,7 +362,9 @@ export async function getSwingTradeLedger(userId: string, market: "IN" | "US"): 
       : status === "CLOSED" && legacyExitPrice !== null
         ? (legacyExitPrice - buyPrice) * quantity
         : 0;
-    const currentPrice = nullableNumber(row.current_price);
+    const quoteUpdatedAt = row.quote_updated_at ? new Date(row.quote_updated_at as Date | string).getTime() : 0;
+    const quoteFresh = status === "CLOSED" || !marketOpen || quoteUpdatedAt >= Date.now() - 7 * 60 * 1000;
+    const currentPrice = quoteFresh ? nullableNumber(row.current_price) : null;
     const effectiveTrailingStop = nullableNumber(row.effective_trailing_stop);
     const priorClose = nullableNumber(row.prior_close);
     const twoSessionClose = nullableNumber(row.two_session_close);

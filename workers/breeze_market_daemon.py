@@ -196,11 +196,14 @@ def load_cash_instruments(conn, archive: ZipFile, exchanges: list[str], limit: i
                case when exists(
                  select 1 from public.swing_trade_ledger l where l.asset_id=a.id and l.status='OPEN'
                ) then 0 when exists(
+                 select 1 from public.live_market_targets t
+                  where t.asset_id=a.id and t.last_seen_at >= now() - interval '1 day'
+               ) then 1 when exists(
                  select 1 from public.swing_signals s
                   where s.asset_id=a.id and s.verdict <> 'NO_SETUP'
-               ) then 1 when exists(
+               ) then 2 when exists(
                  select 1 from public.universe_members u where u.asset_id=a.id and u.universe='NIFTY_500'
-               ) then 2 else 3 end,
+               ) then 3 else 4 end,
                a.exchange,a.ticker
             """,
             (exchanges,),
