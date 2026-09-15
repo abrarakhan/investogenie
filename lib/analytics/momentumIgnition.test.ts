@@ -98,4 +98,34 @@ describe("Momentum Ignition", () => {
     expect(result.qualifies).toBe(false);
     expect(result.gates.find((item) => item.key === "liquidity")?.passed).toBe(false);
   });
+
+  it("detects a liquid recent listing without requiring 200 sessions", () => {
+    const bars = momentumBars(60).slice(-24).map((bar, index) => ({
+      ...bar,
+      close: 100 + index * 1.5,
+      open: 99.5 + index * 1.5,
+      high: 101 + index * 1.5,
+      low: 99 + index * 1.5,
+      volume: index === 23 ? 3_000_000 : 1_000_000,
+    }));
+    const result = assessMomentumIgnition({
+      currentPrice: bars.at(-1)!.close,
+      bars,
+      benchmarkBars: benchmark(60),
+    });
+    expect(result.modelType).toBe("NEW_LISTING");
+    expect(result.tradingSessions).toBe(24);
+    expect(result.gates.find((item) => item.key === "trend")?.passed).toBe(true);
+  });
+
+  it("keeps a circuit-prone recent listing out of entry ready", () => {
+    const bars = momentumBars(60).slice(-24).map((bar, index) => {
+      const close = 100 * Math.pow(1.1, Math.max(0, index - 20));
+      return { ...bar, open: close, high: close, low: close, close, volume: 2_000_000 };
+    });
+    const result = assessMomentumIgnition({ currentPrice: bars.at(-1)!.close, bars, benchmarkBars: benchmark(60) });
+    expect(result.modelType).toBe("NEW_LISTING");
+    expect(result.status).not.toBe("ENTRY_READY");
+    expect(result.gates.find((item) => item.key === "circuit")?.passed).toBe(false);
+  });
 });

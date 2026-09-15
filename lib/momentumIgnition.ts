@@ -42,6 +42,7 @@ export interface MomentumIgnitionCandidate extends MomentumIgnitionAssessment {
   projectedStop: number;
   projectedTarget: number;
   projectedTrail: number;
+  projectedDays: number;
 }
 
 export interface MomentumIgnitionResult {
@@ -120,9 +121,13 @@ const PRELIMINARY_SQL = `
     join stats st on st.asset_id=u.id
     join public.latest_quotes q on q.asset_id=u.id
     left join public.swing_signals s on s.asset_id=u.id
-   where st.history_count>=200
+   where st.history_count>=10
      and q.price>=20
-     and q.price>st.sma20 and st.sma20>st.sma50 and st.sma50>st.sma200
+     and (
+       (st.history_count>=200 and q.price>st.sma20 and st.sma20>st.sma50 and st.sma50>st.sma200)
+       or
+       (st.history_count<200 and q.price>st.sma20)
+     )
      and q.price>=st.breakout_level*0.90
      and st.traded_value20>=10000000
      and st.latest_date >= $1::date
@@ -196,7 +201,7 @@ export async function getMomentumIgnitionCandidates(
   const candidates: MomentumIgnitionCandidate[] = [];
   for (const row of preliminary) {
     const bars = barsByAsset.get(row.asset_id) ?? [];
-    if (bars.length < 200) continue;
+    if (bars.length < 10) continue;
     const assessment = assessMomentumIgnition({
       currentPrice: Number(row.current_price),
       bars,
@@ -206,6 +211,12 @@ export async function getMomentumIgnitionCandidates(
     });
     if (!assessment.qualifies) continue;
     const risk = assessment.atr14 * settings.stopAtrMult;
+    const recentCloses = bars.slice(-Math.min(11, bars.length)).map((bar) => bar.close);
+    const velocity = recentCloses.slice(1).reduce(
+      (sum, close, index) => sum + Math.abs(close - recentCloses[index]),
+      0,
+    ) / Math.max(1, recentCloses.length - 1);
+    const targetDistance = risk * settings.targetRR;
     candidates.push({
       ...assessment,
       assetId: row.asset_id,
@@ -221,6 +232,7 @@ export async function getMomentumIgnitionCandidates(
       projectedStop: assessment.entryTrigger - risk,
       projectedTarget: assessment.entryTrigger + risk * settings.targetRR,
       projectedTrail: assessment.entryTrigger - assessment.atr14 * settings.trailAtrMult,
+      projectedDays: Math.min(20, Math.max(1, Math.round(targetDistance / Math.max(velocity, 0.01)))),
     });
   }
 

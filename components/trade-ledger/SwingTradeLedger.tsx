@@ -49,7 +49,7 @@ export default function SwingTradeLedger({ market, trades, defaults }: {
 
       <details open={Boolean(defaults.ticker)} className="rounded-lg border border-white/10 bg-white/[0.02]">
         <summary className="cursor-pointer list-none px-5 py-4 font-semibold [&::-webkit-details-marker]:hidden">
-          {defaults.strategy === "STRONG_SWING" && defaults.ticker
+          {(defaults.strategy === "STRONG_SWING" || defaults.strategy === "MOMENTUM_IGNITION") && defaults.ticker
             ? `Buy & track ${defaults.ticker}`
             : "Log a purchased swing trade"}
           <span className="ml-2 text-sm font-normal text-white/40">Freeze the plan you bought against</span>
@@ -81,7 +81,7 @@ export default function SwingTradeLedger({ market, trades, defaults }: {
             Strategy, target, stop, trailing stop, and projected holding period are captured automatically from the latest swing candidate data.
           </p>
           <button className="h-11 self-end rounded-lg bg-[var(--ig-accent)] px-5 text-sm font-bold text-black transition-opacity hover:opacity-90">
-            {defaults.strategy === "STRONG_SWING" ? "Confirm purchase & track" : "Add to ledger"}
+            {defaults.strategy === "STRONG_SWING" || defaults.strategy === "MOMENTUM_IGNITION" ? "Confirm purchase & track" : "Add to ledger"}
           </button>
         </form>
       </details>

@@ -1,3 +1,4 @@
+import Link from "next/link";
 import type { MomentumIgnitionCandidate, MomentumIgnitionResult } from "@/lib/momentumIgnition";
 import type { MomentumIgnitionStatus } from "@/lib/analytics/momentumIgnition";
 
@@ -30,6 +31,18 @@ function IgnitionCard({ candidate, rank }: { candidate: MomentumIgnitionCandidat
   const keyGates = candidate.gates.filter((item) => [
     "trend", "relative_strength", "compression", "dry_up", "live_volume", "liquidity", "volatility", "circuit",
   ].includes(item.key));
+  const canTrack = candidate.status === "ENTRY_READY" && candidate.baseScore > 0;
+  const ledgerParams = new URLSearchParams({
+    assetId: candidate.assetId,
+    ticker: candidate.ticker,
+    strategy: "MOMENTUM_IGNITION",
+    current: String(candidate.currentPrice),
+    entry: String(candidate.entryTrigger),
+    target: String(candidate.projectedTarget),
+    stop: String(candidate.projectedStop),
+    trail: String(candidate.projectedTrail),
+    days: String(candidate.projectedDays),
+  });
   return (
     <article className="rounded-lg border border-white/10 bg-white/[0.025] p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -38,6 +51,9 @@ function IgnitionCard({ candidate, rank }: { candidate: MomentumIgnitionCandidat
             <span className="font-mono text-[10px] text-white/30">#{rank}</span>
             <h3 className="text-lg font-black">{candidate.ticker}</h3>
             <span className="text-[10px] uppercase tracking-wider text-white/35">NSE</span>
+            <span className="rounded-full border border-white/10 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-white/45">
+              {candidate.modelType === "NEW_LISTING" ? `New listing · ${candidate.tradingSessions} sessions` : "Established"}
+            </span>
           </div>
           <p className="mt-1 truncate text-xs text-white/42">{candidate.name ?? candidate.baseVerdict}</p>
         </div>
@@ -77,6 +93,17 @@ function IgnitionCard({ candidate, rank }: { candidate: MomentumIgnitionCandidat
           ))}
         </div>
       </details>
+
+      <div className="mt-3 border-t border-white/8 pt-3">
+        {canTrack ? <Link
+          href={`/terminal/in/trade-ledger?${ledgerParams.toString()}`}
+          className="inline-flex min-h-11 items-center rounded-lg border border-emerald-400/35 bg-emerald-400/10 px-4 text-sm font-bold text-emerald-200 hover:bg-emerald-400/15"
+        >Buy &amp; Track</Link> : <p className="text-[11px] leading-relaxed text-white/38">
+          {candidate.status === "ENTRY_READY"
+            ? "Awaiting a base swing signal before a frozen trade plan can be recorded."
+            : "Buy & Track unlocks only at Entry ready after liquidity, volume, extension and circuit checks pass."}
+        </p>}
+      </div>
     </article>
   );
 }
@@ -107,7 +134,7 @@ export default function MomentumIgnitionCandidates({ result }: { result: Momentu
           <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-cyan-300">Separate discovery engine · not the base Swing ranking</div>
           <h2 className="mt-1 text-2xl font-black">Momentum Ignition</h2>
           <p className="mt-1 max-w-3xl text-sm leading-relaxed text-white/45">
-            Finds liquid NSE trend leaders approaching expansion before the confirmed Strong Swing engine acts.
+            Finds liquid NSE trend leaders, including recent listings, approaching expansion before the confirmed Strong Swing engine acts.
           </p>
         </div>
         <div className="text-right text-xs text-white/40">
@@ -129,7 +156,7 @@ export default function MomentumIgnitionCandidates({ result }: { result: Momentu
       </div>
 
       <div className="rounded-lg border border-cyan-400/15 bg-cyan-400/[0.035] px-4 py-3 text-xs leading-relaxed text-cyan-100/65">
-        Discovery only. A fast move is not automatically a trade. Extended names remain Wait for Pullback, and the confirmed Strong Swing engine below remains the execution authority.
+        Discovery only. Recent listings use an adaptive 5/10/20-session model; established shares retain the existing 200-session model. Extended or circuit-prone names remain Wait for Pullback, and Strong Swing Confirmation remains the execution authority.
       </div>
 
       {result.candidates.length === 0

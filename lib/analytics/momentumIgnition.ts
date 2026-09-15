@@ -23,6 +23,8 @@ export interface MomentumIgnitionInput {
 }
 
 export interface MomentumIgnitionAssessment {
+  modelType: "ESTABLISHED" | "NEW_LISTING";
+  tradingSessions: number;
   status: MomentumIgnitionStatus;
   qualifies: boolean;
   score: number;
@@ -95,12 +97,122 @@ function gate(key: string, label: string, passed: boolean, detail: string): Mome
   return { key, label, passed, detail };
 }
 
+function assessNewListingMomentum(input: MomentumIgnitionInput): MomentumIgnitionAssessment {
+  if (input.bars.length < 10) throw new Error("New-listing momentum requires at least 10 bars.");
+  const bars = input.bars;
+  const latest = bars.at(-1) as OHLCV;
+  const closes = bars.map((bar) => bar.close);
+  const trs = trueRanges(bars);
+  const lookback = Math.min(20, bars.length - 1);
+  const prior = bars.slice(-(lookback + 1), -1);
+  const fast = sma(closes, 5) as number;
+  const slowPeriod = Math.min(20, bars.length);
+  const slow = sma(closes, slowPeriod) as number;
+  const atr14 = mean(trs.slice(-Math.min(14, trs.length)));
+  const atr5 = mean(trs.slice(-5));
+  const atrBase = mean(trs.slice(-Math.min(20, trs.length)));
+  const compressionRatio = atrBase > 0 ? atr5 / atrBase : Number.POSITIVE_INFINITY;
+  const breakoutLevel = Math.max(...prior.map((bar) => bar.high));
+  const entryTrigger = breakoutLevel + 0.1 * atr14;
+  const distanceToBreakoutPct = pctChange(input.currentPrice, entryTrigger) ?? Number.POSITIVE_INFINITY;
+  const entryExtensionAtr = atr14 > 0 ? (input.currentPrice - entryTrigger) / atr14 : Number.POSITIVE_INFINITY;
+  const averageVolume = mean(prior.map((bar) => bar.volume));
+  const progress = input.currentSessionVolume
+    ? Math.max(0.12, Math.min(1, input.sessionProgressFraction ?? 1))
+    : 1;
+  const projectedVolumeRatio = averageVolume > 0 ? latest.volume / (averageVolume * progress) : 0;
+  const volumeDryUpRatio = averageVolume > 0
+    ? mean(bars.slice(-4, -1).map((bar) => bar.volume)) / averageVolume
+    : Number.POSITIVE_INFINITY;
+  const averageTradedValue20 = mean(prior.map((bar) => bar.close * bar.volume));
+
+  const start20 = bars.at(-(lookback + 1)) as OHLCV;
+  const fiveStart = bars.at(-Math.min(6, bars.length)) as OHLCV;
+  const stockReturn20 = pctChange(start20.close, input.currentPrice);
+  const stockReturn5 = pctChange(fiveStart.close, input.currentPrice);
+  const benchmark20 = benchmarkReturn(input.benchmarkBars, start20.date, latest.date);
+  const benchmark5 = benchmarkReturn(input.benchmarkBars, fiveStart.date, latest.date);
+  const relativeStrength20Pct = stockReturn20 !== null && benchmark20 !== null ? stockReturn20 - benchmark20 : null;
+  const relativeStrength5Pct = stockReturn5 !== null && benchmark5 !== null ? stockReturn5 - benchmark5 : null;
+  const relativeStrengthAcceleration = relativeStrength20Pct !== null && relativeStrength5Pct !== null
+    ? relativeStrength5Pct - relativeStrength20Pct
+    : null;
+
+  const benchmarkCloses = input.benchmarkBars.map((bar) => bar.close);
+  const benchmarkSma50 = sma(benchmarkCloses, 50);
+  const benchmarkSma50Prior = sma(benchmarkCloses, 50, benchmarkCloses.length - 20);
+  const benchmarkLatest = input.benchmarkBars.at(-1);
+  const marketRegimePositive = Boolean(benchmarkLatest && benchmarkSma50 !== null
+    && benchmarkSma50Prior !== null && benchmarkLatest.close > benchmarkSma50 && benchmarkSma50 > benchmarkSma50Prior);
+  const dateGap = benchmarkLatest
+    ? Math.abs(Date.parse(`${latest.date}T00:00:00Z`) - Date.parse(`${benchmarkLatest.date}T00:00:00Z`)) / 86_400_000
+    : Number.POSITIVE_INFINITY;
+  const dataFresh = dateGap <= 1;
+  const trendAligned = input.currentPrice > fast && fast > slow && latest.close > fiveStart.close;
+  const relativeStrengthPositive = (relativeStrength20Pct ?? Number.NEGATIVE_INFINITY) >= 5;
+  const nearBreakout = input.currentPrice >= entryTrigger || (distanceToBreakoutPct >= 0 && distanceToBreakoutPct <= 5);
+  const volumeExpanding = projectedVolumeRatio >= 1.5;
+  const liquid = averageTradedValue20 >= 50_000_000;
+  const atrPct = input.currentPrice > 0 ? (atr14 / input.currentPrice) * 100 : Number.POSITIVE_INFINITY;
+  const volatilitySafe = atrPct <= 7;
+  let circuitLikeSessions20 = 0;
+  const circuitWindow = bars.slice(-(lookback + 1));
+  for (let index = 1; index < circuitWindow.length; index++) {
+    if (isCircuitLike(circuitWindow[index - 1], circuitWindow[index])) circuitLikeSessions20++;
+  }
+  const circuitSafe = circuitLikeSessions20 < 2;
+  const range = latest.high - latest.low;
+  const closeLocation = range > 0 ? Math.max(0, Math.min(1, (input.currentPrice - latest.low) / range)) : 0.5;
+  let accumulationDays10 = 0;
+  const accumulationWindow = bars.slice(-Math.min(11, bars.length));
+  for (let index = 1; index < accumulationWindow.length; index++) {
+    if (accumulationWindow[index].close > accumulationWindow[index - 1].close
+      && accumulationWindow[index].volume >= averageVolume * 1.1) accumulationDays10++;
+  }
+  const compressed = compressionRatio <= 0.9;
+  const volumeDry = volumeDryUpRatio <= 0.85;
+  const score = Math.round(
+    (trendAligned ? 25 : 0) + (relativeStrengthPositive ? 20 : 0) + (nearBreakout ? 15 : 0)
+      + (volumeExpanding ? 15 : 0) + (accumulationDays10 >= 2 ? 10 : 0)
+      + (compressed || volumeDry ? 10 : 0) + (marketRegimePositive ? 5 : 0),
+  );
+  const gates = [
+    gate("freshness", "Fresh price history", dataFresh, benchmarkLatest ? `Stock ${latest.date}; benchmark ${benchmarkLatest.date}.` : "Benchmark history unavailable."),
+    gate("trend", "New-listing trend", trendAligned, `Price above rising ${slowPeriod}-session structure and positive five-session direction.`),
+    gate("relative_strength", `${lookback}-session relative strength`, relativeStrengthPositive, relativeStrength20Pct === null ? "Benchmark comparison unavailable." : `${relativeStrength20Pct.toFixed(1)}% versus Nifty.`),
+    gate("rs_acceleration", "Relative-strength acceleration", (relativeStrengthAcceleration ?? 0) > 0, relativeStrengthAcceleration === null ? "Short-window comparison unavailable." : `${relativeStrengthAcceleration.toFixed(1)} percentage points.`),
+    gate("proximity", "Near lifetime breakout", nearBreakout, `${distanceToBreakoutPct.toFixed(1)}% below trigger ${entryTrigger.toFixed(2)}.`),
+    gate("compression", "Range compression", compressed, `${compressionRatio.toFixed(2)}x short/base volatility.`),
+    gate("dry_up", "Volume dry-up", volumeDry, `${volumeDryUpRatio.toFixed(2)}x prior volume.`),
+    gate("accumulation", "Accumulation sessions", accumulationDays10 >= 2, `${accumulationDays10} qualifying sessions.`),
+    gate("live_volume", "Expansion volume", volumeExpanding, `${projectedVolumeRatio.toFixed(2)}x time-adjusted volume.`),
+    gate("market", "Market regime", marketRegimePositive, marketRegimePositive ? "Nifty trend is supportive." : "Nifty trend is not supportive."),
+    gate("liquidity", "Execution liquidity", liquid, `Average traded value ${Math.round(averageTradedValue20).toLocaleString("en-IN")}; requires INR 5 crore.`),
+    gate("volatility", "New-listing volatility", volatilitySafe, `ATR is ${atrPct.toFixed(1)}% of price; maximum 7%.`),
+    gate("circuit", "Circuit behaviour", circuitSafe, `${circuitLikeSessions20} circuit-like sessions; maximum 1.`),
+  ];
+  const qualifies = dataFresh && liquid && input.currentPrice >= 20 && trendAligned && relativeStrengthPositive && nearBreakout && score >= 55;
+  const breakoutTriggered = input.currentPrice >= entryTrigger;
+  let status: MomentumIgnitionStatus = "NOT_QUALIFIED";
+  if (qualifies && breakoutTriggered && (!volatilitySafe || !circuitSafe || entryExtensionAtr > 0.5)) status = "WAIT_FOR_PULLBACK";
+  else if (qualifies && breakoutTriggered && volumeExpanding && closeLocation >= 0.6) status = "ENTRY_READY";
+  else if (qualifies && breakoutTriggered) status = "BREAKOUT_TRIGGERED";
+  else if (qualifies) status = "EARLY_WATCH";
+  return {
+    modelType: "NEW_LISTING", tradingSessions: bars.length, status, qualifies, score, gates,
+    breakoutLevel, entryTrigger, atr14, entryExtensionAtr, distanceToBreakoutPct,
+    relativeStrength20Pct, relativeStrength5Pct, relativeStrengthAcceleration,
+    compressionRatio, volumeDryUpRatio, projectedVolumeRatio, accumulationDays10,
+    averageTradedValue20, closeLocation, marketRegimePositive, circuitLikeSessions20,
+  };
+}
+
 /**
  * Pre-breakout discovery model. It is intentionally independent of the
  * confirmed Strong Swing engine and never changes that engine's calculations.
  */
 export function assessMomentumIgnition(input: MomentumIgnitionInput): MomentumIgnitionAssessment {
-  if (input.bars.length < 200) throw new Error("Momentum Ignition requires at least 200 bars.");
+  if (input.bars.length < 200) return assessNewListingMomentum(input);
   const bars = input.bars;
   const latest = bars.at(-1) as OHLCV;
   const closes = bars.map((bar) => bar.close);
@@ -244,6 +356,8 @@ export function assessMomentumIgnition(input: MomentumIgnitionInput): MomentumIg
   else if (qualifies) status = "EARLY_WATCH";
 
   return {
+    modelType: "ESTABLISHED",
+    tradingSessions: bars.length,
     status,
     qualifies,
     score,

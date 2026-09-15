@@ -47,8 +47,9 @@ async function resolveSignalProjection(assetId: string, market: "IN" | "US", pre
     .sort(([, left], [, right]) => right.score - left.score);
   const preferredScore = row.strategy_scores?.[preferredStrategy];
   const isStrongSwing = preferredStrategy === "STRONG_SWING";
-  const strategyKey = isStrongSwing
-    ? "STRONG_SWING"
+  const isMomentumIgnition = preferredStrategy === "MOMENTUM_IGNITION";
+  const strategyKey = isStrongSwing || isMomentumIgnition
+    ? preferredStrategy
     : preferredStrategy && preferredScore?.dir === "LONG"
       ? preferredStrategy
       : availableLongStrategies[0]?.[0] ?? "DEFAULT_SWING";
@@ -57,11 +58,13 @@ async function resolveSignalProjection(assetId: string, market: "IN" | "US", pre
     atr: num(row.atr), longTrigger: buyPrice, shortTrigger: num(row.short_trigger),
     hh22: Math.min(num(row.hh22) || buyPrice, buyPrice), ll22: num(row.ll22), dailyVelocity: num(row.daily_velocity),
   };
-  const strategyScore = isStrongSwing ? undefined : row.strategy_scores?.[strategyKey];
+  const strategyScore = isStrongSwing || isMomentumIgnition ? undefined : row.strategy_scores?.[strategyKey];
   const settings = await getUserSwingSettings();
   const levels = deriveLevels(setup, "LONG", settings);
   const label = isStrongSwing
     ? "Strong Swing"
+    : isMomentumIgnition
+      ? "Momentum Ignition"
     : STRATEGY_META.find((item) => item.key === strategyKey)?.label ?? "Default Swing";
   return { row, levels, label, strategyKey, strategyScore, trailingDistance: settings.trailAtrMult * levels.atr };
 }
