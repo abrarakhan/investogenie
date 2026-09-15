@@ -115,8 +115,8 @@ function CandidateCard({ candidate }: { candidate: StrongSwingCandidate }) {
         {candidate.gates.map((gate) => (
           <div key={gate.key} className={`rounded-md border px-3 py-2 ${gate.passed ? "border-emerald-400/15 bg-emerald-400/[0.035]" : gate.category === "execution" ? "border-orange-400/15 bg-orange-400/[0.035]" : "border-rose-400/15 bg-rose-400/[0.035]"}`}>
             <div className="flex items-center gap-2 text-xs font-semibold">
-              <span className={gate.passed ? "text-emerald-300" : gate.category === "execution" ? "text-orange-300" : "text-rose-300"}>
-                {gate.passed ? "PASS" : gate.category === "execution" ? "BLOCK" : "WAIT"}
+              <span className={gate.passed ? "text-emerald-300" : !gate.blocking ? "text-amber-300" : gate.category === "execution" ? "text-orange-300" : "text-rose-300"}>
+                {gate.passed ? "PASS" : !gate.blocking ? "CAUTION" : gate.category === "execution" ? "BLOCK" : "WAIT"}
               </span>
               <span className="text-white/75">{gate.label}</span>
             </div>
@@ -133,6 +133,7 @@ function CandidateCard({ candidate }: { candidate: StrongSwingCandidate }) {
         <span>Close location {(candidate.closeLocation * 100).toFixed(0)}%</span>
         <span>ATR risk {candidate.atrPct.toFixed(1)}%</span>
         <span>Stop risk {candidate.stopRiskPct.toFixed(1)}%</span>
+        <span>Suggested exposure {candidate.suggestedExposurePct}%</span>
       </div>
       <div className="mt-4 border-t border-white/8 pt-4">
         {candidate.status === "EXECUTION_READY" ? (

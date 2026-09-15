@@ -13,6 +13,7 @@ export interface StrongSwingGate {
   passed: boolean;
   detail: string;
   category: "technical" | "execution";
+  blocking: boolean;
 }
 
 export interface StrongSwingInput {
@@ -54,6 +55,7 @@ export interface StrongSwingAssessment {
   stopRiskPct: number;
   entryExtensionAtr: number;
   circuitLikeSessions20: number;
+  suggestedExposurePct: number;
 }
 
 const mean = (values: number[]): number =>
@@ -87,8 +89,9 @@ function gate(
   passed: boolean,
   detail: string,
   category: StrongSwingGate["category"] = "technical",
+  blocking = true,
 ): StrongSwingGate {
-  return { key, label, passed, detail, category };
+  return { key, label, passed, detail, category, blocking };
 }
 
 const KNOWN_CIRCUIT_BANDS = [5, 10, 20];
@@ -200,6 +203,11 @@ export function assessStrongSwing(input: StrongSwingInput): StrongSwingAssessmen
     benchmarkLatest && benchmarkSma50 !== null && benchmarkSma50Prior !== null
       && benchmarkLatest.close > benchmarkSma50 && benchmarkSma50 > benchmarkSma50Prior,
   );
+  const benchmarkTwoDayChange = benchmarkBars.length >= 3
+    ? pctChange(benchmarkBars.at(-3)!.close, benchmarkBars.at(-1)!.close)
+    : null;
+  const marketShock = (benchmarkTwoDayChange ?? 0) <= -4;
+  const suggestedExposurePct = marketShock ? 0 : marketRegimePositive ? 100 : 50;
 
   const referenceDate = benchmarkLatest?.date ?? latest.date;
   const dataFresh = benchmarkBars.length > 0 && absDaysBetween(latest.date, referenceDate) <= 1;
@@ -251,7 +259,9 @@ export function assessStrongSwing(input: StrongSwingInput): StrongSwingAssessmen
     gate("market_regime", "Market regime", marketRegimePositive,
       benchmarkBars.length === 0
         ? "Benchmark data unavailable — regime cannot be assessed."
-        : marketRegimePositive ? "Benchmark is above a rising 50 SMA." : "Benchmark is not above a rising 50 SMA."),
+        : marketRegimePositive ? "Benchmark is above a rising 50 SMA; normal sizing." : "Selective regime: use 50% position size and demand relative strength.", "execution", false),
+    gate("market_shock", "Market shock", !marketShock,
+      benchmarkTwoDayChange === null ? "Two-session benchmark move unavailable." : `${benchmarkTwoDayChange.toFixed(1)}% over two sessions; entries stop at -4%.`, "execution"),
     gate("confirmation", hasOi ? "OI build-up" : "Cash-equity confirmation", hasOi ? oiConfirmed : cashConfirmed,
       hasOi
         ? `${(oiChange5Pct ?? 0).toFixed(1)}% OI change over five sessions.`
@@ -271,8 +281,8 @@ export function assessStrongSwing(input: StrongSwingInput): StrongSwingAssessmen
     gate("circuit_behaviour", "Circuit behaviour", circuitLikeSessions20 < 2,
       `${circuitLikeSessions20} circuit-like closes in 20 sessions; maximum 1.`, "execution"),
     gate("live_quote", "Live broker quote", input.market !== "IN" || !input.microstructure || Boolean(input.microstructure.quoteFresh), input.microstructure?.quoteFresh ? "Breeze quote is current." : "No Breeze execution quote; existing safety gates apply.", "execution"),
-    gate("live_spread", "Live bid-ask spread", input.market !== "IN" || !input.microstructure || Boolean(input.microstructure.bestBid && input.microstructure.bestAsk && ((input.microstructure.bestAsk-input.microstructure.bestBid)/input.microstructure.bestAsk)*100 <= 0.75), input.microstructure?.bestBid && input.microstructure?.bestAsk ? `${(((input.microstructure.bestAsk-input.microstructure.bestBid)/input.microstructure.bestAsk)*100).toFixed(2)}% spread; maximum 0.75%.` : "Live market depth unavailable.", "execution"),
-    gate("live_circuit", "Circuit exit room", input.market !== "IN" || !input.microstructure || Boolean(input.microstructure.lowerCircuit && currentPrice > input.microstructure.lowerCircuit * 1.03), input.microstructure?.lowerCircuit ? `${(((currentPrice/input.microstructure.lowerCircuit)-1)*100).toFixed(1)}% above lower circuit; requires 3%.` : "Live circuit band unavailable.", "execution"),
+    gate("live_spread", "Live bid-ask spread", input.market !== "IN" || !input.microstructure?.bestBid || !input.microstructure?.bestAsk || ((input.microstructure.bestAsk-input.microstructure.bestBid)/input.microstructure.bestAsk)*100 <= 0.75, input.microstructure?.bestBid && input.microstructure?.bestAsk ? `${(((input.microstructure.bestAsk-input.microstructure.bestBid)/input.microstructure.bestAsk)*100).toFixed(2)}% spread; maximum 0.75%.` : "Not verified: Breeze depth absent on this tick.", "execution"),
+    gate("live_circuit", "Circuit exit room", input.market !== "IN" || !input.microstructure?.lowerCircuit || currentPrice > input.microstructure.lowerCircuit * 1.03, input.microstructure?.lowerCircuit ? `${(((currentPrice/input.microstructure.lowerCircuit)-1)*100).toFixed(1)}% above lower circuit; requires 3%.` : "Not verified: Breeze circuit band absent on this tick.", "execution"),
   ];
 
   const passed = gates.filter((item) => item.passed).length;
@@ -284,18 +294,18 @@ export function assessStrongSwing(input: StrongSwingInput): StrongSwingAssessmen
   const breakoutFailed = input.isBreakout && atr > 0 && latest.close < breakoutLevel - atr;
   const hardRiskKeys = new Set([
     "extension_5d", "extension_10d", "sma20_extension", "atr_risk",
-    "stop_width", "circuit_behaviour", "freshness", "price", "liquidity", "live_quote", "live_spread", "live_circuit",
+    "stop_width", "circuit_behaviour", "freshness", "price", "liquidity", "live_quote", "live_spread", "live_circuit", "market_shock",
   ]);
   const hardRiskFailed = gates.some((item) => hardRiskKeys.has(item.key) && !item.passed);
   const entryZoneFailed = gates.some((item) => item.key === "entry_zone" && !item.passed);
   const technicalPassed = gates
-    .filter((item) => item.category === "technical")
+    .filter((item) => item.category === "technical" && item.blocking)
     .every((item) => item.passed);
   const status: StrongSwingStatus = trailingBreached || breakoutFailed
     ? "INVALIDATED"
     : hardRiskFailed ? "RISK_OFF"
       : technicalPassed && entryZoneFailed ? "WAIT_FOR_ENTRY"
-        : gates.every((item) => item.passed) ? "EXECUTION_READY" : "WATCHLIST";
+        : gates.filter((item) => item.blocking).every((item) => item.passed) ? "EXECUTION_READY" : "WATCHLIST";
 
   return {
     status,
@@ -322,5 +332,6 @@ export function assessStrongSwing(input: StrongSwingInput): StrongSwingAssessmen
     stopRiskPct,
     entryExtensionAtr,
     circuitLikeSessions20,
+    suggestedExposurePct,
   };
 }
