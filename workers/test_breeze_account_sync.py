@@ -5,6 +5,7 @@ from breeze_account_sync import (
     INVESTOGENIE_ACTIVITY_START,
     as_number,
     external_key,
+    fetch_rows,
     history_windows,
     response_rows,
 )
@@ -21,6 +22,17 @@ class BreezeAccountSyncTest(unittest.TestCase):
 
     def test_no_data_found_is_a_successful_empty_snapshot(self):
         self.assertEqual(response_rows({"Success": None, "Error": "No Data Found"}), [])
+
+    def test_transient_broker_failure_is_retried(self):
+        responses = iter([RuntimeError("empty response"), {"Success": [{"order_id": "1"}]}])
+
+        def fetch():
+            response = next(responses)
+            if isinstance(response, Exception):
+                raise response
+            return response
+
+        self.assertEqual(fetch_rows(fetch, attempts=2), [{"order_id": "1"}])
 
     def test_reconciliation_starts_with_investogenie_activity(self):
         self.assertEqual(INVESTOGENIE_ACTIVITY_START.date().isoformat(), "2026-08-01")

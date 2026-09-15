@@ -11,6 +11,7 @@ import datetime as dt
 import hashlib
 import json
 import sys
+import time
 from decimal import Decimal, InvalidOperation
 from typing import Any, Callable
 
@@ -69,6 +70,19 @@ def response_rows(response: Any) -> list[dict[str, Any]]:
     if isinstance(success, dict):
         return [success]
     raise RuntimeError("Breeze response has an unexpected Success payload")
+
+
+def fetch_rows(fetch: Callable[[], Any], attempts: int = 3) -> list[dict[str, Any]]:
+    last_error: Exception | None = None
+    for attempt in range(attempts):
+        try:
+            return response_rows(fetch())
+        except Exception as exc:
+            last_error = exc
+            if attempt + 1 < attempts:
+                time.sleep(attempt + 1)
+    assert last_error is not None
+    raise last_error
 
 
 def load_accounts(conn) -> list[tuple[str, str, str, str]]:
@@ -186,7 +200,7 @@ def sync_account(conn, user_id: str, api_key: str, api_secret: str, session_toke
         successful: set[str] = set()
         for kind, fetch in jobs:
             try:
-                collected[kind].extend(response_rows(fetch()))
+                collected[kind].extend(fetch_rows(fetch))
                 successful.add(kind)
             except Exception as exc:
                 errors.append(f"{kind}: {exc}")
