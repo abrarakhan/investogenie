@@ -1,6 +1,13 @@
+import datetime as dt
 import unittest
 
-from breeze_account_sync import INVESTOGENIE_ACTIVITY_START, as_number, external_key, response_rows
+from breeze_account_sync import (
+    INVESTOGENIE_ACTIVITY_START,
+    as_number,
+    external_key,
+    history_windows,
+    response_rows,
+)
 
 
 class BreezeAccountSyncTest(unittest.TestCase):
@@ -17,6 +24,16 @@ class BreezeAccountSyncTest(unittest.TestCase):
 
     def test_reconciliation_starts_with_investogenie_activity(self):
         self.assertEqual(INVESTOGENIE_ACTIVITY_START.date().isoformat(), "2026-08-01")
+
+    def test_broker_history_is_split_within_breeze_limit(self):
+        end = INVESTOGENIE_ACTIVITY_START + dt.timedelta(days=24)
+        windows = history_windows(INVESTOGENIE_ACTIVITY_START, end)
+
+        self.assertEqual(len(windows), 3)
+        for from_date, to_date in windows:
+            start_at = dt.datetime.fromisoformat(from_date.replace("Z", "+00:00"))
+            end_at = dt.datetime.fromisoformat(to_date.replace("Z", "+00:00"))
+            self.assertLessEqual(end_at - start_at, dt.timedelta(days=9))
 
     def test_external_keys_keep_distinct_orders(self):
         first = external_key("ORDER", {"order_id": "101"}, 0)

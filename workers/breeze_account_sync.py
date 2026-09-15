@@ -21,6 +21,20 @@ from breeze_market_daemon import database_url, decrypt_credential, env
 
 
 INVESTOGENIE_ACTIVITY_START = dt.datetime(2026, 8, 1, tzinfo=dt.timezone.utc)
+BROKER_HISTORY_WINDOW = dt.timedelta(days=9)
+
+
+def history_windows(start: dt.datetime, end: dt.datetime) -> list[tuple[str, str]]:
+    windows: list[tuple[str, str]] = []
+    cursor = start
+    while cursor <= end:
+        window_end = min(cursor + BROKER_HISTORY_WINDOW, end)
+        windows.append((
+            cursor.isoformat(timespec="milliseconds").replace("+00:00", "Z"),
+            window_end.isoformat(timespec="milliseconds").replace("+00:00", "Z"),
+        ))
+        cursor = window_end + dt.timedelta(milliseconds=1)
+    return windows
 
 
 def as_number(*values: Any) -> Decimal | None:
@@ -154,18 +168,19 @@ def sync_account(conn, user_id: str, api_key: str, api_secret: str, session_toke
         breeze.generate_session(api_secret=api_secret, session_token=session_token)
         now = dt.datetime.now(dt.timezone.utc)
         start = INVESTOGENIE_ACTIVITY_START
-        from_date = start.isoformat(timespec="milliseconds").replace("+00:00", "Z")
-        to_date = now.isoformat(timespec="milliseconds").replace("+00:00", "Z")
         jobs: list[tuple[str, Callable[[], Any]]] = [
             ("FUNDS", breeze.get_funds),
             ("HOLDING", breeze.get_demat_holdings),
             ("POSITION", breeze.get_portfolio_positions),
         ]
         for exchange in ("NSE", "NFO"):
-            jobs.extend([
-                ("ORDER", lambda exchange=exchange: breeze.get_order_list(exchange, from_date, to_date)),
-                ("TRADE", lambda exchange=exchange: breeze.get_trade_list(from_date, to_date, exchange)),
-            ])
+            for from_date, to_date in history_windows(start, now):
+                jobs.extend([
+                    ("ORDER", lambda exchange=exchange, from_date=from_date, to_date=to_date:
+                     breeze.get_order_list(exchange, from_date, to_date)),
+                    ("TRADE", lambda exchange=exchange, from_date=from_date, to_date=to_date:
+                     breeze.get_trade_list(from_date, to_date, exchange)),
+                ])
 
         collected: dict[str, list[dict[str, Any]]] = {kind: [] for kind in counts}
         successful: set[str] = set()
