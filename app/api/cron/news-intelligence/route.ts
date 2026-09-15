@@ -1,5 +1,5 @@
 import { type NextRequest, NextResponse } from "next/server";
-import { getSystemAIConfig, getSystemNewsConfig } from "@/lib/credentials-actions";
+import { getSystemAIConfig, getSystemNewsConfigs } from "@/lib/credentials-actions";
 import { checkCronAuth, logCronRun } from "@/lib/ingest/cronLog";
 import { refreshNewsIntelligence } from "@/lib/news/sync";
 import type { MarketId } from "@/lib/types";
@@ -17,8 +17,8 @@ export async function GET(request: NextRequest) {
   const requested = request.nextUrl.searchParams.get("market")?.toUpperCase();
   const markets: MarketId[] = requested === "IN" || requested === "US" ? [requested] : ["IN", "US"];
   try {
-    const [news, ai] = await Promise.all([getSystemNewsConfig(), getSystemAIConfig()]);
-    if (!news) {
+    const [news, ai] = await Promise.all([getSystemNewsConfigs(), getSystemAIConfig()]);
+    if (!news.length) {
       await logCronRun(databaseUrl, {
         job: "news-intelligence", status: "skipped",
         detail: { reason: "news API not configured" }, durationMs: Date.now() - started,

@@ -13,6 +13,7 @@ const requiredRelations = [
   "public.news_sources",
   "public.news_sync_state",
   "public.event_stock_map",
+  "public.user_news_providers",
 ];
 const client = new pg.Client({
   connectionString: url,

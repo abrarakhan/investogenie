@@ -12,9 +12,15 @@ interface CandidateRow {
   sector: string | null;
 }
 
+export function prioritizeNewsCandidates(
+  ledger: CandidateRow[], strong: CandidateRow[], swing: CandidateRow[],
+): CandidateRow[] {
+  return [...new Map([...ledger, ...strong, ...swing].map((row) => [row.asset_id, row])).values()];
+}
+
 export interface NewsSyncSummary {
   market: MarketId;
-  provider: ActiveNewsConfig["provider"];
+  provider: string;
   fetched: number;
   stored: number;
   impacts: number;
@@ -24,9 +30,10 @@ export interface NewsSyncSummary {
 
 export async function refreshNewsIntelligence(
   market: MarketId,
-  news: ActiveNewsConfig,
+  newsInput: ActiveNewsConfig | ActiveNewsConfig[],
   ai: ActiveAIConfig | null,
 ): Promise<NewsSyncSummary> {
+  const newsConfigs = Array.isArray(newsInput) ? newsInput : [newsInput];
   const rows = await query<CandidateRow>(
     `with latest_scan as (
        select max(as_of) as_of from public.swing_signals where country=$1
@@ -71,24 +78,38 @@ export async function refreshNewsIntelligence(
       where l.market=$1 and l.status='OPEN' and a.is_active`,
     [market],
   );
+  const strongRows = await query<CandidateRow>(
+    `with latest as (select max(captured_at) at from public.strong_swing_snapshots where market=$1)
+     select a.id asset_id,a.ticker,a.name,a.sector
+       from public.strong_swing_snapshots s join latest l on l.at=s.captured_at
+       join public.assets a on a.id=s.asset_id
+      where s.market=$1 and a.is_active order by s.rank limit 30`,
+    [market],
+  );
   // Provider queries are intentionally quota-bounded. Open real trades must
   // come first so swing candidates can never crowd held positions out of the
   // stock-specific news search.
-  const tracked = new Map([...ledgerRows, ...rows].map((row) => [row.asset_id, row]));
-  const assets: NewsAssetRef[] = [...tracked.values()].map((row) => ({
+  const assets: NewsAssetRef[] = prioritizeNewsCandidates(ledgerRows, strongRows, rows).map((row) => ({
     assetId: row.asset_id, ticker: row.ticker, name: row.name, sector: row.sector,
   }));
-  const syncState = await query<{ last_published_at: Date | string | null }>(
-    `select last_published_at from public.news_sync_state where provider=$1 and market=$2`,
-    [news.provider, market],
-  );
-  const since = syncState[0]?.last_published_at
-    ? new Date(syncState[0].last_published_at).toISOString()
-    : undefined;
-  const enriched = enrichEvidence(await fetchNews(news, market, assets, ledgerRows.length, since));
+  const fetchedBatches = await Promise.allSettled(newsConfigs.map(async (news) => {
+    const syncState = await query<{ last_published_at: Date | string | null }>(
+      `select last_published_at from public.news_sync_state where provider=$1 and market=$2`,
+      [news.provider, market],
+    );
+    const since = syncState[0]?.last_published_at
+      ? new Date(syncState[0].last_published_at).toISOString() : undefined;
+    return fetchNews(news, market, assets, ledgerRows.length, since);
+  }));
+  const successfulBatches = fetchedBatches.filter((result): result is PromiseFulfilledResult<Awaited<ReturnType<typeof fetchNews>>> => result.status === "fulfilled");
+  if (!successfulBatches.length) {
+    const error = fetchedBatches.find((result) => result.status === "rejected");
+    throw error?.reason ?? new Error("All configured news providers failed.");
+  }
+  const enriched = enrichEvidence(successfulBatches.flatMap((result) => result.value));
   const fetched = [...new Map(enriched.map((article) => [article.canonicalUrl ?? article.url, article])).values()];
   if (!fetched.length) {
-    throw new Error(`No ${market} news articles were returned from ${news.provider} for the last 72 hours.`);
+    throw new Error(`No ${market} news articles were returned from the configured providers.`);
   }
   const articles = fetched.slice(0, 50);
   const impacts = await classifyNews(market, articles, assets, ai);
@@ -154,20 +175,23 @@ export async function refreshNewsIntelligence(
         ],
       );
     }
-    const newest = articles.reduce<string | null>((latest, article) =>
-      !latest || article.publishedAt > latest ? article.publishedAt : latest, null);
-    await client.query(
-      `insert into public.news_sync_state(provider,market,last_published_at,last_success_at)
-       values($1,$2,$3,now()) on conflict(provider,market) do update set
-       last_published_at=greatest(public.news_sync_state.last_published_at,excluded.last_published_at),last_success_at=now()`,
-      [news.provider, market, newest],
-    );
+    for (const news of newsConfigs) {
+      const providerArticles = articles.filter((article) => article.provider === news.provider);
+      if (!providerArticles.length) continue;
+      const newest = providerArticles.reduce((latest, article) => article.publishedAt > latest ? article.publishedAt : latest, providerArticles[0].publishedAt);
+      await client.query(
+        `insert into public.news_sync_state(provider,market,last_published_at,last_success_at)
+         values($1,$2,$3,now()) on conflict(provider,market) do update set
+         last_published_at=greatest(public.news_sync_state.last_published_at,excluded.last_published_at),last_success_at=now()`,
+        [news.provider, market, newest],
+      );
+    }
     return ids;
   });
 
   return {
     market,
-    provider: news.provider,
+    provider: [...new Set(articles.map((article) => article.provider))].join(","),
     fetched: fetched.length,
     stored: articleIds.length,
     impacts: impacts.length,

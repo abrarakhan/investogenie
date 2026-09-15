@@ -230,6 +230,75 @@ export interface ActiveNewsConfig {
   apiKey: string;
 }
 
+export interface StoredNewsProvider { provider: NewsProvider; enabled: boolean }
+
+export async function getUserNewsProviders(): Promise<StoredNewsProvider[]> {
+  const user = await getSessionUser();
+  if (!user) return [];
+  return query<StoredNewsProvider>(
+    `select provider,enabled from public.user_news_providers where user_id=$1 order by provider`,
+    [user.id],
+  );
+}
+
+export async function saveNewsProvider(provider: NewsProvider, apiKey: string): Promise<void> {
+  const user = await getSessionUser();
+  if (!user) throw new Error("Not signed in");
+  if (!NEWS_PROVIDERS.has(provider) || !apiKey.trim()) throw new Error("Select a provider and enter its API key.");
+  await query(
+    `insert into public.user_news_providers(user_id,provider,api_key_encrypted,enabled)
+     values($1,$2,$3,true) on conflict(user_id,provider) do update set
+     api_key_encrypted=excluded.api_key_encrypted,enabled=true,updated_at=now()`,
+    [user.id, provider, encryptCredential(apiKey.trim())],
+  );
+}
+
+export async function removeNewsProvider(provider: NewsProvider): Promise<void> {
+  const user = await getSessionUser();
+  if (!user) throw new Error("Not signed in");
+  await query(`delete from public.user_news_providers where user_id=$1 and provider=$2`, [user.id, provider]);
+}
+
+async function newsConfigsForUser(userId: string): Promise<ActiveNewsConfig[]> {
+  const rows = await query<{ provider: string; api_key_encrypted: string }>(
+    `select provider,api_key_encrypted from public.user_news_providers
+      where user_id=$1 and enabled order by provider`, [userId],
+  );
+  return rows.filter((row) => NEWS_PROVIDERS.has(row.provider as NewsProvider)).map((row) => ({
+    provider: row.provider as NewsProvider, apiKey: decryptCredential(row.api_key_encrypted),
+  }));
+}
+
+export async function getActiveNewsConfigs(): Promise<ActiveNewsConfig[]> {
+  const user = await getSessionUser();
+  if (user) {
+    const configs = await newsConfigsForUser(user.id);
+    if (configs.length) return configs;
+  }
+  const legacy = await getActiveNewsConfig();
+  return legacy ? [legacy] : [];
+}
+
+export async function getSystemNewsConfigs(): Promise<ActiveNewsConfig[]> {
+  const environment = [
+    process.env.MARKETAUX_API_KEY && { provider: "marketaux" as const, apiKey: process.env.MARKETAUX_API_KEY },
+    process.env.GNEWS_API_KEY && { provider: "gnews" as const, apiKey: process.env.GNEWS_API_KEY },
+    process.env.NEWS_API_KEY && { provider: "newsapi" as const, apiKey: process.env.NEWS_API_KEY },
+    process.env.ALPHA_VANTAGE_API_KEY && { provider: "alpha_vantage" as const, apiKey: process.env.ALPHA_VANTAGE_API_KEY },
+  ].filter((item): item is ActiveNewsConfig => Boolean(item));
+  if (environment.length) return environment;
+  const owner = await queryOne<{ id: string }>(
+    `select id from public.users order by (email=$1) desc,created_at asc limit 1`,
+    [process.env.DEFAULT_USER_EMAIL ?? ""],
+  );
+  if (owner) {
+    const configs = await newsConfigsForUser(owner.id);
+    if (configs.length) return configs;
+  }
+  const legacy = await getSystemNewsConfig();
+  return legacy ? [legacy] : [];
+}
+
 /** Resolve a user's news API, falling back to deployment environment keys. */
 export async function getActiveNewsConfig(): Promise<ActiveNewsConfig | null> {
   const user = await getSessionUser();

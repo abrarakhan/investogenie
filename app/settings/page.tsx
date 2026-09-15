@@ -4,7 +4,7 @@ import { getSessionUser } from "@/lib/auth";
 import AppShell from "@/components/app/AppShell";
 import { getUserSwingSettings } from "@/lib/settings";
 import { getEmailPreferences } from "@/lib/email-actions";
-import { getUserCredentials } from "@/lib/credentials-actions";
+import { getUserCredentials, getUserNewsProviders } from "@/lib/credentials-actions";
 import { normalizeMarket } from "@/lib/markets";
 import { saveSwingSettings, resetSwingSettings } from "./actions";
 import EmailPreferencesForm from "@/components/settings/EmailPreferencesForm";
@@ -49,7 +49,7 @@ export default async function SettingsPage({ searchParams }: {
   const market = normalizeMarket(marketParam ?? "in") ?? "IN";
   const s = await getUserSwingSettings();
   const emailPrefs = await getEmailPreferences();
-  const creds = await getUserCredentials();
+  const [creds, newsProviders] = await Promise.all([getUserCredentials(), getUserNewsProviders()]);
 
   return (
     <AppShell
@@ -113,7 +113,7 @@ export default async function SettingsPage({ searchParams }: {
           before storage in the database.
         </p>
         <div className="mt-8">
-          <CredentialsForm initialCreds={creds} breezeStatus={breezeParam} breezeCallbackUrl={breezeCallbackUrl} />
+          <CredentialsForm initialCreds={creds} initialNewsProviders={newsProviders} breezeStatus={breezeParam} breezeCallbackUrl={breezeCallbackUrl} />
         </div>
       </section>
     </AppShell>

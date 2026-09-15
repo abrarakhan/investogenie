@@ -4,7 +4,7 @@ import AppShell from "@/components/app/AppShell";
 import NewsRefreshButton from "@/components/screener/NewsRefreshButton";
 import NewsSwingCandidates from "@/components/screener/NewsSwingCandidates";
 import { getSessionUser } from "@/lib/auth";
-import { getActiveAIConfig, getActiveNewsConfig } from "@/lib/credentials-actions";
+import { getActiveAIConfig, getActiveNewsConfigs } from "@/lib/credentials-actions";
 import { normalizeMarket } from "@/lib/markets";
 import { getNewsSwingWorkspace } from "@/lib/newsSwing";
 import { getUserSwingSettings } from "@/lib/settings";
@@ -20,7 +20,7 @@ export default async function NewsSwingPage({ params }: { params: Promise<{ mark
   const user = await getSessionUser();
   if (!user) redirect("/login");
   const [settings, newsConfig, aiConfig] = await Promise.all([
-    getUserSwingSettings(), getActiveNewsConfig(), getActiveAIConfig(),
+    getUserSwingSettings(), getActiveNewsConfigs(), getActiveAIConfig(),
   ]);
   const workspace = await getNewsSwingWorkspace(market, settings);
   if (market === "IN") await markLiveMarketTargets(workspace.candidates.map((candidate) => candidate.assetId), "news_swing");
@@ -35,7 +35,7 @@ export default async function NewsSwingPage({ params }: { params: Promise<{ mark
       active="news-swing"
       title="News & AI Swing"
       subtitle="Existing swing calculations, ranked through a time-decayed and source-linked event-risk overlay."
-      actions={<NewsRefreshButton market={market} configured={Boolean(newsConfig)} />}
+      actions={<NewsRefreshButton market={market} configured={newsConfig.length > 0} />}
     >
       <MarketDataAutoRefresh market={market} />
       <div className="mb-6 grid gap-3 lg:grid-cols-[1fr_auto] lg:items-start">
@@ -48,7 +48,7 @@ export default async function NewsSwingPage({ params }: { params: Promise<{ mark
         </div>
       </div>
 
-      {!newsConfig && (
+      {!newsConfig.length && (
         <div className="mb-6 rounded-lg border border-amber-400/25 bg-amber-400/[0.05] p-4 text-sm text-amber-100/75">
           News ingestion is not configured. Add an Alpha Vantage, GNews, or NewsAPI key in <Link href="/settings" className="font-semibold text-[var(--ig-accent)] underline">Settings</Link>. Technical candidates remain visible with a zero news adjustment.
         </div>

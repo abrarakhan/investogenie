@@ -1,6 +1,6 @@
 # InvestoGenie - Capabilities
 
-> Current capability snapshot (2026-09-15) after adding Marketaux and a verified-evidence layer to source-linked News & AI
+> Current capability snapshot (2026-09-16) after adding simultaneous provider aggregation, Strong Swing-prioritized news retrieval, Marketaux, and a verified-evidence layer to source-linked News & AI
 > Swing, DeepSeek V4 classification, GNews rate-limit recovery, conservative asset retirement,
 > and repairing the hourly swing scan (failing every
 > daytime run and periodically saturating the database), correcting a one-day date shift across
@@ -37,7 +37,8 @@ help/knowledge base, and recurring data sync jobs.
 | Swing candidates | Buy-candidate screener with entry, target, stop, trail, score, days | Working; hourly scan repaired 2026-08-09 |
 | Stock Screener | US+India fundamental/price-action screener: filter engine, presets, saved screens, universes, CSV/Excel export | Working |
 | **NL Query (screener)** | Plain-English → filters, dispatched to a **user-chosen AI provider** (Anthropic/OpenAI/Google/DeepSeek), validated through the same filter-engine guard regardless of provider | Working |
-| **News & AI Swing** | Existing technical candidates overlaid with source-linked, time-decayed event assessment; Marketaux/GNews/NewsAPI/Alpha Vantage ingestion, incremental watermarks, canonical deduplication, source trust, corroboration, and DeepSeek-compatible structured classification without changing technical entries or risk levels | Working |
+| **News & AI Swing** | Existing technical candidates overlaid with source-linked, time-decayed event assessment; simultaneous Marketaux/GNews/NewsAPI/Alpha Vantage ingestion, incremental watermarks, canonical deduplication, cross-provider corroboration, and DeepSeek-compatible structured classification without changing technical entries or risk levels | Working |
+| **News coverage priority** | Open ledger trades first, latest Strong Swing candidates second, ordinary Swing candidates third; successful providers are merged and isolated provider failures are tolerated | Working |
 | **Trade Ledger news guard** | Open trades receive stock-first AI/news monitoring; only verified severe stock-specific evidence can independently trigger an exit, while unverified or broad evidence is cautionary | Working |
 | Legendary strategies | Qullamaggie, Minervini, Darvas, PTJ, Simons tags and filters | Working |
 | **Long-Term Candidates** | Six investor-inspired rankings with normalized income, balance-sheet and cash-flow evidence, multi-year CAGR/ROCE, confidence, sector/investability gates and daily score snapshots | Working (0.87s page load since the 2026-08-09 query fix); statement coverage backfilling |

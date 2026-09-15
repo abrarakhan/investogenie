@@ -1,6 +1,6 @@
 # InvestoGenie Status
 
-_Last updated: 2026-09-15 (added Marketaux, incremental news watermarks, canonical article identity, source trust, independent corroboration, event-map schema, and verified-evidence gating for Trade Ledger exits)_
+_Last updated: 2026-09-16 (added simultaneous encrypted news providers and changed scheduled news coverage priority to open ledger trades, Strong Swing candidates, then ordinary Swing candidates)_
 
 This file summarizes what has been built so far, what is currently working, what is partial, and what to build next.
 
@@ -195,6 +195,12 @@ Portfolio/fund figures below were refreshed on 2026-07-25 where the current DB e
 - Marketaux is available as an encrypted provider in Settings. Its entity-aware feed uses
   `published_after`, entity filtering, and grouped similar stories; GNews, NewsAPI, and Alpha
   Vantage remain available.
+- Multiple providers can now be enabled together in Settings. Each key is encrypted separately;
+  scheduled and manual refreshes merge all successful feeds into one evidence batch, so one
+  provider failure does not discard the others and corroboration can cross provider boundaries.
+- Retrieval priority is open Trade Ledger stocks first, latest Strong Swing snapshot candidates
+  second, and ordinary Swing candidates third. The News & AI page still applies its bounded news
+  overlay without changing either base strategy calculation.
 - Provider/market watermarks fetch only newly published evidence with a 15-minute overlap.
   Canonical URLs and title fingerprints prevent tracking-link duplicates, while event clusters
   count independent publisher domains.
@@ -207,6 +213,8 @@ Portfolio/fund figures below were refreshed on 2026-07-25 where the current DB e
 - Migration `0042_news_evidence_quality.sql` also creates the versionable `news_sources` and
   `event_stock_map` registries. Deterministic transmission templates and the Market Intelligence
   UI remain the next phase; they are not silently applied before calibration.
+- Migration `0043_multi_news_providers.sql` stores multiple enabled encrypted provider keys per user
+  and migrates the previous single-provider selection forward.
 
 ### Startup / Recurring Wrapper
 

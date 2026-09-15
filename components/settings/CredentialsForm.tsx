@@ -1,11 +1,12 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { updateCredentials, clearCredential, type NewsProvider, type StoredCredentials } from "@/lib/credentials-actions";
+import { updateCredentials, clearCredential, removeNewsProvider, saveNewsProvider, type NewsProvider, type StoredCredentials, type StoredNewsProvider } from "@/lib/credentials-actions";
 import { AI_PROVIDERS, DEFAULT_MODEL_BY_PROVIDER, type AIProvider } from "@/lib/ai/providers";
 
 interface Props {
   initialCreds: StoredCredentials | null;
+  initialNewsProviders: StoredNewsProvider[];
   breezeStatus?: string;
   breezeCallbackUrl: string;
 }
@@ -41,7 +42,7 @@ function formatIstTimestamp(value: string | Date | null): string | null {
   }).format(date);
 }
 
-export default function CredentialsForm({ initialCreds, breezeStatus, breezeCallbackUrl }: Props) {
+export default function CredentialsForm({ initialCreds, initialNewsProviders, breezeStatus, breezeCallbackUrl }: Props) {
   // --- SMTP state ---
   const [smtpHost, setSmtpHost] = useState(initialCreds?.smtpHost || "");
   const [smtpPort, setSmtpPort] = useState(initialCreds?.smtpPort || 587);
@@ -70,6 +71,7 @@ export default function CredentialsForm({ initialCreds, breezeStatus, breezeCall
   const [newsProvider, setNewsProvider] = useState<NewsProvider>(initialCreds?.newsProvider ?? "gnews");
   const [newsKey, setNewsKey] = useState("");
   const [newsKeySet, setNewsKeySet] = useState(!!initialCreds?.newsApiKeySet);
+  const [enabledNewsProviders, setEnabledNewsProviders] = useState<NewsProvider[]>(initialNewsProviders.map((item) => item.provider));
   const [breezeApiKey, setBreezeApiKey] = useState("");
   const [breezeApiSecret, setBreezeApiSecret] = useState("");
   const [breezeSessionToken, setBreezeSessionToken] = useState("");
@@ -162,12 +164,17 @@ export default function CredentialsForm({ initialCreds, breezeStatus, breezeCall
   };
 
   const handleSaveNews = async () => {
+    if (!newsKey.trim()) {
+      setMessage({ type: "error", text: "Enter the API key for the selected provider." });
+      return;
+    }
     setLoading(true);
     setMessage(null);
     try {
-      await updateCredentials({ newsProvider, newsApiKey: newsKey || undefined });
+      await saveNewsProvider(newsProvider, newsKey);
       setNewsKey("");
       if (newsKey) setNewsKeySet(true);
+      setEnabledNewsProviders((current) => [...new Set([...current, newsProvider])]);
       setMessage({ type: "success", text: `News provider saved: ${NEWS_PROVIDERS.find((item) => item.key === newsProvider)?.label}.` });
     } catch (err) {
       setMessage({ type: "error", text: err instanceof Error ? err.message : "Failed to save news API" });
@@ -176,17 +183,16 @@ export default function CredentialsForm({ initialCreds, breezeStatus, breezeCall
     }
   };
 
-  const handleClearNewsKey = async () => {
+  const handleRemoveNewsProvider = async (providerToRemove: NewsProvider) => {
     setLoading(true);
     try {
-      await clearCredential("newsApiKey");
-      setNewsKeySet(false);
-      setMessage({ type: "success", text: "News API key cleared." });
+      await removeNewsProvider(providerToRemove);
+      setEnabledNewsProviders((current) => current.filter((item) => item !== providerToRemove));
+      if (providerToRemove === newsProvider) setNewsKeySet(false);
+      setMessage({ type: "success", text: `${NEWS_PROVIDERS.find((item) => item.key === providerToRemove)?.label} removed.` });
     } catch (err) {
-      setMessage({ type: "error", text: err instanceof Error ? err.message : "Failed to clear news key" });
-    } finally {
-      setLoading(false);
-    }
+      setMessage({ type: "error", text: err instanceof Error ? err.message : "Failed to remove provider" });
+    } finally { setLoading(false); }
   };
 
   const handleSaveBreeze = async () => {
@@ -402,9 +408,15 @@ export default function CredentialsForm({ initialCreds, breezeStatus, breezeCall
           Supplies source-linked market, macro, and company headlines to News &amp; AI Swing and open Trade Ledger positions. On a personal installation, the encrypted owner key also powers unattended hourly refreshes during each market&apos;s trading hours; deployment environment keys take priority.
         </p>
         <div className="space-y-4">
+          {enabledNewsProviders.length > 0 && <div className="flex flex-wrap gap-2">
+            {enabledNewsProviders.map((item) => <span key={item} className="inline-flex items-center gap-2 rounded-lg border border-emerald-400/25 bg-emerald-400/10 px-3 py-2 text-xs text-emerald-200">
+              {NEWS_PROVIDERS.find((providerItem) => providerItem.key === item)?.label}
+              <button type="button" onClick={() => handleRemoveNewsProvider(item)} disabled={loading} className="text-white/45 hover:text-rose-300">Remove</button>
+            </span>)}
+          </div>}
           <label className="block">
             <span className="text-sm font-medium text-white/80">Provider</span>
-            <select value={newsProvider} onChange={(event) => setNewsProvider(event.target.value as NewsProvider)} disabled={loading} className={inputCls}>
+            <select value={newsProvider} onChange={(event) => { const next = event.target.value as NewsProvider; setNewsProvider(next); setNewsKeySet(enabledNewsProviders.includes(next)); }} disabled={loading} className={inputCls}>
               {NEWS_PROVIDERS.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}
             </select>
             <span className="mt-1 block text-xs text-white/40">{NEWS_PROVIDERS.find((item) => item.key === newsProvider)?.hint}</span>
@@ -416,9 +428,8 @@ export default function CredentialsForm({ initialCreds, breezeStatus, breezeCall
           </label>
           <div className="flex gap-2">
             <button onClick={handleSaveNews} disabled={loading} className="rounded-lg bg-gradient-to-r from-[var(--ig-primary)] to-[var(--ig-accent)] px-4 py-2 text-sm font-semibold text-black disabled:opacity-50">
-              {loading ? "Saving..." : "Save news API"}
+              {loading ? "Saving..." : enabledNewsProviders.includes(newsProvider) ? "Replace provider key" : "Add news provider"}
             </button>
-            {newsKeySet && <button onClick={handleClearNewsKey} disabled={loading} className="rounded-lg border border-rose-500/30 px-4 py-2 text-sm text-rose-400 hover:bg-rose-500/10 disabled:opacity-50">Clear key</button>}
           </div>
         </div>
       </div>

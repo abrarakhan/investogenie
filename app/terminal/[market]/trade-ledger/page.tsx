@@ -4,7 +4,7 @@ import SwingTradeLedger from "@/components/trade-ledger/SwingTradeLedger";
 import LedgerAutoRefresh from "@/components/trade-ledger/LedgerAutoRefresh";
 import NewsRefreshButton from "@/components/screener/NewsRefreshButton";
 import { getSessionUser } from "@/lib/auth";
-import { getActiveNewsConfig } from "@/lib/credentials-actions";
+import { getActiveNewsConfigs } from "@/lib/credentials-actions";
 import { normalizeMarket } from "@/lib/markets";
 import { getSwingTradeLedger } from "@/lib/swingTradeLedger";
 import { markLiveMarketTargets } from "@/lib/liveMarketTargets";
@@ -26,7 +26,7 @@ export default async function SwingTradeLedgerPage({ params, searchParams }: {
   const defaults = Object.fromEntries(Object.entries(raw).map(([key, value]) => [key, Array.isArray(value) ? value[0] : value]));
   const [trades, newsConfig, breeze] = await Promise.all([
     getSwingTradeLedger(user.id, market),
-    getActiveNewsConfig(),
+    getActiveNewsConfigs(),
     market === "IN" ? getBreezeReconciliation(user.id) : Promise.resolve(null),
   ]);
   if (market === "IN") {
@@ -43,7 +43,7 @@ export default async function SwingTradeLedgerPage({ params, searchParams }: {
       title="Swing Trade Ledger"
       subtitle="Track real purchases against the exact target, stop, trail, and holding window recorded at entry."
       maxWidth="max-w-6xl"
-      actions={<NewsRefreshButton market={market} configured={Boolean(newsConfig)} />}
+      actions={<NewsRefreshButton market={market} configured={newsConfig.length > 0} />}
     >
       <LedgerAutoRefresh market={market} />
       {breeze && <BreezeReconciliationPanel data={breeze} />}
