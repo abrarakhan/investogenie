@@ -30,8 +30,17 @@ type SyncRow = {
   positions_count: number;
   orders_count: number;
   error: string | null;
+  started_at: Date | string;
   finished_at: Date | string | null;
 };
+
+export function isSyncOlderThanSession(
+  syncStartedAt: Date | string | null | undefined,
+  sessionUpdatedAt: Date | string | null | undefined,
+): boolean {
+  if (!syncStartedAt || !sessionUpdatedAt) return false;
+  return new Date(syncStartedAt).getTime() < new Date(sessionUpdatedAt).getTime();
+}
 
 export async function getBreezeReconciliation(userId: string): Promise<BreezeReconciliation> {
   const scopeStart = "2026-08-01";
@@ -42,21 +51,21 @@ export async function getBreezeReconciliation(userId: string): Promise<BreezeRec
     mismatches: [], rejectedOrders: [],
   };
   try {
-    const configured = await queryOne<{ configured: boolean }>(
-      `select exists(
-         select 1 from public.user_credentials
-          where user_id=$1 and breeze_api_key_encrypted is not null
-            and breeze_api_secret_encrypted is not null
-            and breeze_session_token_encrypted is not null
-       ) configured`,
+    const credential = await queryOne<{ configured: boolean; session_updated_at: Date | string | null }>(
+      `select breeze_api_key_encrypted is not null
+              and breeze_api_secret_encrypted is not null
+              and breeze_session_token_encrypted is not null configured,
+              breeze_session_updated_at session_updated_at
+         from public.user_credentials where user_id=$1`,
       [userId],
     );
     const sync = await queryOne<SyncRow>(
-      `select status,holdings_count,positions_count,orders_count,error,finished_at
+      `select status,holdings_count,positions_count,orders_count,error,started_at,finished_at
          from public.breeze_broker_syncs where user_id=$1
         order by started_at desc limit 1`,
       [userId],
     );
+    const superseded = isSyncOlderThanSession(sync?.started_at, credential?.session_updated_at);
     const scopedCounts = await queryOne<{ holdings_count: string; positions_count: string }>(
       `with tracked as (
          select distinct upper(a.ticker) ticker
@@ -127,11 +136,11 @@ export async function getBreezeReconciliation(userId: string): Promise<BreezeRec
       [userId, scopeStart],
     );
     return {
-      configured: Boolean(configured?.configured),
+      configured: Boolean(credential?.configured),
       scopeStart,
-      status: sync?.status ?? null,
-      capturedAt: sync?.finished_at ? new Date(sync.finished_at).toISOString() : null,
-      error: sync?.error ?? null,
+      status: superseded ? "RUNNING" : sync?.status ?? null,
+      capturedAt: superseded ? null : sync?.finished_at ? new Date(sync.finished_at).toISOString() : null,
+      error: superseded ? null : sync?.error ?? null,
       holdingsCount: Number(scopedCounts?.holdings_count ?? 0),
       positionsCount: Number(scopedCounts?.positions_count ?? 0),
       ordersCount: Number(sync?.orders_count ?? 0),

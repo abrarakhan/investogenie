@@ -1,6 +1,7 @@
 import { SignJWT, jwtVerify } from "jose";
 import { decryptCredential, encryptCredential } from "@/lib/crypto/credentials";
 import { query, queryOne } from "@/lib/db";
+import { triggerBreezeReconciliation } from "@/lib/breeze/reconciliation";
 
 export const BREEZE_CONNECT_COOKIE = "ig_breeze_connect";
 export const BREEZE_CONNECT_MAX_AGE = 10 * 60;
@@ -64,5 +65,6 @@ export async function saveBreezeApiSession(userId: string, apiSession: string): 
       returning id`,
     [userId, encryptCredential(apiSession)],
   );
+  if (rows.length === 1) await triggerBreezeReconciliation();
   return rows.length === 1;
 }

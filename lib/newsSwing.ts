@@ -1,5 +1,5 @@
 import { query, queryOne } from "@/lib/db";
-import { runScreener, type ScreenRow } from "@/lib/screener";
+import { getStrongSwingCandidates, type StrongSwingCandidate } from "@/lib/strongSwing";
 import { rankNewsSwingCandidates, scoreNewsSwing, type NewsDirection, type NewsHorizon, type NewsScope, type NewsSwingScore } from "@/lib/analytics/newsSwing";
 import type { SwingSettings } from "@/lib/settings";
 import type { MarketId } from "@/lib/types";
@@ -42,7 +42,7 @@ export interface NewsEvidence {
   model: string | null;
 }
 
-export interface NewsSwingCandidate extends ScreenRow, NewsSwingScore {
+export interface NewsSwingCandidate extends StrongSwingCandidate, NewsSwingScore {
   news: NewsEvidence[];
 }
 
@@ -59,11 +59,7 @@ export async function getNewsSwingWorkspace(
   market: MarketId,
   settings: SwingSettings,
 ): Promise<NewsSwingWorkspace> {
-  const base = await runScreener(
-    market,
-    { ...settings, includeShort: false },
-    market === "IN" ? { exchange: "NSE", limit: 30 } : { limit: 30 },
-  );
+  const base = (await getStrongSwingCandidates(market, settings)).slice(0, 30);
   const ids = base.map((row) => row.assetId);
   const impacts = ids.length ? await query<ImpactRow>(
     `select i.asset_id,i.sector,i.scope,i.event_type,i.direction,i.sentiment_score,
@@ -108,7 +104,7 @@ export async function getNewsSwingWorkspace(
       || (item.scope === "ASSET" && item.assetId === row.assetId)
       || (item.scope === "SECTOR" && item.sector && item.sector === sector),
     );
-    const score = scoreNewsSwing(row.score, news);
+    const score = scoreNewsSwing(row.strengthScore, news);
     return { ...row, ...score, news };
   }));
 

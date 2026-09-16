@@ -227,7 +227,7 @@ export default function CredentialsForm({ initialCreds, initialNewsProviders, br
       setBreezeApiKey("");
       setBreezeApiSecret("");
       setBreezeSessionToken("");
-      setMessage({ type: "success", text: "Breeze credentials saved. The live worker will connect or reconnect within 30 seconds." });
+      setMessage({ type: "success", text: "Breeze credentials saved. Live data will reconnect and read-only broker reconciliation has started." });
     } catch (err) {
       setMessage({ type: "error", text: err instanceof Error ? err.message : "Failed to save Breeze credentials" });
     } finally {

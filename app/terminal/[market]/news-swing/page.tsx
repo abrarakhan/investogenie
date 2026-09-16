@@ -34,13 +34,13 @@ export default async function NewsSwingPage({ params }: { params: Promise<{ mark
       market={market}
       active="news-swing"
       title="News & AI Swing"
-      subtitle="Existing swing calculations, ranked through a time-decayed and source-linked event-risk overlay."
+      subtitle="Strong Swing confirmation and execution plans, ranked through a time-decayed and source-linked event-risk overlay."
       actions={<NewsRefreshButton market={market} configured={newsConfig.length > 0} />}
     >
       <MarketDataAutoRefresh market={market} />
       <div className="mb-6 grid gap-3 lg:grid-cols-[1fr_auto] lg:items-start">
         <div className="border-l-2 border-[var(--ig-accent)] pl-4 text-sm leading-relaxed text-white/52">
-          News can adjust rank by at most 20 points. It never creates a setup or changes technical entry, target, stop, OI, volume, or breakout calculations. Severe verified negatives can mark a candidate Risk-off.
+          Strong Swing is the technical base. News can adjust rank by at most 20 points; it never creates a setup or changes confirmed entry, target, stop, trail, OI, volume, or breakout calculations. Severe verified negatives can mark a candidate Risk-off.
         </div>
         <div className="text-xs text-white/38 lg:text-right">
           <div>{workspace.articleCount} recent articles · {workspace.impactCount} classified impacts</div>

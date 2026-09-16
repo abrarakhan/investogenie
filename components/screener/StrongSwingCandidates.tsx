@@ -78,16 +78,20 @@ function CandidateCard({ candidate }: { candidate: StrongSwingCandidate }) {
         </div>
       </div>
 
-      <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+      <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
         {[
-          ["Current", candidate.lastQuote ?? candidate.latestClose, "text-white"],
           ["Confirmed entry", candidate.strongEntry, "text-white"],
           ["Target", candidate.strongTarget, "text-emerald-300"],
           ["Stop", candidate.strongStop, "text-rose-300"],
+          ["Trail", candidate.strongTrail, "text-amber-200"],
+          ["Current", candidate.lastQuote ?? candidate.latestClose, "text-white"],
+          ["Horizon", `~${candidate.strongExpectedDays}d`, "text-cyan-200"],
         ].map(([label, value, color]) => (
           <div key={String(label)} className="rounded-md bg-black/30 px-3 py-2.5">
             <div className="text-[10px] uppercase tracking-wide text-white/35">{label}</div>
-            <div className={`mt-1 font-mono text-sm ${color}`}>{fmt(Number(value))}</div>
+            <div className={`mt-1 font-mono text-sm ${color}`}>
+              {typeof value === "number" ? fmt(value) : value}
+            </div>
           </div>
         ))}
       </div>

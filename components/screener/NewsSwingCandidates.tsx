@@ -21,7 +21,11 @@ const fmtTime = (value: string) => new Intl.DateTimeFormat("en-IN", {
 
 function CandidateCard({ candidate, rank }: { candidate: NewsSwingCandidate; rank: number }) {
   const evidence = candidate.news.slice(0, 4);
-  const price = candidate.lastQuote ?? candidate.close;
+  const price = candidate.lastQuote ?? candidate.latestClose;
+  const strongRisk = candidate.strongEntry - candidate.strongStop;
+  const strongRiskReward = strongRisk > 0
+    ? (candidate.strongTarget - candidate.strongEntry) / strongRisk
+    : null;
   return (
     <article className="rounded-lg border border-white/10 bg-white/[0.025] p-4 sm:p-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -29,22 +33,23 @@ function CandidateCard({ candidate, rank }: { candidate: NewsSwingCandidate; ran
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-mono text-xs font-bold text-[var(--ig-accent)]">#{rank}</span>
             <h2 className="text-lg font-bold">{candidate.ticker}</h2>
-            <span className="text-[10px] uppercase tracking-wider text-white/35">{candidate.exchange} · {candidate.verdict.replaceAll("_", " ")}</span>
+            <span className="text-[10px] uppercase tracking-wider text-white/35">{candidate.exchange} · {candidate.status.replaceAll("_", " ")}</span>
           </div>
-          <p className="mt-1 text-sm text-white/45">Current {fmt(price)} · technical signal {candidate.asOf.slice(0, 10)}</p>
+          <p className="mt-1 text-sm text-white/45">Current {fmt(price)} · Strong Swing signal {candidate.latestDate}</p>
         </div>
         <span className={`rounded-full border px-3 py-1 text-[10px] font-bold uppercase tracking-wide ${STATE_STYLE[candidate.state]}`}>
           {STATE_LABEL[candidate.state]}
         </span>
       </div>
 
-      <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-5">
+      <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
         {[
-          ["Technical", candidate.technicalScore.toFixed(1), "text-white"],
+          ["Strong technical", candidate.technicalScore.toFixed(1), "text-white"],
           ["News overlay", `${candidate.newsAdjustment >= 0 ? "+" : ""}${candidate.newsAdjustment.toFixed(1)}`, candidate.newsAdjustment >= 0 ? "text-emerald-300" : "text-rose-300"],
           ["Combined", candidate.combinedScore.toFixed(1), "text-[var(--ig-accent)]"],
-          ["Entry", fmt(candidate.entry), "text-white"],
-          ["Stop", fmt(candidate.stopLoss), "text-rose-300"],
+          ["Confirmed entry", fmt(candidate.strongEntry), "text-white"],
+          ["Target", fmt(candidate.strongTarget), "text-emerald-300"],
+          ["Stop", fmt(candidate.strongStop), "text-rose-300"],
         ].map(([label, value, color]) => (
           <div key={label} className="rounded-md bg-black/30 px-3 py-2.5">
             <div className="text-[10px] uppercase tracking-wide text-white/35">{label}</div>
@@ -54,10 +59,10 @@ function CandidateCard({ candidate, rank }: { candidate: NewsSwingCandidate; ran
       </div>
 
       <div className="mt-3 grid grid-cols-2 gap-x-5 gap-y-2 border-y border-white/8 py-3 text-[11px] sm:grid-cols-4 lg:grid-cols-8">
-        <span><span className="text-white/32">Target </span><span className="font-mono text-emerald-300">{fmt(candidate.target)}</span></span>
-        <span><span className="text-white/32">Trail </span><span className="font-mono text-amber-200">{fmt(candidate.trailingStop)}</span></span>
-        <span><span className="text-white/32">R:R </span><span className="font-mono text-white/65">{fmt(candidate.riskReward, 1)}x</span></span>
-        <span><span className="text-white/32">Horizon </span><span className="text-white/65">{candidate.expectedDays === null ? "-" : `~${candidate.expectedDays}d`}</span></span>
+        <span><span className="text-white/32">Strong rank </span><span className="font-mono text-cyan-200">#{candidate.strongSwingRank}</span></span>
+        <span><span className="text-white/32">Trail </span><span className="font-mono text-amber-200">{fmt(candidate.strongTrail)}</span></span>
+        <span><span className="text-white/32">R:R </span><span className="font-mono text-white/65">{fmt(strongRiskReward, 1)}x</span></span>
+        <span><span className="text-white/32">Horizon </span><span className="text-white/65">~{candidate.strongExpectedDays}d</span></span>
         <span><span className="text-white/32">P/E </span><span className="font-mono text-white/65">{fmt(candidate.peRatio, 1)}</span></span>
         <span><span className="text-white/32">ROCE </span><span className="font-mono text-white/65">{candidate.roce === null ? "-" : `${candidate.roce.toFixed(1)}%`}</span></span>
         <span><span className="text-white/32">Profit YoY </span><span className={candidate.profitVarYoY !== null && candidate.profitVarYoY < 0 ? "text-rose-300" : "text-emerald-300"}>{candidate.profitVarYoY === null ? "-" : `${candidate.profitVarYoY >= 0 ? "+" : ""}${candidate.profitVarYoY.toFixed(1)}%`}</span></span>
@@ -121,9 +126,9 @@ export default function NewsSwingCandidates({ candidates }: { candidates: NewsSw
           </div>
         ))}
       </div>
-      {candidates.length > 0 && <p className="text-xs text-white/40">Ranked from highest to lowest combined technical and news conviction. Risk-off setups are shown last.</p>}
+      {candidates.length > 0 && <p className="text-xs text-white/40">Strong Swing candidates ranked from highest to lowest combined confirmation and news conviction. Risk-off setups are shown last.</p>}
       {candidates.map((candidate, index) => <CandidateCard key={candidate.assetId} candidate={candidate} rank={index + 1} />)}
-      {!candidates.length && <div className="rounded-lg border border-white/10 p-8 text-center text-sm text-white/45">No technical buy candidates are available to enrich with news.</div>}
+      {!candidates.length && <div className="rounded-lg border border-white/10 p-8 text-center text-sm text-white/45">No Strong Swing candidates are available to enrich with news.</div>}
     </div>
   );
 }

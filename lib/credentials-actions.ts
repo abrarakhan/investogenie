@@ -3,6 +3,7 @@
 import { getSessionUser } from "@/lib/auth";
 import { query, queryOne } from "@/lib/db";
 import { encryptCredential, decryptCredential } from "@/lib/crypto/credentials";
+import { triggerBreezeReconciliation } from "@/lib/breeze/reconciliation";
 import {
   DEFAULT_MODEL_BY_PROVIDER,
   isAIProvider,
@@ -161,6 +162,7 @@ export async function updateCredentials(input: CredentialsInput): Promise<Stored
       ],
     );
     if (!row) throw new Error("Failed to create credentials");
+    if (encBreezeSessionToken) await triggerBreezeReconciliation();
     return mapCredentials(row);
   }
 
@@ -199,6 +201,7 @@ export async function updateCredentials(input: CredentialsInput): Promise<Stored
     ],
   );
   if (!row) throw new Error("Failed to update credentials");
+  if (encBreezeSessionToken) await triggerBreezeReconciliation();
   return mapCredentials(row);
 }
 

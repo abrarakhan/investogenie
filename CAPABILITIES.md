@@ -37,7 +37,7 @@ help/knowledge base, and recurring data sync jobs.
 | Swing candidates | Buy-candidate screener with entry, target, stop, trail, score, days | Working; hourly scan repaired 2026-08-09 |
 | Stock Screener | US+India fundamental/price-action screener: filter engine, presets, saved screens, universes, CSV/Excel export | Working |
 | **NL Query (screener)** | Plain-English → filters, dispatched to a **user-chosen AI provider** (Anthropic/OpenAI/Google/DeepSeek), validated through the same filter-engine guard regardless of provider | Working |
-| **News & AI Swing** | Existing technical candidates overlaid with source-linked, time-decayed event assessment; simultaneous Marketaux/GNews/NewsAPI/Alpha Vantage ingestion, incremental watermarks, canonical deduplication, cross-provider corroboration, and DeepSeek-compatible structured classification without changing technical entries or risk levels | Working |
+| **News & AI Swing** | Strong Swing candidates and frozen execution levels overlaid with source-linked, time-decayed event assessment; simultaneous Marketaux/GNews/NewsAPI/Alpha Vantage ingestion, incremental watermarks, canonical deduplication, cross-provider corroboration, and DeepSeek-compatible structured classification without changing either Swing calculation | Working |
 | **News coverage priority** | Open ledger trades first, latest Strong Swing candidates second, ordinary Swing candidates third; successful providers are merged and isolated provider failures are tolerated | Working |
 | **Trade Ledger news guard** | Open trades receive stock-first AI/news monitoring; only verified severe stock-specific evidence can independently trigger an exit, while unverified or broad evidence is cautionary | Working |
 | Legendary strategies | Qullamaggie, Minervini, Darvas, PTJ, Simons tags and filters | Working |
@@ -483,9 +483,10 @@ npm test            # 146/146 passing across 17 files
 npm run build       # clean production build
 ```
 
-The News & AI Swing layer preserves the original technical calculation. It only classifies
-source-linked events and applies the already-tested time-decayed, +/-20-point overlay; entries,
-targets, stops, trails and base strategy scores remain owned by the existing swing engine.
+The News & AI Swing layer uses Strong Swing as its candidate and technical-score base. It only
+classifies source-linked events and applies the already-tested time-decayed, +/-20-point overlay;
+confirmed entries, targets, stops, trails, and both Swing strategy scores remain owned by the
+existing technical engines.
 
 Swing scan repair and six-module date fix, 2026-08-09:
 

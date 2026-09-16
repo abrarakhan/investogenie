@@ -170,9 +170,10 @@ Portfolio/fund figures below were refreshed on 2026-07-25 where the current DB e
 
 ### News & AI Swing
 
-- `/terminal/[market]/news-swing` starts from the existing buy-candidate calculation and applies
-  a separate, bounded event overlay. News never creates a setup and never changes entry, target,
-  stop, trailing stop, OI, volume, breakout, or base technical score.
+- `/terminal/[market]/news-swing` now starts from the ranked Strong Swing candidate set and applies
+  a separate, bounded event overlay to the Strong Swing confirmation score. News never creates a
+  setup and never changes confirmed entry, target, stop, trailing stop, OI, volume, breakout, or
+  either underlying Swing calculation.
 - GNews, NewsAPI and Alpha Vantage provide source-linked headlines. GNews requests are serialized
   and retry HTTP 429 responses, preventing a rate-limited macro batch from being reported as a
   successful zero-article refresh.
@@ -199,8 +200,9 @@ Portfolio/fund figures below were refreshed on 2026-07-25 where the current DB e
   scheduled and manual refreshes merge all successful feeds into one evidence batch, so one
   provider failure does not discard the others and corroboration can cross provider boundaries.
 - Retrieval priority is open Trade Ledger stocks first, latest Strong Swing snapshot candidates
-  second, and ordinary Swing candidates third. The News & AI page still applies its bounded news
-  overlay without changing either base strategy calculation.
+  second, and ordinary Swing candidates third. The News & AI candidate workspace itself is based
+  on Strong Swing, while ordinary Swing remains a lower-priority discovery source for broader
+  news coverage. The bounded overlay does not change either strategy calculation.
 - Provider/market watermarks fetch only newly published evidence with a 15-minute overlap.
   Canonical URLs and title fingerprints prevent tracking-link duplicates, while event clusters
   count independent publisher domains.
