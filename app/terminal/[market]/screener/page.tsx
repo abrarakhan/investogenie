@@ -3,6 +3,7 @@ import { runScreener } from "@/lib/screener";
 import { getUserSwingSettings } from "@/lib/settings";
 import ScreenerTable from "@/components/screener/ScreenerTable";
 import AppShell from "@/components/app/AppShell";
+import MarketDataAutoRefresh from "@/components/app/MarketDataAutoRefresh";
 import { getSessionUser } from "@/lib/auth";
 import { MARKET_COUNTRY, normalizeMarket } from "@/lib/markets";
 import { markLiveMarketTargets } from "@/lib/liveMarketTargets";
@@ -40,6 +41,7 @@ export default async function TerminalScreener({
       title={`Swing Candidates${!isUS ? " - Top 20" : ""}`}
       subtitle="Buy-side swing candidates ranked inside the selected market workspace."
     >
+      <MarketDataAutoRefresh market={marketId} assetIds={rows.map((row) => row.assetId)} />
       <div className="mb-8">
         <p className="max-w-2xl text-white/50">
             {isUS ? (

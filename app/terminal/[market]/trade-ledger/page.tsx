@@ -2,6 +2,7 @@ import { notFound, redirect } from "next/navigation";
 import AppShell from "@/components/app/AppShell";
 import SwingTradeLedger from "@/components/trade-ledger/SwingTradeLedger";
 import LedgerAutoRefresh from "@/components/trade-ledger/LedgerAutoRefresh";
+import MarketDataAutoRefresh from "@/components/app/MarketDataAutoRefresh";
 import NewsRefreshButton from "@/components/screener/NewsRefreshButton";
 import { getSessionUser } from "@/lib/auth";
 import { getActiveNewsConfigs } from "@/lib/credentials-actions";
@@ -46,6 +47,7 @@ export default async function SwingTradeLedgerPage({ params, searchParams }: {
       actions={<NewsRefreshButton market={market} configured={newsConfig.length > 0} />}
     >
       <LedgerAutoRefresh market={market} />
+      <MarketDataAutoRefresh market={market} assetIds={trades.filter((trade) => trade.status === "OPEN").map((trade) => trade.assetId)} />
       {breeze && <BreezeReconciliationPanel data={breeze} />}
       <SwingTradeLedger market={market} trades={trades} defaults={defaults} />
     </AppShell>

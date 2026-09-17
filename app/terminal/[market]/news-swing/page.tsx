@@ -37,7 +37,7 @@ export default async function NewsSwingPage({ params }: { params: Promise<{ mark
       subtitle="Strong Swing confirmation and execution plans, ranked through a time-decayed and source-linked event-risk overlay."
       actions={<NewsRefreshButton market={market} configured={newsConfig.length > 0} />}
     >
-      <MarketDataAutoRefresh market={market} />
+      <MarketDataAutoRefresh market={market} assetIds={workspace.candidates.map((candidate) => candidate.assetId)} />
       <div className="mb-6 grid gap-3 lg:grid-cols-[1fr_auto] lg:items-start">
         <div className="border-l-2 border-[var(--ig-accent)] pl-4 text-sm leading-relaxed text-white/52">
           Strong Swing is the technical base. News can adjust rank by at most 20 points; it never creates a setup or changes confirmed entry, target, stop, trail, OI, volume, or breakout calculations. Severe verified negatives can mark a candidate Risk-off.

@@ -43,7 +43,7 @@ export default async function StrongSwingPage({
       title="Strong Swing Candidates"
       subtitle="Execution-ready setups only after technical confirmation, entry discipline, volatility, stop-risk, liquidity and circuit-behaviour checks agree."
     >
-      <MarketDataAutoRefresh market={market} />
+      <MarketDataAutoRefresh market={market} assetIds={candidates.map((candidate) => candidate.assetId)} />
       <div className="mb-6 border-l-2 border-[var(--ig-accent)] pl-4 text-sm leading-relaxed text-white/52">
         Buy &amp; Track is enabled only for green Execution Ready setups and records the frozen plan in your ledger. Breeze currently supplies live market data; it does not place the broker order, so confirm exchange restrictions in ICICI Direct before buying.
       </div>
