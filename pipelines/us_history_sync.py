@@ -56,6 +56,7 @@ def parse_args() -> argparse.Namespace:
         help="Postgres connection URL (defaults to DATABASE_URL or local Investogenie DB)",
     )
     parser.add_argument("--symbols", help="Comma-separated US tickers to synchronize")
+    parser.add_argument("--all-active", action="store_true", help="Refresh all eligible active stocks, including same-day intraday bars, for EOD")
     parser.add_argument("--limit", type=int, default=250, help="Maximum tickers to process this run")
     parser.add_argument("--min-bars", type=int, default=DEFAULT_MIN_BARS, help="Coverage target per ticker")
     parser.add_argument(
@@ -84,14 +85,15 @@ def yahoo_symbol(ticker: str) -> str:
 
 
 def load_assets(
-    conn, requested: set[str] | None, limit: int | None, min_bars: int, stale_days: int
+    conn, requested: set[str] | None, limit: int | None, min_bars: int, stale_days: int,
+    refresh_all: bool = False,
 ) -> list[AssetState]:
     params: list[object] = []
     filters = ["a.country='US'", "a.asset_class='STOCK'", "a.is_active=true"]
     if requested:
         filters.append("a.ticker=any(%s)")
         params.append(sorted(requested))
-    else:
+    elif not refresh_all:
         # Select a ticker if it either needs deeper history (below min_bars) OR
         # already has enough bars but hasn't been refreshed recently (stale).
         # Without the staleness leg, any ticker that ever crossed min_bars would
@@ -283,7 +285,7 @@ def main() -> None:
     requested = requested_symbols(args.symbols)
     conn = psycopg2.connect(args.database_url)
     try:
-        assets = load_assets(conn, requested, args.limit, args.min_bars, args.stale_days)
+        assets = load_assets(conn, requested, args.limit, args.min_bars, args.stale_days, args.all_active)
         print(f"Synchronizing US OHLCV for {len(assets)} stocks (target {args.min_bars} bars).")
         fetched = 0
         bars_written = 0

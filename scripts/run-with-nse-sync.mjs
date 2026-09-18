@@ -1410,7 +1410,7 @@ const stopEodScheduler = startEodScheduler({
     // No recurring-job cap: cover the full active universe after US close.
     await run([usPipeline, "--quotes-only", "--quote-batch-size", usQuoteBatchSize,
       "--google-fallback-limit", usGoogleFallbackLimit, "--sleep", usSyncSleep]);
-    await run([usHistoryPipeline, "--limit", "100000", "--stale-days", "0",
+    await run([usHistoryPipeline, "--all-active", "--limit", "100000", "--stale-days", "0",
       "--min-bars", usHistoryMinBars, "--sleep", usHistorySleep]);
   },
 });
