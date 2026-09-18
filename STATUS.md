@@ -168,6 +168,18 @@ Portfolio/fund figures below were refreshed on 2026-07-25 where the current DB e
 
 ## Data Sync And Workers
 
+### Exchange-Close Updates
+
+- A persistent end-of-day scheduler runs NSE/BSE quote and OHLCV ingestion after
+  18:30 IST and full-universe US quote/OHLCV ingestion after 17:00 America/New_York.
+- Trading calendars skip holidays/weekends and the US clock follows DST. Startup
+  catches up the latest completed session if its job has not completed.
+- `cron_logs` stores `eod-in` / `eod-us` completion by trading session; failed jobs
+  retry after 30 minutes. Database advisory locks prevent duplicate EOD workers.
+- US EOD removes the ordinary 1,500-quote / 150-history job caps. Existing provider
+  backoff and unavailable-symbol handling still apply; a completed job is not a
+  claim that every listing is fresh. Data Health continues to report actual gaps.
+
 ### News & AI Swing
 
 - `/terminal/[market]/news-swing` now starts from the ranked Strong Swing candidate set and applies

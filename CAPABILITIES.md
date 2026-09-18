@@ -474,6 +474,12 @@ node scripts/backfill-progress.mjs   # queue + coverage status for the OHLCV bac
 
 ## Verification Status
 
+Exchange-close automation (2026-09-18): NSE/BSE after 18:30 IST, US after
+17:00 New York time with DST/calendar awareness, restart catch-up, persistent
+per-session job completion, advisory locking, and 30-minute failure retries.
+US post-close jobs process the full eligible universe rather than recurring-job
+caps. Unavailable provider data remains an explicit coverage gap.
+
 News intelligence, DeepSeek V4, GNews recovery and backfill hardening, 2026-08-26:
 
 ```bash

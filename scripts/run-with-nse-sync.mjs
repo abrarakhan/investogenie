@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { isMarketOpenNow, isTradingDay, latestExpectedSessionDate, refreshMarketHolidays } from "../lib/market-calendar.mjs";
+import { startEodScheduler } from "./eod-scheduler.mjs";
 
 const mode = process.argv[2];
 if (mode !== "dev" && mode !== "start") {
@@ -998,10 +999,12 @@ function runBhavcopyNseSync(trigger) {
     if (success) {
       runMarketRefresh(`${trigger} post-sync`);
     }
+    return success;
   })()
     .catch((error) => {
       console.error(`[nse-sync] ${trigger} fatal error: ${error.message}`);
       recordSyncJob(`nse-sync/${trigger}`, "error", error.message);
+      return false;
     })
     .finally(async () => {
       syncPromise = null;
@@ -1382,6 +1385,27 @@ nextChild.on("close", (code, signal) => {
 const refreshedNseCalendar = await refreshMarketHolidays("IN");
 console.log(`[market-calendar] NSE capital-market holidays ${refreshedNseCalendar ? "refreshed" : "using bundled fallback"}`);
 scheduleDailySync();
+const stopEodScheduler = startEodScheduler({
+  databaseUrl: process.env.DATABASE_URL,
+  runIndia: async () => {
+    if (syncDisabled) throw new Error("NSE_SYNC_DISABLED disables India EOD updates");
+    if (!await runBhavcopyNseSync("exchange-close")) throw new Error("India EOD update failed");
+  },
+  runUS: async () => {
+    if (usQuoteDisabled || usHistoryDisabled) throw new Error("US quote/history updates disabled");
+    const run = (args) => new Promise((resolveRun, rejectRun) => {
+      const child = spawn(python, args, { cwd: root, env: process.env, stdio: "inherit" });
+      child.once("error", rejectRun);
+      child.once("close", (code, signal) => code === 0 && !signal ? resolveRun() : rejectRun(new Error(`US EOD job exited ${signal ?? code}`)));
+    });
+    // No recurring-job cap: cover the full active universe after US close.
+    await run([usPipeline, "--quotes-only", "--quote-batch-size", usQuoteBatchSize,
+      "--google-fallback-limit", usGoogleFallbackLimit, "--sleep", usSyncSleep]);
+    await run([usHistoryPipeline, "--limit", "100000", "--stale-days", "0",
+      "--min-bars", usHistoryMinBars, "--sleep", usHistorySleep]);
+  },
+});
+process.once("exit", stopEodScheduler);
 scheduleDailyAmfiSync();
 scheduleNseCatchup();
 scheduleRecurringMarketRefresh();
