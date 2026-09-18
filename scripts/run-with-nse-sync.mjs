@@ -43,6 +43,7 @@ const syncDisabled = process.env.NSE_SYNC_DISABLED === "1";
 // Production restarts must become responsive before optional maintenance jobs
 // begin. Timed schedules remain active when immediate startup runs are skipped.
 const startupSyncDisabled = process.env.STARTUP_SYNC_DISABLED === "1";
+let eodChild = null;
 const nseSyncProvider = (process.env.NSE_SYNC_PROVIDER ?? "bhavcopy").toLowerCase();
 const nseBhavcopyMaxSessions = process.env.NSE_BHAVCOPY_MAX_SESSIONS ?? "20";
 const breezeHistoryLimit = process.env.BREEZE_HISTORY_LIMIT ?? "750";
@@ -1321,6 +1322,8 @@ const nextChild = spawn(
 function shutdown(signal) {
   if (shuttingDown) return;
   shuttingDown = true;
+  stopEodScheduler();
+  if (eodChild) eodChild.kill(signal);
   if (dailyTimer) clearTimeout(dailyTimer);
   if (amfiDailyTimer) clearTimeout(amfiDailyTimer);
   if (nseCatchupTimer) clearInterval(nseCatchupTimer);
@@ -1394,9 +1397,15 @@ const stopEodScheduler = startEodScheduler({
   runUS: async () => {
     if (usQuoteDisabled || usHistoryDisabled) throw new Error("US quote/history updates disabled");
     const run = (args) => new Promise((resolveRun, rejectRun) => {
-      const child = spawn(python, args, { cwd: root, env: process.env, stdio: "inherit" });
+      if (shuttingDown) { rejectRun(new Error("Service is shutting down")); return; }
+      const child = spawn(python, args, { cwd: root, env: process.env, stdio: "inherit", timeout: 6 * 60 * 60_000 });
+      eodChild = child;
       child.once("error", rejectRun);
-      child.once("close", (code, signal) => code === 0 && !signal ? resolveRun() : rejectRun(new Error(`US EOD job exited ${signal ?? code}`)));
+      child.once("close", (code, signal) => {
+        if (eodChild === child) eodChild = null;
+        if (code === 0 && !signal) resolveRun();
+        else rejectRun(new Error(`US EOD job exited ${signal ?? code}`));
+      });
     });
     // No recurring-job cap: cover the full active universe after US close.
     await run([usPipeline, "--quotes-only", "--quote-batch-size", usQuoteBatchSize,

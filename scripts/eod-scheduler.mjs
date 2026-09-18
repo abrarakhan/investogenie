@@ -15,10 +15,11 @@ export function startEodScheduler({ databaseUrl, runIndia, runUS }) {
   async function tick() {
     if (stopped || busy || !databaseUrl) return;
     busy = true;
-    const client = new Client({ connectionString: databaseUrl });
+    const client = new Client({ connectionString: databaseUrl, connectionTimeoutMillis: 10_000 });
     try {
       await client.connect();
       for (const [market, run] of [["IN", runIndia], ["US", runUS]]) {
+        if (stopped) break;
         const session = dueEodSession(market);
         const key = `${market}:${session}`;
         if (completed.get(market) === session || Date.now() < (retryAt.get(key) ?? 0)) continue;
