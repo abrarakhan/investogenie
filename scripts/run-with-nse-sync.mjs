@@ -423,6 +423,7 @@ function runAmfiSchemeMasterSync(trigger) {
 }
 
 function runMarketRefresh(trigger) {
+  if (shuttingDown) return Promise.resolve();
   if (marketRefreshPromise) {
     console.log(`[market-refresh] skipping ${trigger}; refresh still running`);
     return marketRefreshPromise;
@@ -937,6 +938,7 @@ async function runBhavcopyNseSyncWithRetry(trigger, maxRetries = 2) {
   let lastError = null;
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    if (shuttingDown) return false;
     try {
       await waitForApp();
       if (!process.env.CRON_SECRET) throw new Error("CRON_SECRET is not configured");
@@ -1025,6 +1027,7 @@ function runSync(trigger) {
 }
 
 async function runFundamentals(trigger) {
+  if (shuttingDown) return;
   if (fundamentalsDisabled) {
     console.log(`[fundamentals] ${trigger} sync disabled by FUNDAMENTALS_SYNC_DISABLED=1`);
     recordSyncJob(`fundamentals/${trigger}`, "skipped", "disabled");
@@ -1132,6 +1135,7 @@ function runUSHistory(trigger) {
 }
 
 async function runUSFundamentals(trigger) {
+  if (shuttingDown) return;
   if (usFundamentalsDisabled) {
     console.log(`[us-fundamentals] ${trigger} sync disabled by US_FUNDAMENTALS_SYNC_DISABLED=1`);
     recordSyncJob(`us-fundamentals/${trigger}`, "skipped", "disabled");
