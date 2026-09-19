@@ -52,7 +52,10 @@ export interface LedgerTrade {
     state: string;
   };
   risk: { state: string; recommendation: string; reasons: string[] };
+  exits: Array<{ id: string; soldOn: string; quantity: number; exitPrice: number; reason: string | null; realizedPnlValue: number }>;
 }
+
+export interface CandlePoint { date: string; open: number; high: number; low: number; close: number; volume: number | null }
 
 export interface LedgerSummary {
   openCount: number;
@@ -115,4 +118,40 @@ export function getLedger(market: Market) {
   return request<{ generatedAt: string; summary: LedgerSummary; trades: LedgerTrade[] }>(
     `/api/v1/mobile/trade-ledger?market=${market}`,
   );
+}
+
+export function getCandles(market: Market, ticker: string) {
+  return request<{ candle: { ticker: string; points: CandlePoint[] } | null }>(
+    `/api/v1/mobile/candles?market=${market}&ticker=${encodeURIComponent(ticker)}&days=90`,
+  );
+}
+
+export function createTrade(input: {
+  assetId: string; market: Market; boughtOn: string; buyPrice: number; quantity: number;
+  strategyKey: string; projectionEntry?: number; projectedTarget?: number; projectedStop?: number;
+  projectedTrailingStop?: number; expectedHoldingDays?: number;
+}) {
+  return request<{ id: string }>("/api/v1/mobile/trade-ledger", { method: "POST", body: JSON.stringify(input) });
+}
+
+export function updateTrade(tradeId: string, input: {
+  market: Market; boughtOn: string; buyPrice: number; quantity: number; notes?: string;
+}) {
+  return request<{ ok: true }>(`/api/v1/mobile/trade-ledger/${tradeId}`, { method: "PATCH", body: JSON.stringify(input) });
+}
+
+export function deleteTrade(tradeId: string) {
+  return request<void>(`/api/v1/mobile/trade-ledger/${tradeId}`, { method: "DELETE" });
+}
+
+export function recordSale(tradeId: string, input: {
+  market: Market; soldOn: string; quantity: number; exitPrice: number; reason?: string;
+}) {
+  return request<{ ok: true }>(`/api/v1/mobile/trade-ledger/${tradeId}/sales`, { method: "POST", body: JSON.stringify(input) });
+}
+
+export function updateSale(tradeId: string, saleId: string, input: {
+  market: Market; soldOn: string; quantity: number; exitPrice: number; reason?: string;
+}) {
+  return request<{ ok: true }>(`/api/v1/mobile/trade-ledger/${tradeId}/sales/${saleId}`, { method: "PATCH", body: JSON.stringify(input) });
 }

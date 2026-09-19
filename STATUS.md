@@ -1,6 +1,6 @@
 # InvestoGenie Status
 
-_Last updated: 2026-09-19 (completed Android/iOS Phase 1 foundation with revocable mobile authentication and read-only Strong Swing and Trade Ledger screens)_
+_Last updated: 2026-09-19 (deployed Android/iOS Phase 1 to AWS and completed Phase 2 trade management, charts, and foreground refresh)_
 
 This file summarizes what has been built so far, what is currently working, what is partial, and what to build next.
 
@@ -40,8 +40,24 @@ InvestoGenie is now a local-first market terminal and portfolio intelligence app
   a read-only ledger, open/realized/overall P&L, pull-to-refresh, and server-generated trade risk.
 - No Swing, Strong Swing, News & AI, target, stop, ranking, or ledger calculation changed. Trade
   writes, push notifications, live streaming, charts and store distribution belong to later phases.
-- Local migration `0044_mobile_sessions.sql` is applied. Production must apply it during the next
-  AWS release before the mobile app can sign in.
+- Migration `0044_mobile_sessions.sql` is applied locally and on AWS production.
+
+### Android / iOS Phase 2
+
+- Phase 1 commit `8e7be0d` is deployed on AWS with `0044_mobile_sessions.sql` applied and the
+  versioned mobile authentication/read endpoints available in production.
+- The mobile client can now log an actual purchase directly from an `EXECUTION_READY` Strong Swing
+  candidate. The server uses the same signal projection resolver and stored user risk settings as
+  the web ledger, then freezes entry, target, stop, trail and holding window at purchase.
+- Trade entries can be edited or deleted. Open trades support partial/final sales, and recorded
+  sales can be corrected. Every mutation is bearer-authenticated and scoped by `user_id`.
+- Candidate detail includes a 50-session OHLC-derived price profile. Strong Swing and Trade Ledger
+  refresh every five minutes while the app is open and still support pull-to-refresh.
+- The web ledger projection lookup was moved, without formula changes, to
+  `lib/swingTradeProjection.ts` so web and mobile cannot drift. All analytics, ranking, signal,
+  News & AI, stop, target and risk calculation files remain unchanged.
+- Push alerts, biometric re-authentication, background delivery, native candlesticks and signed
+  Play Store/App Store distribution remain Phase 3.
 
 ### Active personal deployment and cloud readiness
 

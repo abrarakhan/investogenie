@@ -16,3 +16,6 @@ SHA-256 hashes, sessions expire after 30 days, and sign-out revokes the active d
 Phase 1 includes login, India/US selection, ranked Strong Swing candidates, candidate gate detail,
 and a read-only Trade Ledger with aggregate P&L and server-generated trade risk.
 
+Phase 2 adds authenticated trade creation from an Execution Ready Strong Swing plan, edit/delete,
+partial and final sale recording, sale editing, a 50-session price profile, and five-minute refresh
+while the app is open. Every projection is still calculated and frozen by the existing server engine.
