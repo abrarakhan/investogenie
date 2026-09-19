@@ -1,15 +1,17 @@
 # InvestoGenie Status
 
-_Last updated: 2026-09-19 (completed Android/iOS Phase 4 News & AI parity and production packaging; signed build awaits Expo login)_
+_Last updated: 2026-09-19 (Phase 4 mobile parity is deployed; mobile navigation is fixed and local native Android/iOS builds are the chosen distribution path)_
 
 This file summarizes what has been built so far, what is currently working, what is partial, and what to build next.
 
 ## Repository State
 
-- Branch: `main`; latest committed product revision: `bdbf018` (`Add news swing and harden data backfill`).
-- The DeepSeek V4 provider, GNews retry/empty-result fix, related tests, environment examples and
-  this documentation refresh are currently pending in the product working tree.
-- Generated `.claude/context` history churn is unrelated to the product changes and remains excluded.
+- Branch: `main`; latest committed product revision: `5b1bd0b` (`Fix mobile workspace navigation visibility`).
+- `main` is aligned with `origin/main`. Phase 4's production backend is deployed on AWS from
+  revision `1c96442`; revision `5b1bd0b` is a mobile-client navigation/version fix and does not
+  alter the deployed web service or any market calculation.
+- Unrelated local edits in `.claude/context`, `AGENTS.md`, `CLAUDE.md`,
+  `app/api/cron/backfill-nse/route.ts`, and `opencode.json` remain excluded from product commits.
 
 ## Product Direction
 
@@ -67,8 +69,8 @@ InvestoGenie is now a local-first market terminal and portfolio intelligence app
   minute in the background. Devices without enrolled biometrics continue with OS session security.
 - Strong Swing detail now renders native OHLC candles with high/low wicks. Source data and all
   entry/target/stop/rank values still come unchanged from the existing server endpoints.
-- `mobile/eas.json` provides development, internal APK preview and production build profiles.
-  Final signed binaries require linking the repo to the owner's Expo project and store credentials.
+- `mobile/eas.json` retains development, preview and production profiles, but Expo cloud builds
+  are not the approved distribution path because they upload the source bundle to Expo's service.
 - Migration `0045_mobile_push.sql`, token registration/revocation, notification audit/deduplication,
   and the protected `/api/cron/mobile-alerts` endpoint are included.
 - Protected calculation diff: no files under `lib/analytics`, nor `lib/strongSwing.ts`,
@@ -82,26 +84,40 @@ InvestoGenie is now a local-first market terminal and portfolio intelligence app
 - Candidate cards show technical score, bounded news adjustment, combined score, unchanged frozen
   Strong Swing levels, state and source-linked evidence. Five-minute foreground refresh remains a
   presentation refresh only.
-- Preview and production EAS profiles pin the active AWS HTTPS endpoint. Production builds fail
-  closed when the server URL is absent or non-HTTPS rather than silently using localhost.
+- Production mobile configuration pins the active AWS HTTPS endpoint and fails closed when the
+  server URL is absent or non-HTTPS rather than silently using localhost.
 - Release validation checks identifiers, HTTPS environments and the notifications plugin. Android
   version code, iOS build number, encryption declaration and a mobile privacy statement are present.
-- Signed Android/iOS binaries remain pending because this Mac is not signed into Expo. No signing
-  identity or project ownership was invented or stored in the repository.
+- The Android client is now version `0.1.1` (`versionCode` 2) and iOS build number 2. The India/US
+  switch is followed by always-visible `Strong`, `News & AI`, and `Ledger` workspace tabs, fixing
+  the first APK's navigation being hidden behind Android's system navigation area.
+- The previously installed Android APK was built from `1c96442`; it does not contain the
+  `5b1bd0b` navigation fix. A replacement APK will be generated locally with Gradle/Android Studio.
+- Signed binaries will be built locally: Expo SDK remains an open-source React Native dependency,
+  while `expo prebuild`, Gradle and Xcode generate/sign native projects without EAS Build, Expo
+  Updates, or an Expo cloud source upload.
+- iOS local build prerequisites are not yet installed on this Mac: full Xcode, CocoaPods, an
+  Apple signing identity, and the iOS Simulator runtime. A free Apple ID can install a development
+  build on the owner's iPhone with periodic re-signing; TestFlight/App Store distribution requires
+  Apple Developer Program membership.
+- Push delivery still uses the Expo push relay with deliberately generic payloads. Replacing that
+  transport with direct FCM/APNs remains a future privacy-hardening task and is separate from the
+  decision to avoid Expo cloud builds.
 - Protected calculation diff remains empty for `lib/analytics`, `lib/strongSwing.ts`,
   `lib/swingTradeLedger.ts`, `lib/screener.ts`, and `lib/newsSwing.ts`.
 
-### Active personal deployment and cloud readiness
+### Active AWS deployment and local fallback
 
-- The active personal deployment is the local Mac: `com.investogenie.app` runs the production
-  build through a user-level `launchd` service, starts after login, restarts after failures and
-  keeps the existing market-data scheduler in the same supervised process.
-- Next.js listens only on `127.0.0.1:3000`. Tailscale Serve supplies a certificate-backed HTTPS
-  address that is reachable only by devices in the owner's tailnet; no router forwarding or
-  publicly exposed PostgreSQL port is used. The private HTTPS `/login` endpoint was verified
-  with HTTP 200 on 2026-08-09.
-- `caffeinate` prevents idle sleep while the Mac is connected to AC power. Closing the laptop,
-  logging out, losing power or losing internet still pauses the app and its recurring jobs.
+- The active production deployment is AWS Lightsail, supervised by the `investogenie` systemd
+  service with the Next.js server and recurring market-data scheduler in the same process tree.
+  The deployed Phase 4 mobile endpoint `/api/v1/mobile/news-swing` was verified to enforce bearer
+  authentication (HTTP 401 without a token), and the service remained active after deployment.
+- The local Mac `launchd`/Tailscale deployment remains available as a private fallback and
+  development environment; it is no longer the primary production instance.
+- In the local fallback, Next.js listens only on `127.0.0.1:3000`; Tailscale Serve supplies a
+  certificate-backed HTTPS address reachable only inside the owner's tailnet. `caffeinate` keeps
+  that fallback awake on AC power, but closing the laptop, logout, power loss, or network loss
+  still pauses it. These limitations do not apply to the active AWS service.
 - `deploy/local/` documents one-click development, production service install/uninstall, logs,
   Tailscale access and local password recovery, while
   `deploy/oracle/` provides Ubuntu bootstrap, systemd, Nginx, production environment template,
@@ -113,12 +129,13 @@ InvestoGenie is now a local-first market terminal and portfolio intelligence app
   hides password input and updates only the bcrypt hash for an existing user, preserving that
   user's portfolio, CAS holdings, mappings and settings. No unauthenticated reset endpoint is
   exposed over Tailscale.
-- `scripts/check-deployment.mjs` validates secrets, runtime, build artifact and database isolation;
-  the live Mac passes 10/10 local checks and a production-profile simulation passes 12/12.
+- `scripts/check-deployment.mjs` validates secrets, runtime, build artifacts and database isolation;
+  the local fallback previously passed 10/10 local checks and a production-profile simulation
+  passed 12/12.
 - The Oracle deployment package remains available as a future option, but no OCI production VM is
-  currently provisioned. The personal deployment has no cloud-compute bill.
+  currently provisioned. AWS Lightsail is the current paid cloud host.
 - Current local sizing is approximately 1.9 GB for PostgreSQL and 2.4 GB for the development
-  workspace. Cloud deployment remains optional and would require a VM/domain to be provisioned.
+  workspace; production storage and runtime capacity are managed on the AWS instance.
 
 ## Current App Surfaces
 

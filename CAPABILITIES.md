@@ -1,6 +1,8 @@
 # InvestoGenie - Capabilities
 
-> Current capability snapshot (2026-09-19) after completing Android/iOS Phase 4 News & AI parity and production packaging, alongside simultaneous provider aggregation and Strong Swing-prioritized news retrieval
+> Current capability snapshot (2026-09-19) after deploying Android/iOS Phase 4 News & AI parity,
+> fixing mobile workspace navigation, and choosing fully local Gradle/Xcode builds instead of
+> Expo cloud source uploads, alongside simultaneous provider aggregation and Strong Swing-prioritized news retrieval
 > Swing, DeepSeek V4 classification, GNews rate-limit recovery, conservative asset retirement,
 > and repairing the hourly swing scan (failing every
 > daytime run and periodically saturating the database), correcting a one-day date shift across
@@ -50,11 +52,13 @@ help/knowledge base, and recurring data sync jobs.
 | **Help & knowledge base** | `/help` guided walkthrough + 13 code-accurate articles (swing engine + 5 swing strategies + probability method + Long-Term engine + 6 investor strategies) | Working |
 | Sync health | Browser-visible `/admin/sync` and `/data/health` freshness and provider status pages | Working |
 | Recurring sync | Startup, recurring, and daily jobs for quotes, OHLCV, fundamentals, macro, scans, and the email digest | Working |
-| **Private personal deployment** | Production Next.js + schedulers supervised by macOS `launchd`, localhost-only listener, AC-power sleep prevention and tailnet-only Tailscale Serve HTTPS | Active and verified |
-| **Android / iOS Phase 1** | Expo SDK 57 client with secure device login, India/US selection, server-ranked Strong Swing detail, and read-only Trade Ledger/P&L/risk | API deployed on AWS; native app distribution pending |
-| **Android / iOS Phase 2** | Execution Ready candidate-to-ledger flow, edit/delete, partial/final sale recording and correction, price profile, five-minute foreground refresh | Built and verified; native store distribution pending |
-| **Android / iOS Phase 3** | Opt-in deduplicated ledger-state push alerts, biometric re-entry, native OHLC candles, notification audit trail and EAS build profiles; notification provider receives no financial details | Built; Expo project linking and signed store builds pending |
-| **Android / iOS Phase 4** | Existing server-ranked News & AI Swing with linked evidence, fail-closed production API configuration, privacy metadata and release validation | Built and verified; signed binaries await owner Expo login/project link |
+| **AWS production deployment** | Production Next.js + schedulers supervised by systemd on AWS Lightsail, serving the web terminal and versioned mobile APIs | Active; Phase 4 backend deployed at `1c96442` |
+| **Private local fallback** | macOS `launchd`, localhost-only listener, AC-power sleep prevention and tailnet-only Tailscale Serve HTTPS | Available and previously verified; no longer primary production |
+| **Android / iOS Phase 1** | Expo SDK 57 client with secure device login, India/US selection, server-ranked Strong Swing detail, and read-only Trade Ledger/P&L/risk | API deployed on AWS; working in the Android client |
+| **Android / iOS Phase 2** | Execution Ready candidate-to-ledger flow, edit/delete, partial/final sale recording and correction, price profile, five-minute foreground refresh | Built and verified; server calculations remain authoritative |
+| **Android / iOS Phase 3** | Opt-in deduplicated ledger-state push alerts, biometric re-entry, native OHLC candles, and notification audit trail; push payloads contain no financial details | Built and verified; direct FCM/APNs remains future hardening |
+| **Android / iOS Phase 4** | Existing server-ranked News & AI Swing with linked evidence, fail-closed production API configuration, privacy metadata and release validation | Backend deployed on AWS; mobile source at 0.1.1 with visible Strong/News & AI/Ledger navigation |
+| **Local native mobile builds** | Expo Prebuild generates native projects locally; Android uses Gradle/Android Studio and iOS uses Xcode signing, with no EAS Build, Expo Updates, or Expo cloud source upload | Chosen path; replacement Android APK pending, and Xcode/CocoaPods/Apple signing are not yet installed |
 | Oracle deployment package | Native Ubuntu ARM systemd/Nginx deployment, isolated environment, checks, backups and release automation | Available; not provisioned |
 | AMFI scheme identity | Official option-level AMFI registry with AMC/category, NAV, both ISIN columns, AMFI codes, and many-identifiers-to-one-snapshot mapping | Working |
 | Provider fallback | Yahoo Finance (US OHLCV history, free/unofficial), Google Finance fallback for quotes. A Tiingo-based module (`lib/ingest/usHistory.ts`) exists and is configured but is NOT used by the recurring sync path — see Architecture. | Working |
