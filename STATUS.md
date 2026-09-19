@@ -1,6 +1,6 @@
 # InvestoGenie Status
 
-_Last updated: 2026-09-19 (completed Android/iOS Phase 3 safety alerts, biometric re-entry, native candlesticks, and EAS build readiness)_
+_Last updated: 2026-09-19 (completed Android/iOS Phase 4 News & AI parity and production packaging; signed build awaits Expo login)_
 
 This file summarizes what has been built so far, what is currently working, what is partial, and what to build next.
 
@@ -73,6 +73,23 @@ InvestoGenie is now a local-first market terminal and portfolio intelligence app
   and the protected `/api/cron/mobile-alerts` endpoint are included.
 - Protected calculation diff: no files under `lib/analytics`, nor `lib/strongSwing.ts`,
   `lib/swingTradeLedger.ts`, `lib/screener.ts`, or `lib/newsSwing.ts`, were modified in Phase 3.
+
+### Android / iOS Phase 4
+
+- The mobile terminal now includes News & AI Swing. Its API calls the existing
+  `getNewsSwingWorkspace()` with the signed-in user's settings and returns its candidates in the
+  exact existing order; the device performs no scoring, re-ranking or recommendation calculation.
+- Candidate cards show technical score, bounded news adjustment, combined score, unchanged frozen
+  Strong Swing levels, state and source-linked evidence. Five-minute foreground refresh remains a
+  presentation refresh only.
+- Preview and production EAS profiles pin the active AWS HTTPS endpoint. Production builds fail
+  closed when the server URL is absent or non-HTTPS rather than silently using localhost.
+- Release validation checks identifiers, HTTPS environments and the notifications plugin. Android
+  version code, iOS build number, encryption declaration and a mobile privacy statement are present.
+- Signed Android/iOS binaries remain pending because this Mac is not signed into Expo. No signing
+  identity or project ownership was invented or stored in the repository.
+- Protected calculation diff remains empty for `lib/analytics`, `lib/strongSwing.ts`,
+  `lib/swingTradeLedger.ts`, `lib/screener.ts`, and `lib/newsSwing.ts`.
 
 ### Active personal deployment and cloud readiness
 

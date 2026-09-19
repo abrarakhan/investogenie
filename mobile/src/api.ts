@@ -1,7 +1,14 @@
 import * as SecureStore from "expo-secure-store";
 
 const TOKEN_KEY = "investogenie.mobile.token";
-const API_URL = (process.env.EXPO_PUBLIC_API_URL || "http://localhost:3000").replace(/\/$/, "");
+const configuredApiUrl = process.env.EXPO_PUBLIC_API_URL?.trim();
+const API_URL = (configuredApiUrl || "http://localhost:3000").replace(/\/$/, "");
+
+export function apiConfigurationError(): string | null {
+  if (!configuredApiUrl && !__DEV__) return "This build has no InvestoGenie server configured.";
+  if (!/^https:\/\//.test(API_URL) && !__DEV__) return "Production builds require an HTTPS InvestoGenie server.";
+  return null;
+}
 
 export type Market = "IN" | "US";
 
@@ -25,6 +32,24 @@ export interface StrongCandidate {
   fiveDayReturnPct: number | null;
   tenDayReturnPct: number | null;
   gates: Array<{ key: string; label: string; passed: boolean; detail: string }>;
+}
+
+export interface NewsEvidence {
+  articleId: string;
+  title: string;
+  url: string;
+  sourceName: string | null;
+  publishedAt: string;
+  direction: "POSITIVE" | "NEGATIVE" | "NEUTRAL";
+  rationale: string;
+}
+
+export interface NewsSwingCandidate extends StrongCandidate {
+  technicalScore: number;
+  newsAdjustment: number;
+  combinedScore: number;
+  state: "FAVORED" | "NEUTRAL" | "CAUTION" | "RISK_OFF";
+  news: NewsEvidence[];
 }
 
 export interface LedgerTrade {
@@ -67,6 +92,8 @@ export interface LedgerSummary {
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const configurationError = apiConfigurationError();
+  if (configurationError) throw new Error(configurationError);
   const token = await SecureStore.getItemAsync(TOKEN_KEY);
   const response = await fetch(`${API_URL}${path}`, {
     ...init,
@@ -121,6 +148,16 @@ export function getStrongSwing(market: Market) {
   return request<{ generatedAt: string; candidates: StrongCandidate[] }>(
     `/api/v1/mobile/strong-swing?market=${market}&limit=30`,
   );
+}
+
+export function getNewsSwing(market: Market) {
+  return request<{
+    generatedAt: string;
+    lastFetchedAt: string | null;
+    articleCount: number;
+    impactCount: number;
+    candidates: NewsSwingCandidate[];
+  }>(`/api/v1/mobile/news-swing?market=${market}`);
 }
 
 export function getLedger(market: Market) {

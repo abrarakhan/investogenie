@@ -3,15 +3,21 @@
     "name": "InvestoGenie",
     "slug": "investogenie",
     "version": "0.1.0",
+    "description": "Private InvestoGenie market terminal and trade ledger companion.",
     "orientation": "portrait",
     "scheme": "investogenie",
     "userInterfaceStyle": "dark",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.investogenie.mobile"
+      "bundleIdentifier": "com.investogenie.mobile",
+      "buildNumber": "1",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "package": "com.investogenie.mobile",
+      "versionCode": 1,
       "predictiveBackGestureEnabled": true
     },
     "plugins": [

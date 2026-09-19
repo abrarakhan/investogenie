@@ -1,19 +1,19 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import {
-  ActivityIndicator, Alert, AppState, FlatList, Modal, Pressable, RefreshControl, SafeAreaView,
+  ActivityIndicator, Alert, AppState, FlatList, Linking, Modal, Pressable, RefreshControl, SafeAreaView,
   ScrollView, StyleSheet, Text, TextInput, View,
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import * as Notifications from "expo-notifications";
 import Svg, { Line, Rect } from "react-native-svg";
 import {
-  createTrade, deleteTrade, getCandles, getLedger, getStrongSwing, login, logout, recordSale,
+  apiConfigurationError, createTrade, deleteTrade, getCandles, getLedger, getNewsSwing, getStrongSwing, login, logout, recordSale,
   restoreSession, updateSale, updateTrade, type CandlePoint, type LedgerSummary, type LedgerTrade,
-  type Market, type MobileUser, type StrongCandidate,
+  type Market, type MobileUser, type NewsSwingCandidate, type StrongCandidate,
 } from "./src/api";
 import { registerDeviceNotifications, unlockWithBiometrics } from "./src/deviceSecurity";
 
-type Tab = "strong" | "ledger";
+type Tab = "strong" | "news" | "ledger";
 const today = () => new Date().toISOString().slice(0, 10);
 const money = (value: number, market: Market) => new Intl.NumberFormat(market === "IN" ? "en-IN" : "en-US", {
   style: "currency", currency: market === "IN" ? "INR" : "USD", maximumFractionDigits: 2,
@@ -61,6 +61,7 @@ function Login({ onLogin }: { onLogin: (user: MobileUser) => void }) {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const configurationError = apiConfigurationError();
   const submit = async () => {
     setBusy(true); setError("");
     try { onLogin(await login(email, password)); }
@@ -71,10 +72,11 @@ function Login({ onLogin }: { onLogin: (user: MobileUser) => void }) {
     <Text style={styles.brand}>Investo<Text style={styles.accent}>Genie</Text></Text>
     <Text style={styles.eyebrow}>MOBILE TERMINAL</Text><Text style={styles.title}>Sign in</Text>
     <Text style={styles.muted}>Use the same account as the InvestoGenie web terminal.</Text>
+    {!!configurationError && <Text style={styles.error}>{configurationError}</Text>}
     <Field value={email} onChangeText={setEmail} placeholder="Email" keyboard="email-address" />
     <Field value={password} onChangeText={setPassword} placeholder="Password" secure />
     {!!error && <Text style={styles.error}>{error}</Text>}
-    <Action label="Open terminal" busy={busy} onPress={submit} />
+    <Action label="Open terminal" busy={busy} disabled={!!configurationError} onPress={submit} />
   </ScrollView>;
 }
 
@@ -89,8 +91,8 @@ function Terminal({ user, requestedTab, onRequestedTabHandled, onLogout }: { use
     <View style={styles.header}><View><Text style={styles.brandSmall}>Investo<Text style={styles.accent}>Genie</Text></Text><Text style={styles.user}>{user.email}</Text></View><Pressable onPress={onLogout}><Text style={styles.link}>Sign out</Text></Pressable></View>
     <View style={styles.switchRow}>{(["IN", "US"] as Market[]).map((value) => <Pressable key={value} onPress={() => setMarket(value)} style={[styles.switch, market === value && styles.switchActive]}><Text style={market === value ? styles.switchTextActive : styles.switchText}>{value === "IN" ? "India" : "US"}</Text></Pressable>)}</View>
     {!!notificationStatus && <Text style={styles.deviceStatus}>{notificationStatus}</Text>}
-    <View style={styles.flex}>{activeTab === "strong" ? <Strong key={market} market={market} /> : <Ledger key={market} market={market} />}</View>
-    <View style={styles.tabs}><TabButton active={activeTab === "strong"} label="Strong Swing" onPress={() => selectTab("strong")} /><TabButton active={activeTab === "ledger"} label="Trade Ledger" onPress={() => selectTab("ledger")} /></View>
+    <View style={styles.flex}>{activeTab === "strong" ? <Strong key={market} market={market} /> : activeTab === "news" ? <NewsSwing key={market} market={market} /> : <Ledger key={market} market={market} />}</View>
+    <View style={styles.tabs}><TabButton active={activeTab === "strong"} label="Strong" onPress={() => selectTab("strong")} /><TabButton active={activeTab === "news"} label="News & AI" onPress={() => selectTab("news")} /><TabButton active={activeTab === "ledger"} label="Ledger" onPress={() => selectTab("ledger")} /></View>
   </View>;
 }
 
@@ -131,6 +133,42 @@ function CandidateDetail({ row, market, onBack }: { row: StrongCandidate; market
     {row.gates.map((gate) => <View key={gate.key} style={styles.gate}><Text style={gate.passed ? styles.good : styles.bad}>{gate.passed ? "PASS" : "WAIT"}</Text><View style={styles.gateText}><Text style={styles.gateLabel}>{gate.label}</Text><Text style={styles.muted}>{gate.detail}</Text></View></View>)}
     <TradeEntrySheet visible={buying} row={row} market={market} onClose={() => setBuying(false)} onSaved={() => { setBuying(false); setNotice("Trade recorded in your ledger with this frozen Strong Swing plan."); }} />
   </ScrollView>;
+}
+
+function NewsSwing({ market }: { market: Market }) {
+  const [rows, setRows] = useState<NewsSwingCandidate[]>([]);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState("");
+  const [summary, setSummary] = useState({ articles: 0, impacts: 0, fetchedAt: null as string | null });
+  const load = useCallback(async () => {
+    setRefreshing(true); setError("");
+    try {
+      const result = await getNewsSwing(market);
+      setRows(result.candidates);
+      setSummary({ articles: result.articleCount, impacts: result.impactCount, fetchedAt: result.lastFetchedAt });
+    } catch (cause) { setError(message(cause, "Could not load News & AI Swing")); }
+    finally { setRefreshing(false); }
+  }, [market]);
+  useEffect(() => {
+    let active = true;
+    getNewsSwing(market).then((result) => {
+      if (!active) return;
+      setRows(result.candidates);
+      setSummary({ articles: result.articleCount, impacts: result.impactCount, fetchedAt: result.lastFetchedAt });
+    }).catch((cause) => { if (active) setError(message(cause, "Could not load News & AI Swing")); });
+    return () => { active = false; };
+  }, [market]);
+  useEffect(() => { const timer = setInterval(load, 300_000); return () => clearInterval(timer); }, [load]);
+  return <View style={styles.flex}><ScreenHead title="News & AI Swing" subtitle="Existing Strong Swing setups in the exact server-ranked News & AI order." />
+    <Text style={styles.newsSummary}>{summary.articles} articles · {summary.impacts} impacts · {summary.fetchedAt ? `fetched ${new Date(summary.fetchedAt).toLocaleString()}` : "awaiting news sync"}</Text>
+    {!!error && <Banner text={error} />}
+    <FlatList data={rows} keyExtractor={(item) => item.assetId} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={load} tintColor="#34d399" />} contentContainerStyle={styles.list} ListEmptyComponent={!refreshing ? <Empty text="No News & AI candidates available." /> : null} renderItem={({ item, index }) => <View style={styles.card}>
+      <View style={styles.rowBetween}><View><Text style={styles.ticker}>#{index + 1} {item.ticker}</Text><Text style={styles.meta}>Strong rank #{item.strongSwingRank} · {item.status.replaceAll("_", " ")}</Text></View><StatePill state={item.state} /></View>
+      <View style={styles.metricRow}><Metric label="TECHNICAL" value={item.technicalScore.toFixed(1)} /><Metric label="NEWS" value={`${item.newsAdjustment >= 0 ? "+" : ""}${item.newsAdjustment.toFixed(1)}`} positive={item.newsAdjustment > 0} negative={item.newsAdjustment < 0} /><Metric label="COMBINED" value={item.combinedScore.toFixed(1)} /></View>
+      <View style={styles.metricRow}><Metric label="ENTRY" value={money(item.strongEntry, market)} /><Metric label="TARGET" value={money(item.strongTarget, market)} positive /><Metric label="STOP" value={money(item.strongStop, market)} negative /></View>
+      {item.news.slice(0, 3).map((evidence) => <Pressable key={`${evidence.articleId}:${evidence.direction}`} onPress={() => void Linking.openURL(evidence.url)} style={styles.evidence}><Text style={evidence.direction === "POSITIVE" ? styles.goodValue : evidence.direction === "NEGATIVE" ? styles.badValue : styles.meta}>{evidence.direction} · {evidence.sourceName ?? "Source"}</Text><Text numberOfLines={2} style={styles.evidenceTitle}>{evidence.title}</Text><Text numberOfLines={2} style={styles.meta}>{evidence.rationale}</Text></Pressable>)}
+    </View>} />
+  </View>;
 }
 
 function PriceChart({ market, ticker }: { market: Market; ticker: string }) {
@@ -197,12 +235,13 @@ function SaleForm({ trade, sale, market, onClose, onSaved }: { trade: LedgerTrad
 
 function Sheet({ visible, title, onClose, children }: { visible: boolean; title: string; onClose: () => void; children: React.ReactNode }) { return <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}><View style={styles.modalBackdrop}><View style={styles.sheet}><View style={styles.rowBetween}><Text style={styles.sectionTitle}>{title}</Text><Pressable onPress={onClose}><Text style={styles.link}>Close</Text></Pressable></View>{children}</View></View></Modal>; }
 function Field({ value, onChangeText, placeholder, keyboard, secure }: { value: string; onChangeText: (value: string) => void; placeholder: string; keyboard?: "email-address" | "decimal-pad"; secure?: boolean }) { return <TextInput style={styles.input} value={value} onChangeText={onChangeText} placeholder={placeholder} placeholderTextColor="#697078" autoCapitalize="none" keyboardType={keyboard} secureTextEntry={secure} />; }
-function Action({ label, onPress, busy = false }: { label: string; onPress: () => void; busy?: boolean }) { return <Pressable style={styles.primary} onPress={onPress} disabled={busy}>{busy ? <ActivityIndicator color="#04110d" /> : <Text style={styles.primaryText}>{label}</Text>}</Pressable>; }
+function Action({ label, onPress, busy = false, disabled = false }: { label: string; onPress: () => void; busy?: boolean; disabled?: boolean }) { return <Pressable style={[styles.primary, disabled && styles.disabled]} onPress={onPress} disabled={busy || disabled}>{busy ? <ActivityIndicator color="#04110d" /> : <Text style={styles.primaryText}>{label}</Text>}</Pressable>; }
 const SmallAction = ({ label, onPress, destructive }: { label: string; onPress: () => void; destructive?: boolean }) => <Pressable style={styles.smallAction} onPress={onPress}><Text style={destructive ? styles.badValue : styles.link}>{label}</Text></Pressable>;
 const Centered = ({ children }: { children: React.ReactNode }) => <View style={styles.center}>{children}</View>;
 const ScreenHead = ({ title, subtitle }: { title: string; subtitle: string }) => <View style={styles.screenHead}><Text style={styles.title}>{title}</Text><Text style={styles.muted}>{subtitle}</Text></View>;
 const TabButton = ({ active, label, onPress }: { active: boolean; label: string; onPress: () => void }) => <Pressable style={[styles.tab, active && styles.tabActive]} onPress={onPress}><Text style={active ? styles.tabTextActive : styles.tabText}>{label}</Text></Pressable>;
 const Score = ({ value }: { value: number }) => <View style={styles.score}><Text style={styles.scoreText}>{Math.round(value)}</Text></View>;
+const StatePill = ({ state }: { state: NewsSwingCandidate["state"] }) => <View style={[styles.statePill, state === "FAVORED" ? styles.stateFavored : state === "RISK_OFF" ? styles.stateRisk : state === "CAUTION" ? styles.stateCaution : null]}><Text style={styles.stateText}>{state.replaceAll("_", " ")}</Text></View>;
 const Metric = ({ label, value, positive, negative }: { label: string; value: string; positive?: boolean; negative?: boolean }) => <View style={styles.metric}><Text style={styles.metricLabel}>{label}</Text><Text numberOfLines={1} style={[styles.metricValue, positive && styles.goodValue, negative && styles.badValue]}>{value}</Text></View>;
 const Summary = ({ label, value }: { label: string; value: string }) => <View style={styles.summaryCard}><Text style={styles.metricLabel}>{label}</Text><Text style={styles.summaryValue}>{value}</Text></View>;
 const Empty = ({ text }: { text: string }) => <View style={styles.empty}><Text style={styles.muted}>{text}</Text></View>;
@@ -212,7 +251,7 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: "#05070a" }, flex: { flex: 1 }, center: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: "#05070a" },
   login: { flexGrow: 1, justifyContent: "center", padding: 28, gap: 14, backgroundColor: "#05070a" }, brand: { color: "#f7f8fa", fontSize: 30, fontWeight: "900" }, brandSmall: { color: "#f7f8fa", fontSize: 20, fontWeight: "900" }, accent: { color: "#34d399" }, eyebrow: { color: "#34d399", fontSize: 11, fontWeight: "800", letterSpacing: 3 },
   title: { color: "#f7f8fa", fontSize: 27, fontWeight: "900" }, muted: { color: "#858c95", fontSize: 14, lineHeight: 21 }, input: { color: "#f7f8fa", backgroundColor: "#0c1015", borderColor: "#242a32", borderWidth: 1, borderRadius: 8, paddingHorizontal: 15, height: 52 },
-  error: { color: "#fb7185" }, success: { color: "#6ee7b7", marginTop: 12 }, warning: { color: "#fbbf24", borderColor: "#6b4d0d", borderWidth: 1, padding: 12, borderRadius: 7 }, primary: { backgroundColor: "#34d399", borderRadius: 8, minHeight: 52, alignItems: "center", justifyContent: "center", marginVertical: 4 }, primaryText: { color: "#04110d", fontSize: 15, fontWeight: "900" },
+  error: { color: "#fb7185" }, success: { color: "#6ee7b7", marginTop: 12 }, warning: { color: "#fbbf24", borderColor: "#6b4d0d", borderWidth: 1, padding: 12, borderRadius: 7 }, primary: { backgroundColor: "#34d399", borderRadius: 8, minHeight: 52, alignItems: "center", justifyContent: "center", marginVertical: 4 }, disabled: { opacity: 0.45 }, primaryText: { color: "#04110d", fontSize: 15, fontWeight: "900" },
   header: { paddingHorizontal: 18, paddingVertical: 12, borderBottomColor: "#1d2229", borderBottomWidth: 1, flexDirection: "row", alignItems: "center", justifyContent: "space-between" }, user: { color: "#707780", fontSize: 10, marginTop: 2 }, link: { color: "#5eead4", fontWeight: "700" },
   switchRow: { flexDirection: "row", padding: 12, gap: 8 }, switch: { flex: 1, alignItems: "center", padding: 10, borderWidth: 1, borderColor: "#252b33", borderRadius: 7 }, switchActive: { backgroundColor: "#102a22", borderColor: "#2b8c70" }, switchText: { color: "#777f89", fontWeight: "800" }, switchTextActive: { color: "#6ee7b7", fontWeight: "900" },
   screenHead: { paddingHorizontal: 18, paddingTop: 8, paddingBottom: 12, gap: 5 }, errorBanner: { color: "#fecdd3", backgroundColor: "#35131d", marginHorizontal: 18, marginBottom: 10, padding: 12, borderRadius: 7 }, list: { padding: 14, gap: 10, paddingBottom: 28 },
@@ -224,4 +263,5 @@ const styles = StyleSheet.create({
   actions: { flexDirection: "row", gap: 8, borderTopWidth: 1, borderTopColor: "#1d2229", paddingTop: 10 }, smallAction: { minHeight: 40, justifyContent: "center", paddingHorizontal: 10 }, saleRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", backgroundColor: "#080b0f", borderRadius: 6, padding: 10 },
   modalBackdrop: { flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(0,0,0,0.72)" }, sheet: { backgroundColor: "#0b0f14", borderTopLeftRadius: 12, borderTopRightRadius: 12, borderColor: "#2a3038", borderWidth: 1, padding: 20, paddingBottom: 36, gap: 12 },
   chart: { height: 120, marginTop: 18, backgroundColor: "#080b0f", borderRadius: 8, overflow: "hidden" }, chartCaption: { color: "#646b74", fontSize: 10, marginTop: 6 }, deviceStatus: { color: "#6f7781", fontSize: 9, paddingHorizontal: 16, paddingBottom: 4 },
+  newsSummary: { color: "#697078", fontSize: 10, paddingHorizontal: 18, paddingBottom: 8 }, evidence: { borderTopWidth: 1, borderTopColor: "#1d2229", paddingTop: 10, gap: 3 }, evidenceTitle: { color: "#e5e7eb", fontSize: 13, fontWeight: "700" }, statePill: { borderRadius: 12, borderWidth: 1, borderColor: "#343a43", paddingHorizontal: 8, paddingVertical: 5 }, stateFavored: { borderColor: "#23835f", backgroundColor: "#0d2c21" }, stateRisk: { borderColor: "#9f2942", backgroundColor: "#35131d" }, stateCaution: { borderColor: "#8a6417", backgroundColor: "#30250d" }, stateText: { color: "#d5dae0", fontSize: 9, fontWeight: "900" },
 });

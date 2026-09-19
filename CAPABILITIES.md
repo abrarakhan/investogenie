@@ -1,6 +1,6 @@
 # InvestoGenie - Capabilities
 
-> Current capability snapshot (2026-09-19) after completing Android/iOS Phase 3 generic safety alerts, biometric re-entry, native candlesticks and EAS build readiness, alongside simultaneous provider aggregation and Strong Swing-prioritized news retrieval
+> Current capability snapshot (2026-09-19) after completing Android/iOS Phase 4 News & AI parity and production packaging, alongside simultaneous provider aggregation and Strong Swing-prioritized news retrieval
 > Swing, DeepSeek V4 classification, GNews rate-limit recovery, conservative asset retirement,
 > and repairing the hourly swing scan (failing every
 > daytime run and periodically saturating the database), correcting a one-day date shift across
@@ -54,6 +54,7 @@ help/knowledge base, and recurring data sync jobs.
 | **Android / iOS Phase 1** | Expo SDK 57 client with secure device login, India/US selection, server-ranked Strong Swing detail, and read-only Trade Ledger/P&L/risk | API deployed on AWS; native app distribution pending |
 | **Android / iOS Phase 2** | Execution Ready candidate-to-ledger flow, edit/delete, partial/final sale recording and correction, price profile, five-minute foreground refresh | Built and verified; native store distribution pending |
 | **Android / iOS Phase 3** | Opt-in deduplicated ledger-state push alerts, biometric re-entry, native OHLC candles, notification audit trail and EAS build profiles; notification provider receives no financial details | Built; Expo project linking and signed store builds pending |
+| **Android / iOS Phase 4** | Existing server-ranked News & AI Swing with linked evidence, fail-closed production API configuration, privacy metadata and release validation | Built and verified; signed binaries await owner Expo login/project link |
 | Oracle deployment package | Native Ubuntu ARM systemd/Nginx deployment, isolated environment, checks, backups and release automation | Available; not provisioned |
 | AMFI scheme identity | Official option-level AMFI registry with AMC/category, NAV, both ISIN columns, AMFI codes, and many-identifiers-to-one-snapshot mapping | Working |
 | Provider fallback | Yahoo Finance (US OHLCV history, free/unofficial), Google Finance fallback for quotes. A Tiingo-based module (`lib/ingest/usHistory.ts`) exists and is configured but is NOT used by the recurring sync path — see Architecture. | Working |
