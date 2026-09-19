@@ -1,8 +1,9 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import {
-  ActivityIndicator, Alert, AppState, FlatList, Linking, Modal, Pressable, RefreshControl, SafeAreaView,
+  ActivityIndicator, Alert, AppState, FlatList, Linking, Modal, Pressable, RefreshControl,
   ScrollView, StyleSheet, Text, TextInput, View,
 } from "react-native";
+import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import * as Notifications from "expo-notifications";
 import Svg, { Line, Rect } from "react-native-svg";
@@ -51,9 +52,9 @@ export default function App() {
   }, [unlock, user]);
   if (booting) return <Centered><ActivityIndicator color="#34d399" /></Centered>;
   if (user && !unlocked) return <Centered><Text style={styles.title}>InvestoGenie locked</Text><Action label="Unlock" onPress={() => void unlock()} /></Centered>;
-  return <SafeAreaView style={styles.safe}><StatusBar style="light" />{
+  return <SafeAreaProvider><SafeAreaView style={styles.safe} edges={["top", "right", "bottom", "left"]}><StatusBar style="light" />{
     user ? <Terminal user={user} requestedTab={requestedTab} onRequestedTabHandled={() => setRequestedTab(null)} onLogout={() => logout().then(() => setUser(null))} /> : <Login onLogin={(next) => { setUser(next); setUnlocked(true); }} />
-  }</SafeAreaView>;
+  }</SafeAreaView></SafeAreaProvider>;
 }
 
 function Login({ onLogin }: { onLogin: (user: MobileUser) => void }) {
@@ -90,9 +91,9 @@ function Terminal({ user, requestedTab, onRequestedTabHandled, onLogout }: { use
   return <View style={styles.flex}>
     <View style={styles.header}><View><Text style={styles.brandSmall}>Investo<Text style={styles.accent}>Genie</Text></Text><Text style={styles.user}>{user.email}</Text></View><Pressable onPress={onLogout}><Text style={styles.link}>Sign out</Text></Pressable></View>
     <View style={styles.switchRow}>{(["IN", "US"] as Market[]).map((value) => <Pressable key={value} onPress={() => setMarket(value)} style={[styles.switch, market === value && styles.switchActive]}><Text style={market === value ? styles.switchTextActive : styles.switchText}>{value === "IN" ? "India" : "US"}</Text></Pressable>)}</View>
+    <View style={styles.tabs}><TabButton active={activeTab === "strong"} label="Strong" onPress={() => selectTab("strong")} /><TabButton active={activeTab === "news"} label="News & AI" onPress={() => selectTab("news")} /><TabButton active={activeTab === "ledger"} label="Ledger" onPress={() => selectTab("ledger")} /></View>
     {!!notificationStatus && <Text style={styles.deviceStatus}>{notificationStatus}</Text>}
     <View style={styles.flex}>{activeTab === "strong" ? <Strong key={market} market={market} /> : activeTab === "news" ? <NewsSwing key={market} market={market} /> : <Ledger key={market} market={market} />}</View>
-    <View style={styles.tabs}><TabButton active={activeTab === "strong"} label="Strong" onPress={() => selectTab("strong")} /><TabButton active={activeTab === "news"} label="News & AI" onPress={() => selectTab("news")} /><TabButton active={activeTab === "ledger"} label="Ledger" onPress={() => selectTab("ledger")} /></View>
   </View>;
 }
 
@@ -257,7 +258,7 @@ const styles = StyleSheet.create({
   screenHead: { paddingHorizontal: 18, paddingTop: 8, paddingBottom: 12, gap: 5 }, errorBanner: { color: "#fecdd3", backgroundColor: "#35131d", marginHorizontal: 18, marginBottom: 10, padding: 12, borderRadius: 7 }, list: { padding: 14, gap: 10, paddingBottom: 28 },
   card: { backgroundColor: "#0b0f14", borderColor: "#252b33", borderWidth: 1, borderRadius: 8, padding: 15, gap: 14 }, rowBetween: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 10 }, ticker: { color: "#f8fafc", fontSize: 19, fontWeight: "900" }, meta: { color: "#707780", fontSize: 12, marginTop: 3 }, score: { minWidth: 43, height: 32, paddingHorizontal: 8, alignItems: "center", justifyContent: "center", borderRadius: 16, backgroundColor: "#103126" }, scoreText: { color: "#6ee7b7", fontWeight: "900" },
   metricRow: { flexDirection: "row", gap: 8 }, metricGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginVertical: 18 }, metric: { flex: 1, minWidth: 88, backgroundColor: "#080b0f", borderRadius: 6, padding: 10 }, metricLabel: { color: "#656c75", fontSize: 10, fontWeight: "700" }, metricValue: { color: "#e5e7eb", fontSize: 14, fontWeight: "800", marginTop: 5 }, goodValue: { color: "#34d399" }, badValue: { color: "#fb7185" }, cardFoot: { color: "#949ba4", fontSize: 12 },
-  tabs: { flexDirection: "row", borderTopWidth: 1, borderTopColor: "#20252c", backgroundColor: "#080b0f", padding: 8, gap: 8 }, tab: { flex: 1, alignItems: "center", paddingVertical: 12, borderRadius: 7 }, tabActive: { backgroundColor: "#123126" }, tabText: { color: "#727983", fontWeight: "800" }, tabTextActive: { color: "#6ee7b7", fontWeight: "900" },
+  tabs: { flexDirection: "row", borderBottomWidth: 1, borderBottomColor: "#20252c", backgroundColor: "#080b0f", paddingHorizontal: 12, paddingBottom: 8, gap: 8 }, tab: { flex: 1, alignItems: "center", paddingVertical: 11, borderRadius: 7 }, tabActive: { backgroundColor: "#123126" }, tabText: { color: "#727983", fontSize: 12, fontWeight: "800" }, tabTextActive: { color: "#6ee7b7", fontSize: 12, fontWeight: "900" },
   detail: { padding: 20, paddingBottom: 50 }, detailTicker: { color: "#f8fafc", fontSize: 34, fontWeight: "900", marginTop: 22 }, sectionTitle: { color: "#f8fafc", fontSize: 18, fontWeight: "900", marginTop: 8, marginBottom: 10 }, gate: { flexDirection: "row", gap: 12, borderTopWidth: 1, borderTopColor: "#1c2229", paddingVertical: 13 }, gateText: { flex: 1 }, gateLabel: { color: "#e5e7eb", fontWeight: "800", marginBottom: 3 }, good: { color: "#34d399", fontSize: 11, fontWeight: "900", width: 38 }, bad: { color: "#fbbf24", fontSize: 11, fontWeight: "900", width: 38 },
   summary: { paddingHorizontal: 14, paddingBottom: 8, gap: 8 }, summaryCard: { width: 140, backgroundColor: "#0b0f14", borderColor: "#252b33", borderWidth: 1, borderRadius: 8, padding: 12 }, summaryValue: { color: "#f8fafc", fontSize: 17, fontWeight: "900", marginTop: 5 }, empty: { padding: 50, alignItems: "center" },
   actions: { flexDirection: "row", gap: 8, borderTopWidth: 1, borderTopColor: "#1d2229", paddingTop: 10 }, smallAction: { minHeight: 40, justifyContent: "center", paddingHorizontal: 10 }, saleRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", backgroundColor: "#080b0f", borderRadius: 6, padding: 10 },

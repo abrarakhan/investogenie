@@ -2,7 +2,7 @@
   "expo": {
     "name": "InvestoGenie",
     "slug": "investogenie",
-    "version": "0.1.0",
+    "version": "0.1.1",
     "description": "Private InvestoGenie market terminal and trade ledger companion.",
     "orientation": "portrait",
     "scheme": "investogenie",
@@ -10,15 +10,19 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.investogenie.mobile",
-      "buildNumber": "1",
+      "buildNumber": "2",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
       "package": "com.investogenie.mobile",
-      "versionCode": 1,
-      "predictiveBackGestureEnabled": true
+      "versionCode": 2,
+      "predictiveBackGestureEnabled": true,
+      "permissions": [
+        "android.permission.USE_BIOMETRIC",
+        "android.permission.USE_FINGERPRINT"
+      ]
     },
     "plugins": [
       [
@@ -35,6 +39,11 @@
         }
       ],
       "expo-notifications"
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "7799dd9d-5a04-4266-9ec5-c41265f1c0df"
+      }
+    }
   }
 }
