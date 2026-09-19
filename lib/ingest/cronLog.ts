@@ -16,6 +16,7 @@ export type CronJob =
   | "refresh-screener"
   | "forward-test"
   | "news-intelligence"
+  | "mobile-alerts"
   | "gmail-disclosures"
   | "send-email-digest";
 const CRON_JOBS: ReadonlySet<string> = new Set<CronJob>([
@@ -30,6 +31,7 @@ const CRON_JOBS: ReadonlySet<string> = new Set<CronJob>([
   "refresh-screener",
   "forward-test",
   "news-intelligence",
+  "mobile-alerts",
   "gmail-disclosures",
   "send-email-digest",
 ]);

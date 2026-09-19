@@ -1,6 +1,6 @@
 # InvestoGenie Status
 
-_Last updated: 2026-09-19 (deployed Android/iOS Phase 1 to AWS and completed Phase 2 trade management, charts, and foreground refresh)_
+_Last updated: 2026-09-19 (completed Android/iOS Phase 3 safety alerts, biometric re-entry, native candlesticks, and EAS build readiness)_
 
 This file summarizes what has been built so far, what is currently working, what is partial, and what to build next.
 
@@ -38,8 +38,7 @@ InvestoGenie is now a local-first market terminal and portfolio intelligence app
   settings; ledger calls `getSwingTradeLedger()` and `summarizeSwingTradeLedger()`.
 - The Phase 1 app provides India/US selection, ranked Strong Swing cards, confirmation-gate detail,
   a read-only ledger, open/realized/overall P&L, pull-to-refresh, and server-generated trade risk.
-- No Swing, Strong Swing, News & AI, target, stop, ranking, or ledger calculation changed. Trade
-  writes, push notifications, live streaming, charts and store distribution belong to later phases.
+- No Swing, Strong Swing, News & AI, target, stop, ranking, or ledger calculation changed.
 - Migration `0044_mobile_sessions.sql` is applied locally and on AWS production.
 
 ### Android / iOS Phase 2
@@ -56,8 +55,24 @@ InvestoGenie is now a local-first market terminal and portfolio intelligence app
 - The web ledger projection lookup was moved, without formula changes, to
   `lib/swingTradeProjection.ts` so web and mobile cannot drift. All analytics, ranking, signal,
   News & AI, stop, target and risk calculation files remain unchanged.
-- Push alerts, biometric re-authentication, background delivery, native candlesticks and signed
-  Play Store/App Store distribution remain Phase 3.
+
+### Android / iOS Phase 3
+
+- Mobile devices can opt into background Trade Ledger alerts. The five-minute market-hours job
+  reads the existing server-produced `STAY`, `STAY_CAUTION`, and `EXIT` state and never computes a
+  replacement recommendation. `STAY` does not notify; changed caution/exit signatures notify once.
+- Push payloads are deliberately generic. Tickers, prices, recommendations, reasons and quote
+  timestamps stay inside InvestoGenie; the authenticated app fetches the current ledger after open.
+- Biometric/device authentication protects restored sessions after the app has spent more than a
+  minute in the background. Devices without enrolled biometrics continue with OS session security.
+- Strong Swing detail now renders native OHLC candles with high/low wicks. Source data and all
+  entry/target/stop/rank values still come unchanged from the existing server endpoints.
+- `mobile/eas.json` provides development, internal APK preview and production build profiles.
+  Final signed binaries require linking the repo to the owner's Expo project and store credentials.
+- Migration `0045_mobile_push.sql`, token registration/revocation, notification audit/deduplication,
+  and the protected `/api/cron/mobile-alerts` endpoint are included.
+- Protected calculation diff: no files under `lib/analytics`, nor `lib/strongSwing.ts`,
+  `lib/swingTradeLedger.ts`, `lib/screener.ts`, or `lib/newsSwing.ts`, were modified in Phase 3.
 
 ### Active personal deployment and cloud readiness
 

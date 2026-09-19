@@ -14,6 +14,10 @@ const requiredRelations = [
   "public.news_sync_state",
   "public.event_stock_map",
   "public.user_news_providers",
+  "public.mobile_sessions",
+  "public.mobile_push_tokens",
+  "public.mobile_trade_alert_state",
+  "public.mobile_notification_log",
 ];
 const client = new pg.Client({
   connectionString: url,

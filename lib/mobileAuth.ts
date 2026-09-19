@@ -28,18 +28,25 @@ export async function createMobileSession(userId: string, deviceName?: string) {
 }
 
 export async function getMobileSessionUser(request: NextRequest): Promise<SessionUser | null> {
+  return (await getMobileSession(request))?.user ?? null;
+}
+
+export async function getMobileSession(request: NextRequest): Promise<{
+  sessionId: string;
+  user: SessionUser;
+} | null> {
   const token = readBearerToken(request.headers.get("authorization"));
   if (!token) return null;
-  const user = await queryOne<SessionUser>(
+  const row = await queryOne<SessionUser & { session_id: string }>(
     `update public.mobile_sessions s
         set last_used_at=now()
        from public.users u
       where s.token_hash=$1 and s.user_id=u.id
         and s.revoked_at is null and s.expires_at > now()
-      returning u.id,u.email`,
+      returning s.id session_id,u.id,u.email`,
     [hashMobileToken(token)],
   );
-  return user;
+  return row ? { sessionId: row.session_id, user: { id: row.id, email: row.email } } : null;
 }
 
 export async function revokeMobileSession(request: NextRequest): Promise<boolean> {
@@ -52,4 +59,3 @@ export async function revokeMobileSession(request: NextRequest): Promise<boolean
   );
   return rows.length > 0;
 }
-

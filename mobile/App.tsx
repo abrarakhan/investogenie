@@ -1,14 +1,17 @@
-import { useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import {
-  ActivityIndicator, Alert, FlatList, Modal, Pressable, RefreshControl, SafeAreaView,
+  ActivityIndicator, Alert, AppState, FlatList, Modal, Pressable, RefreshControl, SafeAreaView,
   ScrollView, StyleSheet, Text, TextInput, View,
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
+import * as Notifications from "expo-notifications";
+import Svg, { Line, Rect } from "react-native-svg";
 import {
   createTrade, deleteTrade, getCandles, getLedger, getStrongSwing, login, logout, recordSale,
   restoreSession, updateSale, updateTrade, type CandlePoint, type LedgerSummary, type LedgerTrade,
   type Market, type MobileUser, type StrongCandidate,
 } from "./src/api";
+import { registerDeviceNotifications, unlockWithBiometrics } from "./src/deviceSecurity";
 
 type Tab = "strong" | "ledger";
 const today = () => new Date().toISOString().slice(0, 10);
@@ -21,10 +24,35 @@ const message = (cause: unknown, fallback: string) => cause instanceof Error ? c
 export default function App() {
   const [booting, setBooting] = useState(true);
   const [user, setUser] = useState<MobileUser | null>(null);
-  useEffect(() => { restoreSession().then(setUser).finally(() => setBooting(false)); }, []);
+  const [unlocked, setUnlocked] = useState(false);
+  const [requestedTab, setRequestedTab] = useState<Tab | null>(null);
+  const backgroundedAt = useRef<number | null>(null);
+  const unlock = useCallback(async () => setUnlocked(await unlockWithBiometrics()), []);
+  useEffect(() => {
+    restoreSession().then(async (restored) => {
+      setUser(restored);
+      if (restored) setUnlocked(await unlockWithBiometrics());
+      else setUnlocked(true);
+    }).finally(() => setBooting(false));
+  }, []);
+  useEffect(() => {
+    const response = Notifications.addNotificationResponseReceivedListener(() => {
+      setRequestedTab("ledger");
+      setUnlocked(true);
+    });
+    const appState = AppState.addEventListener("change", (state) => {
+      if (state === "background") backgroundedAt.current = Date.now();
+      if (state === "active" && user && backgroundedAt.current && Date.now() - backgroundedAt.current > 60_000) {
+        setUnlocked(false);
+        void unlock();
+      }
+    });
+    return () => { response.remove(); appState.remove(); };
+  }, [unlock, user]);
   if (booting) return <Centered><ActivityIndicator color="#34d399" /></Centered>;
+  if (user && !unlocked) return <Centered><Text style={styles.title}>InvestoGenie locked</Text><Action label="Unlock" onPress={() => void unlock()} /></Centered>;
   return <SafeAreaView style={styles.safe}><StatusBar style="light" />{
-    user ? <Terminal user={user} onLogout={() => logout().then(() => setUser(null))} /> : <Login onLogin={setUser} />
+    user ? <Terminal user={user} requestedTab={requestedTab} onRequestedTabHandled={() => setRequestedTab(null)} onLogout={() => logout().then(() => setUser(null))} /> : <Login onLogin={(next) => { setUser(next); setUnlocked(true); }} />
   }</SafeAreaView>;
 }
 
@@ -50,14 +78,19 @@ function Login({ onLogin }: { onLogin: (user: MobileUser) => void }) {
   </ScrollView>;
 }
 
-function Terminal({ user, onLogout }: { user: MobileUser; onLogout: () => void }) {
+function Terminal({ user, requestedTab, onRequestedTabHandled, onLogout }: { user: MobileUser; requestedTab: Tab | null; onRequestedTabHandled: () => void; onLogout: () => void }) {
   const [market, setMarket] = useState<Market>("IN");
   const [tab, setTab] = useState<Tab>("strong");
+  const [notificationStatus, setNotificationStatus] = useState("");
+  useEffect(() => { void registerDeviceNotifications().then(setNotificationStatus).catch(() => setNotificationStatus("Push registration is temporarily unavailable.")); }, []);
+  const activeTab = requestedTab ?? tab;
+  const selectTab = (next: Tab) => { setTab(next); onRequestedTabHandled(); };
   return <View style={styles.flex}>
     <View style={styles.header}><View><Text style={styles.brandSmall}>Investo<Text style={styles.accent}>Genie</Text></Text><Text style={styles.user}>{user.email}</Text></View><Pressable onPress={onLogout}><Text style={styles.link}>Sign out</Text></Pressable></View>
     <View style={styles.switchRow}>{(["IN", "US"] as Market[]).map((value) => <Pressable key={value} onPress={() => setMarket(value)} style={[styles.switch, market === value && styles.switchActive]}><Text style={market === value ? styles.switchTextActive : styles.switchText}>{value === "IN" ? "India" : "US"}</Text></Pressable>)}</View>
-    <View style={styles.flex}>{tab === "strong" ? <Strong key={market} market={market} /> : <Ledger key={market} market={market} />}</View>
-    <View style={styles.tabs}><TabButton active={tab === "strong"} label="Strong Swing" onPress={() => setTab("strong")} /><TabButton active={tab === "ledger"} label="Trade Ledger" onPress={() => setTab("ledger")} /></View>
+    {!!notificationStatus && <Text style={styles.deviceStatus}>{notificationStatus}</Text>}
+    <View style={styles.flex}>{activeTab === "strong" ? <Strong key={market} market={market} /> : <Ledger key={market} market={market} />}</View>
+    <View style={styles.tabs}><TabButton active={activeTab === "strong"} label="Strong Swing" onPress={() => selectTab("strong")} /><TabButton active={activeTab === "ledger"} label="Trade Ledger" onPress={() => selectTab("ledger")} /></View>
   </View>;
 }
 
@@ -105,7 +138,11 @@ function PriceChart({ market, ticker }: { market: Market; ticker: string }) {
   useEffect(() => { let active = true; getCandles(market, ticker).then((result) => { if (active) setPoints(result.candle?.points.slice(-50) ?? []); }).catch(() => undefined); return () => { active = false; }; }, [market, ticker]);
   if (!points.length) return <View style={styles.chart}><ActivityIndicator color="#34d399" /></View>;
   const low = Math.min(...points.map((point) => point.low)); const high = Math.max(...points.map((point) => point.high)); const span = Math.max(0.0001, high - low);
-  return <View><View style={styles.chart}>{points.map((point) => { const height = 8 + ((point.close - low) / span) * 72; return <View key={point.date} style={[styles.chartBar, { height }, point.close >= point.open ? styles.chartUp : styles.chartDown]} />; })}</View><Text style={styles.chartCaption}>50-session close profile · {money(low, market)} to {money(high, market)}</Text></View>;
+  const width = 340; const height = 120; const step = width / points.length; const bodyWidth = Math.max(2, step * 0.58);
+  const y = (price: number) => 8 + ((high - price) / span) * (height - 16);
+  return <View><View style={styles.chart}><Svg width="100%" height={height} viewBox={`0 0 ${width} ${height}`}>
+    {points.map((point, index) => { const x = index * step + step / 2; const rising = point.close >= point.open; const color = rising ? "#34d399" : "#fb7185"; const top = y(Math.max(point.open, point.close)); const bottom = y(Math.min(point.open, point.close)); return <Fragment key={point.date}><Line x1={x} x2={x} y1={y(point.high)} y2={y(point.low)} stroke={color} strokeWidth="1" /><Rect x={x - bodyWidth / 2} y={top} width={bodyWidth} height={Math.max(1.5, bottom - top)} fill={color} /></Fragment>; })}
+  </Svg></View><Text style={styles.chartCaption}>50-session OHLC candles · {money(low, market)} to {money(high, market)}</Text></View>;
 }
 
 function Ledger({ market }: { market: Market }) {
@@ -186,5 +223,5 @@ const styles = StyleSheet.create({
   summary: { paddingHorizontal: 14, paddingBottom: 8, gap: 8 }, summaryCard: { width: 140, backgroundColor: "#0b0f14", borderColor: "#252b33", borderWidth: 1, borderRadius: 8, padding: 12 }, summaryValue: { color: "#f8fafc", fontSize: 17, fontWeight: "900", marginTop: 5 }, empty: { padding: 50, alignItems: "center" },
   actions: { flexDirection: "row", gap: 8, borderTopWidth: 1, borderTopColor: "#1d2229", paddingTop: 10 }, smallAction: { minHeight: 40, justifyContent: "center", paddingHorizontal: 10 }, saleRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", backgroundColor: "#080b0f", borderRadius: 6, padding: 10 },
   modalBackdrop: { flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(0,0,0,0.72)" }, sheet: { backgroundColor: "#0b0f14", borderTopLeftRadius: 12, borderTopRightRadius: 12, borderColor: "#2a3038", borderWidth: 1, padding: 20, paddingBottom: 36, gap: 12 },
-  chart: { height: 100, marginTop: 18, backgroundColor: "#080b0f", borderRadius: 8, paddingHorizontal: 8, paddingVertical: 10, flexDirection: "row", alignItems: "flex-end", justifyContent: "space-between", overflow: "hidden" }, chartBar: { width: 3, minHeight: 5, borderRadius: 2 }, chartUp: { backgroundColor: "#34d399" }, chartDown: { backgroundColor: "#fb7185" }, chartCaption: { color: "#646b74", fontSize: 10, marginTop: 6 },
+  chart: { height: 120, marginTop: 18, backgroundColor: "#080b0f", borderRadius: 8, overflow: "hidden" }, chartCaption: { color: "#646b74", fontSize: 10, marginTop: 6 }, deviceStatus: { color: "#6f7781", fontSize: 9, paddingHorizontal: 16, paddingBottom: 4 },
 });

@@ -21,8 +21,14 @@
           "configureAndroidBackup": true,
           "faceIDPermission": "Allow InvestoGenie to protect your signed-in session."
         }
-      ]
+      ],
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "Allow InvestoGenie to protect your signed-in session."
+        }
+      ],
+      "expo-notifications"
     ]
   }
 }
-

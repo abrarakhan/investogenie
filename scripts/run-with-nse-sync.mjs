@@ -82,6 +82,8 @@ const indiaQuoteBatchSize = process.env.INDIA_LIVE_QUOTE_BATCH_SIZE ?? "100";
 const indiaQuoteSleep = process.env.INDIA_LIVE_QUOTE_SLEEP_SECONDS ?? "0.2";
 const newsRefreshIntervalMinutes = Number(process.env.NEWS_REFRESH_INTERVAL_MINUTES ?? 60);
 const newsRefreshDisabled = process.env.NEWS_REFRESH_DISABLED === "1";
+const mobileAlertIntervalMinutes = Number(process.env.MOBILE_ALERT_INTERVAL_MINUTES ?? 5);
+const mobileAlertsDisabled = process.env.MOBILE_ALERTS_DISABLED === "1";
 const breezeAccountSyncIntervalMinutes = Number(process.env.BREEZE_ACCOUNT_SYNC_INTERVAL_MINUTES ?? 5);
 const breezeAccountSyncDisabled = process.env.BREEZE_ACCOUNT_SYNC_DISABLED === "1";
 const gmailDisclosureSyncIntervalHours = Number(process.env.GMAIL_DISCLOSURE_SYNC_INTERVAL_HOURS ?? 24);
@@ -142,6 +144,8 @@ let breezeAccountChild = null;
 let breezeAccountTimer = null;
 let newsRefreshTimer = null;
 let newsRefreshPromise = null;
+let mobileAlertTimer = null;
+let mobileAlertPromise = null;
 let gmailDisclosureTimer = null;
 let gmailDisclosurePromise = null;
 let backfillTimer = null;
@@ -654,6 +658,43 @@ function scheduleNewsRefresh() {
   console.log(`[news-intelligence] refresh every ${newsRefreshIntervalMinutes} minutes during India 09:15-15:30 IST and US 09:30-16:00 ET`);
   newsRefreshTimer = setInterval(() => runNewsRefresh("recurring"), newsRefreshIntervalMinutes * 60 * 1000);
   if (!startupSyncDisabled) setTimeout(() => runNewsRefresh("startup"), 5_000);
+}
+
+async function runMobileAlerts(trigger) {
+  if (mobileAlertsDisabled) return;
+  const openMarkets = [isIndiaMarketOpen() ? "IN" : null, isUsMarketOpen() ? "US" : null].filter(Boolean);
+  if (openMarkets.length === 0) {
+    console.log(`[mobile-alerts] skipping ${trigger}; India and US markets are closed`);
+    return;
+  }
+  if (mobileAlertPromise) {
+    console.log(`[mobile-alerts] skipping ${trigger}; prior check still running`);
+    return mobileAlertPromise;
+  }
+  mobileAlertPromise = (async () => {
+    await waitForApp();
+    if (!process.env.CRON_SECRET) throw new Error("CRON_SECRET is not configured");
+    for (const market of openMarkets) {
+      const url = new URL("http://127.0.0.1:3000/api/cron/mobile-alerts");
+      url.searchParams.set("market", market);
+      const response = await fetch(url, { headers: { authorization: `Bearer ${process.env.CRON_SECRET}` } });
+      const body = await response.text();
+      if (!response.ok) throw new Error(`${market} mobile alerts failed (${response.status}): ${body}`);
+      console.log(`[mobile-alerts] ${trigger} ${market} completed: ${body}`);
+    }
+  })().catch((error) => console.error(`[mobile-alerts] ${trigger} failed: ${error.message}`))
+    .finally(() => { mobileAlertPromise = null; });
+  return mobileAlertPromise;
+}
+
+function scheduleMobileAlerts() {
+  if (mobileAlertsDisabled || !Number.isFinite(mobileAlertIntervalMinutes) || mobileAlertIntervalMinutes <= 0) {
+    console.log("[mobile-alerts] recurring checks disabled");
+    return;
+  }
+  console.log(`[mobile-alerts] trade-state checks every ${mobileAlertIntervalMinutes} minutes during open markets`);
+  mobileAlertTimer = setInterval(() => runMobileAlerts("recurring"), mobileAlertIntervalMinutes * 60 * 1000);
+  if (!startupSyncDisabled) setTimeout(() => runMobileAlerts("startup"), 10_000);
 }
 
 async function runGmailDisclosureSync(trigger) {
@@ -1334,6 +1375,7 @@ function shutdown(signal) {
   if (marketRefreshTimer) clearInterval(marketRefreshTimer);
   if (marketHoursQuoteRefreshTimer) clearInterval(marketHoursQuoteRefreshTimer);
   if (newsRefreshTimer) clearInterval(newsRefreshTimer);
+  if (mobileAlertTimer) clearInterval(mobileAlertTimer);
   if (gmailDisclosureTimer) clearInterval(gmailDisclosureTimer);
   if (backfillTimer) clearInterval(backfillTimer);
   if (emailDigestTimer) clearInterval(emailDigestTimer);
@@ -1372,6 +1414,7 @@ nextChild.on("close", (code, signal) => {
   if (nseCatchupTimer) clearInterval(nseCatchupTimer);
   if (marketRefreshTimer) clearInterval(marketRefreshTimer);
   if (marketHoursQuoteRefreshTimer) clearInterval(marketHoursQuoteRefreshTimer);
+  if (mobileAlertTimer) clearInterval(mobileAlertTimer);
   if (backfillTimer) clearInterval(backfillTimer);
   if (emailDigestTimer) clearInterval(emailDigestTimer);
   if (syncChild) syncChild.kill("SIGTERM");
@@ -1424,6 +1467,7 @@ scheduleNseCatchup();
 scheduleRecurringMarketRefresh();
 scheduleMarketHoursQuoteRefresh();
 scheduleNewsRefresh();
+scheduleMobileAlerts();
 scheduleGmailDisclosureSync();
 scheduleBackfillCron();
 scheduleEmailDigest();

@@ -103,9 +103,18 @@ export async function login(email: string, password: string): Promise<MobileUser
 }
 
 export async function logout(): Promise<void> {
-  try { await request("/api/v1/mobile/auth/logout", { method: "DELETE" }); } finally {
+  try {
+    await request("/api/v1/mobile/push-token", { method: "DELETE" }).catch(() => undefined);
+    await request("/api/v1/mobile/auth/logout", { method: "DELETE" });
+  } finally {
     await SecureStore.deleteItemAsync(TOKEN_KEY);
   }
+}
+
+export function registerPushToken(token: string, platform: "android" | "ios") {
+  return request<{ ok: true }>("/api/v1/mobile/push-token", {
+    method: "POST", body: JSON.stringify({ token, platform }),
+  });
 }
 
 export function getStrongSwing(market: Market) {
