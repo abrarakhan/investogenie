@@ -1,0 +1,28 @@
+{
+  "expo": {
+    "name": "InvestoGenie",
+    "slug": "investogenie",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "scheme": "investogenie",
+    "userInterfaceStyle": "dark",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.investogenie.mobile"
+    },
+    "android": {
+      "package": "com.investogenie.mobile",
+      "predictiveBackGestureEnabled": true
+    },
+    "plugins": [
+      [
+        "expo-secure-store",
+        {
+          "configureAndroidBackup": true,
+          "faceIDPermission": "Allow InvestoGenie to protect your signed-in session."
+        }
+      ]
+    ]
+  }
+}
+

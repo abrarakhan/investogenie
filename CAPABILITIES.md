@@ -1,6 +1,6 @@
 # InvestoGenie - Capabilities
 
-> Current capability snapshot (2026-09-16) after adding simultaneous provider aggregation, Strong Swing-prioritized news retrieval, Marketaux, and a verified-evidence layer to source-linked News & AI
+> Current capability snapshot (2026-09-19) after adding the Android/iOS Phase 1 foundation, simultaneous provider aggregation, Strong Swing-prioritized news retrieval, Marketaux, and a verified-evidence layer to source-linked News & AI
 > Swing, DeepSeek V4 classification, GNews rate-limit recovery, conservative asset retirement,
 > and repairing the hourly swing scan (failing every
 > daytime run and periodically saturating the database), correcting a one-day date shift across
@@ -51,6 +51,7 @@ help/knowledge base, and recurring data sync jobs.
 | Sync health | Browser-visible `/admin/sync` and `/data/health` freshness and provider status pages | Working |
 | Recurring sync | Startup, recurring, and daily jobs for quotes, OHLCV, fundamentals, macro, scans, and the email digest | Working |
 | **Private personal deployment** | Production Next.js + schedulers supervised by macOS `launchd`, localhost-only listener, AC-power sleep prevention and tailnet-only Tailscale Serve HTTPS | Active and verified |
+| **Android / iOS Phase 1** | Expo SDK 57 client with secure device login, India/US selection, server-ranked Strong Swing detail, and read-only Trade Ledger/P&L/risk | Built locally; AWS migration and app distribution pending |
 | Oracle deployment package | Native Ubuntu ARM systemd/Nginx deployment, isolated environment, checks, backups and release automation | Available; not provisioned |
 | AMFI scheme identity | Official option-level AMFI registry with AMC/category, NAV, both ISIN columns, AMFI codes, and many-identifiers-to-one-snapshot mapping | Working |
 | Provider fallback | Yahoo Finance (US OHLCV history, free/unofficial), Google Finance fallback for quotes. A Tiingo-based module (`lib/ingest/usHistory.ts`) exists and is configured but is NOT used by the recurring sync path — see Architecture. | Working |

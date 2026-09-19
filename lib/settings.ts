@@ -16,8 +16,8 @@ interface Row {
 }
 
 /** Resolve the signed-in user's risk settings, falling back to defaults. */
-export async function getUserSwingSettings(): Promise<SwingSettings> {
-  const user = await getSessionUser();
+export async function getUserSwingSettings(userId?: string): Promise<SwingSettings> {
+  const user = userId ? { id: userId } : await getSessionUser();
   if (!user) return DEFAULT_SETTINGS;
   const data = await queryOne<Row>(
     "select stop_atr_mult, target_rr, trail_atr_mult, include_short from public.user_swing_settings where user_id = $1",

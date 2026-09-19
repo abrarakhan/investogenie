@@ -1,6 +1,6 @@
 # InvestoGenie Status
 
-_Last updated: 2026-09-16 (added simultaneous encrypted news providers and changed scheduled news coverage priority to open ledger trades, Strong Swing candidates, then ordinary Swing candidates)_
+_Last updated: 2026-09-19 (completed Android/iOS Phase 1 foundation with revocable mobile authentication and read-only Strong Swing and Trade Ledger screens)_
 
 This file summarizes what has been built so far, what is currently working, what is partial, and what to build next.
 
@@ -25,6 +25,23 @@ InvestoGenie is now a local-first market terminal and portfolio intelligence app
 - Portfolio import and Fund Overlap X-Ray using CAS and AMC disclosures.
 - Forward-testing infrastructure to judge strategies out of sample.
 - Data coverage visibility and repair workflows for fund mappings, source freshness, and stale strategy inputs.
+
+### Android / iOS Phase 1
+
+- `mobile/` is an isolated Expo SDK 57 React Native application for Android and iOS. It does not
+  alter the Next.js dependency graph or copy trading calculations onto the device.
+- Mobile sign-in uses the existing InvestoGenie email/password account. The server returns a
+  random 256-bit device token; Expo SecureStore protects it on-device and PostgreSQL stores only
+  its SHA-256 hash. Tokens expire after 30 days and are revoked on sign-out.
+- Versioned endpoints under `/api/v1/mobile` expose the signed-in profile, Strong Swing candidates,
+  and Trade Ledger. Strong Swing calls `getStrongSwingCandidates()` with the user's stored risk
+  settings; ledger calls `getSwingTradeLedger()` and `summarizeSwingTradeLedger()`.
+- The Phase 1 app provides India/US selection, ranked Strong Swing cards, confirmation-gate detail,
+  a read-only ledger, open/realized/overall P&L, pull-to-refresh, and server-generated trade risk.
+- No Swing, Strong Swing, News & AI, target, stop, ranking, or ledger calculation changed. Trade
+  writes, push notifications, live streaming, charts and store distribution belong to later phases.
+- Local migration `0044_mobile_sessions.sql` is applied. Production must apply it during the next
+  AWS release before the mobile app can sign in.
 
 ### Active personal deployment and cloud readiness
 
@@ -229,6 +246,7 @@ Portfolio/fund figures below were refreshed on 2026-07-25 where the current DB e
   UI remain the next phase; they are not silently applied before calibration.
 - Migration `0043_multi_news_providers.sql` stores multiple enabled encrypted provider keys per user
   and migrates the previous single-provider selection forward.
+- Migration `0044_mobile_sessions.sql` stores hashed, expiring and revocable Android/iOS device sessions.
 
 ### Startup / Recurring Wrapper
 
