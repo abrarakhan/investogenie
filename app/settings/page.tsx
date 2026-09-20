@@ -100,7 +100,7 @@ export default async function SettingsPage({ searchParams }: {
       <section className="mt-12 border-t border-white/10 pt-12">
         <h2 className="text-2xl font-bold">Email digest</h2>
         <p className="mt-2 text-sm text-white/50">
-          Receive a daily morning email with top 5 stocks from the swing candidates
+          Receive a daily morning email with the top 5 stocks from Strong Swing
           and probability screens, with full details on each.
         </p>
         <EmailPreferencesForm initialPrefs={emailPrefs} userEmail={user.email || ""} />

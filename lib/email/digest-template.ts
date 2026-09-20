@@ -1,11 +1,11 @@
-import type { ScreenRow } from "@/lib/screener";
+import type { StrongSwingCandidate } from "@/lib/strongSwing";
 import type { ProbabilityForecast } from "@/lib/analytics/probability/types";
 
 export interface EmailDigestData {
   userName: string;
   userEmail: string;
-  /** Rows from runScreener() — the same source as the Swing Candidates screen. */
-  swingCandidates: ScreenRow[];
+  /** Rows from getStrongSwingCandidates() in the same order as the Strong Swing screen. */
+  strongSwingCandidates: StrongSwingCandidate[];
   /** Rows from getProbabilitySummary() — the same source as the Probability screen. */
   probabilityCandidates: ProbabilityForecast[];
   generatedAt: Date;
@@ -39,11 +39,10 @@ function metric(label: string, value: string, valueColor = "#1f2937"): string {
 }
 
 /**
- * Swing candidate card — mirrors the Swing Candidates screen: a BUY action,
- * current price, and the derived trade levels (entry / target / stop / trail),
- * R:R, expected days, plus P/E and ROCE.
+ * Strong Swing card using the confirmed levels and status produced by the
+ * server's existing Strong Swing engine.
  */
-function swingCard(row: ScreenRow): string {
+function strongSwingCard(row: StrongSwingCandidate): string {
   const price = row.lastQuote ?? row.close;
   const changePct = row.quoteChangePct;
   const changeColor = changePct != null && changePct >= 0 ? "#10b981" : "#ef4444";
@@ -69,19 +68,19 @@ function swingCard(row: ScreenRow): string {
 
       <!-- trade levels -->
       <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin-bottom: 12px;">
-        ${metric("Entry", inr(row.entry), "#1f2937")}
-        ${metric("Target", inr(row.target), "#10b981")}
-        ${metric("Stop", inr(row.stopLoss), "#ef4444")}
+        ${metric("Confirmed entry", inr(row.strongEntry), "#1f2937")}
+        ${metric("Target", inr(row.strongTarget), "#10b981")}
+        ${metric("Stop", inr(row.strongStop), "#ef4444")}
       </div>
 
       <!-- stats -->
       <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; padding-top: 12px; border-top: 1px solid #f3f4f6;">
-        ${metric("R:R", row.riskReward != null ? `${num(row.riskReward)}×` : "–")}
-        ${metric("~Days", row.expectedDays != null ? `${Math.round(row.expectedDays)}d` : "–")}
-        ${metric("P/E", num(row.peRatio))}
-        ${metric("ROCE", row.roce != null ? `${num(row.roce)}%` : "–")}
-        ${metric("Trail", inr(row.trailingStop))}
-        ${metric("Score", num(row.score, 0))}
+        ${metric("Status", row.status.replaceAll("_", " "))}
+        ${metric("~Days", `${Math.round(row.strongExpectedDays)}d`)}
+        ${metric("Gates", `${row.gates.filter((gate) => gate.passed).length}/${row.gates.length}`)}
+        ${metric("Exposure", `${num(row.suggestedExposurePct, 0)}%`)}
+        ${metric("Trail", inr(row.strongTrail))}
+        ${metric("Strong score", num(row.strengthScore, 0))}
       </div>
     </div>`;
 }
@@ -135,10 +134,10 @@ export function buildEmailHtml(data: EmailDigestData): string {
     minute: "2-digit",
   });
 
-  const swingContent =
-    data.swingCandidates.length > 0
-      ? data.swingCandidates.map((row) => swingCard(row)).join("")
-      : '<p style="color: #6b7280; font-style: italic; text-align: center; padding: 20px;">No swing candidates found today.</p>';
+  const strongSwingContent =
+    data.strongSwingCandidates.length > 0
+      ? data.strongSwingCandidates.map((row) => strongSwingCard(row)).join("")
+      : '<p style="color: #6b7280; font-style: italic; text-align: center; padding: 20px;">No Strong Swing candidates found today.</p>';
 
   const probContent =
     data.probabilityCandidates.length > 0
@@ -179,7 +178,7 @@ export function buildEmailHtml(data: EmailDigestData): string {
           <!-- Header -->
           <div class="header" style="background: linear-gradient(135deg, #0ea5e9 0%, #06b6d4 100%); padding: 30px; color: white;">
             <h1 style="font-size: 26px; font-weight: 700; margin-bottom: 8px;">InvestoGenie Daily Digest</h1>
-            <p style="opacity: 0.95; font-size: 14px;">Swing candidates & probability forecasts • ${timestamp} IST</p>
+            <p style="opacity: 0.95; font-size: 14px;">Strong Swing candidates & probability forecasts • ${timestamp} IST</p>
           </div>
 
           <!-- Body -->
@@ -188,15 +187,15 @@ export function buildEmailHtml(data: EmailDigestData): string {
               Hello <strong>${data.userName}</strong>,
             </p>
             <p style="margin-bottom: 28px; color: #6b7280; font-size: 15px;">
-              Here are today's top picks from each engine — the same data you see on the Swing Candidates and Probability screens.
+              Here are today's top picks from each engine — the same data you see on the Strong Swing and Probability screens.
             </p>
 
-            <!-- Swing Candidates -->
+            <!-- Strong Swing Candidates -->
             <div style="margin-bottom: 36px;">
               <h2 style="font-size: 18px; font-weight: 700; color: #1f2937; margin-bottom: 16px; padding-bottom: 10px; border-bottom: 3px solid #0ea5e9;">
-                🎯 Swing Candidates
+                🎯 Strong Swing Candidates
               </h2>
-              ${swingContent}
+              ${strongSwingContent}
             </div>
 
             <!-- Probability -->
@@ -212,7 +211,7 @@ export function buildEmailHtml(data: EmailDigestData): string {
               <p style="margin-bottom: 16px; color: #1e40af; font-size: 14px; font-weight: 500;">
                 📈 Dive deeper into each stock's analysis
               </p>
-              <a href="${APP_URL}/terminal/in/screener" class="cta-button" style="display: inline-block; background-color: #0ea5e9; color: white; padding: 12px 28px; border-radius: 6px; font-weight: 600; font-size: 15px;">
+              <a href="${APP_URL}/terminal/in/strong-swing" class="cta-button" style="display: inline-block; background-color: #0ea5e9; color: white; padding: 12px 28px; border-radius: 6px; font-weight: 600; font-size: 15px;">
                 Open InvestoGenie Terminal
               </a>
             </div>

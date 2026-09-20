@@ -56,7 +56,7 @@ export default function EmailPreferencesForm({ initialPrefs, userEmail }: Props)
           <div>
             <span className="block text-sm font-medium">Enable daily email digest</span>
             <span className="block text-xs text-white/40">
-              Receive top 5 stocks from swing candidates and probability screens every morning
+              Receive the top 5 Strong Swing stocks and probability forecasts every morning
             </span>
           </div>
         </label>
@@ -106,8 +106,8 @@ export default function EmailPreferencesForm({ initialPrefs, userEmail }: Props)
                 className="mt-1 h-4 w-4"
               />
               <div>
-                <span className="block text-sm">🎯 Swing candidates</span>
-                <span className="block text-xs text-white/40">Top 5 swing trading setups</span>
+                <span className="block text-sm">🎯 Strong Swing candidates</span>
+                <span className="block text-xs text-white/40">Top 5 confirmation-gated setups in Strong Swing order</span>
               </div>
             </label>
 

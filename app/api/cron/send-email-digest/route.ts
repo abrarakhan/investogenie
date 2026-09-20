@@ -7,7 +7,7 @@ export const maxDuration = 300; // 5 minutes
 /**
  * Daily email digest sender. Runs at 7 AM IST.
  *
- * Sends an email with top 5 stocks from both swing candidates and
+ * Sends an email with the top 5 stocks from Strong Swing and
  * probability screens to each user who has opted in.
  */
 export async function GET(request: Request) {

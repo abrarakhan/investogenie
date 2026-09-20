@@ -4,9 +4,9 @@ import { getSessionUser } from "@/lib/auth";
 import { query, queryOne } from "@/lib/db";
 import { buildEmailHtml, type EmailDigestData } from "@/lib/email/digest-template";
 import { sendEmailWithConfig } from "@/lib/email/nodemailer-service";
-import { runScreener } from "@/lib/screener";
 import { getProbabilitySummary } from "@/lib/probability-runtime";
-import { DEFAULT_SETTINGS } from "@/lib/settings";
+import { getUserSwingSettings } from "@/lib/settings";
+import { getStrongSwingCandidates } from "@/lib/strongSwing";
 
 export interface EmailPreferences {
   id: string;
@@ -223,13 +223,11 @@ export async function sendEmailDigest(userId: string): Promise<void> {
   const { decryptCredential } = await import("@/lib/crypto/credentials");
   const smtpPassword = decryptCredential(smtpCreds.smtp_password_encrypted);
 
-  // Swing candidates — the SAME source and args as the Swing Candidates screen:
-  // runScreener() over the NSE universe, buy-only, capped at 20. We fetch the
-  // full 20 (so SHORT-biased rows filtered out of the top scores don't starve
-  // the list) and take the top 5 the screen would show first.
-  const buyOnlySettings = { ...DEFAULT_SETTINGS, includeShort: false };
-  const swingCandidates = prefs.include_swing_candidates
-    ? (await runScreener("IN", buyOnlySettings, { exchange: "NSE", limit: 20 })).slice(0, 5)
+  // Strong Swing candidates — the same server-authoritative source, user risk
+  // settings, confirmation gates, and order as the Strong Swing screen.
+  const settings = await getUserSwingSettings(userId);
+  const strongSwingCandidates = prefs.include_swing_candidates
+    ? (await getStrongSwingCandidates("IN", settings)).slice(0, 5)
     : [];
 
   // Probability forecasts — the SAME source as the Probability screen:
@@ -241,7 +239,7 @@ export async function sendEmailDigest(userId: string): Promise<void> {
   const digestData: EmailDigestData = {
     userName: prefs.email.split("@")[0],
     userEmail: prefs.email,
-    swingCandidates,
+    strongSwingCandidates,
     probabilityCandidates,
     generatedAt: new Date(),
   };
