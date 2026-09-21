@@ -195,6 +195,16 @@ function TradeCard({ trade, today }: { trade: SwingLedgerTrade; today: string })
 
 function RevisedPlanPanel({ trade }: { trade: SwingLedgerTrade }) {
   const plan = trade.revisedPlan;
+  const exitNow = plan.action === "EXIT";
+  const actionCopy = exitNow
+    ? `Exit the remaining ${trade.remainingQuantity.toLocaleString("en-IN")} shares at the next executable market price. Do not wait for the frozen target.`
+    : plan.action === "PROTECT_RECOVERY"
+      ? `Hold only while price remains above ${price(plan.protectiveStop)}; exit the remaining ${trade.remainingQuantity.toLocaleString("en-IN")} shares if that level trades.`
+      : plan.action === "PROTECT_PROFIT"
+        ? `Protect the gain on the remaining ${trade.remainingQuantity.toLocaleString("en-IN")} shares at ${price(plan.protectiveStop)}; there is no approved higher target yet.`
+        : plan.action === "EXTEND_RUNNER"
+          ? `Hold the remaining ${trade.remainingQuantity.toLocaleString("en-IN")} shares toward ${price(plan.revisedTarget)}, with ${price(plan.protectiveStop)} as the controlling exit.`
+          : `Continue with the frozen plan: target ${price(plan.revisedTarget)} and exit protection at ${price(plan.protectiveStop)}.`;
   const tone = plan.action === "EXIT"
     ? "border-rose-500/30 bg-rose-500/[0.08] text-rose-200"
     : plan.action === "PROTECT_RECOVERY" || plan.action === "PROTECT_PROFIT"
@@ -211,10 +221,15 @@ function RevisedPlanPanel({ trade }: { trade: SwingLedgerTrade }) {
         </div>
         {plan.originalPlanBreached && <span className="rounded-full border border-rose-400/30 bg-rose-500/10 px-3 py-1 text-[10px] font-bold uppercase tracking-wide text-rose-200">Original stop traded through</span>}
       </div>
+      <div className={`mt-3 rounded-lg border px-3 py-3 ${exitNow ? "border-rose-400/35 bg-rose-500/10" : "border-current/15 bg-black/20"}`}>
+        <div className="text-[10px] font-bold uppercase tracking-[0.16em] opacity-60">Action now</div>
+        <p className="mt-1 text-sm font-bold leading-relaxed">{actionCopy}</p>
+        {exitNow && <p className="mt-1 text-xs text-white/55">This is an exit instruction for the current swing trade, not a prediction that the stock cannot rise further.</p>}
+      </div>
       <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
-        <Metric label="Frozen target" value={price(trade.projectedTarget)} tone="muted" />
+        <Metric label={exitNow ? "Old target · reference only" : "Frozen target"} value={price(trade.projectedTarget)} tone="muted" />
         <Metric label="Revised objective" value={price(plan.revisedTarget)} tone={plan.revisedTarget ? "good" : "muted"} />
-        <Metric label="Protect at" value={price(plan.protectiveStop)} tone="warn" />
+        <Metric label={exitNow ? "Old stop · no longer actionable" : "Protect at"} value={exitNow ? "—" : price(plan.protectiveStop)} tone={exitNow ? "muted" : "warn"} />
         <Metric label="Upside left" value={pct(plan.remainingUpsidePct)} tone={(plan.remainingUpsidePct ?? 0) > 0 ? "good" : "muted"} />
       </div>
       <ul className="mt-3 space-y-1 text-xs leading-relaxed text-white/65">
