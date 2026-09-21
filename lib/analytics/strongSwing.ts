@@ -69,18 +69,17 @@ const sma = (values: number[], period: number, end = values.length): number | nu
 const pctChange = (from: number, to: number): number | null =>
   from > 0 && Number.isFinite(from) && Number.isFinite(to) ? ((to - from) / from) * 100 : null;
 
-/**
- * Absolute day gap between two dates. Freshness cares about lag in *either* direction: the
- * previous helper clamped negatives to 0, so a benchmark older than the stock reported a gap
- * of 0 and always passed the freshness gate — even though the benchmark drives the regime and
- * relative-strength gates too.
- */
-const absDaysBetween = (from: string, to: string): number => {
-  const start = Date.parse(`${from.slice(0, 10)}T00:00:00Z`);
-  const end = Date.parse(`${to.slice(0, 10)}T00:00:00Z`);
-  return Number.isFinite(start) && Number.isFinite(end)
-    ? Math.abs(Math.floor((end - start) / 86_400_000))
-    : Number.POSITIVE_INFINITY;
+/** Count observed exchange sessions between two market dates, in either direction. */
+const absTradingSessionsBetween = (from: string, to: string, sessionDates: string[]): number => {
+  const fromDate = from.slice(0, 10);
+  const toDate = to.slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(fromDate) || !/^\d{4}-\d{2}-\d{2}$/.test(toDate)) {
+    return Number.POSITIVE_INFINITY;
+  }
+  const first = fromDate <= toDate ? fromDate : toDate;
+  const last = fromDate <= toDate ? toDate : fromDate;
+  return [...new Set(sessionDates.map((date) => date.slice(0, 10)))]
+    .filter((date) => date > first && date <= last).length;
 };
 
 function gate(
@@ -210,7 +209,11 @@ export function assessStrongSwing(input: StrongSwingInput): StrongSwingAssessmen
   const suggestedExposurePct = marketShock ? 0 : marketRegimePositive ? 100 : 50;
 
   const referenceDate = benchmarkLatest?.date ?? latest.date;
-  const dataFresh = benchmarkBars.length > 0 && absDaysBetween(latest.date, referenceDate) <= 1;
+  const dataFresh = benchmarkBars.length > 0 && absTradingSessionsBetween(
+    latest.date,
+    referenceDate,
+    [...bars.map((bar) => bar.date), ...benchmarkBars.map((bar) => bar.date)],
+  ) <= 1;
   const priceFloor = input.market === "IN" ? 20 : 2;
   const tradedValueFloor = input.market === "IN" ? 10_000_000 : 1_000_000;
   const hasTrendHistory = sma50 !== null && sma200 !== null && sma50Prior !== null && sma20 !== null;

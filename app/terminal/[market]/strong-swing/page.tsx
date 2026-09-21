@@ -47,8 +47,7 @@ export default async function StrongSwingPage({
       <div className="mb-6 border-l-2 border-[var(--ig-accent)] pl-4 text-sm leading-relaxed text-white/52">
         Buy &amp; Track is enabled only for green Execution Ready setups and records the frozen plan in your ledger. Breeze currently supplies live market data; it does not place the broker order, so confirm exchange restrictions in ICICI Direct before buying.
       </div>
-      {market === "IN" && <MomentumIgnitionCandidates result={momentumIgnition} />}
-      <section className={market === "IN" ? "mt-12 border-t border-white/10 pt-8" : ""}>
+      <section>
         {market === "IN" && <div className="mb-6">
           <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-emerald-300">Base Swing lineage · confirmed execution engine</div>
           <h2 className="mt-1 text-2xl font-black">Strong Swing Confirmation</h2>
@@ -56,6 +55,9 @@ export default async function StrongSwingPage({
         </div>}
         <StrongSwingCandidates candidates={candidates} />
       </section>
+      {market === "IN" && <section className="mt-12 border-t border-white/10 pt-8">
+        <MomentumIgnitionCandidates result={momentumIgnition} />
+      </section>}
     </AppShell>
   );
 }

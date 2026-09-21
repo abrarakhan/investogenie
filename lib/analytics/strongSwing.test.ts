@@ -273,6 +273,24 @@ describe("assessStrongSwing", () => {
     expect(result.gates.find((g) => g.key === "freshness")?.passed).toBe(false);
   });
 
+  it("treats Friday benchmark data as fresh for a Monday live bar", () => {
+    const bars = breakoutBars();
+    const benchmarkBars = benchmark();
+    bars[bars.length - 1] = { ...bars.at(-1)!, date: "2026-09-21" };
+    benchmarkBars[benchmarkBars.length - 1] = { ...benchmarkBars.at(-1)!, date: "2026-09-18" };
+    const result = assessStrongSwing({
+      market: "IN",
+      verdict: "LONG_BREAKOUT",
+      isBreakout: true,
+      trigger: bars.at(-1)!.close,
+      atr: 2,
+      trailingStop: null,
+      bars,
+      benchmarkBars,
+    });
+    expect(result.gates.find((g) => g.key === "freshness")?.passed).toBe(true);
+  });
+
   it("reports missing benchmark data rather than blaming the market regime", () => {
     const bars = breakoutBars();
     const result = assessStrongSwing({
