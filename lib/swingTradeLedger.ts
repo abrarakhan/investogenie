@@ -1,6 +1,7 @@
 import { query } from "@/lib/db";
 import { scoreNewsSwing, type NewsDirection, type NewsScope } from "@/lib/analytics/newsSwing";
 import { assessTradeRisk, type TradeRiskAssessment, type TradeRiskState } from "@/lib/analytics/tradeRisk";
+import { reviseSwingTradePlan, type TradePlanRevision } from "@/lib/analytics/tradePlanRevision";
 import { isMarketOpenNow, refreshMarketHolidays } from "@/lib/market-calendar.mjs";
 
 export type SwingTradeState =
@@ -179,6 +180,7 @@ export interface SwingLedgerTrade {
   closeReason: string | null;
   notes: string | null;
   progress: SwingTradeProgress;
+  revisedPlan: TradePlanRevision;
   risk: TradeRiskAssessment & {
     state: TradeRiskState;
     newsAdjustment: number;
@@ -237,6 +239,7 @@ export async function getSwingTradeLedger(userId: string, market: "IN" | "US"): 
   const rows = await query<LedgerRow>(
     `select l.*, a.ticker, a.name asset_name, a.exchange, a.sector asset_sector,
             q.price current_price, q.as_of quote_as_of, q.updated_at quote_updated_at,
+            s.atr current_atr,
             stock_path.prior_close, stock_path.two_session_close,
             coalesce(sales.sold_quantity,0) sold_quantity,
             coalesce(sales.realized_proceeds,0) realized_proceeds,
@@ -263,12 +266,13 @@ export async function getSwingTradeLedger(userId: string, market: "IN" | "US"): 
            ) closes
        ) stock_path on true
        left join lateral (
-         select max(d.high) highest_high
+         select max(d.high) highest_high, min(d.low) lowest_low
            from public.daily_ohlcv d
           where d.asset_id = l.asset_id
             and d.date >= l.bought_on
             and d.date <= coalesce(l.closed_on, current_date)
        ) path on true
+       left join public.swing_signals s on s.asset_id=l.asset_id
        left join lateral (
          select sum(e.quantity) sold_quantity,
                 sum(e.quantity * e.exit_price) realized_proceeds,
@@ -438,9 +442,30 @@ export async function getSwingTradeLedger(userId: string, market: "IN" | "US"): 
       assetNewsVerified: assetImpacts.some((impact) => impact.verified_evidence),
       newsFresh,
     });
+    const revisedPlan = reviseSwingTradePlan({
+      status,
+      currentPrice,
+      buyPrice,
+      originalTarget: trade.projectedTarget,
+      originalStop: trade.projectedStop,
+      effectiveTrailingStop,
+      atr: nullableNumber(row.current_atr) ?? nullableNumber(row.projected_atr),
+      highestHighSinceEntry: nullableNumber(row.highest_high),
+      lowestLowSinceEntry: nullableNumber(row.lowest_low),
+      stockMove1dPct,
+      stockMove2dPct,
+      soldQuantity,
+      remainingQuantity,
+      externalExitRisk: assessment.recommendation === "EXIT"
+        && assessment.reasons.some((reason) => !reason.startsWith("The recorded strategy target has been reached")),
+      externalExitReasons: assessment.recommendation === "EXIT"
+        ? assessment.reasons.filter((reason) => !reason.startsWith("The recorded strategy target has been reached"))
+        : [],
+    });
     return {
       ...trade,
       progress,
+      revisedPlan,
       risk: {
         ...assessment,
         newsAdjustment: newsScore.newsAdjustment,

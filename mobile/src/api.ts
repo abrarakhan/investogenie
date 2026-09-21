@@ -77,6 +77,16 @@ export interface LedgerTrade {
     state: string;
   };
   risk: { state: string; recommendation: string; reasons: string[] };
+  revisedPlan: {
+    action: "FOLLOW_ORIGINAL" | "EXTEND_RUNNER" | "PROTECT_PROFIT" | "PROTECT_RECOVERY" | "EXIT" | "UNAVAILABLE";
+    label: string;
+    revisedTarget: number | null;
+    protectiveStop: number | null;
+    remainingUpsidePct: number | null;
+    originalPlanBreached: boolean;
+    atUpperCircuit: boolean;
+    reasons: string[];
+  };
   exits: Array<{ id: string; soldOn: string; quantity: number; exitPrice: number; reason: string | null; realizedPnlValue: number }>;
 }
 

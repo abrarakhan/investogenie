@@ -143,6 +143,7 @@ function TradeCard({ trade, today }: { trade: SwingLedgerTrade; today: string })
         </div>
       </div>
       {trade.status === "OPEN" && <TradeRiskPanel trade={trade} />}
+      {trade.status === "OPEN" && <RevisedPlanPanel trade={trade} />}
       <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Metric label="Buy" value={price(trade.buyPrice)} />
         <Metric label={trade.status === "CLOSED" ? "Exit" : "Current"} value={price(trade.status === "CLOSED" ? trade.exitPrice : trade.currentPrice)} tone={(trade.progress.pnlPct ?? 0) >= 0 ? "good" : "bad"} />
@@ -192,17 +193,54 @@ function TradeCard({ trade, today }: { trade: SwingLedgerTrade; today: string })
   );
 }
 
+function RevisedPlanPanel({ trade }: { trade: SwingLedgerTrade }) {
+  const plan = trade.revisedPlan;
+  const tone = plan.action === "EXIT"
+    ? "border-rose-500/30 bg-rose-500/[0.08] text-rose-200"
+    : plan.action === "PROTECT_RECOVERY" || plan.action === "PROTECT_PROFIT"
+      ? "border-amber-500/25 bg-amber-500/[0.06] text-amber-200"
+      : plan.action === "EXTEND_RUNNER"
+        ? "border-cyan-400/25 bg-cyan-400/[0.06] text-cyan-200"
+        : "border-white/10 bg-white/[0.025] text-white/75";
+  return (
+    <div className={`mt-4 rounded-lg border p-4 ${tone}`}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <div className="text-[10px] font-bold uppercase tracking-[0.16em] opacity-60">Live revised plan</div>
+          <h4 className="mt-1 text-sm font-bold">{plan.label}</h4>
+        </div>
+        {plan.originalPlanBreached && <span className="rounded-full border border-rose-400/30 bg-rose-500/10 px-3 py-1 text-[10px] font-bold uppercase tracking-wide text-rose-200">Original stop traded through</span>}
+      </div>
+      <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <Metric label="Frozen target" value={price(trade.projectedTarget)} tone="muted" />
+        <Metric label="Revised objective" value={price(plan.revisedTarget)} tone={plan.revisedTarget ? "good" : "muted"} />
+        <Metric label="Protect at" value={price(plan.protectiveStop)} tone="warn" />
+        <Metric label="Upside left" value={pct(plan.remainingUpsidePct)} tone={(plan.remainingUpsidePct ?? 0) > 0 ? "good" : "muted"} />
+      </div>
+      <ul className="mt-3 space-y-1 text-xs leading-relaxed text-white/65">
+        {plan.reasons.map((reason) => <li key={reason}>• {reason}</li>)}
+      </ul>
+      <p className="mt-3 text-[11px] text-white/35">The frozen entry plan remains unchanged. Revised objectives are volatility-scaled guidance for the remaining quantity, not guaranteed prices or automatic broker orders.</p>
+    </div>
+  );
+}
+
 function TradeRiskPanel({ trade }: { trade: SwingLedgerTrade }) {
-  const riskOff = trade.risk.state === "RISK_OFF";
+  const targetExtension = trade.progress.state === "TARGET_REACHED" && trade.revisedPlan.action === "EXTEND_RUNNER";
+  const riskOff = trade.risk.state === "RISK_OFF" && !targetExtension;
   const panelClass = riskOff
     ? "border-rose-500/30 bg-rose-500/[0.08]"
     : trade.risk.state === "CAUTION" || trade.risk.coverageWarning
       ? "border-amber-500/25 bg-amber-500/[0.06]"
       : "border-emerald-500/25 bg-emerald-500/[0.05]";
-  const recommendation = trade.risk.recommendation === "EXIT"
+  const recommendation = targetExtension
+    ? "TARGET REACHED"
+    : trade.risk.recommendation === "EXIT"
     ? "EXIT"
     : trade.risk.recommendation === "STAY_CAUTION" ? "STAY / CAUTION" : "STAY";
-  const headingClass = riskOff
+  const headingClass = targetExtension
+    ? "text-cyan-200"
+    : riskOff
     ? "text-rose-200"
     : trade.risk.recommendation === "STAY_CAUTION" ? "text-amber-200" : "text-emerald-200";
   return (
@@ -212,7 +250,9 @@ function TradeRiskPanel({ trade }: { trade: SwingLedgerTrade }) {
           Hourly News &amp; AI trade check
         </h4>
         <span className={`rounded-full border px-3 py-1 text-xs font-bold tracking-wide ${
-          riskOff
+          targetExtension
+            ? "border-cyan-400/35 bg-cyan-500/15 text-cyan-200"
+            : riskOff
             ? "border-rose-400/35 bg-rose-500/15 text-rose-200"
             : trade.risk.recommendation === "STAY_CAUTION"
               ? "border-amber-400/35 bg-amber-500/15 text-amber-200"
