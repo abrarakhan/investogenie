@@ -1,284 +1,157 @@
 # InvestoGenie
 
-InvestoGenie is a local-first market intelligence and paper trading terminal for the US and Indian markets. It combines portfolio tracking, live quote refreshes, buy-candidate swing screening, company fundamentals, and market overview pages on top of a local PostgreSQL database.
+InvestoGenie is a self-hosted market intelligence and trade-management platform for Indian and US
+equities. It combines technical screening, execution-gated Strong Swing candidates, source-linked
+News & AI analysis, long-term fundamentals, live market data, mutual-fund look-through, and a
+broker-reconciled trade ledger in one server-authoritative system.
 
-## Current Status
+The active production deployment runs on AWS Lightsail. The same codebase supports local macOS
+development and an alternate Ubuntu/Oracle-compatible deployment.
 
-- Next.js 16 App Router app with React 19.
-- Local PostgreSQL replaces Supabase completely.
-- Local email/password auth with signed HTTP-only sessions.
-- Separate US and India experiences.
-- Recurring quote, OHLCV, fundamentals, and swing-scan jobs.
-- Yahoo Finance primary sync with Google Finance quote fallback.
-- NSE incremental OHLCV sync for Indian stocks.
-- US and India company fundamentals sync into a shared reports table.
-- Broker-reconciled Swing Trade Ledger with partial exits, capital-employed ROI, dated XIRR and
-  separate cumulative trade turnover.
+## Current Production
 
-Current local database coverage from the development machine:
+- Next.js 16.3 App Router, React 19 and TypeScript.
+- PostgreSQL as the system of record; direct access through `pg`.
+- AWS Lightsail with systemd, Nginx/HTTPS and recurring ingestion workers.
+- India-first market coverage with NSE/BSE trading-session and holiday awareness.
+- ICICI Breeze for priority live market data and read-only broker reconciliation.
+- Bhavcopy, Yahoo and Google fallbacks plus exchange-close OHLCV maintenance.
+- Android/iOS client backed by versioned server APIs; analytics remain on the server.
+- Current product revision: `9f77b09`; documentation follows `main`.
 
-| Dataset | Rows |
-| --- | ---: |
-| Assets | 18,070 |
-| Daily OHLCV bars | 4,304,693 |
-| Latest quotes | 17,242 |
-| Swing signals | 2,422 |
-| Financial reports | 83,443 |
-| Cron logs | 91 |
+Detailed live status is maintained in [STATUS.md](STATUS.md), capabilities in
+[CAPABILITIES.md](CAPABILITIES.md), and system boundaries in [ARCHITECTURE.md](ARCHITECTURE.md).
 
-## Deployment
+## Core Workspaces
 
-The same revision supports local development, private Mac fallback, and active AWS production:
+| Workspace | Purpose |
+| --- | --- |
+| Market overview | India/US quotes, breadth, charts and market context |
+| Stock Screener | Fundamental and price-action filters, presets, saved screens and exports |
+| Swing Candidates | Broad strategy discovery with frozen entry, target, stop and holding window |
+| Strong Swing | Stricter execution-readiness, liquidity, regime and exchange-safety gates |
+| News & AI Swing | Strong Swing base with bounded, source-linked event intelligence |
+| Long-Term Candidates | Multi-year financial evidence and investor-inspired rankings |
+| Probability | 21-session return distribution, upside probability and drawdown range |
+| Trade Ledger | Purchases, partial/final sales, revised plans, news risk, P&L, ROI and XIRR |
+| Fund Mapping | CAS holdings, AMFI identities, AMC disclosures and stock-overlap analysis |
+| Data Health | Source freshness, coverage gaps, backfill queue and repair controls |
 
-- macOS local: `Launch InvestoGenie.command` or `npm run dev`, using `.env.local`
-  and Mac-local PostgreSQL.
-- AWS Lightsail: active production build under systemd/Nginx with VM-local PostgreSQL.
-- Oracle-compatible Ubuntu package: retained as an alternate deployment path.
+## Trade Ledger Accounting
 
-See [`DEPLOYMENT.md`](DEPLOYMENT.md) for the target matrix, promotion workflow,
-environment checks, and links to the complete local and Oracle instructions.
+The ledger stores gross trade data and broker-reconciled acquisition value, sale proceeds and
+realized P&L. It distinguishes:
+
+- **Capital employed:** external capital inferred chronologically after recycling retained sale
+  proceeds.
+- **Trade turnover:** cumulative acquisition value across every purchase.
+- **ROI:** overall P&L divided by capital employed; it is not annualized.
+- **XIRR:** annualized money-weighted return using dated capital additions and ending retained
+  cash plus current open-position value.
+
+The ICICI Direct reconciliation through 22 September 2026 currently records INR 3,83,657.44 of
+capital employed, INR 8,76,695.04 of trade turnover and INR 22,712.85 of realized profit. This is
+5.92% ROI over 18 August-22 September 2026; the short-period XIRR is 170.91% annualized.
+
+Trade-ledger accounting does not alter Swing, Strong Swing, News & AI, target, stop or ranking
+calculations.
+
+## Data And Automation
+
+The scheduler in `scripts/run-with-nse-sync.mjs` runs alongside Next.js and coordinates:
+
+- five-minute priority quote/OHLCV refreshes during Indian market hours;
+- hourly ledger-focused news assessment during active sessions;
+- NSE/BSE and US exchange-close quote/history synchronization;
+- market-calendar-aware freshness and catch-up jobs;
+- persistent OHLCV backfill workers and auditable exclusions;
+- fundamentals, macro, swing-scan and forward-test maintenance;
+- daily Strong Swing email digest;
+- Gmail discovery for the latest CAS and AMC monthly disclosures.
+
+Provider credentials are encrypted per user where supported. Secrets and production environment
+files are never committed.
 
 ## Main Routes
 
 | Route | Purpose |
 | --- | --- |
-| `/` | Cinematic landing page with market pivot and ticker tape |
-| `/markets/us` | US market overview dashboard |
-| `/markets/in` | India market overview dashboard |
-| `/terminal/us` | Authenticated US portfolio terminal |
-| `/terminal/in` | Authenticated India portfolio terminal |
-| `/terminal/in/trade-ledger` | Broker-reconciled swing trades, partial exits, P&L, ROI and XIRR |
-| `/terminal/us/screener` | US swing candidates |
-| `/terminal/in/screener` | India swing candidates |
-| `/settings` | Per-user swing risk settings |
-| `/login` | Sign in / sign up |
+| `/terminal/in` | India terminal |
+| `/terminal/us` | US terminal |
+| `/terminal/[market]/stocks` | Stock screener |
+| `/terminal/[market]/strong-swing` | Strong Swing and Momentum Ignition |
+| `/terminal/[market]/news-swing` | News & AI Swing |
+| `/terminal/[market]/trade-ledger` | Trade Ledger and broker reconciliation |
+| `/terminal/[market]/long-term` | Long-Term Candidates |
+| `/terminal/[market]/probability` | Probability workspace |
+| `/portfolio/fund-mapping` | CAS/AMC mapping and fund overlap |
+| `/data/health` | Data coverage and backfill health |
+| `/settings` | User, provider, Breeze and Gmail settings |
+| `/help` | Product and methodology guides |
 
-## Product Features
+## Technology
 
-### Landing and Market Overview
+| Layer | Technology |
+| --- | --- |
+| Web/API | Next.js 16.3, React 19, TypeScript |
+| Mobile | React Native / Expo SDK 57, locally generated native projects |
+| Database | PostgreSQL |
+| UI | Tailwind CSS 4, Lightweight Charts |
+| Ingestion | Node.js and Python workers |
+| Production | AWS Lightsail, systemd, Nginx, HTTPS |
+| Authentication | Signed web sessions and hashed expiring mobile tokens |
+| Credential storage | AES-256-GCM encrypted per-user secrets |
 
-- WebGL hero with Three.js and React Three Fiber.
-- GSAP kinetic headline and scroll sections.
-- US/India market pivot switch.
-- Live ticker tape from `latest_quotes`.
-- Dedicated US and India market overview pages.
-- Quote panels, breadth, normalized performance chart, candidate list, and fundamentals leaders.
+## Local Development
 
-### Portfolio Terminal
-
-- Per-user portfolio, holdings, transaction ledger, and watchlist.
-- Market-scoped US and India views.
-- Currency-aware formatting for USD and INR.
-- Benchmark cards:
-  - US: SPY, QQQ, DIA
-  - India: NIFTY, SENSEX, USDINR
-- Trade ticket for buy/sell entries.
-- Watchlist add/remove with live quote display.
-
-### Swing Candidates
-
-- Buy-candidate oriented screener.
-- India view is NSE-only and capped to the top 20 candidates.
-- US view uses the currently available US historical scan set.
-- Candidate rows include:
-  - current price
-  - entry
-  - target
-  - stop loss
-  - trailing stop
-  - score
-  - expected days
-  - verdict
-  - strategy tags
-  - P/E
-  - market cap
-  - ROCE
-  - profit and sales growth
-
-### Analytics
-
-- Derivative-aided swing classifier using Donchian breakouts, Bollinger squeezes, ATR risk levels, volume, and open-interest signals where available.
-- Read-time level derivation so user risk settings apply without rescanning.
-- Legendary strategy tags:
-  - Qullamaggie
-  - Minervini
-  - Darvas
-  - Paul Tudor Jones
-  - Simons mean reversion
-- India mutual fund overlap engine.
-- Macro correlation engine.
-
-### Fundamentals
-
-- Shared `asset_financial_reports` table for quarterly and annual reports.
-- Latest financials view for screener joins.
-- India monetary values are normalized to Rs. crore.
-- US monetary values are normalized to USD millions.
-- Derived metrics include P/E, market cap, ROCE, YoY profit variance, and YoY sales variance.
-
-## Data Sync
-
-The normal app launcher runs recurring data work through:
-
-```bash
-npm run dev
-```
-
-That command starts Next.js through `scripts/run-with-nse-sync.mjs`, which:
-
-- waits until the local server is reachable,
-- runs official NSE bhavcopy OHLCV top-up,
-- runs official BSE bhavcopy OHLCV top-up,
-- refreshes security listings,
-- refreshes latest market quotes from bhavcopy,
-- syncs US quotes from Yahoo Finance,
-- falls back to Google Finance for unresolved US quotes,
-- runs the swing scan,
-- starts Indian fundamentals sync,
-- starts US fundamentals sync,
-- refreshes priority NSE/BSE latest quotes every 5 minutes during Indian market hours
-  (09:15-15:30 IST, Mon-Fri). Tune with
-  `MARKET_HOURS_QUOTE_REFRESH_INTERVAL_MINUTES` (India 09:15-15:30 IST and
-  US 09:30-16:00 ET), or disable with `MARKET_HOURS_QUOTE_REFRESH_DISABLED=1`,
-- refreshes the active NSE universe in Yahoo Finance batches before each
-  5-minute quote pass; tune provider load with `INDIA_LIVE_QUOTE_BATCH_SIZE`
-  and `INDIA_LIVE_QUOTE_SLEEP_SECONDS`,
-- repeats market quote refresh on `MARKET_REFRESH_INTERVAL_MINUTES`,
-- schedules the daily NSE/BSE bhavcopy history sync by IST time.
-
-Yahoo/Google history fetches are no longer the normal India update path. They
-remain available through the queued backfill repair flow for symbols/dates that
-official bhavcopy does not cover.
-
-Useful manual commands:
-
-```bash
-npm run sync:nse-history
-npm run sync:nse-quotes
-npm run sync:fundamentals
-npm run sync:us
-npm run sync:us-history
-npm run sync:us-quotes
-npm run sync:us-fundamentals
-npm run backfill
-```
-
-## OHLCV Backfill Queue
-
-Large quote-without-history gaps are repaired through `public.backfill_queue` instead of one huge blast run. The queue is populated idempotently from live coverage gaps: assets with `latest_quotes` but zero `daily_ohlcv` bars.
-
-Priority order:
-
-1. India screener universe: `NIFTY_500`.
-2. US screener universe: `SP_500` and `NASDAQ_100` when seeded.
-3. User portfolio/watchlist holdings.
-4. Active swing signals or open forward-test positions.
-5. Remaining India quoted assets.
-6. Remaining US quoted assets.
-
-Manual trigger options:
-
-- Browser: open `/data/health`, then use **Populate Queue**, **Run Backfill Now**, or **Re-queue Failed**.
-- CLI: start the app first, then run `npm run backfill`.
-
-The app launcher also checks the queue after market-close windows and triggers one configured batch through `/api/backfill/run?job=cron`.
-
-Environment variables:
-
-```bash
-BACKFILL_BATCH_SIZE=100
-BACKFILL_DELAY_IN_MS=1500
-BACKFILL_DELAY_US_MS=1000
-BACKFILL_HISTORY_DAYS=504
-BACKFILL_SKIP_DURING_MARKET_HOURS=true
-BACKFILL_CRON_DISABLED=0
-BACKFILL_INDIA_HOUR_IST=17
-BACKFILL_US_HOUR_IST=22
-```
-
-Monitor progress in SQL:
-
-```sql
-select tier, status, count(*)
-from public.backfill_queue
-group by tier, status
-order by tier, status;
-```
-
-The worker only inserts/upserts OHLCV bars through the existing history scripts. It does not delete data. Rows that already gained history are marked `skipped`; failed rows retry up to three attempts before becoming `failed`.
-
-## Local Setup
-
-Install dependencies:
+Requirements: Node.js, Python 3, PostgreSQL, and the environment variables documented in
+`.env.example`.
 
 ```bash
 npm install
-```
-
-Create `.env.local`:
-
-```bash
-DATABASE_URL=postgresql://abrarahmedkhan@127.0.0.1:5432/investogenie
-SESSION_SECRET=replace-with-a-long-random-secret
-CRON_SECRET=replace-with-a-long-random-secret
-
-# Optional — powers the natural-language screener box on /terminal/{us,in}/stocks.
-# Without it the rest of the screener works normally and the NL box reports that
-# it is unconfigured. Get a key at https://console.anthropic.com/settings/keys
-ANTHROPIC_API_KEY=sk-ant-...
-
-# Optional — powers /terminal/{us,in}/news-swing. Configure one news source;
-# the existing AI key classifies impact, while a deterministic fallback remains available.
-GNEWS_API_KEY=...
-# Alternatives: ALPHA_VANTAGE_API_KEY=... or NEWS_API_KEY=...
-```
-
-Start the app:
-
-```bash
 npm run dev
 ```
 
-Open:
+Open `http://localhost:3000`.
 
-```text
-http://localhost:3000
-```
-
-## Local Database Access
-
-Use these settings in TablePlus, DBeaver, pgAdmin, or another Postgres client:
-
-```text
-Host: 127.0.0.1
-Port: 5432
-Database: investogenie
-User: abrarahmedkhan
-Password: blank
-SSL: disabled/default
-```
-
-Connection URL:
-
-```text
-postgresql://abrarahmedkhan@127.0.0.1:5432/investogenie
-```
-
-## Verification
-
-Common checks:
+Useful verification commands:
 
 ```bash
+npm test
 npm run lint
-npx tsc --noEmit
 npm run build
-npm run smoke      # requires the app running on http://127.0.0.1:3000
 ```
 
-The build uses local fonts, so it does not depend on fetching Google Fonts from the sandbox.
+The current suite contains 238 passing tests across 33 files. Integration tests require the local
+PostgreSQL test environment.
 
-## Known Gaps
+## Deployment
 
-- US quote and fundamentals coverage is much broader than US historical OHLCV scan coverage. The new `sync:us-history` Yahoo pipeline expands this coverage in conservative batches.
-- Provider APIs can rate-limit or block scripted traffic; the sync-state tables keep recurring jobs moving past unsupported symbols.
-- A visible admin/data freshness page would make sync health easier to inspect from the browser.
+Production releases are committed to `main`, pushed to GitHub, and deployed on AWS with:
+
+```bash
+sudo bash /opt/investogenie/app/deploy/oracle/deploy-release.sh
+```
+
+The historical directory name is retained for compatibility; the script is the active shared
+Ubuntu deployment path for AWS and Oracle-compatible hosts. It installs locked dependencies,
+builds the application, applies migrations through `0046_trade_ledger_returns.sql`, verifies the
+schema, and restarts `investogenie.service`.
+
+See [DEPLOYMENT.md](DEPLOYMENT.md), [deploy/local/README.md](deploy/local/README.md), and
+[deploy/oracle/README.md](deploy/oracle/README.md).
+
+## Mobile
+
+The mobile client displays the same server-ranked Strong Swing and News & AI candidates and the
+same server-calculated ledger results. Approved builds are generated locally with Expo Prebuild and
+then signed through Gradle/Android Studio or Xcode; source is not uploaded to EAS Build and Expo
+Updates is not enabled.
+
+See [mobile/README.md](mobile/README.md) and [mobile/PRIVACY.md](mobile/PRIVACY.md).
+
+## Important Boundary
+
+InvestoGenie is a personal research and trade-management system. Targets, stops, probabilities,
+news classifications and AI assessments are decision support, not guarantees or autonomous broker
+instructions. Broker/exchange restrictions and executable order state must still be confirmed.
