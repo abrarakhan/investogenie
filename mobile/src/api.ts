@@ -87,7 +87,7 @@ export interface LedgerTrade {
     atUpperCircuit: boolean;
     reasons: string[];
   };
-  exits: Array<{ id: string; soldOn: string; quantity: number; exitPrice: number; reason: string | null; realizedPnlValue: number }>;
+  exits: Array<{ id: string; soldOn: string; quantity: number; exitPrice: number; saleValue: number; reason: string | null; realizedPnlValue: number }>;
 }
 
 export interface CandlePoint { date: string; open: number; high: number; low: number; close: number; volume: number | null }
@@ -99,6 +99,10 @@ export interface LedgerSummary {
   unrealizedPnlValue: number;
   realizedPnlValue: number;
   overallPnlValue: number;
+  totalInvestedValue: number;
+  currentOpenValue: number;
+  roiPct: number | null;
+  xirrPct: number | null;
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {

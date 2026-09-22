@@ -39,13 +39,17 @@ export default function SwingTradeLedger({ market, trades, defaults }: {
 
   return (
     <div className="space-y-6">
-      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-8">
         <Summary label="Open trades" value={String(summary.openCount)} />
         <Summary label="Open capital" value={money(summary.openInvestedValue, currency)} />
+        <Summary label="Total invested" value={money(summary.totalInvestedValue, currency)} />
         <Summary label="Unrealized P&L" value={money(summary.unrealizedPnlValue, currency)} tone={summary.unrealizedPnlValue >= 0 ? "good" : "bad"} />
         <Summary label={`Realized P&L · ${summary.closedCount} closed`} value={money(summary.realizedPnlValue, currency)} tone={summary.realizedPnlValue >= 0 ? "good" : "bad"} />
         <Summary label="Overall P&L" value={money(summary.overallPnlValue, currency)} tone={summary.overallPnlValue >= 0 ? "good" : "bad"} />
+        <Summary label="ROI" value={pct(summary.roiPct)} tone={(summary.roiPct ?? 0) >= 0 ? "good" : "bad"} />
+        <Summary label="XIRR · annualized" value={pct(summary.xirrPct)} tone={(summary.xirrPct ?? 0) >= 0 ? "good" : "bad"} />
       </section>
+      <p className="text-[11px] leading-relaxed text-white/35">ROI uses total acquisition cost. XIRR annualizes dated purchase, sale and current-value cash flows; short holding periods can therefore produce very large annualized percentages. Broker net values are used where reconciled.</p>
 
       <details open={Boolean(defaults.ticker)} className="rounded-lg border border-white/10 bg-white/[0.02]">
         <summary className="cursor-pointer list-none px-5 py-4 font-semibold [&::-webkit-details-marker]:hidden">
@@ -133,6 +137,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 function TradeCard({ trade, today }: { trade: SwingLedgerTrade; today: string }) {
   const state = STATE[trade.progress.state];
   const progressWidth = Math.max(0, Math.min(100, trade.progress.targetProgressPct ?? 0));
+  const tradeReturns = summarizeSwingTradeLedger([trade]);
   return (
     <article className="rounded-lg border border-white/10 bg-white/[0.025] p-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -163,6 +168,8 @@ function TradeCard({ trade, today }: { trade: SwingLedgerTrade; today: string })
         {trade.soldQuantity > 0 && <span>Sold {trade.soldQuantity.toLocaleString("en-IN")}</span>}
         <span>Remaining {trade.remainingQuantity.toLocaleString("en-IN")}</span>
         {trade.soldQuantity > 0 && <span className={trade.realizedPnlValue >= 0 ? "text-emerald-300" : "text-rose-300"}>Realized {money(trade.realizedPnlValue, trade.currency)}</span>}
+        <span className={(tradeReturns.roiPct ?? 0) >= 0 ? "text-emerald-300" : "text-rose-300"}>ROI {pct(tradeReturns.roiPct)}</span>
+        <span className={(tradeReturns.xirrPct ?? 0) >= 0 ? "text-emerald-300" : "text-rose-300"}>XIRR {pct(tradeReturns.xirrPct)}</span>
         <span>Quote session {trade.quoteAsOf ?? "unavailable"}</span>
         <span>Updated {quoteTime(trade.quoteUpdatedAt, trade.market)} {trade.market === "IN" ? "IST" : "ET"}</span>
         {trade.notes && <span>{trade.notes}</span>}

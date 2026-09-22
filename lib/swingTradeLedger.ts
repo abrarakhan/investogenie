@@ -47,26 +47,89 @@ export interface SwingTradeLedgerSummary {
   unrealizedPnlValue: number;
   realizedPnlValue: number;
   overallPnlValue: number;
+  totalInvestedValue: number;
+  currentOpenValue: number;
+  roiPct: number | null;
+  xirrPct: number | null;
+}
+
+export interface DatedCashFlow { date: string; amount: number }
+
+export function calculateXirr(cashFlows: DatedCashFlow[]): number | null {
+  const flows = cashFlows.filter((flow) => Number.isFinite(flow.amount) && /^\d{4}-\d{2}-\d{2}$/.test(flow.date));
+  if (!flows.some((flow) => flow.amount < 0) || !flows.some((flow) => flow.amount > 0)) return null;
+  const first = Math.min(...flows.map((flow) => utcDate(flow.date).getTime()));
+  const npv = (rate: number) => flows.reduce((sum, flow) => {
+    const years = (utcDate(flow.date).getTime() - first) / (365 * 86_400_000);
+    return sum + flow.amount / ((1 + rate) ** years);
+  }, 0);
+  let low = -0.9999;
+  let high = 10;
+  let lowValue = npv(low);
+  let highValue = npv(high);
+  while (lowValue * highValue > 0 && high < 1_000_000) {
+    high *= 10;
+    highValue = npv(high);
+  }
+  if (!Number.isFinite(lowValue) || !Number.isFinite(highValue) || lowValue * highValue > 0) return null;
+  for (let iteration = 0; iteration < 200; iteration++) {
+    const mid = (low + high) / 2;
+    const value = npv(mid);
+    if (Math.abs(value) < 0.000001) return mid * 100;
+    if (lowValue * value <= 0) {
+      high = mid;
+      highValue = value;
+    } else {
+      low = mid;
+      lowValue = value;
+    }
+  }
+  return ((low + high) / 2) * 100;
 }
 
 export function summarizeSwingTradeLedger(trades: ReadonlyArray<{
   status: "OPEN" | "CLOSED";
   progress: Pick<SwingTradeProgress, "investedValue" | "pnlValue">;
   realizedPnlValue?: number;
+  purchaseValue?: number;
+  boughtOn?: string;
+  currentPrice?: number | null;
+  remainingQuantity?: number;
+  closedOn?: string | null;
+  exitPrice?: number | null;
+  quantity?: number;
+  exits?: SwingTradeExit[];
 }>): SwingTradeLedgerSummary {
-  return trades.reduce<SwingTradeLedgerSummary>((summary, trade) => {
-    const unrealizedPnl = trade.status === "OPEN" ? trade.progress.pnlValue ?? 0 : 0;
+  const cashFlows: DatedCashFlow[] = [];
+  const asOf = new Date().toISOString().slice(0, 10);
+  const summary = trades.reduce<SwingTradeLedgerSummary>((summary, trade) => {
+    const purchaseValue = trade.purchaseValue ?? trade.progress.investedValue;
+    const quantity = trade.quantity ?? 0;
+    const remainingQuantity = trade.remainingQuantity ?? (trade.status === "OPEN" ? quantity : 0);
+    const remainingCost = quantity > 0 ? purchaseValue * (remainingQuantity / quantity) : trade.progress.investedValue;
+    const currentOpenValue = trade.status === "OPEN" && trade.currentPrice !== null && trade.currentPrice !== undefined
+      ? trade.currentPrice * remainingQuantity
+      : trade.status === "OPEN" ? remainingCost + (trade.progress.pnlValue ?? 0) : 0;
+    const unrealizedPnl = trade.status === "OPEN" ? currentOpenValue - remainingCost : 0;
     const realizedPnl = trade.realizedPnlValue
       ?? (trade.status === "CLOSED" ? trade.progress.pnlValue ?? 0 : 0);
+    if (trade.boughtOn) cashFlows.push({ date: trade.boughtOn, amount: -purchaseValue });
+    for (const exit of trade.exits ?? []) cashFlows.push({ date: exit.soldOn, amount: exit.saleValue });
+    if (!(trade.exits?.length) && trade.status === "CLOSED" && trade.closedOn && trade.exitPrice && quantity > 0) {
+      cashFlows.push({ date: trade.closedOn, amount: trade.exitPrice * quantity });
+    }
+    if (trade.status === "OPEN" && currentOpenValue > 0) cashFlows.push({ date: asOf, amount: currentOpenValue });
     if (trade.status === "OPEN") {
       summary.openCount += 1;
-      summary.openInvestedValue += trade.progress.investedValue;
+      summary.openInvestedValue += remainingCost;
+      summary.currentOpenValue += currentOpenValue;
       summary.unrealizedPnlValue += unrealizedPnl;
     } else {
       summary.closedCount += 1;
     }
     summary.realizedPnlValue += realizedPnl;
     summary.overallPnlValue += unrealizedPnl + realizedPnl;
+    summary.totalInvestedValue += purchaseValue;
     return summary;
   }, {
     openCount: 0,
@@ -75,7 +138,14 @@ export function summarizeSwingTradeLedger(trades: ReadonlyArray<{
     unrealizedPnlValue: 0,
     realizedPnlValue: 0,
     overallPnlValue: 0,
+    totalInvestedValue: 0,
+    currentOpenValue: 0,
+    roiPct: null,
+    xirrPct: null,
   });
+  summary.roiPct = summary.totalInvestedValue > 0 ? (summary.overallPnlValue / summary.totalInvestedValue) * 100 : null;
+  summary.xirrPct = calculateXirr(cashFlows);
+  return summary;
 }
 
 export interface SwingTradeExit {
@@ -85,6 +155,7 @@ export interface SwingTradeExit {
   exitPrice: number;
   reason: string | null;
   realizedPnlValue: number;
+  saleValue: number;
 }
 
 function utcDate(value: string): Date {
@@ -155,6 +226,7 @@ export interface SwingLedgerTrade {
   status: "OPEN" | "CLOSED";
   boughtOn: string;
   buyPrice: number;
+  purchaseValue: number;
   quantity: number;
   soldQuantity: number;
   remainingQuantity: number;
@@ -214,7 +286,7 @@ export const ledgerDateText = (value: LedgerValue) => {
 const dateText = ledgerDateText;
 const nullableNumber = (value: LedgerValue) => value === null ? null : Number(value);
 
-function parseExits(value: LedgerValue, buyPrice: number): SwingTradeExit[] {
+function parseExits(value: LedgerValue, unitCost: number): SwingTradeExit[] {
   if (!Array.isArray(value)) return [];
   return value.flatMap((item) => {
     if (!item || typeof item !== "object") return [];
@@ -222,13 +294,18 @@ function parseExits(value: LedgerValue, buyPrice: number): SwingTradeExit[] {
     const quantity = Number(record.quantity);
     const exitPrice = Number(record.exitPrice);
     if (!Number.isFinite(quantity) || !Number.isFinite(exitPrice)) return [];
+    const saleValue = record.saleValue === null || record.saleValue === undefined
+      ? exitPrice * quantity : Number(record.saleValue);
+    const realizedPnlValue = record.realizedPnl === null || record.realizedPnl === undefined
+      ? saleValue - (unitCost * quantity) : Number(record.realizedPnl);
     return [{
       id: String(record.id),
       soldOn: dateText(record.soldOn) ?? "",
       quantity,
       exitPrice,
       reason: record.reason === null || record.reason === undefined ? null : String(record.reason),
-      realizedPnlValue: (exitPrice - buyPrice) * quantity,
+      realizedPnlValue,
+      saleValue,
     }];
   });
 }
@@ -281,6 +358,8 @@ export async function getSwingTradeLedger(userId: string, market: "IN" | "US"): 
                   'soldOn',e.sold_on,
                   'quantity',e.quantity,
                   'exitPrice',e.exit_price,
+                  'saleValue',coalesce(e.sale_value,e.quantity * e.exit_price),
+                  'realizedPnl',e.realized_pnl,
                   'reason',e.reason
                 ) order by e.sold_on,e.created_at) exits
            from public.swing_trade_exits e
@@ -357,15 +436,16 @@ export async function getSwingTradeLedger(userId: string, market: "IN" | "US"): 
     const boughtOn = dateText(row.bought_on) ?? "";
     const status = String(row.status) as "OPEN" | "CLOSED";
     const buyPrice = Number(row.buy_price);
+    const purchaseValue = Number(row.purchase_value ?? buyPrice * Number(row.quantity));
     const quantity = Number(row.quantity);
-    const exits = parseExits(row.exits, buyPrice);
+    const exits = parseExits(row.exits, quantity > 0 ? purchaseValue / quantity : buyPrice);
     const soldQuantity = Math.min(quantity, Math.max(0, Number(row.sold_quantity ?? 0)));
     const remainingQuantity = status === "CLOSED" ? 0 : Math.max(0, quantity - soldQuantity);
     const legacyExitPrice = nullableNumber(row.exit_price);
     const realizedPnlValue = soldQuantity > 0
-      ? Number(row.realized_proceeds ?? 0) - (buyPrice * soldQuantity)
+      ? exits.reduce((sum, exit) => sum + exit.realizedPnlValue, 0)
       : status === "CLOSED" && legacyExitPrice !== null
-        ? (legacyExitPrice - buyPrice) * quantity
+        ? (legacyExitPrice * quantity) - purchaseValue
         : 0;
     const quoteUpdatedAt = row.quote_updated_at ? new Date(row.quote_updated_at as Date | string).getTime() : 0;
     const quoteFresh = status === "CLOSED" || !marketOpen || quoteUpdatedAt >= Date.now() - 7 * 60 * 1000;
@@ -383,7 +463,7 @@ export async function getSwingTradeLedger(userId: string, market: "IN" | "US"): 
       id: String(row.id), assetId: String(row.asset_id), ticker: String(row.ticker),
       assetName: row.asset_name === null ? null : String(row.asset_name),
       exchange: row.exchange === null ? null : String(row.exchange), market,
-      status, boughtOn, buyPrice, quantity, soldQuantity, remainingQuantity, realizedPnlValue, exits,
+      status, boughtOn, buyPrice, purchaseValue, quantity, soldQuantity, remainingQuantity, realizedPnlValue, exits,
       currency: String(row.currency), strategyKey: String(row.strategy_key),
       strategyLabel: String(row.strategy_label),
       signalVerdict: row.signal_verdict === null ? null : String(row.signal_verdict),

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { calculateSwingTradeProgress, ledgerDateText, summarizeSwingTradeLedger, tradingDaysBetween } from "@/lib/swingTradeLedger";
+import { calculateSwingTradeProgress, calculateXirr, ledgerDateText, summarizeSwingTradeLedger, tradingDaysBetween } from "@/lib/swingTradeLedger";
 
 describe("swing trade ledger progress", () => {
   it("keeps PostgreSQL date values on their local calendar day", () => {
@@ -46,6 +46,10 @@ describe("swing trade ledger progress", () => {
       unrealizedPnlValue: 100,
       realizedPnlValue: 200,
       overallPnlValue: 300,
+      totalInvestedValue: 4_250,
+      currentOpenValue: 1_600,
+      roiPct: 300 / 4_250 * 100,
+      xirrPct: null,
     });
   });
 
@@ -65,5 +69,32 @@ describe("swing trade ledger progress", () => {
     expect(summary.unrealizedPnlValue).toBe(30);
     expect(summary.realizedPnlValue).toBe(40);
     expect(summary.overallPnlValue).toBe(70);
+  });
+
+  it("calculates annualized XIRR from dated cash flows", () => {
+    const xirr = calculateXirr([
+      { date: "2025-01-01", amount: -100_000 },
+      { date: "2026-01-01", amount: 110_000 },
+    ]);
+    expect(xirr).toBeCloseTo(10, 5);
+  });
+
+  it("uses broker purchase, sale and realized values for portfolio returns", () => {
+    const summary = summarizeSwingTradeLedger([{
+      status: "CLOSED",
+      boughtOn: "2026-09-01",
+      closedOn: "2026-09-11",
+      purchaseValue: 10_050,
+      quantity: 100,
+      remainingQuantity: 0,
+      currentPrice: null,
+      progress: { investedValue: 10_000, pnlValue: 1_000 },
+      realizedPnlValue: 900,
+      exits: [{ id: "sale", soldOn: "2026-09-11", quantity: 100, exitPrice: 110, saleValue: 10_950, realizedPnlValue: 900, reason: null }],
+    }]);
+    expect(summary.realizedPnlValue).toBe(900);
+    expect(summary.overallPnlValue).toBe(900);
+    expect(summary.roiPct).toBeCloseTo(8.9552, 3);
+    expect(summary.xirrPct).not.toBeNull();
   });
 });

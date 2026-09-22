@@ -147,8 +147,8 @@ export async function recordMobileTradeSale(userId: string, tradeId: string, inp
     const originalQuantity = Number(trade.quantity);
     if (soldQuantity > originalQuantity - alreadySold + 0.000001) throw new Error("Sale quantity exceeds shares remaining");
     await client.query(
-      `insert into public.swing_trade_exits(trade_id,user_id,sold_on,quantity,exit_price,reason)
-       values($1,$2,$3,$4,$5,$6)`,
+      `insert into public.swing_trade_exits(trade_id,user_id,sold_on,quantity,exit_price,sale_value,reason)
+       values($1,$2,$3,$4,$5,$4*$5,$6)`,
       [tradeId, userId, soldOn, soldQuantity, exitPrice, String(input.reason ?? "Manual exit").slice(0, 120)],
     );
     await synchronizeTradeClosure(client, tradeId, originalQuantity);
@@ -182,7 +182,7 @@ export async function updateMobileTradeSale(userId: string, tradeId: string, sal
     const originalQuantity = Number(trade.quantity);
     if (soldQuantity > originalQuantity - otherSold + 0.000001) throw new Error("Sale quantity exceeds shares available");
     await client.query(
-      `update public.swing_trade_exits set sold_on=$1,quantity=$2,exit_price=$3,reason=$4,updated_at=now()
+      `update public.swing_trade_exits set sold_on=$1,quantity=$2,exit_price=$3,sale_value=$2*$3,realized_pnl=null,reason=$4,updated_at=now()
         where id=$5`,
       [soldOn, soldQuantity, exitPrice, String(input.reason ?? "Manual exit").slice(0, 120), saleId],
     );
