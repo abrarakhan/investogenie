@@ -100,6 +100,7 @@ export interface LedgerSummary {
   realizedPnlValue: number;
   overallPnlValue: number;
   totalInvestedValue: number;
+  capitalEmployedValue: number;
   currentOpenValue: number;
   roiPct: number | null;
   xirrPct: number | null;

@@ -47,6 +47,7 @@ describe("swing trade ledger progress", () => {
       realizedPnlValue: 200,
       overallPnlValue: 300,
       totalInvestedValue: 4_250,
+      capitalEmployedValue: 4_250,
       currentOpenValue: 1_600,
       roiPct: 300 / 4_250 * 100,
       xirrPct: null,
@@ -95,6 +96,33 @@ describe("swing trade ledger progress", () => {
     expect(summary.realizedPnlValue).toBe(900);
     expect(summary.overallPnlValue).toBe(900);
     expect(summary.roiPct).toBeCloseTo(8.9552, 3);
+    expect(summary.xirrPct).not.toBeNull();
+  });
+
+  it("recycles sale proceeds instead of counting every purchase as fresh capital", () => {
+    const summary = summarizeSwingTradeLedger([
+      {
+        status: "CLOSED", boughtOn: "2026-08-18", closedOn: "2026-09-02",
+        purchaseValue: 65_988.80, quantity: 620, remainingQuantity: 0, currentPrice: null,
+        progress: { investedValue: 65_988.80, pnlValue: 4_724.62 }, realizedPnlValue: 4_724.62,
+        exits: [{ id: "global", soldOn: "2026-09-02", quantity: 620, exitPrice: 0, saleValue: 70_713.42, realizedPnlValue: 4_724.62, reason: null }],
+      },
+      {
+        status: "CLOSED", boughtOn: "2026-08-24", closedOn: "2026-09-02",
+        purchaseValue: 99_571.15, quantity: 620, remainingQuantity: 0, currentPrice: null,
+        progress: { investedValue: 99_571.15, pnlValue: -3_616.06 }, realizedPnlValue: -3_616.06,
+        exits: [{ id: "fedfina", soldOn: "2026-09-02", quantity: 620, exitPrice: 0, saleValue: 95_955.09, realizedPnlValue: -3_616.06, reason: null }],
+      },
+      {
+        status: "CLOSED", boughtOn: "2026-09-03", closedOn: "2026-09-08",
+        purchaseValue: 167_239.43, quantity: 98, remainingQuantity: 0, currentPrice: null,
+        progress: { investedValue: 167_239.43, pnlValue: 13_316.54 }, realizedPnlValue: 13_316.54,
+        exits: [{ id: "axis", soldOn: "2026-09-08", quantity: 98, exitPrice: 0, saleValue: 180_555.97, realizedPnlValue: 13_316.54, reason: null }],
+      },
+    ]);
+    expect(summary.totalInvestedValue).toBeCloseTo(332_799.38, 2);
+    expect(summary.capitalEmployedValue).toBeCloseTo(166_130.87, 2);
+    expect(summary.roiPct).toBeCloseTo(8.682, 2);
     expect(summary.xirrPct).not.toBeNull();
   });
 });

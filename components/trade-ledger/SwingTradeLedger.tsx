@@ -39,17 +39,18 @@ export default function SwingTradeLedger({ market, trades, defaults }: {
 
   return (
     <div className="space-y-6">
-      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-8">
+      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-9">
         <Summary label="Open trades" value={String(summary.openCount)} />
         <Summary label="Open capital" value={money(summary.openInvestedValue, currency)} />
-        <Summary label="Total invested" value={money(summary.totalInvestedValue, currency)} />
+        <Summary label="Capital employed" value={money(summary.capitalEmployedValue, currency)} />
+        <Summary label="Trade turnover" value={money(summary.totalInvestedValue, currency)} />
         <Summary label="Unrealized P&L" value={money(summary.unrealizedPnlValue, currency)} tone={summary.unrealizedPnlValue >= 0 ? "good" : "bad"} />
         <Summary label={`Realized P&L · ${summary.closedCount} closed`} value={money(summary.realizedPnlValue, currency)} tone={summary.realizedPnlValue >= 0 ? "good" : "bad"} />
         <Summary label="Overall P&L" value={money(summary.overallPnlValue, currency)} tone={summary.overallPnlValue >= 0 ? "good" : "bad"} />
         <Summary label="ROI" value={pct(summary.roiPct)} tone={(summary.roiPct ?? 0) >= 0 ? "good" : "bad"} />
         <Summary label="XIRR · annualized" value={pct(summary.xirrPct)} tone={(summary.xirrPct ?? 0) >= 0 ? "good" : "bad"} />
       </section>
-      <p className="text-[11px] leading-relaxed text-white/35">ROI uses total acquisition cost. XIRR annualizes dated purchase, sale and current-value cash flows; short holding periods can therefore produce very large annualized percentages. Broker net values are used where reconciled.</p>
+      <p className="text-[11px] leading-relaxed text-white/35">Capital employed is inferred from dated purchases after recycling retained sale proceeds. ROI uses that external capital, while trade turnover shows cumulative purchases. XIRR annualizes inferred capital additions and ending cash/open value; short periods can still produce large annualized percentages. Broker net values are used where reconciled.</p>
 
       <details open={Boolean(defaults.ticker)} className="rounded-lg border border-white/10 bg-white/[0.02]">
         <summary className="cursor-pointer list-none px-5 py-4 font-semibold [&::-webkit-details-marker]:hidden">

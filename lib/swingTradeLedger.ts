@@ -48,6 +48,7 @@ export interface SwingTradeLedgerSummary {
   realizedPnlValue: number;
   overallPnlValue: number;
   totalInvestedValue: number;
+  capitalEmployedValue: number;
   currentOpenValue: number;
   roiPct: number | null;
   xirrPct: number | null;
@@ -100,7 +101,7 @@ export function summarizeSwingTradeLedger(trades: ReadonlyArray<{
   quantity?: number;
   exits?: SwingTradeExit[];
 }>): SwingTradeLedgerSummary {
-  const cashFlows: DatedCashFlow[] = [];
+  const dailyTradingCashFlows = new Map<string, number>();
   const asOf = new Date().toISOString().slice(0, 10);
   const summary = trades.reduce<SwingTradeLedgerSummary>((summary, trade) => {
     const purchaseValue = trade.purchaseValue ?? trade.progress.investedValue;
@@ -113,12 +114,20 @@ export function summarizeSwingTradeLedger(trades: ReadonlyArray<{
     const unrealizedPnl = trade.status === "OPEN" ? currentOpenValue - remainingCost : 0;
     const realizedPnl = trade.realizedPnlValue
       ?? (trade.status === "CLOSED" ? trade.progress.pnlValue ?? 0 : 0);
-    if (trade.boughtOn) cashFlows.push({ date: trade.boughtOn, amount: -purchaseValue });
-    for (const exit of trade.exits ?? []) cashFlows.push({ date: exit.soldOn, amount: exit.saleValue });
+    if (trade.boughtOn) dailyTradingCashFlows.set(
+      trade.boughtOn,
+      (dailyTradingCashFlows.get(trade.boughtOn) ?? 0) - purchaseValue,
+    );
+    for (const exit of trade.exits ?? []) dailyTradingCashFlows.set(
+      exit.soldOn,
+      (dailyTradingCashFlows.get(exit.soldOn) ?? 0) + exit.saleValue,
+    );
     if (!(trade.exits?.length) && trade.status === "CLOSED" && trade.closedOn && trade.exitPrice && quantity > 0) {
-      cashFlows.push({ date: trade.closedOn, amount: trade.exitPrice * quantity });
+      dailyTradingCashFlows.set(
+        trade.closedOn,
+        (dailyTradingCashFlows.get(trade.closedOn) ?? 0) + trade.exitPrice * quantity,
+      );
     }
-    if (trade.status === "OPEN" && currentOpenValue > 0) cashFlows.push({ date: asOf, amount: currentOpenValue });
     if (trade.status === "OPEN") {
       summary.openCount += 1;
       summary.openInvestedValue += remainingCost;
@@ -139,12 +148,34 @@ export function summarizeSwingTradeLedger(trades: ReadonlyArray<{
     realizedPnlValue: 0,
     overallPnlValue: 0,
     totalInvestedValue: 0,
+    capitalEmployedValue: 0,
     currentOpenValue: 0,
     roiPct: null,
     xirrPct: null,
   });
-  summary.roiPct = summary.totalInvestedValue > 0 ? (summary.overallPnlValue / summary.totalInvestedValue) * 100 : null;
-  summary.xirrPct = calculateXirr(cashFlows);
+  const capitalCashFlows: DatedCashFlow[] = [];
+  let retainedCash = 0;
+  for (const [date, amount] of [...dailyTradingCashFlows.entries()].sort(([left], [right]) => left.localeCompare(right))) {
+    retainedCash += amount;
+    if (retainedCash < 0) {
+      const contribution = -retainedCash;
+      summary.capitalEmployedValue += contribution;
+      capitalCashFlows.push({ date, amount: -contribution });
+      retainedCash = 0;
+    }
+  }
+  if (capitalCashFlows.length > 0) {
+    const terminalDate = trades.some((trade) => trade.status === "OPEN")
+      ? asOf
+      : [...dailyTradingCashFlows.keys()].sort().at(-1) ?? asOf;
+    capitalCashFlows.push({ date: terminalDate, amount: retainedCash + summary.currentOpenValue });
+  } else {
+    summary.capitalEmployedValue = summary.totalInvestedValue;
+  }
+  summary.roiPct = summary.capitalEmployedValue > 0
+    ? (summary.overallPnlValue / summary.capitalEmployedValue) * 100
+    : null;
+  summary.xirrPct = calculateXirr(capitalCashFlows);
   return summary;
 }
 
