@@ -12,6 +12,8 @@ InvestoGenie is a local-first market intelligence and paper trading terminal for
 - Yahoo Finance primary sync with Google Finance quote fallback.
 - NSE incremental OHLCV sync for Indian stocks.
 - US and India company fundamentals sync into a shared reports table.
+- Broker-reconciled Swing Trade Ledger with partial exits, capital-employed ROI, dated XIRR and
+  separate cumulative trade turnover.
 
 Current local database coverage from the development machine:
 
@@ -26,12 +28,12 @@ Current local database coverage from the development machine:
 
 ## Deployment
 
-The same revision supports two isolated deployment targets:
+The same revision supports local development, private Mac fallback, and active AWS production:
 
 - macOS local: `Launch InvestoGenie.command` or `npm run dev`, using `.env.local`
   and Mac-local PostgreSQL.
-- Oracle Cloud: production build under systemd/Nginx, using a root-owned
-  environment file and PostgreSQL on the VM loopback interface.
+- AWS Lightsail: active production build under systemd/Nginx with VM-local PostgreSQL.
+- Oracle-compatible Ubuntu package: retained as an alternate deployment path.
 
 See [`DEPLOYMENT.md`](DEPLOYMENT.md) for the target matrix, promotion workflow,
 environment checks, and links to the complete local and Oracle instructions.
@@ -45,6 +47,7 @@ environment checks, and links to the complete local and Oracle instructions.
 | `/markets/in` | India market overview dashboard |
 | `/terminal/us` | Authenticated US portfolio terminal |
 | `/terminal/in` | Authenticated India portfolio terminal |
+| `/terminal/in/trade-ledger` | Broker-reconciled swing trades, partial exits, P&L, ROI and XIRR |
 | `/terminal/us/screener` | US swing candidates |
 | `/terminal/in/screener` | India swing candidates |
 | `/settings` | Per-user swing risk settings |

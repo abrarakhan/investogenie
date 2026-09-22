@@ -1,7 +1,7 @@
 # InvestoGenie Mobile
 
-Read-only Expo application for Android and iOS. It uses the same server-side Strong Swing and
-Trade Ledger calculations as the web terminal; the device only renders API results.
+Android/iOS client using the same server-side Strong Swing, News & AI Swing and Trade Ledger
+calculations as the web terminal; the device does not reproduce or modify analytics.
 
 ## Run
 
@@ -20,10 +20,15 @@ Phase 2 adds authenticated trade creation from an Execution Ready Strong Swing p
 partial and final sale recording, sale editing, a 50-session price profile, and five-minute refresh
 while the app is open. Every projection is still calculated and frozen by the existing server engine.
 
-Phase 3 adds generic background ledger alerts, biometric re-entry, native OHLC candlesticks and EAS
-build profiles. Financial details are never included in third-party push payloads.
+Phase 3 adds generic background ledger alerts, biometric re-entry, native OHLC candlesticks and
+release profiles. Financial details are never included in third-party push payloads.
 
 Phase 4 adds the server-ranked News & AI Swing workspace without copying its scoring or ranking code
 to the device, release configuration validation, pinned AWS HTTPS environments and privacy metadata.
-Run `npm run validate:release` before any EAS build. Signed builds require `npx eas-cli@latest login`
-and linking this directory to the owner's Expo project.
+Run `npm run validate:release` before generating a release. Approved distribution uses local Expo
+Prebuild followed by Gradle/Android Studio or Xcode signing; it does not upload source to EAS Build
+or enable Expo Updates.
+
+The Ledger summary includes server-calculated capital employed, realized/unrealized/overall P&L,
+ROI and XIRR. Capital employed recycles retained sale proceeds instead of treating cumulative
+purchases as new money. The native client only displays the API result.

@@ -1,15 +1,13 @@
 # InvestoGenie Status
 
-_Last updated: 2026-09-19 (Phase 4 mobile parity is deployed; mobile navigation is fixed and local native Android/iOS builds are the chosen distribution path)_
+_Last updated: 2026-09-22 (ICICI Direct trades reconciled; Trade Ledger ROI/XIRR now use capital employed after recycling retained sale proceeds)_
 
 This file summarizes what has been built so far, what is currently working, what is partial, and what to build next.
 
 ## Repository State
 
-- Branch: `main`; latest committed product revision: `5b1bd0b` (`Fix mobile workspace navigation visibility`).
-- `main` is aligned with `origin/main`. Phase 4's production backend is deployed on AWS from
-  revision `1c96442`; revision `5b1bd0b` is a mobile-client navigation/version fix and does not
-  alter the deployed web service or any market calculation.
+- Branch: `main`; latest committed product revision: `9f77b09` (`Calculate ledger returns from employed capital`).
+- `main` is aligned with `origin/main`, and revision `9f77b09` is deployed on AWS Lightsail.
 - Unrelated local edits in `.claude/context`, `AGENTS.md`, `CLAUDE.md`,
   `app/api/cron/backfill-nse/route.ts`, and `opencode.json` remain excluded from product commits.
 
@@ -27,6 +25,21 @@ InvestoGenie is now a local-first market terminal and portfolio intelligence app
 - Portfolio import and Fund Overlap X-Ray using CAS and AMC disclosures.
 - Forward-testing infrastructure to judge strategies out of sample.
 - Data coverage visibility and repair workflows for fund mappings, source freshness, and stale strategy inputs.
+
+### Trade Ledger Returns And Broker Reconciliation
+
+- Migration `0046_trade_ledger_returns.sql` stores broker-reconciled purchase value, sale value,
+  and realized P&L while retaining gross price/quantity data for auditability.
+- The ICICI Direct statement through 21 September 2026 plus the 22 September BODALCHEM and
+  KMCSHIL sales are reconciled in production. Realized P&L is INR 22,712.85.
+- Cumulative purchases are shown as **Trade turnover** (INR 8,76,695.04), not treated as fresh
+  investment. **Capital employed** is inferred chronologically by recycling retained sale proceeds
+  and counting only purchase shortfalls as new capital (INR 3,83,657.44).
+- Portfolio ROI is realized/unrealized P&L divided by capital employed: 5.92% for 18 August through
+  22 September 2026. Portfolio XIRR uses dated inferred capital additions and ending retained cash
+  plus any open-position value; the current short-period annualized result is 170.91%.
+- Trade-level ROI/XIRR remains based on each trade's own purchase and sale cash flows. No Swing,
+  Strong Swing, News & AI, entry, target, stop, or ranking calculation was changed.
 
 ### Android / iOS Phase 1
 
@@ -204,6 +217,8 @@ Current database migration stack:
 - `0027_password_reset_tokens.sql`: bounded, single-use password reset tokens.
 - `0028_asset_tracking_exclusions.sql`: auditable soft exclusions for structurally unsupported or unavailable listings.
 - `0029_news_intelligence.sql`: source-linked news articles and model-classified market/sector/asset impacts.
+- `0030_swing_trade_ledger.sql` through `0045_mobile_push.sql`: ledger, broker/news/mobile and production-operability extensions.
+- `0046_trade_ledger_returns.sql`: broker-reconciled acquisition proceeds and realized-return fields.
 
 ## Current Local Data Coverage
 
@@ -1169,7 +1184,15 @@ Current branch:
 
 - `main`
 
-Recent commits:
+Recent product commits:
+
+- `9f77b09 Calculate ledger returns from employed capital`
+- `5a07944 Apply ledger returns migration during deployment`
+- `7d32e0d Reconcile ledger returns and add XIRR`
+- `ddd435b Use trading sessions for Strong Swing freshness`
+- `a7509c0 Clarify revised trade actions`
+
+Earlier reference commits:
 
 - `45592be Fix the same one-day date shift in five more modules`
 - `b9bc32d Fix swing signal as_of being a day early in non-UTC timezones`

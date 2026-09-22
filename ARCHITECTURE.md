@@ -1,6 +1,6 @@
 # InvestoGenie Architecture
 
-_Living architecture reference. Last updated: 2026-09-19 at product revision `5b1bd0b`._
+_Living architecture reference. Last updated: 2026-09-22 at product revision `9f77b09`._
 
 ## System Overview
 
@@ -135,20 +135,28 @@ Only verified severe stock-specific evidence can activate the News & AI risk-off
 
 ## Trade Ledger
 
-Migration `0030_swing_trade_ledger.sql` introduced the ledger and migration
-`0034_swing_trade_partial_exits.sql` added partial exits. The ledger supports:
+Migration `0030_swing_trade_ledger.sql` introduced the ledger, migration
+`0034_swing_trade_partial_exits.sql` added partial exits, and migration
+`0046_trade_ledger_returns.sql` added broker-reconciled acquisition, sale and realized-P&L values.
+The ledger supports:
 
 - Logging a purchase from an existing server signal or manually supplied symbol, date, price and
   quantity while resolving the remaining plan from stored signal data.
 - Editing and deleting an entry.
 - Partial and final sales, plus correction of recorded sales.
-- Open, realized and overall P&L.
+- Open, realized and overall P&L, cumulative trade turnover, capital-employed ROI and XIRR.
 - Five-minute current-price refresh during market hours.
 - Hourly stock-first News & AI assessment during the relevant trading session.
 - Read-only ICICI Breeze holdings, positions and order reconciliation for InvestoGenie-era trades.
 
 Broker reconciliation does not alter orders or ledger rows automatically. Older long-term broker
 holdings are excluded from the InvestoGenie swing-trade reconciliation scope.
+
+Portfolio return accounting is cash-ledger based. Purchases consume retained cash, sales replenish
+it, and only a dated shortfall is treated as external capital. ROI divides overall P&L by those
+inferred contributions. XIRR uses the dated contributions and terminal retained cash plus current
+open-position value. This prevents repeatedly circulated sale proceeds from inflating the capital
+denominator. Per-trade returns continue to use that trade's broker-reconciled cash flows.
 
 ## Mobile Architecture
 
@@ -286,8 +294,7 @@ password/OTP is handled by the provider and does not pass through InvestoGenie.
 - PostgreSQL is local to the instance and is not exposed publicly.
 - Release procedure: fetch the intended `main` revision, install locked dependencies, run
   migrations/tests/build, then restart and inspect systemd logs.
-- Phase 4 mobile backend is deployed from `1c96442`; `5b1bd0b` is a mobile-source-only navigation
-  fix already on `origin/main`.
+- Product revision `9f77b09` is deployed and `main` is aligned with `origin/main`.
 
 ### Local fallback
 

@@ -1,12 +1,15 @@
-# InvestoGenie on Oracle Cloud Always Free
+# InvestoGenie on AWS Lightsail or Oracle-compatible Ubuntu
 
-This deployment runs Next.js, PostgreSQL, Nginx, and the existing Node/Python
-scheduler on one Ubuntu Ampere A1 VM. PostgreSQL and port 3000 remain private;
-only SSH, HTTP, and HTTPS are exposed.
+This deployment package runs Next.js, PostgreSQL, Nginx, and the existing Node/Python scheduler on
+one Ubuntu VM. It is the active AWS Lightsail production layout and remains compatible with Oracle
+Cloud Ubuntu. PostgreSQL and port 3000 remain private; only SSH, HTTP, and HTTPS are exposed.
 
-## 1. Create the OCI resources
+## 1. Create the VM
 
-Use the tenancy home region and create one `VM.Standard.A1.Flex` instance:
+The active production host is AWS Lightsail. Create an Ubuntu instance with a static public IP,
+SSH key authentication, and enough memory/storage for PostgreSQL, Next.js and ingestion workers.
+
+For Oracle Cloud, use the tenancy home region and create one `VM.Standard.A1.Flex` instance:
 
 - Ubuntu 24.04 aarch64 image
 - 2 OCPUs and 12 GB RAM

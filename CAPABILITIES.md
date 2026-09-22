@@ -1,6 +1,8 @@
 # InvestoGenie - Capabilities
 
-> Current capability snapshot (2026-09-19) after deploying Android/iOS Phase 4 News & AI parity,
+> Current capability snapshot (2026-09-22) after broker-reconciling Trade Ledger returns and
+> calculating portfolio ROI/XIRR from capital employed while recycling retained sale proceeds,
+> alongside Android/iOS Phase 4 News & AI parity,
 > fixing mobile workspace navigation, and choosing fully local Gradle/Xcode builds instead of
 > Expo cloud source uploads, alongside simultaneous provider aggregation and Strong Swing-prioritized news retrieval
 > Swing, DeepSeek V4 classification, GNews rate-limit recovery, conservative asset retirement,
@@ -36,6 +38,7 @@ help/knowledge base, and recurring data sync jobs.
 | Market overviews | Separate US and India dashboards with quotes, breadth, charts, candidates | Working |
 | Auth | Local email/password, signed HTTP-only session cookie, signup, and host-authorized password recovery that preserves portfolio ownership | Working |
 | Portfolio terminal | Holdings, watchlist, trade ledger, benchmark cards | Working |
+| **Trade Ledger accounting** | Partial/final exits, broker-net acquisition/proceeds/P&L, cumulative trade turnover, inferred external capital employed, portfolio ROI and money-weighted XIRR | Working; ICICI Direct statement reconciled through 22 Sep 2026 |
 | Swing candidates | Buy-candidate screener with entry, target, stop, trail, score, days | Working; hourly scan repaired 2026-08-09 |
 | Stock Screener | US+India fundamental/price-action screener: filter engine, presets, saved screens, universes, CSV/Excel export | Working |
 | **NL Query (screener)** | Plain-English → filters, dispatched to a **user-chosen AI provider** (Anthropic/OpenAI/Google/DeepSeek), validated through the same filter-engine guard regardless of provider | Working |
@@ -52,7 +55,7 @@ help/knowledge base, and recurring data sync jobs.
 | **Help & knowledge base** | `/help` guided walkthrough + 13 code-accurate articles (swing engine + 5 swing strategies + probability method + Long-Term engine + 6 investor strategies) | Working |
 | Sync health | Browser-visible `/admin/sync` and `/data/health` freshness and provider status pages | Working |
 | Recurring sync | Startup, recurring, and daily jobs for quotes, OHLCV, fundamentals, macro, scans, and the email digest | Working |
-| **AWS production deployment** | Production Next.js + schedulers supervised by systemd on AWS Lightsail, serving the web terminal and versioned mobile APIs | Active; Phase 4 backend deployed at `1c96442` |
+| **AWS production deployment** | Production Next.js + schedulers supervised by systemd on AWS Lightsail, serving the web terminal and versioned mobile APIs | Active; product revision `9f77b09` deployed |
 | **Private local fallback** | macOS `launchd`, localhost-only listener, AC-power sleep prevention and tailnet-only Tailscale Serve HTTPS | Available and previously verified; no longer primary production |
 | **Android / iOS Phase 1** | Expo SDK 57 client with secure device login, India/US selection, server-ranked Strong Swing detail, and read-only Trade Ledger/P&L/risk | API deployed on AWS; working in the Android client |
 | **Android / iOS Phase 2** | Execution Ready candidate-to-ledger flow, edit/delete, partial/final sale recording and correction, price profile, five-minute foreground refresh | Built and verified; server calculations remain authoritative |
@@ -481,6 +484,17 @@ node scripts/backfill-progress.mjs   # queue + coverage status for the OHLCV bac
 | Personal hosting | macOS `launchd` + `caffeinate`; Tailscale Serve tailnet-only HTTPS to localhost |
 
 ## Verification Status
+
+Trade Ledger capital-return correction, 2026-09-22:
+
+```bash
+npm test        # 238/238 passing across 33 files
+npm run build   # clean production build and TypeScript validation
+```
+
+The reconciled production ledger reports INR 3,83,657.44 capital employed, INR 8,76,695.04 trade
+turnover, INR 22,712.85 realized P&L, 5.92% non-annualized ROI and 170.91% annualized XIRR for the
+short 18-Aug-to-22-Sep measurement period. Reinvested proceeds do not count as new capital.
 
 Exchange-close automation (2026-09-18): NSE/BSE after 18:30 IST, US after
 17:00 New York time with DST/calendar awareness, restart catch-up, persistent
