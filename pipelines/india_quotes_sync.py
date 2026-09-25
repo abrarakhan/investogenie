@@ -234,7 +234,7 @@ def upsert_market_data(conn, rows: list[tuple]) -> int:
               close=excluded.close,
               volume=excluded.volume,
               source=excluded.source
-            where coalesce(public.daily_ohlcv.source, '') not like 'BREEZE_%'
+            where coalesce(public.daily_ohlcv.source, '') not like 'BREEZE_%%'
             """,
             [
                 (asset_id, as_of, open_price, high, low, price, volume, "YAHOO_FINANCE_LIVE")
