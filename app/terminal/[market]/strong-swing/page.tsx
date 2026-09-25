@@ -28,12 +28,10 @@ export default async function StrongSwingPage({
     getStrongSwingCandidates(market, settings),
     getMomentumIgnitionCandidates(market, settings),
   ]);
-  if (market === "IN") {
-    await markLiveMarketTargets(
-      [...candidates.map((candidate) => candidate.assetId), ...momentumIgnition.candidates.map((candidate) => candidate.assetId)],
-      "strong_swing",
-    );
-  }
+  await markLiveMarketTargets(
+    [...candidates.map((candidate) => candidate.assetId), ...(market === "IN" ? momentumIgnition.candidates.map((candidate) => candidate.assetId) : [])],
+    "strong_swing",
+  );
 
   return (
     <AppShell

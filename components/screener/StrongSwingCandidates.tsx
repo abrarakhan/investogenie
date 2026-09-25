@@ -171,6 +171,41 @@ function CandidateCard({ candidate }: { candidate: StrongSwingCandidate }) {
   );
 }
 
+function CandidateGroup({
+  title,
+  candidates,
+  color,
+  defaultOpen = false,
+  note,
+  totalCount,
+}: {
+  title: string;
+  candidates: StrongSwingCandidate[];
+  color: string;
+  defaultOpen?: boolean;
+  note?: string;
+  totalCount?: number;
+}) {
+  if (candidates.length === 0) return null;
+  return (
+    <details open={defaultOpen} className="group rounded-lg border border-white/10 bg-white/[0.012]">
+      <summary className="flex min-h-12 cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 [&::-webkit-details-marker]:hidden">
+        <div className="min-w-0">
+          <div className={`text-sm font-bold uppercase tracking-[0.18em] ${color}`}>
+            {title} <span className="font-mono text-white/45">({totalCount ?? candidates.length})</span>
+          </div>
+          {note && <div className="mt-1 text-[11px] normal-case tracking-normal text-white/35">{note}</div>}
+        </div>
+        <span className="shrink-0 text-xs font-semibold text-white/45 group-open:hidden">Expand</span>
+        <span className="hidden shrink-0 text-xs font-semibold text-white/45 group-open:inline">Collapse</span>
+      </summary>
+      <div className="space-y-3 border-t border-white/8 p-3 sm:p-4">
+        {candidates.map((candidate) => <CandidateCard key={candidate.assetId} candidate={candidate} />)}
+      </div>
+    </details>
+  );
+}
+
 export default function StrongSwingCandidates({ candidates }: { candidates: StrongSwingCandidate[] }) {
   const ranked = rankStrongSwingCandidates(candidates);
   const executionReady = ranked.filter((candidate) => candidate.status === "EXECUTION_READY");
@@ -207,11 +242,23 @@ export default function StrongSwingCandidates({ candidates }: { candidates: Stro
         </div>
       )}
 
-      {executionReady.length > 0 && <section className="space-y-3"><h2 className="text-sm font-bold uppercase tracking-[0.18em] text-emerald-300">Execution ready</h2>{executionReady.map((candidate) => <CandidateCard key={candidate.assetId} candidate={candidate} />)}</section>}
-      {waitingForEntry.length > 0 && <section className="space-y-3"><h2 className="text-sm font-bold uppercase tracking-[0.18em] text-cyan-200">Wait for entry</h2>{waitingForEntry.map((candidate) => <CandidateCard key={candidate.assetId} candidate={candidate} />)}</section>}
-      {watchlist.length > 0 && <section className="space-y-3"><div className="flex flex-wrap items-end justify-between gap-2"><h2 className="text-sm font-bold uppercase tracking-[0.18em] text-amber-200">Awaiting confirmation</h2>{watchlist.length > visibleWatchlist.length && <span className="text-[11px] text-white/35">Showing the strongest {visibleWatchlist.length} of {watchlist.length}</span>}</div>{visibleWatchlist.map((candidate) => <CandidateCard key={candidate.assetId} candidate={candidate} />)}</section>}
-      {riskOff.length > 0 && <details className="rounded-lg border border-orange-400/15 px-4 py-3"><summary className="cursor-pointer text-sm text-orange-200/70">Show risk-off setups ({riskOff.length})</summary><div className="mt-4 space-y-3">{riskOff.slice(0, 30).map((candidate) => <CandidateCard key={candidate.assetId} candidate={candidate} />)}</div></details>}
-      {invalidated.length > 0 && <details className="rounded-lg border border-white/10 px-4 py-3"><summary className="cursor-pointer text-sm text-white/55">Show invalidated setups ({invalidated.length})</summary><div className="mt-4 space-y-3">{visibleInvalidated.map((candidate) => <CandidateCard key={candidate.assetId} candidate={candidate} />)}{invalidated.length > visibleInvalidated.length && <p className="text-xs text-white/35">Showing the highest-ranked {visibleInvalidated.length} invalidated setups.</p>}</div></details>}
+      <CandidateGroup title="Execution ready" candidates={executionReady} color="text-emerald-300" defaultOpen />
+      <CandidateGroup title="Wait for entry" candidates={waitingForEntry} color="text-cyan-200" />
+      <CandidateGroup
+        title="Awaiting confirmation"
+        candidates={visibleWatchlist}
+        totalCount={watchlist.length}
+        color="text-amber-200"
+        note={watchlist.length > visibleWatchlist.length ? `Showing the strongest ${visibleWatchlist.length} of ${watchlist.length}` : undefined}
+      />
+      <CandidateGroup title="Risk off" candidates={riskOff.slice(0, 30)} totalCount={riskOff.length} color="text-orange-200" />
+      <CandidateGroup
+        title="Invalidated"
+        candidates={visibleInvalidated}
+        totalCount={invalidated.length}
+        color="text-rose-300"
+        note={invalidated.length > visibleInvalidated.length ? `Showing the highest-ranked ${visibleInvalidated.length} of ${invalidated.length}` : undefined}
+      />
     </div>
   );
 }
