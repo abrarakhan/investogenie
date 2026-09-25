@@ -298,7 +298,7 @@ def sync_nifty_history(conn, dry_run: bool) -> int:
             on conflict (asset_id,date) do update set
               open=excluded.open,high=excluded.high,low=excluded.low,
               close=excluded.close,volume=excluded.volume,source=excluded.source
-            where coalesce(public.daily_ohlcv.source, '') not like 'BREEZE_%'
+            where coalesce(public.daily_ohlcv.source, '') not like 'BREEZE_%%'
             """,
             [(*row, "YAHOO_FINANCE_LIVE") for row in payload],
         )
