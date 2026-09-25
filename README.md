@@ -60,7 +60,7 @@ calculations.
 
 The scheduler in `scripts/run-with-nse-sync.mjs` runs alongside Next.js and coordinates:
 
-- five-minute priority quote/OHLCV refreshes during Indian market hours;
+- five-minute priority quote/OHLCV refreshes during Indian and US market hours;
 - hourly ledger-focused news assessment during active sessions;
 - NSE/BSE and US exchange-close quote/history synchronization;
 - market-calendar-aware freshness and catch-up jobs;

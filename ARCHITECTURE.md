@@ -202,7 +202,7 @@ uses the Expo push relay; direct FCM/APNs is the future transport-hardening step
 `npm start` runs `scripts/run-with-nse-sync.mjs`, which supervises Next.js and recurring jobs in the
 same systemd service on AWS. Important schedules include:
 
-- India/US market-hours quote refresh, default every five minutes.
+- India/US market-hours priority quote and current-session OHLCV refresh, default every five minutes.
 - Breeze market worker and five-minute read-only account reconciliation when credentials/session
   are valid.
 - Hourly News & AI refresh during the India and US trading sessions.
@@ -221,7 +221,9 @@ a valid Friday close is not marked stale on a weekend or exchange holiday.
 - India live priority set: ICICI Breeze when connected; Yahoo/Google and exchange sources remain
   fallbacks.
 - India end-of-day authority: NSE/BSE Bhavcopy.
-- US quotes/history: Yahoo-based pipelines with Google fallback where supported.
+- US live priority set: open ledger positions, recently visible stocks, and the top 120 existing
+  actionable signals; Yahoo five-minute bars are primary and Google is a bounded quote fallback.
+- US end-of-day: full eligible-universe Yahoo quote/history pass after the New York close.
 - Macro: FRED-backed pipeline.
 - All writes carry timestamps/source metadata; stale or unavailable assets are excluded from
   candidate calculations until repaired or intentionally retired.

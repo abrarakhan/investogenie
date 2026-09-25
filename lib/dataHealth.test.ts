@@ -135,6 +135,17 @@ describe("classifyCoverageGaps", () => {
     expect(gaps).not.toContainEqual(expect.objectContaining({ issueType: "Swing signal on stale data" }));
   });
 
+  it("measures US history against exchange sessions instead of calendar days", () => {
+    const gaps = classifyCoverageGaps({
+      symbol: "AAPL", market: "US", hasQuote: true,
+      quoteUpdatedAt: "2026-09-04T19:55:00Z", quoteAsOf: "2026-09-04",
+      hasHistory: true, latestHistoryDate: "2026-09-04", inUniverse: true,
+      now: "2026-09-07T16:00:00Z",
+    });
+    expect(gaps).not.toContainEqual(expect.objectContaining({ issueType: "Quote age" }));
+    expect(gaps).not.toContainEqual(expect.objectContaining({ issueType: "History stale" }));
+  });
+
   it("detects universe assets with missing and stale fundamentals", () => {
     const missing = classifyCoverageGaps({ symbol: "AAPL", market: "US", inUniverse: true, hasFundamentals: false, now: "2026-07-20T10:00:00Z" });
     const stale = classifyCoverageGaps({ symbol: "MSFT", market: "US", inUniverse: true, hasFundamentals: true, latestFundamentalsDate: "2025-12-01", now: "2026-07-20T10:00:00Z" });
@@ -181,6 +192,27 @@ describe("classifySourceFreshness — NSE/BSE OHLCV History source cards", () =>
   it("keeps the 11 September close fresh on the 14 September holiday", () => {
     const row = { ...fridayRow, quote_as_of: "2026-09-11" };
     expect(classifySourceFreshness(row, new Date("2026-09-14T13:15:00Z"), "")).toBe("fresh");
+  });
+});
+
+describe("classifySourceFreshness — US source cards", () => {
+  const fridayRow: SourceRow = {
+    source: "US OHLCV History",
+    last_success_at: "2026-09-04T20:00:00Z",
+    quote_as_of: "2026-09-04",
+    record_count: 8300,
+    failed: false,
+    cadence_hours: 24,
+    detail: "US assets with OHLCV bars",
+  };
+
+  it("keeps the Friday close fresh through Labor Day", () => {
+    expect(classifySourceFreshness(fridayRow, new Date("2026-09-07T16:00:00Z"), "")).toBe("fresh");
+  });
+
+  it("marks one missed US trading session stale and two failed", () => {
+    expect(classifySourceFreshness(fridayRow, new Date("2026-09-08T22:00:00Z"), "")).toBe("stale");
+    expect(classifySourceFreshness(fridayRow, new Date("2026-09-09T22:00:00Z"), "")).toBe("failed");
   });
 });
 

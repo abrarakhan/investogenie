@@ -138,6 +138,7 @@ let marketRefreshTimer = null;
 let marketHoursQuoteRefreshTimer = null;
 let marketHoursQuoteRefreshPromise = null;
 let indiaLiveQuoteChild = null;
+let usLiveQuoteChild = null;
 let breezeChild = null;
 let breezeRestartTimer = null;
 let breezeAccountChild = null;
@@ -563,6 +564,37 @@ function runIndiaLiveQuoteSync(trigger) {
   });
 }
 
+function runUSLiveQuoteSync(trigger) {
+  if (!python) return Promise.reject(new Error("no Python executable found"));
+  if (usLiveQuoteChild) {
+    console.log(`[us-live-quotes] skipping ${trigger}; prior US sync still running`);
+    return Promise.resolve();
+  }
+
+  const args = [
+    usPipeline,
+    "--quotes-only",
+    "--priority-only",
+    "--intraday",
+    "--quote-batch-size", usQuoteBatchSize,
+    "--google-fallback-limit", usGoogleFallbackLimit,
+    "--sleep", usSyncSleep,
+  ];
+  if (process.env.US_LIVE_QUOTE_LIMIT) args.push("--quote-limit", process.env.US_LIVE_QUOTE_LIMIT);
+
+  return new Promise((resolveRun, rejectRun) => {
+    console.log(`[us-live-quotes] starting ${trigger} priority Yahoo/Google quote and OHLCV refresh`);
+    usLiveQuoteChild = spawn(python, args, { cwd: root, env: process.env, stdio: "inherit" });
+    usLiveQuoteChild.once("error", rejectRun);
+    usLiveQuoteChild.once("close", (code, signal) => {
+      usLiveQuoteChild = null;
+      if (signal) rejectRun(new Error(`US live quote refresh stopped by ${signal}`));
+      else if (code !== 0) rejectRun(new Error(`US live quote refresh failed with exit code ${code}`));
+      else resolveRun();
+    });
+  });
+}
+
 async function runMarketHoursQuoteRefresh(trigger) {
   if (marketHoursQuoteRefreshDisabled) {
     console.log(`[market-hours-quotes] ${trigger} refresh disabled`);
@@ -592,6 +624,7 @@ async function runMarketHoursQuoteRefresh(trigger) {
     } else {
       await runQuoteRefreshRequest(trigger);
     }
+    if (usOpen) await runUSLiveQuoteSync(trigger);
   })()
     .catch((error) => console.error(`[market-hours-quotes] ${trigger} failed: ${error.message}`))
     .finally(() => {
@@ -1425,6 +1458,7 @@ nextChild.on("close", (code, signal) => {
   if (amfiChild) amfiChild.kill("SIGTERM");
   if (marketRefreshChild) marketRefreshChild.kill("SIGTERM");
   if (indiaLiveQuoteChild) indiaLiveQuoteChild.kill("SIGTERM");
+  if (usLiveQuoteChild) usLiveQuoteChild.kill("SIGTERM");
   if (breezeRestartTimer) clearTimeout(breezeRestartTimer);
   if (breezeAccountTimer) clearInterval(breezeAccountTimer);
   if (breezeChild) breezeChild.kill("SIGTERM");

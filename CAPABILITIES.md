@@ -434,7 +434,10 @@ is not exposed. `npm run service:install` rebuilds/reinstalls the service after 
 The wrapper's recurring loop does:
 
 - security listings refresh,
-- priority market quote and intraday OHLCV refresh (5-minute India market-hours cadence),
+- priority market quote and intraday OHLCV refresh (5-minute India and US market-hours cadence),
+- US priority refresh orders open ledger positions, recently visible stocks, then the top 120
+  existing non-`NO_SETUP` signals; Yahoo five-minute bars update both quotes and the current
+  session OHLCV row, with bounded Google quote fallback,
 - US quote/fundamental/history sync hooks — US history via free Yahoo Finance (`yfinance`),
   150 symbols/hour. Batch selection rotates by **attempt time** (`us_history_sync_state.last_attempt_at`),
   not by data staleness: attempting a symbol always moves it to the back of the queue, so no
@@ -688,12 +691,9 @@ database (not just static analysis) — see `STATUS.md` for the specific queries
   assets fresh at time of writing, draining at ~150/hour toward full coverage in ~2.4 days of
   continuous uptime. Data Health will keep reporting elevated US staleness until roughly
   2026-08-05; worth confirming then that the fresh count is climbing rather than flat.
-- The weekend-staleness fix (2026-07-26) covers NSE/BSE only. US markets are also closed
-  Sat/Sun, so "US OHLCV History" / "US Quotes" source cards have the identical flat-cadence
-  flaw and would likewise show false stale/failed statuses over the US weekend — not fixed here,
-  since it needs an equivalent "expected trading day + after-close" helper for US market hours
-  (ET-based) that doesn't exist yet, and the request that prompted this fix was specifically
-  about NSE/BSE.
+- US quote/history health is now New York-session-aware. Weekends and configured US exchange
+  holidays preserve the last completed session as fresh; one genuinely missed session is stale
+  and two are failed.
 - US OTC coverage is intentionally excluded (see the note under Current Local Data Coverage
   above) — if OTC history is ever wanted, it needs a different provider than Tiingo EOD, since
   that is the actual reason OTC has no bars, not a bug in the ingestion job.

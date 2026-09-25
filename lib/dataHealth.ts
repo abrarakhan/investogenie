@@ -117,29 +117,26 @@ export function classifyCoverageGaps(input: CoverageGapInput): CoverageGap[] {
   const gaps: CoverageGap[] = [];
   const historyGap = daysBetween(now, input.latestHistoryDate);
   const quoteAge = hoursBetween(now, input.quoteUpdatedAt);
-  const indianQuoteAsOf = input.market === "IN" ? input.quoteAsOf?.slice(0, 10) ?? null : null;
-  const expectedIndianAsOf = input.market === "IN" ? expectedIndianBhavcopyDate(asDate(now) ?? new Date()) : null;
-  const indianQuoteLagDays = expectedIndianAsOf && indianQuoteAsOf
-    ? tradingSessionLag("IN", indianQuoteAsOf, expectedIndianAsOf)
+  const quoteAsOf = input.quoteAsOf?.slice(0, 10) ?? null;
+  const expectedAsOf = latestExpectedSessionDate(input.market, nowDate);
+  const quoteLagSessions = expectedAsOf && quoteAsOf
+    ? tradingSessionLag(input.market, quoteAsOf, expectedAsOf)
     : null;
   const marketOpen = isMarketOpen(input.market, nowDate);
   const requiresCurrentSession = !!(input.inUniverse || input.activeSwingSignal || input.openForwardTest);
   const toleratedInactiveSessions = requiresCurrentSession ? 0 : 2;
-  const staleQuote = input.market === "IN"
-    ? !!input.hasQuote && (marketOpen
-      ? quoteAge === null || quoteAge > 1
-      : indianQuoteLagDays === null || indianQuoteLagDays > toleratedInactiveSessions)
-    : !!input.hasQuote && marketOpen && (quoteAge === null || quoteAge > 1);
-  // Measure lag in exchange sessions. Weekends and declared holidays do not
-  // make the last valid NSE/BSE close stale.
-  const indianHistoryAsOf = input.market === "IN" ? input.latestHistoryDate?.slice(0, 10) ?? null : null;
-  const expectedIndianHistoryAsOf = input.market === "IN" ? expectedIndianBhavcopyDate(asDate(now) ?? new Date()) : null;
-  const indianHistoryLagDays = expectedIndianHistoryAsOf && indianHistoryAsOf
-    ? tradingSessionLag("IN", indianHistoryAsOf, expectedIndianHistoryAsOf)
+  const staleQuote = !!input.hasQuote && (marketOpen
+    ? quoteAge === null || quoteAge > 1
+    : quoteLagSessions !== null && quoteLagSessions > toleratedInactiveSessions);
+  // Measure lag in exchange sessions for both markets. Weekends and declared
+  // holidays do not make the last valid close stale.
+  const historyAsOf = input.latestHistoryDate?.slice(0, 10) ?? null;
+  const expectedHistoryAsOf = latestExpectedSessionDate(input.market, nowDate);
+  const historyLagSessions = expectedHistoryAsOf && historyAsOf
+    ? tradingSessionLag(input.market, historyAsOf, expectedHistoryAsOf)
     : null;
-  const staleHistory = input.market === "IN"
-    ? input.hasHistory && (indianHistoryLagDays === null || indianHistoryLagDays > toleratedInactiveSessions)
-    : input.hasHistory && (historyGap === null || historyGap > 3);
+  const staleHistory = input.hasHistory
+    && (historyLagSessions === null || historyLagSessions > toleratedInactiveSessions);
 
   if (input.hasQuote && !input.hasHistory) {
     gaps.push({
@@ -154,18 +151,16 @@ export function classifyCoverageGaps(input: CoverageGapInput): CoverageGap[] {
   }
 
   if (staleHistory) {
-    const indianLagLabel = indianHistoryLagDays === null
+    const sessionLagLabel = historyLagSessions === null
       ? "an unknown number of trading sessions"
-      : `${indianHistoryLagDays} trading ${indianHistoryLagDays === 1 ? "session" : "sessions"}`;
+      : `${historyLagSessions} trading ${historyLagSessions === 1 ? "session" : "sessions"}`;
     gaps.push({
       symbol: input.symbol,
       market: input.market,
       issueType: "History stale",
-      detail: input.market === "IN"
-        ? `Latest OHLCV bar is ${indianLagLabel} behind. This asset is excluded from strategy calculations until refreshed.`
-        : `Latest OHLCV bar is ${historyGap ?? "unknown"} days old. This asset is excluded from strategy calculations until refreshed.`,
+      detail: `Latest OHLCV bar is ${sessionLagLabel} behind. This asset is excluded from strategy calculations until refreshed.`,
       severity: "medium",
-      gapDays: input.market === "IN" ? indianHistoryLagDays : historyGap,
+      gapDays: historyLagSessions,
       action: "Backfill history",
     });
   }
@@ -279,7 +274,23 @@ function isIndianHistorySource(source: string): boolean {
   return source === "NSE OHLCV History" || source === "BSE OHLCV History";
 }
 
+function sourceMarket(source: string): "IN" | "US" | null {
+  if (isIndianQuoteSource(source) || isIndianHistorySource(source)) return "IN";
+  if (source === "US Quotes" || source === "US OHLCV History") return "US";
+  return null;
+}
+
 export function classifySourceFreshness(row: SourceRow, now: Date, nowIso: string): FreshnessStatus {
+  const market = sourceMarket(row.source);
+  if (market === "US") {
+    const expectedAsOf = latestExpectedSessionDate("US", now);
+    const observedAsOf = row.quote_as_of?.slice(0, 10) ?? null;
+    if (observedAsOf) {
+      if (observedAsOf >= expectedAsOf) return "fresh";
+      const lag = tradingSessionLag("US", observedAsOf, expectedAsOf);
+      return lag <= 1 ? "stale" : "failed";
+    }
+  }
   if (isIndianQuoteSource(row.source)) {
     const expectedAsOf = expectedIndianBhavcopyDate(now);
     const quoteAsOf = row.quote_as_of?.slice(0, 10) ?? null;
@@ -307,7 +318,7 @@ export function classifySourceFreshness(row: SourceRow, now: Date, nowIso: strin
       return lagDays <= 1 ? "stale" : "failed";
     }
   }
-  if ((isIndianQuoteSource(row.source) || isIndianHistorySource(row.source)) && isMarketHoliday("IN", now)) {
+  if (market && isMarketHoliday(market, now)) {
     return "off_hours";
   }
   return classifyFreshness({
@@ -348,10 +359,10 @@ export async function getDataHealthSummary(now = new Date()): Promise<SourceHeal
          ) o
         where a.country='IN' and a.exchange='BSE' and a.asset_class='STOCK' and coalesce(a.is_active,true)
        union all
-       select 'US Quotes', max(q.updated_at), null::text, count(*), 1, 'US latest quote rows'
+       select 'US Quotes', max(q.updated_at), max(q.as_of)::text, count(*), 1, 'US latest quote rows'
          from public.latest_quotes q join public.assets a on a.id=q.asset_id where a.country='US' and a.asset_class='STOCK' and coalesce(a.is_active,true) and a.exchange in ('NASDAQ','NYSE','AMEX','NYSEARCA','NYSEAMERICAN')
        union all
-       select 'US OHLCV History', max(o.date)::timestamptz, null::text, count(*), 24, 'US assets with OHLCV bars'
+       select 'US OHLCV History', max(o.date)::timestamptz, max(o.date)::text, count(*), 24, 'US assets with OHLCV bars'
          from public.assets a
          cross join lateral (
            select h.date from public.daily_ohlcv h where h.asset_id=a.id order by h.date desc limit 1

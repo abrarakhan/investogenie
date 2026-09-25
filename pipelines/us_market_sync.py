@@ -16,6 +16,7 @@ import re
 import time
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import psycopg2
@@ -50,6 +51,7 @@ class USAsset:
     ticker: str
     exchange: str
     yahoo_symbol: str
+    previous_close: float | None
 
 
 @dataclass(frozen=True)
@@ -58,6 +60,10 @@ class Quote:
     change_pct: float | None
     as_of: date | None
     source: str
+    open: float | None = None
+    high: float | None = None
+    low: float | None = None
+    volume: int | None = None
 
 
 def parse_args() -> argparse.Namespace:
@@ -72,6 +78,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--quote-limit", type=int)
     parser.add_argument("--quote-batch-size", type=int, default=100)
     parser.add_argument("--google-fallback-limit", type=int, default=100)
+    parser.add_argument("--priority-only", action="store_true")
+    parser.add_argument("--intraday", action="store_true")
     parser.add_argument("--fundamentals-limit", type=int, default=250)
     parser.add_argument("--stale-days", type=int, default=7)
     parser.add_argument("--sleep", type=float, default=0.4)
@@ -91,9 +99,13 @@ def requested_symbols(raw: str | None) -> set[str] | None:
     return {symbol.strip().upper() for symbol in raw.split(",") if symbol.strip()}
 
 
-def load_assets(conn, requested: set[str] | None, limit: int | None) -> list[USAsset]:
+def load_assets(conn, requested: set[str] | None, limit: int | None, priority_only: bool = False) -> list[USAsset]:
     params: list[object] = []
-    filters = ["a.country='US'", "a.asset_class='STOCK'", "a.is_active=true"]
+    filters = [
+        "a.country='US'", "a.asset_class='STOCK'", "a.is_active=true",
+        "a.exchange in ('NASDAQ','NYSE','AMEX','NYSEARCA','NYSEAMERICAN')",
+        "not exists (select 1 from public.asset_tracking_exclusions x where x.asset_id=a.id)",
+    ]
     if requested:
         filters.append("a.ticker=any(%s)")
         params.append(sorted(requested))
@@ -105,25 +117,50 @@ def load_assets(conn, requested: set[str] | None, limit: int | None) -> list[USA
     with conn.cursor() as cur:
         cur.execute(
             f"""
-            select a.id::text,a.ticker,a.exchange
+            select a.id::text,a.ticker,a.exchange,latest.close,
+                   exists (select 1 from public.swing_trade_ledger l where l.asset_id=a.id and l.status='OPEN') ledger_open,
+                   priority.last_seen_at,signal.score
               from public.assets a
               left join public.latest_quotes q on q.asset_id=a.id
               left join public.quote_sync_state s
                 on s.asset_id=a.id and s.provider='YAHOO_GOOGLE_US'
+              left join lateral (
+                select o.close from public.daily_ohlcv o where o.asset_id=a.id order by o.date desc limit 1
+              ) latest on true
+              left join lateral (
+                select max(t.last_seen_at) last_seen_at from public.live_market_targets t
+                 where t.asset_id=a.id and t.last_seen_at >= now() - interval '1 day'
+              ) priority on true
+              left join lateral (
+                select max(ss.score) score from public.swing_signals ss
+                 where ss.asset_id=a.id and ss.verdict <> 'NO_SETUP'
+              ) signal on true
              where {' and '.join(filters)}
-             order by s.last_attempt_at nulls first,
+               and (
+                 not %s
+                 or exists (select 1 from public.swing_trade_ledger l where l.asset_id=a.id and l.status='OPEN')
+                 or priority.last_seen_at is not null
+                 or a.id in (
+                   select ss.asset_id from public.swing_signals ss
+                    where ss.country='US' and ss.verdict <> 'NO_SETUP'
+                    order by ss.score desc,ss.ticker limit 120
+                 )
+               )
+             order by ledger_open desc,(priority.last_seen_at is not null) desc,
+                      priority.last_seen_at desc nulls last,(signal.score is not null) desc,
+                      signal.score desc nulls last,s.last_attempt_at nulls first,
                       coalesce(q.updated_at,timestamptz '1900-01-01'),a.ticker,a.exchange
              {limit_sql}
             """,
-            params,
+            [*params, priority_only] if limit is None else [*params[:-1], priority_only, params[-1]],
         )
         return [
-            USAsset(row[0], row[1], row[2] or "", yahoo_symbol(row[1]))
+            USAsset(row[0], row[1], row[2] or "", yahoo_symbol(row[1]), float(row[3]) if row[3] is not None else None)
             for row in cur.fetchall()
         ]
 
 
-def quote_from_section(section: pd.DataFrame) -> Quote | None:
+def quote_from_section(section: pd.DataFrame, previous_close: float | None = None, session_date: date | None = None) -> Quote | None:
     if section.empty or "Close" not in section.columns:
         return None
     closes = pd.to_numeric(section["Close"], errors="coerce").dropna()
@@ -131,17 +168,30 @@ def quote_from_section(section: pd.DataFrame) -> Quote | None:
     if closes.empty:
         return None
     price = float(closes.iloc[-1])
-    previous = float(closes.iloc[-2]) if len(closes) > 1 else None
+    previous = previous_close if previous_close and previous_close > 0 else (float(closes.iloc[-2]) if len(closes) > 1 else None)
     change_pct = (
         (price - previous) / previous * 100
         if previous is not None and previous != 0
         else None
     )
     timestamp = pd.Timestamp(closes.index[-1])
-    return Quote(price, change_pct, timestamp.date(), "YAHOO_FINANCE")
+    as_of = timestamp.tz_convert("America/New_York").date() if timestamp.tzinfo else timestamp.date()
+    if session_date is not None and as_of != session_date:
+        return None
+    def numeric(name: str) -> pd.Series:
+        return pd.to_numeric(section[name], errors="coerce").dropna() if name in section else pd.Series(dtype="float64")
+    opens, highs, lows, volumes = (numeric(name) for name in ("Open", "High", "Low", "Volume"))
+    return Quote(
+        price, change_pct, as_of, "YAHOO_FINANCE_LIVE" if session_date else "YAHOO_FINANCE",
+        float(opens.iloc[0]) if not opens.empty else price,
+        float(highs.max()) if not highs.empty else price,
+        float(lows.min()) if not lows.empty else price,
+        int(volumes.clip(lower=0).sum()) if not volumes.empty else None,
+    )
 
 
-def fetch_yahoo_batch(symbols: list[str], retries: int) -> dict[str, Quote]:
+def fetch_yahoo_batch(assets: list[USAsset], retries: int, intraday: bool = False) -> dict[str, Quote]:
+    symbols = [asset.yahoo_symbol for asset in assets]
     if not symbols:
         return {}
     last_error: Exception | None = None
@@ -149,8 +199,8 @@ def fetch_yahoo_batch(symbols: list[str], retries: int) -> dict[str, Quote]:
         try:
             frame = yf.download(
                 tickers=symbols,
-                period="5d",
-                interval="1d",
+                period="1d" if intraday else "5d",
+                interval="5m" if intraday else "1d",
                 group_by="ticker",
                 auto_adjust=False,
                 actions=False,
@@ -161,15 +211,17 @@ def fetch_yahoo_batch(symbols: list[str], retries: int) -> dict[str, Quote]:
             result: dict[str, Quote] = {}
             if not isinstance(frame.columns, pd.MultiIndex):
                 if len(symbols) == 1:
-                    quote = quote_from_section(frame)
+                    quote = quote_from_section(frame, assets[0].previous_close, datetime.now(ZoneInfo("America/New_York")).date() if intraday else None)
                     if quote:
                         result[symbols[0]] = quote
                 return result
             available = set(frame.columns.get_level_values(0))
+            by_symbol = {asset.yahoo_symbol: asset for asset in assets}
             for symbol in symbols:
                 if symbol not in available:
                     continue
-                quote = quote_from_section(frame[symbol])
+                asset = by_symbol[symbol]
+                quote = quote_from_section(frame[symbol], asset.previous_close, datetime.now(ZoneInfo("America/New_York")).date() if intraday else None)
                 if quote:
                     result[symbol] = quote
             return result
@@ -230,6 +282,26 @@ def upsert_quotes(conn, rows: list[tuple]) -> int:
     return len(rows)
 
 
+def upsert_intraday_ohlcv(conn, rows: list[tuple[str, Quote]]) -> int:
+    payload = [
+        (asset_id, quote.as_of, quote.open, quote.high, quote.low, quote.price, quote.volume, quote.source)
+        for asset_id, quote in rows
+        if quote.as_of and quote.open is not None and quote.high is not None and quote.low is not None
+    ]
+    if not payload:
+        return 0
+    with conn.cursor() as cur:
+        execute_values(cur, """
+            insert into public.daily_ohlcv (asset_id,date,open,high,low,close,volume,source)
+            values %s
+            on conflict (asset_id,date) do update set
+              open=excluded.open,high=excluded.high,low=excluded.low,
+              close=excluded.close,volume=excluded.volume,source=excluded.source
+            """, payload, page_size=500)
+    conn.commit()
+    return len(payload)
+
+
 def record_quote_attempts(
     conn,
     assets: list[USAsset],
@@ -266,7 +338,7 @@ def record_quote_attempts(
 
 
 def sync_quotes(conn, args: argparse.Namespace, requested: set[str] | None) -> None:
-    assets = load_assets(conn, requested, args.quote_limit)
+    assets = load_assets(conn, requested, args.quote_limit, args.priority_only)
     by_yahoo: dict[str, list[USAsset]] = {}
     for asset in assets:
         by_yahoo.setdefault(asset.yahoo_symbol, []).append(asset)
@@ -276,10 +348,12 @@ def sync_quotes(conn, args: argparse.Namespace, requested: set[str] | None) -> N
     print(f"Synchronizing quotes for {len(assets)} US listings ({len(symbols)} Yahoo symbols).")
     for start in range(0, len(symbols), batch_size):
         batch = symbols[start : start + batch_size]
-        yahoo_quotes.update(fetch_yahoo_batch(batch, max(1, args.retries)))
+        batch_assets = [by_yahoo[symbol][0] for symbol in batch]
+        yahoo_quotes.update(fetch_yahoo_batch(batch_assets, max(1, args.retries), args.intraday))
         print(f"   Yahoo batch {start // batch_size + 1}: {len(yahoo_quotes)}/{len(symbols)} resolved")
 
     rows: list[tuple] = []
+    intraday_rows: list[tuple[str, Quote]] = []
     unresolved: list[USAsset] = []
     succeeded: set[str] = set()
     errors: dict[str, str] = {}
@@ -290,6 +364,8 @@ def sync_quotes(conn, args: argparse.Namespace, requested: set[str] | None) -> N
                 rows.append(
                     (asset.asset_id, quote.price, quote.change_pct, "USD", quote.as_of, quote.source)
                 )
+                if args.intraday:
+                    intraday_rows.append((asset.asset_id, quote))
                 succeeded.add(asset.asset_id)
         else:
             unresolved.extend(symbol_assets)
@@ -317,12 +393,16 @@ def sync_quotes(conn, args: argparse.Namespace, requested: set[str] | None) -> N
     written = 0
     if not args.dry_run:
         written = upsert_quotes(conn, rows)
+        intraday_written = upsert_intraday_ohlcv(conn, intraday_rows) if args.intraday else 0
         record_quote_attempts(conn, assets, succeeded, errors)
+    else:
+        intraday_written = len(intraday_rows)
     print(
         "US quote sync complete: "
         f"listings={len(assets)} yahoo={len(rows) - google_resolved} "
         f"google={google_resolved} google_failed={google_failed} "
-        f"unresolved={max(0, len(unresolved) - google_resolved)} written={written}"
+        f"unresolved={max(0, len(unresolved) - google_resolved)} written={written} "
+        f"intraday_ohlcv={intraday_written}"
     )
 
 

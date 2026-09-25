@@ -1,13 +1,13 @@
 # InvestoGenie Status
 
-_Last updated: 2026-09-22 (ICICI Direct trades reconciled; Trade Ledger ROI/XIRR now use capital employed after recycling retained sale proceeds)_
+_Last updated: 2026-09-25 (US priority quotes/OHLCV brought to five-minute session parity with India)_
 
 This file summarizes what has been built so far, what is currently working, what is partial, and what to build next.
 
 ## Repository State
 
-- Branch: `main`; latest committed product revision: `9f77b09` (`Calculate ledger returns from employed capital`).
-- `main` is aligned with `origin/main`, and revision `9f77b09` is deployed on AWS Lightsail.
+- Branch: `main`; latest product revision: `Bring US market tracking to session parity`.
+- `main` is aligned with `origin/main`, and the latest product revision is deployed on AWS Lightsail.
 - Unrelated local edits in `.claude/context`, `AGENTS.md`, `CLAUDE.md`,
   `app/api/cron/backfill-nse/route.ts`, and `opencode.json` remain excluded from product commits.
 
@@ -25,6 +25,22 @@ InvestoGenie is now a local-first market terminal and portfolio intelligence app
 - Portfolio import and Fund Overlap X-Ray using CAS and AMC disclosures.
 - Forward-testing infrastructure to judge strategies out of sample.
 - Data coverage visibility and repair workflows for fund mappings, source freshness, and stale strategy inputs.
+
+### US Market Tracking Parity
+
+- During an open US session, the scheduler now refreshes priority US stocks every five minutes.
+  Priority order is open Trade Ledger positions, stocks visible in the app during the last day,
+  then the top 120 existing non-`NO_SETUP` signals. This changes data delivery only; it does not
+  alter Swing, Strong Swing, News & AI, target, stop, or ranking calculations.
+- `pipelines/us_market_sync.py --quotes-only --priority-only --intraday` fetches five-minute Yahoo
+  bars, updates `latest_quotes`, and upserts the current session's aggregate OHLCV row. Google
+  Finance remains the bounded quote fallback when Yahoo does not resolve a symbol.
+- The exchange-close scheduler still runs an uncapped US quote and OHLCV pass across the full
+  eligible NASDAQ/NYSE/AMEX/NYSE Arca/NYSE American universe, with persistent per-session retry.
+- US quote and history health now uses New York trading sessions and the bundled US holiday
+  calendar. Weekends and exchange holidays no longer create false stale/failed cards, while an
+  actually missed completed session remains visible and fail-closed.
+- Manual priority repair: `npm run sync:us-priority`.
 
 ### Trade Ledger Returns And Broker Reconciliation
 
