@@ -6,7 +6,7 @@ This file summarizes what has been built so far, what is currently working, what
 
 ## Repository State
 
-- Branch: `main`; latest product revision: `Bring US market tracking to session parity`.
+- Branch: `main`; latest product revision: `ed76f36` (`Fix benchmark live OHLCV upsert`).
 - `main` is aligned with `origin/main`, and the latest product revision is deployed on AWS Lightsail.
 - Unrelated local edits in `.claude/context`, `AGENTS.md`, `CLAUDE.md`,
   `app/api/cron/backfill-nse/route.ts`, and `opencode.json` remain excluded from product commits.
@@ -41,6 +41,11 @@ InvestoGenie is now a local-first market terminal and portfolio intelligence app
   calendar. Weekends and exchange holidays no longer create false stale/failed cards, while an
   actually missed completed session remains visible and fail-closed.
 - Manual priority repair: `npm run sync:us-priority`.
+- Validation on 25 September 2026: 241 Vitest tests, two US intraday Python tests, TypeScript,
+  and the production build passed. AWS is running `ed76f36` with the five-minute scheduler active.
+- Deployment verification also exposed and fixed two escaped-percent defects in the India Yahoo
+  fallback upserts. Subsequent production scheduler runs completed for both NSE and BSE without
+  the earlier `psycopg2.execute_values` traceback.
 
 ### Trade Ledger Returns And Broker Reconciliation
 

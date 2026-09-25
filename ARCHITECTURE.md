@@ -224,6 +224,9 @@ a valid Friday close is not marked stale on a weekend or exchange holiday.
 - US live priority set: open ledger positions, recently visible stocks, and the top 120 existing
   actionable signals; Yahoo five-minute bars are primary and Google is a bounded quote fallback.
 - US end-of-day: full eligible-universe Yahoo quote/history pass after the New York close.
+- India Yahoo fallback upserts escape SQL wildcard characters before passing statements through
+  `psycopg2.execute_values`; this keeps the NSE/BSE five-minute fallback operational when Breeze
+  is unavailable or does not resolve a priority instrument.
 - Macro: FRED-backed pipeline.
 - All writes carry timestamps/source metadata; stale or unavailable assets are excluded from
   candidate calculations until repaired or intentionally retired.

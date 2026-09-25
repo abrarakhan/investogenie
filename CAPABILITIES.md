@@ -505,6 +505,21 @@ per-session job completion, advisory locking, and 30-minute failure retries.
 US post-close jobs process the full eligible universe rather than recurring-job
 caps. Unavailable provider data remains an explicit coverage gap.
 
+US live-session parity and India fallback repair, 2026-09-25:
+
+```bash
+npm test                 # 241/241 passing across 33 files
+npm run test:us-market   # 2/2 Python intraday parsing tests
+npm run build            # clean production build and TypeScript validation
+```
+
+During an open US session, priority stocks now receive five-minute Yahoo quote and aggregated
+current-session OHLCV updates, with Google as the bounded quote fallback. Open ledger positions
+come first, followed by recently visible stocks and the top 120 existing actionable signals.
+No signal formula or rank is changed. AWS production also confirms the repaired India Yahoo
+fallback completes for both NSE and BSE after escaping SQL wildcard percent characters passed
+through `psycopg2.execute_values`.
+
 News intelligence, DeepSeek V4, GNews recovery and backfill hardening, 2026-08-26:
 
 ```bash
@@ -687,10 +702,9 @@ database (not just static analysis) — see `STATUS.md` for the specific queries
   suite in this repo, so both of its ordering bugs (2026-07-24 and 2026-08-02) were caught only
   by live observation, the second after it had silently stalled for 87 runs. A small pytest
   around `load_assets()`'s selection and rotation is the highest-value next addition.
-- US history coverage is **mid-recovery** from the 2026-08-02 starvation fix: 355 of 8,703 US
-  assets fresh at time of writing, draining at ~150/hour toward full coverage in ~2.4 days of
-  continuous uptime. Data Health will keep reporting elevated US staleness until roughly
-  2026-08-05; worth confirming then that the fresh count is climbing rather than flat.
+- US history maintenance rotates by attempt time during recurring operation and performs an
+  uncapped eligible-universe pass after the New York close. Individual unavailable symbols remain
+  explicit Data Health gaps rather than being made to look fresh.
 - US quote/history health is now New York-session-aware. Weekends and configured US exchange
   holidays preserve the last completed session as fresh; one genuinely missed session is stale
   and two are failed.
