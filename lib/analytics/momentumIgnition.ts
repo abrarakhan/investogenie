@@ -20,7 +20,18 @@ export interface MomentumIgnitionInput {
   benchmarkBars: OHLCV[];
   sessionProgressFraction?: number;
   currentSessionVolume?: boolean;
+  benchmarkLabel?: string;
+  liquidityFloor?: number;
+  liquidityRequirementLabel?: string;
+  priceFloor?: number;
 }
+
+const inputConfig = (input: MomentumIgnitionInput) => ({
+  benchmarkLabel: input.benchmarkLabel ?? "Nifty",
+  liquidityFloor: input.liquidityFloor ?? 50_000_000,
+  liquidityRequirementLabel: input.liquidityRequirementLabel ?? "INR 5 crore",
+  priceFloor: input.priceFloor ?? 20,
+});
 
 export interface MomentumIgnitionAssessment {
   modelType: "ESTABLISHED" | "NEW_LISTING";
@@ -100,6 +111,7 @@ function gate(key: string, label: string, passed: boolean, detail: string): Mome
 function assessNewListingMomentum(input: MomentumIgnitionInput): MomentumIgnitionAssessment {
   if (input.bars.length < 10) throw new Error("New-listing momentum requires at least 10 bars.");
   const bars = input.bars;
+  const config = inputConfig(input);
   const latest = bars.at(-1) as OHLCV;
   const closes = bars.map((bar) => bar.close);
   const trs = trueRanges(bars);
@@ -152,7 +164,7 @@ function assessNewListingMomentum(input: MomentumIgnitionInput): MomentumIgnitio
   const relativeStrengthPositive = (relativeStrength20Pct ?? Number.NEGATIVE_INFINITY) >= 5;
   const nearBreakout = input.currentPrice >= entryTrigger || (distanceToBreakoutPct >= 0 && distanceToBreakoutPct <= 5);
   const volumeExpanding = projectedVolumeRatio >= 1.5;
-  const liquid = averageTradedValue20 >= 50_000_000;
+  const liquid = averageTradedValue20 >= config.liquidityFloor;
   const atrPct = input.currentPrice > 0 ? (atr14 / input.currentPrice) * 100 : Number.POSITIVE_INFINITY;
   const volatilitySafe = atrPct <= 7;
   let circuitLikeSessions20 = 0;
@@ -179,19 +191,19 @@ function assessNewListingMomentum(input: MomentumIgnitionInput): MomentumIgnitio
   const gates = [
     gate("freshness", "Fresh price history", dataFresh, benchmarkLatest ? `Stock ${latest.date}; benchmark ${benchmarkLatest.date}.` : "Benchmark history unavailable."),
     gate("trend", "New-listing trend", trendAligned, `Price above rising ${slowPeriod}-session structure and positive five-session direction.`),
-    gate("relative_strength", `${lookback}-session relative strength`, relativeStrengthPositive, relativeStrength20Pct === null ? "Benchmark comparison unavailable." : `${relativeStrength20Pct.toFixed(1)}% versus Nifty.`),
+    gate("relative_strength", `${lookback}-session relative strength`, relativeStrengthPositive, relativeStrength20Pct === null ? "Benchmark comparison unavailable." : `${relativeStrength20Pct.toFixed(1)}% versus ${config.benchmarkLabel}.`),
     gate("rs_acceleration", "Relative-strength acceleration", (relativeStrengthAcceleration ?? 0) > 0, relativeStrengthAcceleration === null ? "Short-window comparison unavailable." : `${relativeStrengthAcceleration.toFixed(1)} percentage points.`),
     gate("proximity", "Near lifetime breakout", nearBreakout, `${distanceToBreakoutPct.toFixed(1)}% below trigger ${entryTrigger.toFixed(2)}.`),
     gate("compression", "Range compression", compressed, `${compressionRatio.toFixed(2)}x short/base volatility.`),
     gate("dry_up", "Volume dry-up", volumeDry, `${volumeDryUpRatio.toFixed(2)}x prior volume.`),
     gate("accumulation", "Accumulation sessions", accumulationDays10 >= 2, `${accumulationDays10} qualifying sessions.`),
     gate("live_volume", "Expansion volume", volumeExpanding, `${projectedVolumeRatio.toFixed(2)}x time-adjusted volume.`),
-    gate("market", "Market regime", marketRegimePositive, marketRegimePositive ? "Nifty trend is supportive." : "Nifty trend is not supportive."),
-    gate("liquidity", "Execution liquidity", liquid, `Average traded value ${Math.round(averageTradedValue20).toLocaleString("en-IN")}; requires INR 5 crore.`),
+    gate("market", "Market regime", marketRegimePositive, marketRegimePositive ? `${config.benchmarkLabel} trend is supportive.` : `${config.benchmarkLabel} trend is not supportive.`),
+    gate("liquidity", "Execution liquidity", liquid, `Average traded value ${Math.round(averageTradedValue20).toLocaleString("en-IN")}; requires ${config.liquidityRequirementLabel}.`),
     gate("volatility", "New-listing volatility", volatilitySafe, `ATR is ${atrPct.toFixed(1)}% of price; maximum 7%.`),
     gate("circuit", "Circuit behaviour", circuitSafe, `${circuitLikeSessions20} circuit-like sessions; maximum 1.`),
   ];
-  const qualifies = dataFresh && liquid && input.currentPrice >= 20 && trendAligned && relativeStrengthPositive && nearBreakout && score >= 55;
+  const qualifies = dataFresh && liquid && input.currentPrice >= config.priceFloor && trendAligned && relativeStrengthPositive && nearBreakout && score >= 55;
   const breakoutTriggered = input.currentPrice >= entryTrigger;
   let status: MomentumIgnitionStatus = "NOT_QUALIFIED";
   if (qualifies && breakoutTriggered && (!volatilitySafe || !circuitSafe || entryExtensionAtr > 0.5)) status = "WAIT_FOR_PULLBACK";
@@ -214,6 +226,7 @@ function assessNewListingMomentum(input: MomentumIgnitionInput): MomentumIgnitio
 export function assessMomentumIgnition(input: MomentumIgnitionInput): MomentumIgnitionAssessment {
   if (input.bars.length < 200) return assessNewListingMomentum(input);
   const bars = input.bars;
+  const config = inputConfig(input);
   const latest = bars.at(-1) as OHLCV;
   const closes = bars.map((bar) => bar.close);
   const ranges = bars.map((bar) => Math.max(0, bar.high - bar.low));
@@ -303,8 +316,8 @@ export function assessMomentumIgnition(input: MomentumIgnitionInput): MomentumIg
   const volumeDry = volumeDryUpRatio <= 0.8;
   const volumeExpanding = projectedVolumeRatio >= 1.5;
   const averageTradedValue20 = mean(prior20.map((bar) => bar.close * bar.volume));
-  const liquid = averageTradedValue20 >= 50_000_000;
-  const priceFloor = input.currentPrice >= 20;
+  const liquid = averageTradedValue20 >= config.liquidityFloor;
+  const priceFloor = input.currentPrice >= config.priceFloor;
   const atrPct = input.currentPrice > 0 ? (atr14 / input.currentPrice) * 100 : Number.POSITIVE_INFINITY;
   const volatilitySafe = atrPct <= 5;
   const latestWindow = bars.slice(-21);
@@ -321,15 +334,15 @@ export function assessMomentumIgnition(input: MomentumIgnitionInput): MomentumIg
   const gates = [
     gate("freshness", "Fresh price history", dataFresh, benchmarkLatest ? `Stock ${latest.date}; benchmark ${benchmarkLatest.date}.` : "Benchmark history unavailable."),
     gate("trend", "Primary trend", trendAligned, "Price > 20 > 50 > 200-day averages, with the 50-day average rising."),
-    gate("relative_strength", "20-day relative strength", relativeStrengthPositive, relativeStrength20Pct === null ? "Benchmark comparison unavailable." : `${relativeStrength20Pct.toFixed(1)}% versus Nifty.`),
+    gate("relative_strength", "20-day relative strength", relativeStrengthPositive, relativeStrength20Pct === null ? "Benchmark comparison unavailable." : `${relativeStrength20Pct.toFixed(1)}% versus ${config.benchmarkLabel}.`),
     gate("rs_acceleration", "Relative-strength acceleration", relativeStrengthAccelerating, relativeStrengthAcceleration === null ? "Short-window comparison unavailable." : `${relativeStrengthAcceleration.toFixed(1)} percentage-point acceleration.`),
     gate("proximity", "Near breakout", nearBreakout, `${distanceToBreakoutPct.toFixed(1)}% below trigger ${entryTrigger.toFixed(2)}.`),
     gate("compression", "Range compression", compressed, `${compressionRatio.toFixed(2)} short/base volatility ratio; requires <= 0.85.`),
     gate("dry_up", "Volume dry-up", volumeDry, `${volumeDryUpRatio.toFixed(2)}x prior volume; requires <= 0.80x.`),
     gate("accumulation", "Accumulation sessions", accumulationDays10 >= 2, `${accumulationDays10} qualifying sessions in the prior ten.`),
     gate("live_volume", "Breakout volume", volumeExpanding, `${projectedVolumeRatio.toFixed(2)}x time-adjusted 20-day volume.`),
-    gate("market", "Market regime", marketRegimePositive, marketRegimePositive ? "Nifty is above a rising 50-day average." : "Nifty regime is not supportive."),
-    gate("liquidity", "Execution liquidity", liquid, `20-day traded value ${Math.round(averageTradedValue20).toLocaleString("en-IN")}; requires INR 5 crore.`),
+    gate("market", "Market regime", marketRegimePositive, marketRegimePositive ? `${config.benchmarkLabel} is above a rising 50-day average.` : `${config.benchmarkLabel} regime is not supportive.`),
+    gate("liquidity", "Execution liquidity", liquid, `20-day traded value ${Math.round(averageTradedValue20).toLocaleString("en-IN")}; requires ${config.liquidityRequirementLabel}.`),
     gate("volatility", "Volatility ceiling", volatilitySafe, `ATR is ${atrPct.toFixed(1)}% of price; maximum 5%.`),
     gate("circuit", "Circuit behaviour", circuitSafe, `${circuitLikeSessions20} circuit-like sessions in 20; maximum 1.`),
   ];

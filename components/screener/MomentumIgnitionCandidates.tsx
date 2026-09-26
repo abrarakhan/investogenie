@@ -27,7 +27,7 @@ const breakoutDistance = (value: number) => value >= 0
   ? `${number(value, 1)}% below`
   : `${number(Math.abs(value), 1)}% above`;
 
-function IgnitionCard({ candidate, rank }: { candidate: MomentumIgnitionCandidate; rank: number }) {
+function IgnitionCard({ candidate, rank, market }: { candidate: MomentumIgnitionCandidate; rank: number; market: "IN" | "US" }) {
   const keyGates = candidate.gates.filter((item) => [
     "trend", "relative_strength", "compression", "dry_up", "live_volume", "liquidity", "volatility", "circuit",
   ].includes(item.key));
@@ -50,7 +50,7 @@ function IgnitionCard({ candidate, rank }: { candidate: MomentumIgnitionCandidat
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-mono text-[10px] text-white/30">#{rank}</span>
             <h3 className="text-lg font-black">{candidate.ticker}</h3>
-            <span className="text-[10px] uppercase tracking-wider text-white/35">NSE</span>
+            <span className="text-[10px] uppercase tracking-wider text-white/35">{candidate.exchange}</span>
             <span className="rounded-full border border-white/10 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-white/45">
               {candidate.modelType === "NEW_LISTING" ? `New listing · ${candidate.tradingSessions} sessions` : "Established"}
             </span>
@@ -96,7 +96,7 @@ function IgnitionCard({ candidate, rank }: { candidate: MomentumIgnitionCandidat
 
       <div className="mt-3 border-t border-white/8 pt-3">
         {canTrack ? <Link
-          href={`/terminal/in/trade-ledger?${ledgerParams.toString()}`}
+          href={`/terminal/${market.toLowerCase()}/trade-ledger?${ledgerParams.toString()}`}
           className="inline-flex min-h-11 items-center rounded-lg border border-emerald-400/35 bg-emerald-400/10 px-4 text-sm font-bold text-emerald-200 hover:bg-emerald-400/15"
         >Buy &amp; Track</Link> : <p className="text-[11px] leading-relaxed text-white/38">
           {candidate.status === "ENTRY_READY"
@@ -123,6 +123,7 @@ function Fact({ label, value }: { label: string; value: string }) {
 }
 
 export default function MomentumIgnitionCandidates({ result }: { result: MomentumIgnitionResult }) {
+  const marketLabel = result.market === "IN" ? "NSE" : "US";
   const entryReady = result.candidates.filter((item) => item.status === "ENTRY_READY").length;
   const triggered = result.candidates.filter((item) => item.status === "BREAKOUT_TRIGGERED").length;
   const early = result.candidates.filter((item) => item.status === "EARLY_WATCH").length;
@@ -134,11 +135,11 @@ export default function MomentumIgnitionCandidates({ result }: { result: Momentu
           <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-cyan-300">Separate discovery engine · not the base Swing ranking</div>
           <h2 className="mt-1 text-2xl font-black">Momentum Ignition</h2>
           <p className="mt-1 max-w-3xl text-sm leading-relaxed text-white/45">
-            Finds liquid NSE trend leaders, including recent listings, approaching expansion before the confirmed Strong Swing engine acts.
+            Finds liquid {marketLabel} trend leaders, including recent listings, approaching expansion before the confirmed Strong Swing engine acts.
           </p>
         </div>
         <div className="text-right text-xs text-white/40">
-          <div><span className="font-mono font-bold text-white/75">{result.universeScanned.toLocaleString("en-IN")}</span> active NSE stocks scanned</div>
+          <div><span className="font-mono font-bold text-white/75">{result.universeScanned.toLocaleString("en-IN")}</span> active {marketLabel} stocks scanned</div>
           <div>{result.detailedAssessments.toLocaleString("en-IN")} near-breakout charts assessed</div>
         </div>
       </div>
@@ -160,9 +161,9 @@ export default function MomentumIgnitionCandidates({ result }: { result: Momentu
       </div>
 
       {result.candidates.length === 0
-        ? <div className="rounded-lg border border-white/10 px-4 py-8 text-center text-sm text-white/45">No NSE stock currently passes the Momentum Ignition discovery floor.</div>
+        ? <div className="rounded-lg border border-white/10 px-4 py-8 text-center text-sm text-white/45">No {marketLabel} stock currently passes the Momentum Ignition discovery floor.</div>
         : <div className="space-y-3">{result.candidates.map((candidate, index) => (
-          <IgnitionCard key={candidate.assetId} candidate={candidate} rank={index + 1} />
+          <IgnitionCard key={candidate.assetId} candidate={candidate} rank={index + 1} market={result.market} />
         ))}</div>}
     </section>
   );

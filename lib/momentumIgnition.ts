@@ -62,9 +62,10 @@ const toBar = (row: BarRow): OHLCV => ({
   openInterest: row.open_interest === null ? null : Number(row.open_interest),
 });
 
-function indiaSession(now = new Date()): { date: string; open: boolean; progress: number } {
+function marketSession(market: "IN" | "US", now = new Date()): { date: string; open: boolean; progress: number } {
+  const isIndia = market === "IN";
   const parts = Object.fromEntries(new Intl.DateTimeFormat("en-US", {
-    timeZone: "Asia/Kolkata",
+    timeZone: isIndia ? "Asia/Kolkata" : "America/New_York",
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
@@ -76,8 +77,8 @@ function indiaSession(now = new Date()): { date: string; open: boolean; progress
   const date = `${parts.year}-${parts.month}-${parts.day}`;
   const minutes = Number(parts.hour) * 60 + Number(parts.minute);
   const weekday = parts.weekday !== "Sat" && parts.weekday !== "Sun";
-  const start = 9 * 60 + 15;
-  const end = 15 * 60 + 30;
+  const start = isIndia ? 9 * 60 + 15 : 9 * 60 + 30;
+  const end = isIndia ? 15 * 60 + 30 : 16 * 60;
   return {
     date,
     open: weekday && minutes >= start && minutes <= end,
@@ -85,11 +86,15 @@ function indiaSession(now = new Date()): { date: string; open: boolean; progress
   };
 }
 
-const PRELIMINARY_SQL = `
+const preliminarySql = (market: "IN" | "US") => {
+  const universe = market === "IN"
+    ? "a.country='IN' and a.exchange='NSE'"
+    : "a.country='US' and a.exchange in ('NASDAQ','NYSE','AMEX','NYSEARCA','NYSEAMERICAN')";
+  return `
   with universe as materialized (
     select a.id,a.ticker,a.name,a.exchange
       from public.assets a
-     where a.country='IN' and a.exchange='NSE' and a.asset_class='STOCK'
+     where ${universe} and a.asset_class='STOCK'
        and a.is_active
        and not exists (
          select 1 from public.asset_tracking_exclusions x where x.asset_id=a.id
@@ -122,14 +127,14 @@ const PRELIMINARY_SQL = `
     join public.latest_quotes q on q.asset_id=u.id
     left join public.swing_signals s on s.asset_id=u.id
    where st.history_count>=10
-     and q.price>=20
+     and q.price>=$3
      and (
        (st.history_count>=200 and q.price>st.sma20 and st.sma20>st.sma50 and st.sma50>st.sma200)
        or
        (st.history_count<200 and q.price>st.sma20)
      )
      and q.price>=st.breakout_level*0.90
-     and st.traded_value20>=10000000
+     and st.traded_value20>=$4
      and st.latest_date >= $1::date
      and q.as_of::date >= $1::date
      and (not $2::boolean or q.updated_at >= now() - interval '7 minutes')
@@ -139,9 +144,28 @@ const PRELIMINARY_SQL = `
      coalesce(s.score,0) desc,
      u.ticker
    limit 350`;
+};
+
+const marketConfig = (market: "IN" | "US") => market === "IN" ? {
+  universeWhere: "a.country='IN' and a.exchange='NSE'",
+  benchmarkTicker: "NIFTYBEES",
+  benchmarkLabel: "Nifty",
+  priceFloor: 20,
+  preliminaryLiquidityFloor: 10_000_000,
+  liquidityFloor: 50_000_000,
+  liquidityRequirementLabel: "INR 5 crore",
+} : {
+  universeWhere: "a.country='US' and a.exchange in ('NASDAQ','NYSE','AMEX','NYSEARCA','NYSEAMERICAN')",
+  benchmarkTicker: "SPY",
+  benchmarkLabel: "S&P 500",
+  priceFloor: 5,
+  preliminaryLiquidityFloor: 1_000_000,
+  liquidityFloor: 5_000_000,
+  liquidityRequirementLabel: "USD 5 million",
+};
 
 /**
- * Scan the complete active NSE stock catalog in SQL, then apply the richer
+ * Scan the complete active market stock catalog in SQL, then apply the richer
  * TypeScript model to a bounded near-breakout shortlist for predictable AWS
  * memory and response time.
  */
@@ -149,30 +173,29 @@ export async function getMomentumIgnitionCandidates(
   market: "IN" | "US",
   settings: SwingSettings,
 ): Promise<MomentumIgnitionResult> {
-  if (market !== "IN") {
-    return { market, universeScanned: 0, detailedAssessments: 0, candidates: [] };
-  }
-  await refreshMarketHolidays("IN");
-  const expectedSessionDate = latestExpectedSessionDate("IN");
-  const marketOpen = isMarketOpenNow("IN");
+  const config = marketConfig(market);
+  await refreshMarketHolidays(market);
+  const expectedSessionDate = latestExpectedSessionDate(market);
+  const marketOpen = isMarketOpenNow(market);
 
   const [countRows, preliminary, benchmarkRows] = await Promise.all([
     query<{ count: string | number }>(
       `select count(*) count from public.assets a
-        where a.country='IN' and a.exchange='NSE' and a.asset_class='STOCK' and a.is_active
+        where ${config.universeWhere} and a.asset_class='STOCK' and a.is_active
           and not exists (select 1 from public.asset_tracking_exclusions x where x.asset_id=a.id)`,
     ),
-    query<PreliminaryRow>(PRELIMINARY_SQL, [expectedSessionDate, marketOpen]),
+    query<PreliminaryRow>(preliminarySql(market), [expectedSessionDate, marketOpen, config.priceFloor, config.preliminaryLiquidityFloor]),
     query<BarRow>(
       `with chosen as (
          select a.id from public.assets a
-          where a.country='IN' and a.ticker='NIFTYBEES'
+          where a.country=$1 and a.ticker=$2
           order by (select count(*) from public.daily_ohlcv o where o.asset_id=a.id) desc
           limit 1
        )
        select o.asset_id,o.date::text date,o.open,o.high,o.low,o.close,o.volume,o.open_interest
          from public.daily_ohlcv o join chosen c on c.id=o.asset_id
         order by o.date desc limit 260`,
+      [market, config.benchmarkTicker],
     ),
   ]);
   const universeScanned = Number(countRows[0]?.count ?? 0);
@@ -197,7 +220,7 @@ export async function getMomentumIgnitionCandidates(
     barsByAsset.set(row.asset_id, bars);
   }
   const benchmarkBars = benchmarkRows.map(toBar).reverse();
-  const session = indiaSession();
+  const session = marketSession(market);
   const candidates: MomentumIgnitionCandidate[] = [];
   for (const row of preliminary) {
     const bars = barsByAsset.get(row.asset_id) ?? [];
@@ -208,6 +231,10 @@ export async function getMomentumIgnitionCandidates(
       benchmarkBars,
       currentSessionVolume: session.open && bars.at(-1)?.date === session.date,
       sessionProgressFraction: session.progress,
+      benchmarkLabel: config.benchmarkLabel,
+      liquidityFloor: config.liquidityFloor,
+      liquidityRequirementLabel: config.liquidityRequirementLabel,
+      priceFloor: config.priceFloor,
     });
     if (!assessment.qualifies) continue;
     const risk = assessment.atr14 * settings.stopAtrMult;
