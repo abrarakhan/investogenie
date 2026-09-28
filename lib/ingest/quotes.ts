@@ -468,6 +468,10 @@ export async function refreshQuotes(databaseUrl: string, startISO = localToday()
            from public.swing_trade_ledger l
           where l.market='IN' and l.status='OPEN'
          union
+         select f.asset_id,0 priority
+           from public.forward_test_positions f
+          where f.status='OPEN'
+         union
          select r.asset_id,1 priority
            from ranked_signals r where r.exchange_rank <= 50
        )

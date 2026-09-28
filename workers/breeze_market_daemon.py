@@ -276,6 +276,8 @@ def load_cash_instruments(conn, archive: ZipFile, exchanges: list[str], limit: i
              order by
                case when exists(
                  select 1 from public.swing_trade_ledger l where l.asset_id=a.id and l.status='OPEN'
+               ) or exists(
+                 select 1 from public.forward_test_positions f where f.asset_id=a.id and f.status='OPEN'
                ) then 0 when exists(
                  select 1 from public.live_market_targets t
                   where t.asset_id=a.id and t.last_seen_at >= now() - interval '1 day'

@@ -43,6 +43,30 @@ GOOGLE_EXCHANGE = {
     "CBOE": "BATS",
     "OTC": "OTCMKTS",
 }
+US_MARKET_HOLIDAYS = {
+    date.fromisoformat(value)
+    for value in (
+        "2026-01-01", "2026-01-19", "2026-02-16", "2026-04-03",
+        "2026-05-25", "2026-06-19", "2026-07-03", "2026-09-07",
+        "2026-11-26", "2026-12-25", "2027-01-01", "2027-01-18",
+        "2027-02-15", "2027-03-26", "2027-05-31", "2027-06-18",
+        "2027-07-05", "2027-09-06", "2027-11-25", "2027-12-24",
+        "2028-01-17", "2028-02-21", "2028-04-14", "2028-05-29",
+        "2028-06-19", "2028-07-04", "2028-09-04", "2028-11-23",
+        "2028-12-25",
+    )
+}
+
+
+def is_us_market_open(now: datetime | None = None) -> bool:
+    clock = (now or datetime.now(ZoneInfo("America/New_York"))).astimezone(ZoneInfo("America/New_York"))
+    return (
+        clock.weekday() < 5
+        and clock.date() not in US_MARKET_HOLIDAYS
+        and clock.replace(hour=9, minute=30, second=0, microsecond=0)
+        <= clock
+        <= clock.replace(hour=16, minute=0, second=0, microsecond=0)
+    )
 
 
 @dataclass(frozen=True)
@@ -118,7 +142,8 @@ def load_assets(conn, requested: set[str] | None, limit: int | None, priority_on
         cur.execute(
             f"""
             select a.id::text,a.ticker,a.exchange,latest.close,
-                   exists (select 1 from public.swing_trade_ledger l where l.asset_id=a.id and l.status='OPEN') ledger_open,
+                   exists (select 1 from public.swing_trade_ledger l where l.asset_id=a.id and l.status='OPEN')
+                   or exists (select 1 from public.forward_test_positions f where f.asset_id=a.id and f.status='OPEN') ledger_open,
                    priority.last_seen_at,signal.score
               from public.assets a
               left join public.latest_quotes q on q.asset_id=a.id
@@ -139,6 +164,7 @@ def load_assets(conn, requested: set[str] | None, limit: int | None, priority_on
                and (
                  not %s
                  or exists (select 1 from public.swing_trade_ledger l where l.asset_id=a.id and l.status='OPEN')
+                 or exists (select 1 from public.forward_test_positions f where f.asset_id=a.id and f.status='OPEN')
                  or priority.last_seen_at is not null
                  or a.id in (
                    select ss.asset_id from public.swing_signals ss
@@ -254,7 +280,7 @@ def fetch_google_quote(asset: USAsset) -> Quote:
     change_pct = float(match.group(3))
     if price <= 0:
         raise ValueError(f"invalid Google Finance price {price}")
-    return Quote(price, change_pct, date.today(), "GOOGLE_FINANCE")
+    return Quote(price, change_pct, datetime.now(ZoneInfo("America/New_York")).date(), "GOOGLE_FINANCE")
 
 
 def upsert_quotes(conn, rows: list[tuple]) -> int:
@@ -338,6 +364,9 @@ def record_quote_attempts(
 
 
 def sync_quotes(conn, args: argparse.Namespace, requested: set[str] | None) -> None:
+    if args.intraday and not is_us_market_open():
+        print("US market is closed; preserving the last completed quote and OHLCV session.")
+        return
     assets = load_assets(conn, requested, args.quote_limit, args.priority_only)
     by_yahoo: dict[str, list[USAsset]] = {}
     for asset in assets:

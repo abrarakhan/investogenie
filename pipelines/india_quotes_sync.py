@@ -64,6 +64,9 @@ def load_assets(conn, exchange: str, limit: int | None, priority_only: bool = Fa
                    exists (
                      select 1 from public.swing_trade_ledger l
                       where l.asset_id=a.id and l.status='OPEN'
+                   ) or exists (
+                     select 1 from public.forward_test_positions f
+                      where f.asset_id=a.id and f.status='OPEN'
                    ) ledger_open
               from public.assets a
               left join public.latest_quotes q on q.asset_id=a.id
@@ -98,6 +101,10 @@ def load_assets(conn, exchange: str, limit: int | None, priority_only: bool = Fa
                  or exists (
                    select 1 from public.swing_trade_ledger l
                     where l.asset_id=a.id and l.status='OPEN'
+                 )
+                 or exists (
+                   select 1 from public.forward_test_positions f
+                    where f.asset_id=a.id and f.status='OPEN'
                  )
                  or exists (
                    select 1 from public.live_market_targets t

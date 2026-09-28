@@ -1,9 +1,10 @@
 import unittest
-from datetime import date
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 
-from us_market_sync import quote_from_section
+from us_market_sync import is_us_market_open, quote_from_section
 
 
 class USMarketSyncTest(unittest.TestCase):
@@ -33,6 +34,16 @@ class USMarketSyncTest(unittest.TestCase):
             index=pd.DatetimeIndex(["2026-09-23 19:55:00+00:00"]),
         )
         self.assertIsNone(quote_from_section(frame, 99.0, date(2026, 9, 24)))
+
+    def test_us_session_gate_rejects_weekends_and_holidays(self):
+        eastern = ZoneInfo("America/New_York")
+        self.assertTrue(is_us_market_open(datetime(2026, 9, 8, 12, 0, tzinfo=eastern)))
+        self.assertFalse(is_us_market_open(datetime(2026, 9, 12, 12, 0, tzinfo=eastern)))
+        self.assertFalse(is_us_market_open(datetime(2026, 9, 7, 12, 0, tzinfo=eastern)))
+
+    def test_us_session_gate_rejects_after_close(self):
+        eastern = ZoneInfo("America/New_York")
+        self.assertFalse(is_us_market_open(datetime(2026, 9, 11, 16, 1, tzinfo=eastern)))
 
 
 if __name__ == "__main__":
