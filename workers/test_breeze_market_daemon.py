@@ -5,7 +5,7 @@ from zipfile import ZipFile
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-from breeze_market_daemon import decrypt_credential, parse_security_master, parse_tick_time
+from breeze_market_daemon import decrypt_credential, parse_security_master, parse_tick_time, valid_ohlc
 
 
 class BreezeMarketDaemonTests(unittest.TestCase):
@@ -26,6 +26,12 @@ class BreezeMarketDaemonTests(unittest.TestCase):
     def test_tick_time_is_ist_aware(self):
         parsed = parse_tick_time("Wed Sep 09 12:34:56 2026")
         self.assertEqual(parsed.isoformat(), "2026-09-09T12:34:56+05:30")
+
+    def test_zero_low_is_treated_as_missing_not_as_a_market_price(self):
+        self.assertEqual(valid_ohlc(803.05, "809.95", "825", "0"), (809.95, 825.0, 803.05))
+
+    def test_live_ohlc_is_clamped_around_the_last_trade(self):
+        self.assertEqual(valid_ohlc(105, "100", "102", "103"), (100.0, 105, 100.0))
 
     def test_decrypts_node_compatible_credential(self):
         master_key = "test-credential-key"

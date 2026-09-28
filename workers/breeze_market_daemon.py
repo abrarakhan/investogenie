@@ -144,6 +144,22 @@ def integer(value: Any) -> int | None:
     return int(parsed) if parsed is not None else None
 
 
+def valid_ohlc(price: float, open_value: Any, high_value: Any, low_value: Any) -> tuple[float, float, float]:
+    """Return a positive, internally consistent live candle.
+
+    Breeze may send zero for an unavailable session low/high. Persisting that
+    sentinel as a real price corrupts ATR and every pattern detector that reads
+    daily_ohlcv, so missing fields fall back to the observed trade price.
+    """
+    open_price = number(open_value)
+    high = number(high_value)
+    low = number(low_value)
+    open_price = open_price if open_price is not None and open_price > 0 else price
+    high = high if high is not None and high > 0 else max(open_price, price)
+    low = low if low is not None and low > 0 else min(open_price, price)
+    return open_price, max(high, open_price, price), min(low, open_price, price)
+
+
 def normalized_row(row: dict[str, str]) -> dict[str, str]:
     return {str(key).strip().strip('"').lower(): str(value or "").strip().strip('"') for key, value in row.items()}
 
@@ -267,6 +283,7 @@ class MarketBatcher:
         if price is None or price <= 0:
             return
         timestamp = parse_tick_time(tick.get("ltt") or tick.get("datetime"))
+        open_price, high, low = valid_ohlc(price, tick.get("open"), tick.get("high"), tick.get("low"))
         row = {
             "asset_id": instrument.asset_id,
             "ticker": instrument.ticker,
@@ -275,9 +292,9 @@ class MarketBatcher:
             "date": timestamp.date(),
             "price": price,
             "change_pct": number(tick.get("change")),
-            "open": number(tick.get("open")),
-            "high": number(tick.get("high")),
-            "low": number(tick.get("low")),
+            "open": open_price,
+            "high": high,
+            "low": low,
             "volume": integer(tick.get("ttq") or tick.get("volume") or tick.get("total_quantity_traded")),
             "bid": number(tick.get("bPrice") or tick.get("best_bid_price")),
             "ask": number(tick.get("sPrice") or tick.get("best_offer_price")),
@@ -326,9 +343,9 @@ class MarketBatcher:
                       (asset_id,date,open,high,low,close,volume,source)
                     values %s
                     on conflict (asset_id,date) do update set
-                      open=coalesce(public.daily_ohlcv.open,excluded.open),
-                      high=case when excluded.high is null then public.daily_ohlcv.high when public.daily_ohlcv.high is null then excluded.high else greatest(public.daily_ohlcv.high,excluded.high) end,
-                      low=case when excluded.low is null then public.daily_ohlcv.low when public.daily_ohlcv.low is null then excluded.low else least(public.daily_ohlcv.low,excluded.low) end,
+                      open=case when public.daily_ohlcv.open is null or public.daily_ohlcv.open <= 0 then excluded.open else public.daily_ohlcv.open end,
+                      high=case when public.daily_ohlcv.high is null or public.daily_ohlcv.high <= 0 then excluded.high else greatest(public.daily_ohlcv.high,excluded.high) end,
+                      low=case when public.daily_ohlcv.low is null or public.daily_ohlcv.low <= 0 then excluded.low else least(public.daily_ohlcv.low,excluded.low) end,
                       close=excluded.close,
                       volume=case when excluded.volume is null then public.daily_ohlcv.volume when public.daily_ohlcv.volume is null then excluded.volume else greatest(public.daily_ohlcv.volume,excluded.volume) end,
                       source=excluded.source

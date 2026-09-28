@@ -283,8 +283,7 @@ async function upsertBars(client: Client, rows: BhavRow[], source: string): Prom
          low=excluded.low,
          close=excluded.close,
          volume=excluded.volume,
-         source=excluded.source
-       where coalesce(public.daily_ohlcv.source, '') not like 'BREEZE_%'`,
+         source=excluded.source`,
       params,
     );
     upserted += batch.length;
