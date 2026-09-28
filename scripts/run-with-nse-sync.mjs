@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { isMarketOpenNow, isTradingDay, latestExpectedSessionDate, refreshMarketHolidays } from "../lib/market-calendar.mjs";
+import { isMarketOpenNow, isTradingDay, latestExpectedSessionDate, marketHolidayDates, refreshMarketHolidays } from "../lib/market-calendar.mjs";
 import { startEodScheduler } from "./eod-scheduler.mjs";
 
 const mode = process.argv[2];
@@ -1370,7 +1370,7 @@ function scheduleNseCatchup() {
   );
   nseCatchupTimer = setInterval(async () => {
     const clock = istClock();
-    if (clock.day === 0 || clock.day === 6) return; // no bhavcopy expected on weekends
+    if (!isTradingDay("IN", clock.date)) return; // no bhavcopy expected on weekends or holidays
 
     if (nseCatchupAttemptDate !== clock.date) {
       nseCatchupAttemptDate = clock.date;
@@ -1467,6 +1467,14 @@ nextChild.on("close", (code, signal) => {
 });
 
 const refreshedNseCalendar = await refreshMarketHolidays("IN");
+try {
+  writeFileSync(
+    process.env.MARKET_CALENDAR_FILE ?? "/tmp/investogenie-india-market-holidays.json",
+    JSON.stringify({ market: "IN", holidays: marketHolidayDates("IN"), refreshedAt: new Date().toISOString() }),
+  );
+} catch (error) {
+  console.warn(`[market-calendar] unable to publish runtime holiday snapshot: ${error.message}`);
+}
 console.log(`[market-calendar] NSE capital-market holidays ${refreshedNseCalendar ? "refreshed" : "using bundled fallback"}`);
 scheduleDailySync();
 const stopEodScheduler = startEodScheduler({

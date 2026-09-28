@@ -5,7 +5,9 @@ from zipfile import ZipFile
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-from breeze_market_daemon import decrypt_credential, parse_security_master, parse_tick_time, valid_ohlc
+import datetime as dt
+
+from breeze_market_daemon import IST, decrypt_credential, is_india_market_session, parse_security_master, parse_tick_time, valid_ohlc
 
 
 class BreezeMarketDaemonTests(unittest.TestCase):
@@ -32,6 +34,16 @@ class BreezeMarketDaemonTests(unittest.TestCase):
 
     def test_live_ohlc_is_clamped_around_the_last_trade(self):
         self.assertEqual(valid_ohlc(105, "100", "102", "103"), (100.0, 105, 100.0))
+
+    def test_live_ticks_are_accepted_only_during_the_same_open_session(self):
+        friday = dt.datetime(2026, 9, 11, 12, 0, tzinfo=IST)
+        self.assertTrue(is_india_market_session(friday, friday))
+        self.assertFalse(is_india_market_session(friday, dt.datetime(2026, 9, 11, 16, 0, tzinfo=IST)))
+        self.assertFalse(is_india_market_session(friday, dt.datetime(2026, 9, 12, 12, 0, tzinfo=IST)))
+
+    def test_live_ticks_are_rejected_on_exchange_holidays(self):
+        holiday = dt.datetime(2026, 9, 14, 12, 0, tzinfo=IST)
+        self.assertFalse(is_india_market_session(holiday, holiday))
 
     def test_decrypts_node_compatible_credential(self):
         master_key = "test-credential-key"

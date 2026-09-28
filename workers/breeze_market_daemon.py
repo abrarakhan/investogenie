@@ -14,11 +14,13 @@ import csv
 import datetime as dt
 import hashlib
 import io
+import json
 import os
 import signal
 import sys
 import threading
 import time
+import urllib.request
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
@@ -30,6 +32,31 @@ from psycopg2.extras import execute_values
 
 IST = dt.timezone(dt.timedelta(hours=5, minutes=30))
 EQUITY_SERIES = {"EQ", "BE", "BZ", "SM", "ST", "SZ", "DR"}
+NSE_HOLIDAY_URL = "https://www.nseindia.com/api/holiday-master?type=trading"
+INDIA_MARKET_OPEN = dt.time(9, 15)
+INDIA_MARKET_CLOSE = dt.time(15, 30)
+INDIA_MARKET_HOLIDAYS = {
+    dt.date.fromisoformat(value)
+    for value in (
+        "2026-01-15", "2026-01-26", "2026-03-03", "2026-03-26",
+        "2026-03-31", "2026-04-03", "2026-04-14", "2026-05-01",
+        "2026-05-28", "2026-06-26", "2026-09-14", "2026-10-02",
+        "2026-10-20", "2026-11-10", "2026-11-24", "2026-12-25",
+    )
+}
+
+
+def load_runtime_market_holidays() -> bool:
+    path = env("MARKET_CALENDAR_FILE", "/tmp/investogenie-india-market-holidays.json")
+    try:
+        with open(path, encoding="utf-8") as snapshot:
+            payload = json.load(snapshot)
+        dates = payload.get("holidays", []) if payload.get("market") == "IN" else []
+        for value in dates:
+            INDIA_MARKET_HOLIDAYS.add(dt.date.fromisoformat(str(value)))
+        return bool(dates)
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return False
 
 
 def env(name: str, default: str | None = None) -> str | None:
@@ -160,6 +187,43 @@ def valid_ohlc(price: float, open_value: Any, high_value: Any, low_value: Any) -
     return open_price, max(high, open_price, price), min(low, open_price, price)
 
 
+def refresh_india_market_holidays() -> bool:
+    """Merge the official NSE capital-market calendar into the fail-safe set."""
+    loaded_snapshot = load_runtime_market_holidays()
+    request = urllib.request.Request(
+        NSE_HOLIDAY_URL,
+        headers={"Accept": "application/json", "User-Agent": "InvestoGenie/1.0 market-calendar"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=4) as response:
+            payload = json.load(response)
+        added = 0
+        for holiday in payload.get("CM", []):
+            value = str(holiday.get("tradingDate", ""))
+            try:
+                INDIA_MARKET_HOLIDAYS.add(dt.datetime.strptime(value, "%d-%b-%Y").date())
+                added += 1
+            except ValueError:
+                continue
+        return added > 0 or loaded_snapshot
+    except Exception as exc:
+        print(f"[breeze-market] official holiday refresh unavailable: {exc}; using bundled calendar", file=sys.stderr, flush=True)
+        return loaded_snapshot
+
+
+def is_india_market_session(timestamp: dt.datetime, now: dt.datetime | None = None) -> bool:
+    """Accept only a live tick from the currently open Indian cash session."""
+    tick_time = timestamp.astimezone(IST)
+    current = (now or dt.datetime.now(IST)).astimezone(IST)
+    return (
+        tick_time.date() == current.date()
+        and tick_time.weekday() < 5
+        and tick_time.date() not in INDIA_MARKET_HOLIDAYS
+        and INDIA_MARKET_OPEN <= tick_time.time().replace(tzinfo=None) <= INDIA_MARKET_CLOSE
+        and INDIA_MARKET_OPEN <= current.time().replace(tzinfo=None) <= INDIA_MARKET_CLOSE
+    )
+
+
 def normalized_row(row: dict[str, str]) -> dict[str, str]:
     return {str(key).strip().strip('"').lower(): str(value or "").strip().strip('"') for key, value in row.items()}
 
@@ -283,6 +347,8 @@ class MarketBatcher:
         if price is None or price <= 0:
             return
         timestamp = parse_tick_time(tick.get("ltt") or tick.get("datetime"))
+        if not is_india_market_session(timestamp):
+            return
         open_price, high, low = valid_ohlc(price, tick.get("open"), tick.get("high"), tick.get("low"))
         row = {
             "asset_id": instrument.asset_id,
@@ -397,6 +463,11 @@ def main() -> int:
 
     signal.signal(signal.SIGINT, stop_process)
     signal.signal(signal.SIGTERM, stop_process)
+    refreshed_calendar = refresh_india_market_holidays()
+    print(
+        f"[breeze-market] NSE holiday calendar {'refreshed' if refreshed_calendar else 'using bundled fallback'}",
+        flush=True,
+    )
     credentials = wait_for_breeze_credentials(process_stop_event)
     if not credentials:
         return 0
@@ -471,6 +542,7 @@ def main() -> int:
     print(f"[breeze-market] subscribed {subscribed}/{len(instruments)} instruments", flush=True)
 
     last_credential_check = time.monotonic()
+    last_calendar_refresh = time.monotonic()
     try:
         while not stop_event.wait(5):
             handler = getattr(breeze, "sio_rate_refresh_handler", None)
@@ -482,6 +554,9 @@ def main() -> int:
                 if current is None or current.fingerprint != credentials.fingerprint:
                     raise ConnectionError("Breeze credentials changed; reconnecting")
                 last_credential_check = time.monotonic()
+            if time.monotonic() - last_calendar_refresh >= 6 * 60 * 60:
+                refresh_india_market_holidays()
+                last_calendar_refresh = time.monotonic()
     finally:
         try:
             breeze.ws_disconnect()

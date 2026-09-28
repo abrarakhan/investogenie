@@ -3,6 +3,7 @@ import {
   isMarketHoliday,
   isMarketOpenNow,
   latestExpectedSessionDate,
+  marketHolidayDates,
   refreshMarketHolidays,
   tradingSessionLag,
 } from "./market-calendar.mjs";
@@ -17,6 +18,12 @@ describe("market calendar", () => {
     expect(isMarketHoliday("IN", holiday)).toBe(true);
     expect(isMarketOpenNow("IN", holiday)).toBe(false);
     expect(latestExpectedSessionDate("IN", holiday, 18 * 60)).toBe("2026-09-11");
+    expect(marketHolidayDates("IN")).toContain("2026-09-14");
+  });
+
+  it("keeps Friday as the expected session through the closed weekend", () => {
+    expect(latestExpectedSessionDate("IN", new Date("2026-09-12T07:00:00Z"))).toBe("2026-09-11");
+    expect(latestExpectedSessionDate("IN", new Date("2026-09-13T07:00:00Z"))).toBe("2026-09-11");
   });
 
   it("counts missing exchange sessions rather than calendar days", () => {
