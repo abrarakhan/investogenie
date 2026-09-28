@@ -103,6 +103,7 @@ export async function computeSignals(databaseUrl: string): Promise<ScanSummary> 
           and exists (
             select 1 from public.daily_ohlcv o
              where o.asset_id = a.id
+               and o.open > 0 and o.high > 0 and o.low > 0 and o.close > 0
                and o.date >= case when a.country='IN'
                  then (select market_date - 2 from expected)
                  else current_date - 4 end
@@ -138,6 +139,7 @@ export async function computeSignals(databaseUrl: string): Promise<ScanSummary> 
                   o.close, o.volume, o.open_interest
              from public.daily_ohlcv o
             where o.asset_id = any($1)
+              and o.open > 0 and o.high > 0 and o.low > 0 and o.close > 0
             order by o.asset_id, o.date asc`,
           [ids],
         );
