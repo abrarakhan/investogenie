@@ -235,6 +235,10 @@ def upsert_market_data(conn, rows: list[tuple]) -> int:
               volume=excluded.volume,
               source=excluded.source
             where coalesce(public.daily_ohlcv.source, '') not like 'BREEZE_%%'
+               or public.daily_ohlcv.open is null or public.daily_ohlcv.open <= 0
+               or public.daily_ohlcv.high is null or public.daily_ohlcv.high <= 0
+               or public.daily_ohlcv.low is null or public.daily_ohlcv.low <= 0
+               or public.daily_ohlcv.close is null or public.daily_ohlcv.close <= 0
             """,
             [
                 (asset_id, as_of, open_price, high, low, price, volume, "YAHOO_FINANCE_LIVE")
@@ -299,6 +303,10 @@ def sync_nifty_history(conn, dry_run: bool) -> int:
               open=excluded.open,high=excluded.high,low=excluded.low,
               close=excluded.close,volume=excluded.volume,source=excluded.source
             where coalesce(public.daily_ohlcv.source, '') not like 'BREEZE_%%'
+               or public.daily_ohlcv.open is null or public.daily_ohlcv.open <= 0
+               or public.daily_ohlcv.high is null or public.daily_ohlcv.high <= 0
+               or public.daily_ohlcv.low is null or public.daily_ohlcv.low <= 0
+               or public.daily_ohlcv.close is null or public.daily_ohlcv.close <= 0
             """,
             [(*row, "YAHOO_FINANCE_LIVE") for row in payload],
         )
