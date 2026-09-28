@@ -47,7 +47,8 @@ INDIA_MARKET_HOLIDAYS = {
 
 
 def load_runtime_market_holidays() -> bool:
-    path = env("MARKET_CALENDAR_FILE", "/tmp/investogenie-india-market-holidays.json")
+    default_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".runtime-india-market-holidays.json")
+    path = env("MARKET_CALENDAR_FILE", default_path)
     try:
         with open(path, encoding="utf-8") as snapshot:
             payload = json.load(snapshot)

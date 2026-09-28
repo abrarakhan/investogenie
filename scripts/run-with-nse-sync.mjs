@@ -11,6 +11,7 @@ if (mode !== "dev" && mode !== "start") {
 }
 
 const root = process.cwd();
+const marketCalendarFile = process.env.MARKET_CALENDAR_FILE ?? resolve(root, ".runtime-india-market-holidays.json");
 const envFile = resolve(root, ".env.local");
 if (existsSync(envFile)) process.loadEnvFile(envFile);
 
@@ -1469,7 +1470,7 @@ nextChild.on("close", (code, signal) => {
 const refreshedNseCalendar = await refreshMarketHolidays("IN");
 try {
   writeFileSync(
-    process.env.MARKET_CALENDAR_FILE ?? "/tmp/investogenie-india-market-holidays.json",
+    marketCalendarFile,
     JSON.stringify({ market: "IN", holidays: marketHolidayDates("IN"), refreshedAt: new Date().toISOString() }),
   );
 } catch (error) {
