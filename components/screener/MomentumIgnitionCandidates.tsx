@@ -37,7 +37,7 @@ function IgnitionCard({ candidate, rank, market }: { candidate: MomentumIgnition
     ticker: candidate.ticker,
     strategy: "MOMENTUM_IGNITION",
     current: String(candidate.currentPrice),
-    entry: String(candidate.entryTrigger),
+    entry: String(candidate.projectedEntry),
     target: String(candidate.projectedTarget),
     stop: String(candidate.projectedStop),
     trail: String(candidate.projectedTrail),
@@ -66,7 +66,11 @@ function IgnitionCard({ candidate, rank, market }: { candidate: MomentumIgnition
       </div>
 
       <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
-        <Metric label="Current" value={number(candidate.currentPrice)} detail={signed(candidate.quoteChangePct)} />
+        <Metric
+          label={candidate.status === "ENTRY_READY" ? "Live entry" : "Current"}
+          value={number(candidate.status === "ENTRY_READY" ? candidate.projectedEntry : candidate.currentPrice)}
+          detail={candidate.status === "ENTRY_READY" ? "Latest quote plan" : signed(candidate.quoteChangePct)}
+        />
         <Metric label="Breakout trigger" value={number(candidate.entryTrigger)} detail={breakoutDistance(candidate.distanceToBreakoutPct)} />
         <Metric label="Model stop" value={number(candidate.projectedStop)} detail="Planning reference" />
         <Metric label="Model target" value={number(candidate.projectedTarget)} detail="Planning reference" />
@@ -79,6 +83,8 @@ function IgnitionCard({ candidate, rank, market }: { candidate: MomentumIgnition
         <Fact label="Compression" value={`${number(candidate.compressionRatio)}x`} />
         <Fact label="Dry-up" value={`${number(candidate.volumeDryUpRatio)}x`} />
         <Fact label="Accumulation" value={`${candidate.accumulationDays10} days`} />
+        <Fact label="Projected holding" value={`~${candidate.projectedDays} sessions`} />
+        <Fact label="Trailing reference" value={number(candidate.projectedTrail)} />
       </div>
 
       <details className="mt-3 border-t border-white/8 pt-3">

@@ -39,6 +39,7 @@ export interface MomentumIgnitionCandidate extends MomentumIgnitionAssessment {
   latestDate: string;
   baseScore: number;
   baseVerdict: string;
+  projectedEntry: number;
   projectedStop: number;
   projectedTarget: number;
   projectedTrail: number;
@@ -238,7 +239,18 @@ export async function getMomentumIgnitionCandidates(
     });
     if (!assessment.qualifies) continue;
     const risk = assessment.atr14 * settings.stopAtrMult;
+    const projectedEntry = assessment.status === "ENTRY_READY"
+      ? Number(row.current_price)
+      : assessment.entryTrigger;
     const recentCloses = bars.slice(-Math.min(11, bars.length)).map((bar) => bar.close);
+    if (
+      assessment.status === "ENTRY_READY"
+      && recentCloses.length
+      && Math.abs(recentCloses.at(-1)! - projectedEntry) > 0.0001
+    ) {
+      recentCloses.push(projectedEntry);
+      if (recentCloses.length > 11) recentCloses.shift();
+    }
     const velocity = recentCloses.slice(1).reduce(
       (sum, close, index) => sum + Math.abs(close - recentCloses[index]),
       0,
@@ -256,9 +268,10 @@ export async function getMomentumIgnitionCandidates(
       latestDate: row.latest_date,
       baseScore: Number(row.base_score ?? 0),
       baseVerdict: row.base_verdict ?? "NO_SETUP",
-      projectedStop: assessment.entryTrigger - risk,
-      projectedTarget: assessment.entryTrigger + risk * settings.targetRR,
-      projectedTrail: assessment.entryTrigger - assessment.atr14 * settings.trailAtrMult,
+      projectedEntry,
+      projectedStop: projectedEntry - risk,
+      projectedTarget: projectedEntry + risk * settings.targetRR,
+      projectedTrail: projectedEntry - assessment.atr14 * settings.trailAtrMult,
       projectedDays: Math.min(20, Math.max(1, Math.round(targetDistance / Math.max(velocity, 0.01)))),
     });
   }
