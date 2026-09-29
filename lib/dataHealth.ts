@@ -480,37 +480,14 @@ export async function getCoverageGaps(userId: string, now = new Date()): Promise
   await refreshMarketHolidays("IN");
   const rows = await query<AssetGapRow>(
     `with uni as (select distinct asset_id from public.universe_members where universe in ('NIFTY_500','SP_500')),
-          latest_signal_scan as (
-            select country, max(as_of) as_of from public.swing_signals group by country
-          ),
           swing as (
-            select distinct s.asset_id
-              from public.swing_signals s
-              join public.assets signal_asset on signal_asset.id=s.asset_id
-              join latest_signal_scan latest on latest.country=s.country and latest.as_of=s.as_of
-             where s.verdict <> 'NO_SETUP'
+            select distinct t.asset_id
+              from public.live_market_targets t
+              join public.assets signal_asset on signal_asset.id=t.asset_id
+             where t.surface in ('swing','strong_swing','news_swing')
+               and t.last_seen_at >= now() - interval '1 day'
                and signal_asset.is_active
-               and not exists(select 1 from public.asset_tracking_exclusions x where x.asset_id=s.asset_id)
-               and exists(
-                 select 1 from public.daily_ohlcv recent
-                  where recent.asset_id=s.asset_id
-                    and recent.date >= current_date - interval '4 days'
-               )
-               and exists(
-                 select 1 from public.latest_quotes current_quote
-                  where current_quote.asset_id=s.asset_id
-                    and current_quote.as_of::date >= case
-                      when s.country='IN'
-                       and extract(isodow from now() at time zone 'Asia/Kolkata') between 1 and 5
-                       and (now() at time zone 'Asia/Kolkata')::time between time '09:15' and time '15:30'
-                        then (now() at time zone 'Asia/Kolkata')::date
-                      when s.country='US'
-                       and extract(isodow from now() at time zone 'America/New_York') between 1 and 5
-                       and (now() at time zone 'America/New_York')::time between time '09:30' and time '16:00'
-                        then (now() at time zone 'America/New_York')::date
-                      else current_date - 4
-                    end
-               )
+               and not exists(select 1 from public.asset_tracking_exclusions x where x.asset_id=t.asset_id)
           ),
           fwd as (select distinct asset_id from public.forward_test_positions where status = 'OPEN'),
           scoped as (

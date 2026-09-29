@@ -23,7 +23,7 @@ export default async function NewsSwingPage({ params }: { params: Promise<{ mark
     getUserSwingSettings(), getActiveNewsConfigs(), getActiveAIConfig(),
   ]);
   const workspace = await getNewsSwingWorkspace(market, settings);
-  if (market === "IN") await markLiveMarketTargets(workspace.candidates.map((candidate) => candidate.assetId), "news_swing");
+  await markLiveMarketTargets(workspace.candidates.map((candidate) => candidate.assetId), "news_swing");
   const lastSync = workspace.lastFetchedAt
     ? new Intl.DateTimeFormat("en-IN", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Kolkata" }).format(new Date(workspace.lastFetchedAt))
     : "Never";

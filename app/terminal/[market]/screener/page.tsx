@@ -31,7 +31,7 @@ export default async function TerminalScreener({
     buyOnlySettings,
     isUS ? {} : { exchange: "NSE", limit: 20 },
   );
-  if (marketId === "IN") await markLiveMarketTargets(rows.map((row) => row.assetId), "swing");
+  await markLiveMarketTargets(rows.map((row) => row.assetId), "swing");
 
   return (
     <AppShell
