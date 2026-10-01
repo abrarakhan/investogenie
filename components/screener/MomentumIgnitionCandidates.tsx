@@ -140,15 +140,44 @@ function Fact({ label, value }: { label: string; value: string }) {
   </div>;
 }
 
+function CandidateGroup({
+  title,
+  candidates,
+  color,
+  market,
+  defaultOpen = false,
+}: {
+  title: string;
+  candidates: Array<{ candidate: MomentumIgnitionCandidate; rank: number }>;
+  color: string;
+  market: "IN" | "US";
+  defaultOpen?: boolean;
+}) {
+  if (!candidates.length) return null;
+  return <details open={defaultOpen} className="group rounded-lg border border-white/10 bg-white/[0.012]">
+    <summary className="flex min-h-12 cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 [&::-webkit-details-marker]:hidden">
+      <div className={`text-sm font-bold uppercase tracking-[0.18em] ${color}`}>
+        {title} <span className="font-mono text-white/45">({candidates.length})</span>
+      </div>
+      <span className="shrink-0 text-xs font-semibold text-white/45 group-open:hidden">Expand</span>
+      <span className="hidden shrink-0 text-xs font-semibold text-white/45 group-open:inline">Collapse</span>
+    </summary>
+    <div className="space-y-3 border-t border-white/8 p-3 sm:p-4">
+      {candidates.map(({ candidate, rank }) => <IgnitionCard key={candidate.assetId} candidate={candidate} rank={rank} market={market} />)}
+    </div>
+  </details>;
+}
+
 export default function MomentumIgnitionCandidates({ result }: { result: MomentumIgnitionResult }) {
   const marketLabel = result.market === "IN" ? "NSE" : "US";
-  const entryReady = result.candidates.filter((item) => item.status === "MOMENTUM_READY").length;
-  const executionReady = result.candidates.filter((item) =>
-    item.status === "MOMENTUM_READY" && item.strongStatus === "EXECUTION_READY"
-  ).length;
-  const triggered = result.candidates.filter((item) => item.status === "FIRST_THRUST").length;
-  const early = result.candidates.filter((item) => item.status === "PRE_IGNITION").length;
-  const pullback = result.candidates.filter((item) => item.status === "RETEST_SETUP").length;
+  const ranked = result.candidates.map((candidate, index) => ({ candidate, rank: index + 1 }));
+  const executionReady = ranked.filter(({ candidate }) => candidate.status === "MOMENTUM_READY" && candidate.strongStatus === "EXECUTION_READY");
+  const momentumReady = ranked.filter(({ candidate }) => candidate.status === "MOMENTUM_READY" && candidate.strongStatus !== "EXECUTION_READY");
+  const firstThrust = ranked.filter(({ candidate }) => candidate.status === "FIRST_THRUST");
+  const preIgnition = ranked.filter(({ candidate }) => candidate.status === "PRE_IGNITION");
+  const retest = ranked.filter(({ candidate }) => candidate.status === "RETEST_SETUP");
+  const late = ranked.filter(({ candidate }) => candidate.status === "LATE_PROFIT_BOOKING");
+  const failed = ranked.filter(({ candidate }) => candidate.status === "FAILED_BREAKOUT");
   return (
     <section className="space-y-4">
       <div className="flex flex-wrap items-end justify-between gap-3 border-b border-white/10 pb-4">
@@ -165,13 +194,15 @@ export default function MomentumIgnitionCandidates({ result }: { result: Momentu
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-7">
         {[
-          ["Momentum ready", entryReady, "text-emerald-300"],
-          ["Execution ready", executionReady, "text-emerald-200"],
-          ["First thrust", triggered, "text-cyan-200"],
-          ["Pre-ignition", early, "text-amber-200"],
-          ["Retest setup", pullback, "text-sky-200"],
+          ["Execution ready", executionReady.length, "text-emerald-200"],
+          ["Momentum ready", momentumReady.length, "text-emerald-300"],
+          ["First thrust", firstThrust.length, "text-cyan-200"],
+          ["Pre-ignition", preIgnition.length, "text-amber-200"],
+          ["Retest setup", retest.length, "text-sky-200"],
+          ["Late risk", late.length, "text-orange-200"],
+          ["Failed", failed.length, "text-rose-200"],
         ].map(([label, value, color]) => <div key={String(label)} className="border-b border-white/10 px-1 pb-2">
           <div className={`font-mono text-xl font-bold ${color}`}>{value}</div>
           <div className="text-[10px] uppercase tracking-wide text-white/35">{label}</div>
@@ -182,11 +213,17 @@ export default function MomentumIgnitionCandidates({ result }: { result: Momentu
         V2 discovery targets the first thrust or first retest over the next 1–2 sessions. It penalizes repeated highs, nearby resistance, decelerating relative strength and intraday rejection. Strong Swing remains the execution authority.
       </div>
 
-      {result.candidates.length === 0
+      {ranked.length === 0
         ? <div className="rounded-lg border border-white/10 px-4 py-8 text-center text-sm text-white/45">No {marketLabel} stock currently passes the Momentum Ignition discovery floor.</div>
-        : <div className="space-y-3">{result.candidates.map((candidate, index) => (
-          <IgnitionCard key={candidate.assetId} candidate={candidate} rank={index + 1} market={result.market} />
-        ))}</div>}
+        : <div className="space-y-3">
+          <CandidateGroup title="Execution ready" candidates={executionReady} color="text-emerald-200" market={result.market} defaultOpen />
+          <CandidateGroup title="Momentum ready" candidates={momentumReady} color="text-emerald-300" market={result.market} />
+          <CandidateGroup title="First thrust" candidates={firstThrust} color="text-cyan-200" market={result.market} />
+          <CandidateGroup title="Pre-ignition" candidates={preIgnition} color="text-amber-200" market={result.market} />
+          <CandidateGroup title="Retest setup" candidates={retest} color="text-sky-200" market={result.market} />
+          <CandidateGroup title="Late / profit-booking risk" candidates={late} color="text-orange-200" market={result.market} />
+          <CandidateGroup title="Failed breakout" candidates={failed} color="text-rose-200" market={result.market} />
+        </div>}
     </section>
   );
 }
