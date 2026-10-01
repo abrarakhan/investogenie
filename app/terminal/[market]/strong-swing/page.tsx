@@ -1,11 +1,13 @@
 import { notFound, redirect } from "next/navigation";
 import AppShell from "@/components/app/AppShell";
 import MomentumIgnitionCandidates from "@/components/screener/MomentumIgnitionCandidates";
+import MomentumIgnitionLegacyCandidates from "@/components/screener/MomentumIgnitionLegacyCandidates";
 import StrongSwingCandidates from "@/components/screener/StrongSwingCandidates";
 import { getSessionUser } from "@/lib/auth";
 import { normalizeMarket } from "@/lib/markets";
 import { getUserSwingSettings } from "@/lib/settings";
 import { getMomentumIgnitionCandidates } from "@/lib/momentumIgnition";
+import { getMomentumIgnitionCandidates as getLegacyMomentumIgnitionCandidates } from "@/lib/momentumIgnitionLegacy";
 import { getStrongSwingCandidates } from "@/lib/strongSwing";
 import MarketDataAutoRefresh from "@/components/app/MarketDataAutoRefresh";
 import { markLiveMarketTargets } from "@/lib/liveMarketTargets";
@@ -24,12 +26,17 @@ export default async function StrongSwingPage({
   if (!user) redirect("/login");
 
   const settings = await getUserSwingSettings();
-  const [candidates, momentumIgnition] = await Promise.all([
+  const [candidates, legacyMomentumIgnition, momentumIgnition] = await Promise.all([
     getStrongSwingCandidates(market, settings),
+    getLegacyMomentumIgnitionCandidates(market, settings),
     getMomentumIgnitionCandidates(market, settings),
   ]);
   await markLiveMarketTargets(
-    [...candidates.map((candidate) => candidate.assetId), ...momentumIgnition.candidates.map((candidate) => candidate.assetId)],
+    [
+      ...candidates.map((candidate) => candidate.assetId),
+      ...legacyMomentumIgnition.candidates.map((candidate) => candidate.assetId),
+      ...momentumIgnition.candidates.map((candidate) => candidate.assetId),
+    ],
     "strong_swing",
   );
 
@@ -41,7 +48,11 @@ export default async function StrongSwingPage({
       title="Strong Swing Candidates"
       subtitle="Execution-ready setups only after technical confirmation, entry discipline, volatility, stop-risk, liquidity and circuit-behaviour checks agree."
     >
-      <MarketDataAutoRefresh market={market} assetIds={[...candidates.map((candidate) => candidate.assetId), ...momentumIgnition.candidates.map((candidate) => candidate.assetId)]} />
+      <MarketDataAutoRefresh market={market} assetIds={[
+        ...candidates.map((candidate) => candidate.assetId),
+        ...legacyMomentumIgnition.candidates.map((candidate) => candidate.assetId),
+        ...momentumIgnition.candidates.map((candidate) => candidate.assetId),
+      ]} />
       <div className="mb-6 border-l-2 border-[var(--ig-accent)] pl-4 text-sm leading-relaxed text-white/52">
         Buy &amp; Track is enabled only for green Execution Ready setups and records the frozen plan in your ledger. Breeze currently supplies live market data; it does not place the broker order, so confirm exchange restrictions in ICICI Direct before buying.
       </div>
@@ -52,6 +63,9 @@ export default async function StrongSwingPage({
           <p className="mt-1 text-sm text-white/45">The same base Swing signals are re-ranked only after the two-close confirmation and execution-safety gates.</p>
         </div>}
         <StrongSwingCandidates candidates={candidates} />
+      </section>
+      <section className="mt-12 border-t border-white/10 pt-8">
+        <MomentumIgnitionLegacyCandidates result={legacyMomentumIgnition} />
       </section>
       <section className="mt-12 border-t border-white/10 pt-8">
         <MomentumIgnitionCandidates result={momentumIgnition} />
