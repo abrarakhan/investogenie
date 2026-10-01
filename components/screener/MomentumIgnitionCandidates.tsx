@@ -11,7 +11,7 @@ const STATUS_STYLE: Record<MomentumIgnitionStatus, string> = {
 };
 
 const STATUS_LABEL: Record<MomentumIgnitionStatus, string> = {
-  ENTRY_READY: "Entry ready",
+  ENTRY_READY: "Momentum ready",
   BREAKOUT_TRIGGERED: "Breakout triggered",
   EARLY_WATCH: "Early watch",
   WAIT_FOR_PULLBACK: "Wait for pullback",
@@ -31,7 +31,7 @@ function IgnitionCard({ candidate, rank, market }: { candidate: MomentumIgnition
   const keyGates = candidate.gates.filter((item) => [
     "trend", "relative_strength", "compression", "dry_up", "live_volume", "liquidity", "volatility", "circuit",
   ].includes(item.key));
-  const canTrack = candidate.status === "ENTRY_READY" && candidate.baseScore > 0;
+  const canTrack = candidate.status === "ENTRY_READY" && candidate.strongStatus === "EXECUTION_READY";
   const ledgerParams = new URLSearchParams({
     assetId: candidate.assetId,
     ticker: candidate.ticker,
@@ -106,7 +106,9 @@ function IgnitionCard({ candidate, rank, market }: { candidate: MomentumIgnition
           className="inline-flex min-h-11 items-center rounded-lg border border-emerald-400/35 bg-emerald-400/10 px-4 text-sm font-bold text-emerald-200 hover:bg-emerald-400/15"
         >Buy &amp; Track</Link> : <p className="text-[11px] leading-relaxed text-white/38">
           {candidate.status === "ENTRY_READY"
-            ? "Awaiting a base swing signal before a frozen trade plan can be recorded."
+            ? candidate.strongStatus
+              ? `Buy blocked: Strong Swing is ${candidate.strongStatus.toLowerCase().replaceAll("_", " ")}.`
+              : "Buy blocked: awaiting a current-session Strong Swing assessment."
             : "Buy & Track unlocks only at Entry ready after liquidity, volume, extension and circuit checks pass."}
         </p>}
       </div>

@@ -15,6 +15,8 @@ interface PreliminaryRow {
   latest_date: string;
   base_score: string | number | null;
   base_verdict: string | null;
+  strong_status: string | null;
+  strong_captured_at: string | null;
 }
 
 interface BarRow {
@@ -39,6 +41,8 @@ export interface MomentumIgnitionCandidate extends MomentumIgnitionAssessment {
   latestDate: string;
   baseScore: number;
   baseVerdict: string;
+  strongStatus: string | null;
+  strongCapturedAt: string | null;
   projectedEntry: number;
   projectedStop: number;
   projectedTarget: number;
@@ -122,11 +126,18 @@ const preliminarySql = (market: "IN" | "US") => {
   )
   select u.id asset_id,u.ticker,u.name,u.exchange,
          q.price current_price,q.change_pct quote_change_pct,q.as_of::text quote_as_of,
-         st.latest_date::text latest_date,s.score base_score,s.verdict base_verdict
+         st.latest_date::text latest_date,s.score base_score,s.verdict base_verdict,
+         strong.status strong_status,strong.captured_at::text strong_captured_at
     from universe u
     join stats st on st.asset_id=u.id
     join public.latest_quotes q on q.asset_id=u.id
     left join public.swing_signals s on s.asset_id=u.id
+    left join lateral (
+      select ss.status,ss.captured_at
+        from public.strong_swing_snapshots ss
+       where ss.asset_id=u.id and ss.market=$5 and ss.latest_bar_date >= $1::date
+       order by ss.captured_at desc limit 1
+    ) strong on true
    where st.history_count>=10
      and q.price>=$3
      and (
@@ -185,7 +196,7 @@ export async function getMomentumIgnitionCandidates(
         where ${config.universeWhere} and a.asset_class='STOCK' and a.is_active
           and not exists (select 1 from public.asset_tracking_exclusions x where x.asset_id=a.id)`,
     ),
-    query<PreliminaryRow>(preliminarySql(market), [expectedSessionDate, marketOpen, config.priceFloor, config.preliminaryLiquidityFloor]),
+    query<PreliminaryRow>(preliminarySql(market), [expectedSessionDate, marketOpen, config.priceFloor, config.preliminaryLiquidityFloor, market]),
     query<BarRow>(
       `with chosen as (
          select a.id from public.assets a
@@ -268,6 +279,8 @@ export async function getMomentumIgnitionCandidates(
       latestDate: row.latest_date,
       baseScore: Number(row.base_score ?? 0),
       baseVerdict: row.base_verdict ?? "NO_SETUP",
+      strongStatus: row.strong_status,
+      strongCapturedAt: row.strong_captured_at,
       projectedEntry,
       projectedStop: projectedEntry - risk,
       projectedTarget: projectedEntry + risk * settings.targetRR,
