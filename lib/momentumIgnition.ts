@@ -1,4 +1,4 @@
-import { assessMomentumIgnition, type MomentumIgnitionAssessment } from "@/lib/analytics/momentumIgnition";
+import { assessMomentumIgnitionV2, type MomentumIgnitionV2Assessment } from "@/lib/analytics/momentumIgnitionV2";
 import { query } from "@/lib/db";
 import type { SwingSettings } from "@/lib/settings";
 import type { OHLCV } from "@/lib/types";
@@ -30,7 +30,7 @@ interface BarRow {
   open_interest: string | number | null;
 }
 
-export interface MomentumIgnitionCandidate extends MomentumIgnitionAssessment {
+export interface MomentumIgnitionCandidate extends MomentumIgnitionV2Assessment {
   assetId: string;
   ticker: string;
   name: string | null;
@@ -185,6 +185,7 @@ export async function getMomentumIgnitionCandidates(
   market: "IN" | "US",
   settings: SwingSettings,
 ): Promise<MomentumIgnitionResult> {
+  void settings; // V2 uses its own fixed one-to-two-session risk plan.
   const config = marketConfig(market);
   await refreshMarketHolidays(market);
   const expectedSessionDate = latestExpectedSessionDate(market);
@@ -237,7 +238,7 @@ export async function getMomentumIgnitionCandidates(
   for (const row of preliminary) {
     const bars = barsByAsset.get(row.asset_id) ?? [];
     if (bars.length < 10) continue;
-    const assessment = assessMomentumIgnition({
+    const assessment = assessMomentumIgnitionV2({
       currentPrice: Number(row.current_price),
       bars,
       benchmarkBars,
@@ -249,24 +250,15 @@ export async function getMomentumIgnitionCandidates(
       priceFloor: config.priceFloor,
     });
     if (!assessment.qualifies) continue;
-    const risk = assessment.atr14 * settings.stopAtrMult;
-    const projectedEntry = assessment.status === "ENTRY_READY"
+    const projectedEntry = assessment.status === "MOMENTUM_READY"
       ? Number(row.current_price)
       : assessment.entryTrigger;
-    const recentCloses = bars.slice(-Math.min(11, bars.length)).map((bar) => bar.close);
-    if (
-      assessment.status === "ENTRY_READY"
-      && recentCloses.length
-      && Math.abs(recentCloses.at(-1)! - projectedEntry) > 0.0001
-    ) {
-      recentCloses.push(projectedEntry);
-      if (recentCloses.length > 11) recentCloses.shift();
-    }
-    const velocity = recentCloses.slice(1).reduce(
-      (sum, close, index) => sum + Math.abs(close - recentCloses[index]),
-      0,
-    ) / Math.max(1, recentCloses.length - 1);
-    const targetDistance = risk * settings.targetRR;
+    const latest = bars.at(-1)!;
+    const invalidation = assessment.status === "RETEST_SETUP"
+      ? Math.min(latest.low, assessment.breakoutLevel)
+      : assessment.breakoutLevel - assessment.atr14 * 0.25;
+    const projectedStop = Math.max(projectedEntry * 0.97, invalidation);
+    const projectedTarget = projectedEntry * (1 + assessment.shortHorizonTargetPct / 100);
     candidates.push({
       ...assessment,
       assetId: row.asset_id,
@@ -282,19 +274,21 @@ export async function getMomentumIgnitionCandidates(
       strongStatus: row.strong_status,
       strongCapturedAt: row.strong_captured_at,
       projectedEntry,
-      projectedStop: projectedEntry - risk,
-      projectedTarget: projectedEntry + risk * settings.targetRR,
-      projectedTrail: projectedEntry - assessment.atr14 * settings.trailAtrMult,
-      projectedDays: Math.min(20, Math.max(1, Math.round(targetDistance / Math.max(velocity, 0.01)))),
+      projectedStop,
+      projectedTarget,
+      projectedTrail: projectedStop,
+      projectedDays: assessment.shortHorizonDays,
     });
   }
 
   const statusRank = {
-    ENTRY_READY: 0,
-    BREAKOUT_TRIGGERED: 1,
-    WAIT_FOR_PULLBACK: 2,
-    EARLY_WATCH: 3,
-    NOT_QUALIFIED: 4,
+    MOMENTUM_READY: 0,
+    FIRST_THRUST: 1,
+    RETEST_SETUP: 2,
+    PRE_IGNITION: 3,
+    LATE_PROFIT_BOOKING: 4,
+    FAILED_BREAKOUT: 5,
+    NOT_QUALIFIED: 6,
   } as const;
   candidates.sort((left, right) =>
     statusRank[left.status] - statusRank[right.status]

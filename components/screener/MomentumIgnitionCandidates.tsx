@@ -1,20 +1,24 @@
 import Link from "next/link";
 import type { MomentumIgnitionCandidate, MomentumIgnitionResult } from "@/lib/momentumIgnition";
-import type { MomentumIgnitionStatus } from "@/lib/analytics/momentumIgnition";
+import type { MomentumIgnitionV2Status } from "@/lib/analytics/momentumIgnitionV2";
 
-const STATUS_STYLE: Record<MomentumIgnitionStatus, string> = {
-  ENTRY_READY: "border-emerald-400/35 bg-emerald-400/10 text-emerald-200",
-  BREAKOUT_TRIGGERED: "border-cyan-400/35 bg-cyan-400/10 text-cyan-200",
-  EARLY_WATCH: "border-amber-400/35 bg-amber-400/10 text-amber-200",
-  WAIT_FOR_PULLBACK: "border-orange-400/35 bg-orange-400/10 text-orange-200",
+const STATUS_STYLE: Record<MomentumIgnitionV2Status, string> = {
+  MOMENTUM_READY: "border-emerald-400/35 bg-emerald-400/10 text-emerald-200",
+  FIRST_THRUST: "border-cyan-400/35 bg-cyan-400/10 text-cyan-200",
+  RETEST_SETUP: "border-sky-400/35 bg-sky-400/10 text-sky-200",
+  PRE_IGNITION: "border-amber-400/35 bg-amber-400/10 text-amber-200",
+  LATE_PROFIT_BOOKING: "border-orange-400/35 bg-orange-400/10 text-orange-200",
+  FAILED_BREAKOUT: "border-rose-400/35 bg-rose-400/10 text-rose-200",
   NOT_QUALIFIED: "border-white/15 bg-white/5 text-white/45",
 };
 
-const STATUS_LABEL: Record<MomentumIgnitionStatus, string> = {
-  ENTRY_READY: "Momentum ready",
-  BREAKOUT_TRIGGERED: "Breakout triggered",
-  EARLY_WATCH: "Early watch",
-  WAIT_FOR_PULLBACK: "Wait for pullback",
+const STATUS_LABEL: Record<MomentumIgnitionV2Status, string> = {
+  MOMENTUM_READY: "Momentum ready",
+  FIRST_THRUST: "First thrust",
+  RETEST_SETUP: "Retest setup",
+  PRE_IGNITION: "Pre-ignition",
+  LATE_PROFIT_BOOKING: "Late / profit-booking risk",
+  FAILED_BREAKOUT: "Failed breakout",
   NOT_QUALIFIED: "Not qualified",
 };
 
@@ -31,7 +35,7 @@ function IgnitionCard({ candidate, rank, market }: { candidate: MomentumIgnition
   const keyGates = candidate.gates.filter((item) => [
     "trend", "relative_strength", "compression", "dry_up", "live_volume", "liquidity", "volatility", "circuit",
   ].includes(item.key));
-  const canTrack = candidate.status === "ENTRY_READY" && candidate.strongStatus === "EXECUTION_READY";
+  const canTrack = candidate.status === "MOMENTUM_READY" && candidate.strongStatus === "EXECUTION_READY";
   const ledgerParams = new URLSearchParams({
     assetId: candidate.assetId,
     ticker: candidate.ticker,
@@ -67,9 +71,9 @@ function IgnitionCard({ candidate, rank, market }: { candidate: MomentumIgnition
 
       <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
         <Metric
-          label={candidate.status === "ENTRY_READY" ? "Live entry" : "Current"}
-          value={number(candidate.status === "ENTRY_READY" ? candidate.projectedEntry : candidate.currentPrice)}
-          detail={candidate.status === "ENTRY_READY" ? "Latest quote plan" : signed(candidate.quoteChangePct)}
+          label={candidate.status === "MOMENTUM_READY" ? "Live entry" : "Current"}
+          value={number(candidate.status === "MOMENTUM_READY" ? candidate.projectedEntry : candidate.currentPrice)}
+          detail={candidate.status === "MOMENTUM_READY" ? "Latest quote plan" : signed(candidate.quoteChangePct)}
         />
         <Metric label="Breakout trigger" value={number(candidate.entryTrigger)} detail={breakoutDistance(candidate.distanceToBreakoutPct)} />
         <Metric label="Model stop" value={number(candidate.projectedStop)} detail="Planning reference" />
@@ -78,11 +82,13 @@ function IgnitionCard({ candidate, rank, market }: { candidate: MomentumIgnition
 
       <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-[11px] sm:grid-cols-3">
         <Fact label="RS 20d" value={signed(candidate.relativeStrength20Pct)} />
-        <Fact label="RS acceleration" value={signed(candidate.relativeStrengthAcceleration)} />
+        <Fact label="Ignition acceleration" value={signed(candidate.ignitionAccelerationPct)} />
         <Fact label="Projected volume" value={`${number(candidate.projectedVolumeRatio)}x`} />
         <Fact label="Compression" value={`${number(candidate.compressionRatio)}x`} />
         <Fact label="Dry-up" value={`${number(candidate.volumeDryUpRatio)}x`} />
         <Fact label="Accumulation" value={`${candidate.accumulationDays10} days`} />
+        <Fact label="5-session move" value={signed(candidate.return5Pct)} />
+        <Fact label="Resistance headroom" value={candidate.resistanceHeadroomPct === null ? "Clear" : signed(candidate.resistanceHeadroomPct)} />
         <Fact label="Projected holding" value={`~${candidate.projectedDays} sessions`} />
         <Fact label="Trailing reference" value={number(candidate.projectedTrail)} />
       </div>
@@ -100,16 +106,20 @@ function IgnitionCard({ candidate, rank, market }: { candidate: MomentumIgnition
         </div>
       </details>
 
+      <div className="mt-3 rounded-md border border-white/8 bg-black/20 px-3 py-2 text-[11px] leading-relaxed text-white/48">
+        {candidate.timingReasons.map((reason) => <p key={reason}>- {reason}</p>)}
+      </div>
+
       <div className="mt-3 border-t border-white/8 pt-3">
         {canTrack ? <Link
           href={`/terminal/${market.toLowerCase()}/trade-ledger?${ledgerParams.toString()}`}
           className="inline-flex min-h-11 items-center rounded-lg border border-emerald-400/35 bg-emerald-400/10 px-4 text-sm font-bold text-emerald-200 hover:bg-emerald-400/15"
         >Buy &amp; Track</Link> : <p className="text-[11px] leading-relaxed text-white/38">
-          {candidate.status === "ENTRY_READY"
+          {candidate.status === "MOMENTUM_READY"
             ? candidate.strongStatus
               ? `Buy blocked: Strong Swing is ${candidate.strongStatus.toLowerCase().replaceAll("_", " ")}.`
               : "Buy blocked: awaiting a current-session Strong Swing assessment."
-            : "Buy & Track unlocks only at Entry ready after liquidity, volume, extension and circuit checks pass."}
+            : "Buy & Track unlocks only at Momentum ready after early-timing checks and Strong Swing confirmation pass."}
         </p>}
       </div>
     </article>
@@ -132,13 +142,13 @@ function Fact({ label, value }: { label: string; value: string }) {
 
 export default function MomentumIgnitionCandidates({ result }: { result: MomentumIgnitionResult }) {
   const marketLabel = result.market === "IN" ? "NSE" : "US";
-  const entryReady = result.candidates.filter((item) => item.status === "ENTRY_READY").length;
+  const entryReady = result.candidates.filter((item) => item.status === "MOMENTUM_READY").length;
   const executionReady = result.candidates.filter((item) =>
-    item.status === "ENTRY_READY" && item.strongStatus === "EXECUTION_READY"
+    item.status === "MOMENTUM_READY" && item.strongStatus === "EXECUTION_READY"
   ).length;
-  const triggered = result.candidates.filter((item) => item.status === "BREAKOUT_TRIGGERED").length;
-  const early = result.candidates.filter((item) => item.status === "EARLY_WATCH").length;
-  const pullback = result.candidates.filter((item) => item.status === "WAIT_FOR_PULLBACK").length;
+  const triggered = result.candidates.filter((item) => item.status === "FIRST_THRUST").length;
+  const early = result.candidates.filter((item) => item.status === "PRE_IGNITION").length;
+  const pullback = result.candidates.filter((item) => item.status === "RETEST_SETUP").length;
   return (
     <section className="space-y-4">
       <div className="flex flex-wrap items-end justify-between gap-3 border-b border-white/10 pb-4">
@@ -159,9 +169,9 @@ export default function MomentumIgnitionCandidates({ result }: { result: Momentu
         {[
           ["Momentum ready", entryReady, "text-emerald-300"],
           ["Execution ready", executionReady, "text-emerald-200"],
-          ["Triggered", triggered, "text-cyan-200"],
-          ["Early watch", early, "text-amber-200"],
-          ["Wait for pullback", pullback, "text-orange-200"],
+          ["First thrust", triggered, "text-cyan-200"],
+          ["Pre-ignition", early, "text-amber-200"],
+          ["Retest setup", pullback, "text-sky-200"],
         ].map(([label, value, color]) => <div key={String(label)} className="border-b border-white/10 px-1 pb-2">
           <div className={`font-mono text-xl font-bold ${color}`}>{value}</div>
           <div className="text-[10px] uppercase tracking-wide text-white/35">{label}</div>
@@ -169,7 +179,7 @@ export default function MomentumIgnitionCandidates({ result }: { result: Momentu
       </div>
 
       <div className="rounded-lg border border-cyan-400/15 bg-cyan-400/[0.035] px-4 py-3 text-xs leading-relaxed text-cyan-100/65">
-        Discovery only. Recent listings use an adaptive 5/10/20-session model; established shares retain the existing 200-session model. Extended or circuit-prone names remain Wait for Pullback, and Strong Swing Confirmation remains the execution authority.
+        V2 discovery targets the first thrust or first retest over the next 1–2 sessions. It penalizes repeated highs, nearby resistance, decelerating relative strength and intraday rejection. Strong Swing remains the execution authority.
       </div>
 
       {result.candidates.length === 0
