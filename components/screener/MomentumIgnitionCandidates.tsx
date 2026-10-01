@@ -133,6 +133,9 @@ function Fact({ label, value }: { label: string; value: string }) {
 export default function MomentumIgnitionCandidates({ result }: { result: MomentumIgnitionResult }) {
   const marketLabel = result.market === "IN" ? "NSE" : "US";
   const entryReady = result.candidates.filter((item) => item.status === "ENTRY_READY").length;
+  const executionReady = result.candidates.filter((item) =>
+    item.status === "ENTRY_READY" && item.strongStatus === "EXECUTION_READY"
+  ).length;
   const triggered = result.candidates.filter((item) => item.status === "BREAKOUT_TRIGGERED").length;
   const early = result.candidates.filter((item) => item.status === "EARLY_WATCH").length;
   const pullback = result.candidates.filter((item) => item.status === "WAIT_FOR_PULLBACK").length;
@@ -152,9 +155,10 @@ export default function MomentumIgnitionCandidates({ result }: { result: Momentu
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
         {[
-          ["Entry ready", entryReady, "text-emerald-300"],
+          ["Momentum ready", entryReady, "text-emerald-300"],
+          ["Execution ready", executionReady, "text-emerald-200"],
           ["Triggered", triggered, "text-cyan-200"],
           ["Early watch", early, "text-amber-200"],
           ["Wait for pullback", pullback, "text-orange-200"],
