@@ -220,7 +220,7 @@ export async function recordSwingTradeSale(formData: FormData) {
 
     await client.query(
       `insert into public.swing_trade_exits (trade_id,user_id,sold_on,quantity,exit_price,sale_value,reason)
-       values ($1,$2,$3,$4,$5,$4*$5,$6)`,
+       values ($1,$2,$3,$4,$5,$4::numeric*$5::numeric,$6)`,
       [id, user.id, soldOn, soldQuantity, exitPrice, reason],
     );
 
@@ -292,7 +292,7 @@ export async function updateSwingTradeSale(formData: FormData) {
 
     await client.query(
       `update public.swing_trade_exits
-          set sold_on=$1,quantity=$2,exit_price=$3,sale_value=$2*$3,realized_pnl=null,reason=$4,updated_at=now()
+          set sold_on=$1,quantity=$2,exit_price=$3,sale_value=$2::numeric*$3::numeric,realized_pnl=null,reason=$4,updated_at=now()
         where id=$5`,
       [soldOn, soldQuantity, exitPrice, reason, saleId],
     );
