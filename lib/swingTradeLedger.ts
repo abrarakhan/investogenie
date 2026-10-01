@@ -54,6 +54,31 @@ export interface SwingTradeLedgerSummary {
   xirrPct: number | null;
 }
 
+export function calculateRecommendedGttStop(input: {
+  buyPrice: number;
+  projectedStop: number;
+  projectedTrailingStop: number | null;
+  trailingDistance: number | null;
+  highestHigh: number | null;
+  currentPrice: number | null;
+}): { recommendedStop: number; breakEvenActivated: boolean } {
+  const observedHigh = Math.max(input.buyPrice, input.highestHigh ?? input.buyPrice, input.currentPrice ?? input.buyPrice);
+  const initialRisk = Math.max(0, input.buyPrice - input.projectedStop);
+  const breakEvenActivated = initialRisk > 0 && observedHigh >= input.buyPrice + (0.75 * initialRisk);
+  const chandelierStop = input.trailingDistance === null
+    ? input.projectedStop
+    : observedHigh - input.trailingDistance;
+  return {
+    recommendedStop: Math.max(
+      input.projectedStop,
+      input.projectedTrailingStop ?? input.projectedStop,
+      chandelierStop,
+      breakEvenActivated ? input.buyPrice : input.projectedStop,
+    ),
+    breakEvenActivated,
+  };
+}
+
 export interface DatedCashFlow { date: string; amount: number }
 
 export function calculateXirr(cashFlows: DatedCashFlow[]): number | null {
@@ -274,6 +299,11 @@ export interface SwingLedgerTrade {
   projectedStop: number;
   projectedTrailingStop: number | null;
   effectiveTrailingStop: number | null;
+  recordedGttStop: number;
+  recommendedGttStop: number;
+  gttUpdatedAt: string | null;
+  gttUpdateRequired: boolean;
+  breakEvenActivated: boolean;
   expectedHoldingDays: number;
   currentPrice: number | null;
   quoteAsOf: string | null;
@@ -352,12 +382,7 @@ export async function getSwingTradeLedger(userId: string, market: "IN" | "US"): 
             coalesce(sales.sold_quantity,0) sold_quantity,
             coalesce(sales.realized_proceeds,0) realized_proceeds,
             coalesce(sales.exits,'[]'::jsonb) exits,
-            case
-              when l.projected_trailing_stop is null then l.projected_stop
-              when l.trailing_distance is null or path.highest_high is null
-                then greatest(l.projected_stop, l.projected_trailing_stop)
-              else greatest(l.projected_stop, l.projected_trailing_stop, path.highest_high - l.trailing_distance)
-            end effective_trailing_stop
+            path.highest_high,path.lowest_low
        from public.swing_trade_ledger l
        join public.assets a on a.id = l.asset_id
        left join public.latest_quotes q on q.asset_id = l.asset_id
@@ -481,7 +506,19 @@ export async function getSwingTradeLedger(userId: string, market: "IN" | "US"): 
     const quoteUpdatedAt = row.quote_updated_at ? new Date(row.quote_updated_at as Date | string).getTime() : 0;
     const quoteFresh = status === "CLOSED" || !marketOpen || quoteUpdatedAt >= Date.now() - 7 * 60 * 1000;
     const currentPrice = quoteFresh ? nullableNumber(row.current_price) : null;
-    const effectiveTrailingStop = nullableNumber(row.effective_trailing_stop);
+    const gttProtection = calculateRecommendedGttStop({
+      buyPrice,
+      projectedStop: Number(row.projected_stop),
+      projectedTrailingStop: nullableNumber(row.projected_trailing_stop),
+      trailingDistance: nullableNumber(row.trailing_distance),
+      highestHigh: nullableNumber(row.highest_high),
+      currentPrice,
+    });
+    const recommendedGttStop = gttProtection.recommendedStop;
+    const recordedGttStop = nullableNumber(row.current_gtt_stop) ?? Number(row.projected_stop);
+    const effectiveTrailingStop = Math.max(recommendedGttStop, recordedGttStop);
+    const breakEvenActivated = gttProtection.breakEvenActivated;
+    const gttUpdateRequired = status === "OPEN" && recommendedGttStop > recordedGttStop + 0.005;
     const priorClose = nullableNumber(row.prior_close);
     const twoSessionClose = nullableNumber(row.two_session_close);
     const stockMove1dPct = currentPrice !== null && priorClose !== null && priorClose > 0
@@ -501,7 +538,12 @@ export async function getSwingTradeLedger(userId: string, market: "IN" | "US"): 
       signalAsOf: dateText(row.signal_as_of), signalScore: nullableNumber(row.signal_score),
       projectionEntry: nullableNumber(row.projection_entry), projectedTarget: Number(row.projected_target),
       projectedStop: Number(row.projected_stop), projectedTrailingStop: nullableNumber(row.projected_trailing_stop),
-      effectiveTrailingStop, expectedHoldingDays: Number(row.expected_holding_days),
+      effectiveTrailingStop, recordedGttStop, recommendedGttStop,
+      gttUpdatedAt: row.gtt_updated_at instanceof Date
+        ? row.gtt_updated_at.toISOString()
+        : row.gtt_updated_at ? String(row.gtt_updated_at) : null,
+      gttUpdateRequired, breakEvenActivated,
+      expectedHoldingDays: Number(row.expected_holding_days),
       currentPrice,
       quoteAsOf: dateText(row.quote_as_of),
       quoteUpdatedAt: row.quote_updated_at instanceof Date

@@ -1,4 +1,4 @@
-import { addSwingTrade, recordSwingTradeSale, updateSwingTrade, updateSwingTradeSale } from "@/app/terminal/[market]/trade-ledger/actions";
+import { addSwingTrade, confirmSwingTradeGtt, recordSwingTradeSale, updateSwingTrade, updateSwingTradeSale } from "@/app/terminal/[market]/trade-ledger/actions";
 import AssetPicker from "@/components/dashboard/AssetPicker";
 import DeleteTradeButton from "@/components/trade-ledger/DeleteTradeButton";
 import { summarizeSwingTradeLedger, type SwingLedgerTrade, type SwingTradeState } from "@/lib/swingTradeLedger";
@@ -150,6 +150,7 @@ function TradeCard({ trade, today }: { trade: SwingLedgerTrade; today: string })
       </div>
       {trade.status === "OPEN" && <TradeRiskPanel trade={trade} />}
       {trade.status === "OPEN" && <RevisedPlanPanel trade={trade} />}
+      {trade.status === "OPEN" && <GttProtectionPanel trade={trade} />}
       <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Metric label="Buy" value={price(trade.buyPrice)} />
         <Metric label={trade.status === "CLOSED" ? "Exit" : "Current"} value={price(trade.status === "CLOSED" ? trade.exitPrice : trade.currentPrice)} tone={(trade.progress.pnlPct ?? 0) >= 0 ? "good" : "bad"} />
@@ -199,6 +200,41 @@ function TradeCard({ trade, today }: { trade: SwingLedgerTrade; today: string })
       </div>
     </article>
   );
+}
+
+function GttProtectionPanel({ trade }: { trade: SwingLedgerTrade }) {
+  const needsUpdate = trade.gttUpdateRequired;
+  return <div className={`mt-4 rounded-lg border p-4 ${needsUpdate ? "border-amber-400/35 bg-amber-400/[0.08]" : "border-emerald-400/20 bg-emerald-400/[0.04]"}`}>
+    <div className="flex flex-wrap items-start justify-between gap-3">
+      <div>
+        <div className={`text-xs font-bold uppercase tracking-[0.14em] ${needsUpdate ? "text-amber-200" : "text-emerald-300"}`}>
+          {needsUpdate ? "Broker action required" : "GTT protection current"}
+        </div>
+        <div className="mt-1 text-base font-bold text-white/85">
+          {needsUpdate
+            ? `Update GTT stop to ${price(trade.recommendedGttStop)}`
+            : `Tracked GTT stop ${price(trade.recordedGttStop)}`}
+        </div>
+        <p className="mt-1 text-xs leading-relaxed text-white/45">
+          {trade.breakEvenActivated
+            ? "The trade crossed 0.75R, so capital protection has ratcheted to at least the buy price. The level can rise but never fall."
+            : "Protection remains volatility-based until the trade reaches 0.75R."}
+          {needsUpdate && ` Last recorded GTT: ${price(trade.recordedGttStop)}.`}
+        </p>
+      </div>
+      {needsUpdate && <form action={confirmSwingTradeGtt}>
+        <input type="hidden" name="tradeId" value={trade.id} />
+        <input type="hidden" name="market" value={trade.market} />
+        <input type="hidden" name="gttStop" value={trade.recommendedGttStop} />
+        <button className="min-h-11 rounded-lg border border-amber-300/35 bg-amber-300/10 px-4 text-sm font-bold text-amber-100 hover:bg-amber-300/15">
+          I updated GTT to {price(trade.recommendedGttStop)}
+        </button>
+      </form>}
+    </div>
+    <p className="mt-3 border-t border-white/8 pt-2 text-[10px] leading-relaxed text-white/35">
+      Update the order in ICICI Direct first, then confirm here. InvestoGenie does not place or modify broker orders. Gaps, circuits, slippage, and exchange restrictions can still prevent execution at the trigger.
+    </p>
+  </div>;
 }
 
 function RevisedPlanPanel({ trade }: { trade: SwingLedgerTrade }) {

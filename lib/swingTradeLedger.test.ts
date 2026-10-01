@@ -1,7 +1,29 @@
 import { describe, expect, it } from "vitest";
-import { calculateSwingTradeProgress, calculateXirr, ledgerDateText, summarizeSwingTradeLedger, tradingDaysBetween } from "@/lib/swingTradeLedger";
+import { calculateRecommendedGttStop, calculateSwingTradeProgress, calculateXirr, ledgerDateText, summarizeSwingTradeLedger, tradingDaysBetween } from "@/lib/swingTradeLedger";
 
 describe("swing trade ledger progress", () => {
+  it("ratchets protection to break-even after the trade reaches 0.75R", () => {
+    expect(calculateRecommendedGttStop({
+      buyPrice: 61,
+      projectedStop: 56.54,
+      projectedTrailingStop: 52.09,
+      trailingDistance: 8.91,
+      highestHigh: 65,
+      currentPrice: 64.59,
+    })).toEqual({ recommendedStop: 61, breakEvenActivated: true });
+  });
+
+  it("retains the initial stop before the break-even activation threshold", () => {
+    expect(calculateRecommendedGttStop({
+      buyPrice: 61,
+      projectedStop: 56.54,
+      projectedTrailingStop: 52.09,
+      trailingDistance: 8.91,
+      highestHigh: 63,
+      currentPrice: 62.5,
+    })).toEqual({ recommendedStop: 56.54, breakEvenActivated: false });
+  });
+
   it("keeps PostgreSQL date values on their local calendar day", () => {
     expect(ledgerDateText(new Date(2026, 8, 11))).toBe("2026-09-11");
   });

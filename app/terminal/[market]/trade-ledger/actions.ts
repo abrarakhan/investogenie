@@ -153,6 +153,35 @@ export async function updateSwingTrade(formData: FormData) {
   revalidatePath(`/terminal/${market.toLowerCase()}/trade-ledger`);
 }
 
+export async function confirmSwingTradeGtt(formData: FormData) {
+  const user = await requireUser();
+  const market = validMarket(String(formData.get("market") ?? "IN"));
+  const id = String(formData.get("tradeId") ?? "").trim();
+  const gttStop = cleanNumber(formData, "gttStop");
+  if (!id || gttStop === null || gttStop <= 0) throw new Error("Enter a valid GTT stop");
+
+  const trade = await queryOne<{ current_gtt_stop: string | number | null; current_price: string | number | null }>(
+    `select l.current_gtt_stop,q.price current_price
+       from public.swing_trade_ledger l
+       left join public.latest_quotes q on q.asset_id=l.asset_id
+      where l.id=$1 and l.user_id=$2 and l.market=$3 and l.status='OPEN'`,
+    [id, user.id, market],
+  );
+  if (!trade) throw new Error("Open trade was not found");
+  const previous = trade.current_gtt_stop === null ? 0 : Number(trade.current_gtt_stop);
+  const currentPrice = trade.current_price === null ? null : Number(trade.current_price);
+  if (gttStop + 0.005 < previous) throw new Error("A protective GTT cannot be reduced");
+  if (currentPrice !== null && gttStop >= currentPrice) throw new Error("GTT stop must remain below the latest price");
+
+  await query(
+    `update public.swing_trade_ledger
+        set current_gtt_stop=$1,gtt_updated_at=now(),updated_at=now()
+      where id=$2 and user_id=$3 and market=$4 and status='OPEN'`,
+    [gttStop, id, user.id, market],
+  );
+  revalidatePath(`/terminal/${market.toLowerCase()}/trade-ledger`);
+}
+
 export async function recordSwingTradeSale(formData: FormData) {
   const user = await requireUser();
   const market = validMarket(String(formData.get("market") ?? "IN"));
