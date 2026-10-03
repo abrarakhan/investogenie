@@ -1,6 +1,7 @@
 # InvestoGenie - Capabilities
 
-> Current capability snapshot (2026-09-22) after broker-reconciling Trade Ledger returns and
+> Current capability snapshot (2026-10-03) after adding the isolated, cost-aware Adaptive
+> Allocation backtesting lab, alongside broker-reconciled Trade Ledger returns and
 > calculating portfolio ROI/XIRR from capital employed while recycling retained sale proceeds,
 > alongside Android/iOS Phase 4 News & AI parity,
 > fixing mobile workspace navigation, and choosing fully local Gradle/Xcode builds instead of
@@ -56,7 +57,7 @@ help/knowledge base, and recurring data sync jobs.
 | **Help & knowledge base** | `/help` guided walkthrough + 13 code-accurate articles (swing engine + 5 swing strategies + probability method + Long-Term engine + 6 investor strategies) | Working |
 | Sync health | Browser-visible `/admin/sync` and `/data/health` freshness and provider status pages | Working |
 | Recurring sync | Startup, recurring, and daily jobs for quotes, OHLCV, fundamentals, macro, scans, and the email digest | Working |
-| **AWS production deployment** | Production Next.js + schedulers supervised by systemd on AWS Lightsail, serving the web terminal and versioned mobile APIs | Active; product revision `9f77b09` deployed |
+| **AWS production deployment** | Production Next.js + schedulers supervised by systemd on AWS Lightsail, serving the web terminal and versioned mobile APIs | Active; product revision `4e1a6af` deployed |
 | **Private local fallback** | macOS `launchd`, localhost-only listener, AC-power sleep prevention and tailnet-only Tailscale Serve HTTPS | Available and previously verified; no longer primary production |
 | **Android / iOS Phase 1** | Expo SDK 57 client with secure device login, India/US selection, server-ranked Strong Swing detail, and read-only Trade Ledger/P&L/risk | API deployed on AWS; working in the Android client |
 | **Android / iOS Phase 2** | Execution Ready candidate-to-ledger flow, edit/delete, partial/final sale recording and correction, price profile, five-minute foreground refresh | Built and verified; server calculations remain authoritative |

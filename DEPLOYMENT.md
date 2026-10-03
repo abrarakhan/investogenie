@@ -38,5 +38,9 @@ credentials require the original credential-encryption key.
    retained for compatibility).
 6. Verify HTTPS, Data Health, scheduler logs, and a fresh PostgreSQL backup.
 
+The current production revision is `4e1a6af`. The release script applies migrations through
+`0048_adaptive_allocation.sql` and verifies the Adaptive Allocation strategy/run tables before
+restarting the application.
+
 Application code is shared; environment files, databases, service management,
 and operational limits remain target-specific.

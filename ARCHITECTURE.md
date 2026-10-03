@@ -1,6 +1,6 @@
 # InvestoGenie Architecture
 
-_Living architecture reference. Last updated: 2026-09-22 at product revision `9f77b09`._
+_Living architecture reference. Last updated: 2026-10-03 at product revision `4e1a6af`._
 
 ## System Overview
 
@@ -304,7 +304,7 @@ password/OTP is handled by the provider and does not pass through InvestoGenie.
 - PostgreSQL is local to the instance and is not exposed publicly.
 - Release procedure: fetch the intended `main` revision, install locked dependencies, run
   migrations/tests/build, then restart and inspect systemd logs.
-- Product revision `9f77b09` is deployed and `main` is aligned with `origin/main`.
+- Product revision `4e1a6af` is deployed and `main` is aligned with `origin/main`.
 
 ### Local fallback
 
@@ -323,8 +323,9 @@ npm run build
 cd mobile && npm run typecheck && npm run validate:release
 ```
 
-Phase 4 passed 228 Vitest tests, lint, mobile typecheck, release validation and the Next production
-build. When mobile/platform work is requested without a strategy change, diffs must remain empty
+The Adaptive Allocation release passed its focused numerical tests, TypeScript, lint, the Next
+production build, production migration/schema verification and service health checks. When
+mobile/platform or research work is requested without a strategy change, diffs must remain empty
 for the protected calculation and ranking modules listed under Calculation Boundary.
 
 ## Current Architectural Gaps

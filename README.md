@@ -17,7 +17,8 @@ development and an alternate Ubuntu/Oracle-compatible deployment.
 - ICICI Breeze for priority live market data and read-only broker reconciliation.
 - Bhavcopy, Yahoo and Google fallbacks plus exchange-close OHLCV maintenance.
 - Android/iOS client backed by versioned server APIs; analytics remain on the server.
-- Current product revision: `9f77b09`; documentation follows `main`.
+- Cost-aware Adaptive Allocation research with saved paper configurations and comparative backtests.
+- Current product revision: `4e1a6af`; documentation follows `main` and this revision is deployed.
 
 Detailed live status is maintained in [STATUS.md](STATUS.md), capabilities in
 [CAPABILITIES.md](CAPABILITIES.md), and system boundaries in [ARCHITECTURE.md](ARCHITECTURE.md).
@@ -33,6 +34,7 @@ Detailed live status is maintained in [STATUS.md](STATUS.md), capabilities in
 | News & AI Swing | Strong Swing base with bounded, source-linked event intelligence |
 | Long-Term Candidates | Multi-year financial evidence and investor-inspired rankings |
 | Probability | 21-session return distribution, upside probability and drawdown range |
+| Adaptive Allocation | Two-asset Universal Portfolio research with costs, drawdown and baseline comparisons |
 | Trade Ledger | Purchases, partial/final sales, revised plans, news risk, P&L, ROI and XIRR |
 | Fund Mapping | CAS holdings, AMFI identities, AMC disclosures and stock-overlap analysis |
 | Data Health | Source freshness, coverage gaps, backfill queue and repair controls |
@@ -85,6 +87,7 @@ files are never committed.
 | `/terminal/[market]/trade-ledger` | Trade Ledger and broker reconciliation |
 | `/terminal/[market]/long-term` | Long-Term Candidates |
 | `/terminal/[market]/probability` | Probability workspace |
+| `/terminal/[market]/adaptive-allocation` | Cost-aware allocation backtests and saved paper strategies |
 | `/portfolio/fund-mapping` | CAS/AMC mapping and fund overlap |
 | `/data/health` | Data coverage and backfill health |
 | `/settings` | User, provider, Breeze and Gmail settings |
@@ -123,8 +126,9 @@ npm run lint
 npm run build
 ```
 
-The current suite contains 238 passing tests across 33 files. Integration tests require the local
-PostgreSQL test environment.
+The Universal Portfolio engine has focused tests for allocation bounds, transaction costs and
+corporate-action discontinuities. Database integration checks require the local PostgreSQL test
+environment.
 
 ## Deployment
 
@@ -136,7 +140,7 @@ sudo bash /opt/investogenie/app/deploy/oracle/deploy-release.sh
 
 The historical directory name is retained for compatibility; the script is the active shared
 Ubuntu deployment path for AWS and Oracle-compatible hosts. It installs locked dependencies,
-builds the application, applies migrations through `0046_trade_ledger_returns.sql`, verifies the
+builds the application, applies migrations through `0048_adaptive_allocation.sql`, verifies the
 schema, and restarts `investogenie.service`.
 
 See [DEPLOYMENT.md](DEPLOYMENT.md), [deploy/local/README.md](deploy/local/README.md), and
@@ -156,3 +160,5 @@ See [mobile/README.md](mobile/README.md) and [mobile/PRIVACY.md](mobile/PRIVACY.
 InvestoGenie is a personal research and trade-management system. Targets, stops, probabilities,
 news classifications and AI assessments are decision support, not guarantees or autonomous broker
 instructions. Broker/exchange restrictions and executable order state must still be confirmed.
+Adaptive Allocation is likewise a research and paper-tracking surface; it never places orders or
+changes Swing, Strong Swing, Momentum Ignition, News & AI or Trade Ledger calculations.

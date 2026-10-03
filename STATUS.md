@@ -6,7 +6,7 @@ This file summarizes what has been built so far, what is currently working, what
 
 ## Repository State
 
-- Branch: `main`; latest product revision: `ed76f36` (`Fix benchmark live OHLCV upsert`).
+- Branch: `main`; latest product revision: `4e1a6af` (`Add adaptive allocation backtesting lab`).
 - `main` is aligned with `origin/main`, and the latest product revision is deployed on AWS Lightsail.
 - Unrelated local edits in `.claude/context`, `AGENTS.md`, `CLAUDE.md`,
   `app/api/cron/backfill-nse/route.ts`, and `opencode.json` remain excluded from product commits.
@@ -38,6 +38,8 @@ InvestoGenie is now a local-first market terminal and portfolio intelligence app
   maximum drawdown, turnover, estimated costs and an explicit success/mixed/failure verdict.
 - Saved configurations and results are paper research only. Migration
   `0048_adaptive_allocation.sql` stores strategies and dated runs; no broker order path exists.
+- Revision `4e1a6af` is on remote `main` and deployed on AWS. The production build, migration,
+  required-relation verification, authenticated-route redirect and both systemd services passed.
 
 ### US Market Tracking Parity
 

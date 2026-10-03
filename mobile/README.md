@@ -32,3 +32,7 @@ or enable Expo Updates.
 The Ledger summary includes server-calculated capital employed, realized/unrealized/overall P&L,
 ROI and XIRR. Capital employed recycles retained sale proceeds instead of treating cumulative
 purchases as new money. The native client only displays the API result.
+
+Adaptive Allocation is currently a web-only research and paper-backtesting surface. It is not
+exposed through the mobile API and does not alter any mobile Strong Swing, News & AI or Trade
+Ledger response.
