@@ -1,6 +1,7 @@
 import { query, queryOne } from "@/lib/db";
 import { latestExpectedSessionDate, refreshMarketHolidays } from "@/lib/market-calendar.mjs";
 import { backtestUniversalPortfolio, type UniversalBacktestResult, type UniversalPricePoint } from "@/lib/analytics/universalPortfolio";
+import { selectAdaptiveAllocationPair, type AdaptivePairSelection, type AdaptiveSelectionCandidate } from "@/lib/analytics/adaptiveAllocationSelection";
 import type { MarketId } from "@/lib/types";
 
 interface AssetRow { id: string; ticker: string; name: string | null; exchange: string | null }
@@ -13,6 +14,18 @@ export interface AdaptiveBacktest {
   expectedSessionDate: string;
   latestCommonDate: string;
   warning: string | null;
+}
+
+export interface AutomaticAdaptiveSelection {
+  tickerA: string;
+  tickerB: string;
+  poolSize: number;
+  correlation: number;
+  returnA12mPct: number;
+  returnB12mPct: number;
+  commonSessions: number;
+  sectorA: string | null;
+  sectorB: string | null;
 }
 
 export interface SavedAdaptiveStrategy {
@@ -32,6 +45,62 @@ export interface SavedAdaptiveStrategy {
 }
 
 const isoDate = (value: string | Date) => typeof value === "string" ? value.slice(0, 10) : value.toISOString().slice(0, 10);
+
+export async function getAutomaticAdaptiveSelection(
+  market: MarketId,
+  lookbackYears: number,
+): Promise<AutomaticAdaptiveSelection> {
+  await refreshMarketHolidays(market);
+  const expectedSessionDate = latestExpectedSessionDate(market);
+  const assets = await query<AssetRow & { sector: string | null }>(
+    `select a.id,a.ticker,a.name,a.exchange,s.sector
+       from public.assets a
+       left join public.stock_snapshot s on s.asset_id=a.id
+      where a.country=$1 and a.asset_class='STOCK'
+        and ($1 <> 'IN' or a.exchange='NSE')
+        and exists (
+          select 1 from public.daily_ohlcv recent
+           where recent.asset_id=a.id and recent.date=$2::date
+        )
+      order by s.market_cap desc nulls last,s.trade_value desc nulls last,a.ticker
+      limit 14`,
+    [market, expectedSessionDate],
+  );
+  if (assets.length < 2) {
+    throw new Error(`Fewer than two liquid ${market} stocks have history through ${expectedSessionDate}. Refresh market data and try again.`);
+  }
+  const years = Math.max(1, Math.min(20, Math.round(lookbackYears)));
+  const rows = await query<PriceRow & { asset_id: string }>(
+    `select asset_id,date,close
+       from public.daily_ohlcv
+      where asset_id=any($1::uuid[]) and date >= current_date - ($2::text || ' years')::interval
+      order by asset_id,date`,
+    [assets.map((asset) => asset.id), years],
+  );
+  const pricesByAsset = new Map<string, AdaptiveSelectionCandidate["prices"]>();
+  for (const row of rows) {
+    const prices = pricesByAsset.get(row.asset_id) ?? [];
+    prices.push({ date: isoDate(row.date), close: Number(row.close) });
+    pricesByAsset.set(row.asset_id, prices);
+  }
+  const candidates: AdaptiveSelectionCandidate[] = assets.map((asset, index) => ({
+    ...asset,
+    liquidityRank: index + 1,
+    prices: pricesByAsset.get(asset.id) ?? [],
+  }));
+  const selected: AdaptivePairSelection = selectAdaptiveAllocationPair(candidates);
+  return {
+    tickerA: selected.assetA.ticker,
+    tickerB: selected.assetB.ticker,
+    poolSize: candidates.length,
+    correlation: selected.correlation,
+    returnA12mPct: selected.returnA12mPct,
+    returnB12mPct: selected.returnB12mPct,
+    commonSessions: selected.commonSessions,
+    sectorA: selected.assetA.sector,
+    sectorB: selected.assetB.sector,
+  };
+}
 
 export async function resolveAdaptiveAsset(market: MarketId, rawTicker: string): Promise<AssetRow> {
   const ticker = rawTicker.trim().toUpperCase();

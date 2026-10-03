@@ -38,6 +38,9 @@ InvestoGenie is now a local-first market terminal and portfolio intelligence app
   maximum drawdown, turnover, estimated costs and an explicit success/mixed/failure verdict.
 - Saved configurations and results are paper research only. Migration
   `0048_adaptive_allocation.sql` stores strategies and dated runs; no broker order path exists.
+- The default workflow selects both stocks automatically from a current, liquid large-cap pool.
+  Pair selection favors low return correlation, cross-sector diversification, positive recent
+  trends and liquidity without optimizing against the displayed Universal Portfolio result.
 - Revision `4e1a6af` is on remote `main` and deployed on AWS. The production build, migration,
   required-relation verification, authenticated-route redirect and both systemd services passed.
 

@@ -49,7 +49,7 @@ help/knowledge base, and recurring data sync jobs.
 | Legendary strategies | Qullamaggie, Minervini, Darvas, PTJ, Simons tags and filters | Working |
 | **Long-Term Candidates** | Six investor-inspired rankings with normalized income, balance-sheet and cash-flow evidence, multi-year CAGR/ROCE, confidence, sector/investability gates and daily score snapshots | Working (0.87s page load since the 2026-08-09 query fix); statement coverage backfilling |
 | Probability engine | 21-trading-day return distribution per stock: expected return, P(up), drawdown risk, Student-t price range | Working |
-| **Adaptive Allocation Lab** | Two-asset, cost-aware Cover Universal Portfolio backtests with a no-trade band, benchmark comparisons, risk metrics, explicit success/failure verdicts and saved paper configurations | Working; research-only and isolated from all trading rankings/orders |
+| **Adaptive Allocation Lab** | App-selected liquid, diversified stock pairs; two-asset, cost-aware Cover Universal Portfolio backtests with a no-trade band, benchmark comparisons, risk metrics, explicit success/failure verdicts and saved paper configurations | Working; research-only and isolated from all trading rankings/orders |
 | Fundamentals | P/E, market cap, ROCE, YoY profit/sales growth in screener | Working |
 | Macro lead/lag | FRED-backed cross-asset rolling correlation and lead/lag matrix | Working |
 | **Email digest** | Daily 07:00 IST email with top Swing Candidates + Probability forecasts, same engines as the screens | Working |
