@@ -71,7 +71,7 @@ export async function getAutomaticAdaptiveSelection(
   }
   const years = Math.max(1, Math.min(20, Math.round(lookbackYears)));
   const rows = await query<PriceRow & { asset_id: string }>(
-    `select asset_id,date,close
+    `select asset_id,date::text as date,close
        from public.daily_ohlcv
       where asset_id=any($1::uuid[]) and date >= current_date - ($2::text || ' years')::interval
       order by asset_id,date`,
@@ -135,7 +135,7 @@ export async function getAdaptiveBacktest(input: {
   if (assetA.id === assetB.id) throw new Error("Choose two different assets.");
   const years = Math.max(1, Math.min(20, Math.round(input.lookbackYears)));
   const rows = await query<PriceRow & { asset_id: string }>(
-    `select asset_id,date,close
+    `select asset_id,date::text as date,close
        from public.daily_ohlcv
       where asset_id=any($1::uuid[]) and date >= current_date - ($2::text || ' years')::interval
       order by date asc`,
