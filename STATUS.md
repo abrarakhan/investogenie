@@ -1,13 +1,13 @@
 # InvestoGenie Status
 
-_Last updated: 2026-10-03 (cost-aware Adaptive Allocation research and backtesting lab added)_
+_Last updated: 2026-10-03 (capped Breeze automatic NSE cash buying added)_
 
 This file summarizes what has been built so far, what is currently working, what is partial, and what to build next.
 
 ## Repository State
 
-- Branch: `main`; latest product revision: `4e1a6af` (`Add adaptive allocation backtesting lab`).
-- `main` is aligned with `origin/main`, and the latest product revision is deployed on AWS Lightsail.
+- Branch: `main`; documentation tracks the tested release branch.
+- Production deploys pushed `main` revisions to AWS Lightsail.
 - Unrelated local edits in `.claude/context`, `AGENTS.md`, `CLAUDE.md`,
   `app/api/cron/backfill-nse/route.ts`, and `opencode.json` remain excluded from product commits.
 
@@ -36,11 +36,15 @@ InvestoGenie is now a local-first market terminal and portfolio intelligence app
 - The results compare net and gross Universal Portfolio wealth with equal-weight daily CRP,
   equal-weight buy-and-hold and the hindsight-best fixed CRP. The screen reports CAGR, volatility,
   maximum drawdown, turnover, estimated costs and an explicit success/mixed/failure verdict.
-- Saved configurations and results are paper research only. Migration
-  `0048_adaptive_allocation.sql` stores strategies and dated runs; no broker order path exists.
+- Migration `0048_adaptive_allocation.sql` stores strategies and dated runs. Migration
+  `0049_breeze_auto_buy.sql` adds a separately authorized buy-only broker path with hard caps and
+  idempotent order intents; it remains disabled by default.
 - The default workflow selects both stocks automatically from a current, liquid large-cap pool.
   Pair selection favors low return correlation, cross-sector diversification, positive recent
   trends and liquidity without optimizing against the displayed Universal Portfolio result.
+- Saved active India strategies can optionally feed the Breeze buy-only executor after the user
+  explicitly enables live buying and sets daily, per-order and order-count caps. Automatic selling
+  and rebalancing remain disabled.
 - Revision `4e1a6af` is on remote `main` and deployed on AWS. The production build, migration,
   required-relation verification, authenticated-route redirect and both systemd services passed.
 

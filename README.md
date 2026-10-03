@@ -14,11 +14,11 @@ development and an alternate Ubuntu/Oracle-compatible deployment.
 - PostgreSQL as the system of record; direct access through `pg`.
 - AWS Lightsail with systemd, Nginx/HTTPS and recurring ingestion workers.
 - India-first market coverage with NSE/BSE trading-session and holiday awareness.
-- ICICI Breeze for priority live market data and read-only broker reconciliation.
+- ICICI Breeze for priority live market data, broker reconciliation, and explicitly enabled capped NSE cash limit buying.
 - Bhavcopy, Yahoo and Google fallbacks plus exchange-close OHLCV maintenance.
 - Android/iOS client backed by versioned server APIs; analytics remain on the server.
 - Cost-aware Adaptive Allocation research with saved paper configurations and comparative backtests.
-- Current product revision: `4e1a6af`; documentation follows `main` and this revision is deployed.
+- Documentation follows `main`; production is deployed from a tested, pushed `main` revision.
 
 Detailed live status is maintained in [STATUS.md](STATUS.md), capabilities in
 [CAPABILITIES.md](CAPABILITIES.md), and system boundaries in [ARCHITECTURE.md](ARCHITECTURE.md).
@@ -140,7 +140,7 @@ sudo bash /opt/investogenie/app/deploy/oracle/deploy-release.sh
 
 The historical directory name is retained for compatibility; the script is the active shared
 Ubuntu deployment path for AWS and Oracle-compatible hosts. It installs locked dependencies,
-builds the application, applies migrations through `0048_adaptive_allocation.sql`, verifies the
+builds the application, applies migrations through `0049_breeze_auto_buy.sql`, verifies the
 schema, and restarts `investogenie.service`.
 
 See [DEPLOYMENT.md](DEPLOYMENT.md), [deploy/local/README.md](deploy/local/README.md), and
@@ -160,5 +160,6 @@ See [mobile/README.md](mobile/README.md) and [mobile/PRIVACY.md](mobile/PRIVACY.
 InvestoGenie is a personal research and trade-management system. Targets, stops, probabilities,
 news classifications and AI assessments are decision support, not guarantees or autonomous broker
 instructions. Broker/exchange restrictions and executable order state must still be confirmed.
-Adaptive Allocation is likewise a research and paper-tracking surface; it never places orders or
-changes Swing, Strong Swing, Momentum Ignition, News & AI or Trade Ledger calculations.
+Adaptive Allocation remains research-led; saved active strategies can fund buy-only NSE cash
+positions only when the user separately enables Breeze automatic buying with hard spending limits.
+No automatic selling or rebalancing is performed.

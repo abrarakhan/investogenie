@@ -7,6 +7,8 @@ import { getEmailPreferences } from "@/lib/email-actions";
 import { getUserCredentials, getUserNewsProviders } from "@/lib/credentials-actions";
 import { normalizeMarket } from "@/lib/markets";
 import { saveSwingSettings, resetSwingSettings } from "./actions";
+import { saveBreezeAutoBuySettings } from "./actions";
+import { getBreezeAutoBuySettings } from "@/lib/breeze/autoBuy";
 import EmailPreferencesForm from "@/components/settings/EmailPreferencesForm";
 import CredentialsForm from "@/components/settings/CredentialsForm";
 
@@ -49,7 +51,7 @@ export default async function SettingsPage({ searchParams }: {
   const market = normalizeMarket(marketParam ?? "in") ?? "IN";
   const s = await getUserSwingSettings();
   const emailPrefs = await getEmailPreferences();
-  const [creds, newsProviders] = await Promise.all([getUserCredentials(), getUserNewsProviders()]);
+  const [creds, newsProviders, autoBuy] = await Promise.all([getUserCredentials(), getUserNewsProviders(), getBreezeAutoBuySettings(user.id)]);
 
   return (
     <AppShell
@@ -94,6 +96,18 @@ export default async function SettingsPage({ searchParams }: {
           <button type="submit" className="text-xs text-white/40 hover:text-rose-400">
             Reset to defaults
           </button>
+        </form>
+      </section>
+
+      <section className="mt-12 border-t border-white/10 pt-12">
+        <h2 className="text-2xl font-bold">Breeze automatic buying</h2>
+        <p className="mt-2 text-sm text-white/50">Optional real-money NSE cash limit orders. Disabled by default. Market orders, selling, derivatives, and automatic rebalancing are not permitted.</p>
+        <form action={saveBreezeAutoBuySettings} className="mt-6 space-y-5 rounded-xl border border-rose-400/20 bg-rose-400/[0.04] p-5">
+          <label className="flex items-center gap-3"><input type="checkbox" name="enabled" defaultChecked={autoBuy.enabled} /><span className="font-semibold">Enable automatic live buying</span></label>
+          <div className="grid gap-4 sm:grid-cols-2"><label className="text-sm"><input className="mr-2" type="checkbox" name="strong_swing_enabled" defaultChecked={autoBuy.strongSwingEnabled} />Strong Swing Execution Ready</label><label className="text-sm"><input className="mr-2" type="checkbox" name="adaptive_allocation_enabled" defaultChecked={autoBuy.adaptiveAllocationEnabled} />Adaptive Allocation saved strategies</label></div>
+          <div className="grid gap-4 sm:grid-cols-2"><Field name="daily_budget" label="Maximum daily spend (₹)" value={autoBuy.dailyBudget} hint="Hard cap across both engines." step="1" min="0" max="10000000" /><Field name="max_order_value" label="Maximum per order (₹)" value={autoBuy.maxOrderValue} hint="Each order must stay below this value." step="1" min="0" max="10000000" /><Field name="max_orders_per_day" label="Maximum orders per day" value={autoBuy.maxOrdersPerDay} hint="Hard combined order count cap." step="1" min="1" max="20" /><Field name="limit_buffer_bps" label="Limit buffer (bps)" value={autoBuy.limitBufferBps} hint="Added above fresh best ask; maximum 100 bps." step="1" min="0" max="100" /></div>
+          <label className="flex items-start gap-3 text-sm text-white/65"><input className="mt-1" type="checkbox" name="acknowledge_live_orders" /><span>I understand this can submit real-money orders without another confirmation and that orders may fill partially or not at all.</span></label>
+          <button className="rounded-lg bg-rose-300 px-5 py-2.5 text-sm font-bold text-black">Save automatic-buy controls</button>
         </form>
       </section>
 

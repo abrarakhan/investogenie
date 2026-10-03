@@ -20,6 +20,8 @@ const requiredRelations = [
   "public.mobile_notification_log",
   "public.adaptive_allocation_strategies",
   "public.adaptive_allocation_runs",
+  "public.breeze_auto_buy_settings",
+  "public.breeze_order_intents",
 ];
 const client = new pg.Client({
   connectionString: url,

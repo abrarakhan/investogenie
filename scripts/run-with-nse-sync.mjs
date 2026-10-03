@@ -21,6 +21,7 @@ const indiaQuotePipeline = resolve(root, "pipelines/india_quotes_sync.py");
 const breezeHistoryPipeline = resolve(root, "pipelines/breeze_ohlcv_sync.py");
 const breezeMarketWorker = resolve(root, "workers/breeze_market_daemon.py");
 const breezeAccountWorker = resolve(root, "workers/breeze_account_sync.py");
+const breezeAutoBuyWorker = resolve(root, "workers/breeze_auto_buy.py");
 const usPipeline = resolve(root, "pipelines/us_market_sync.py");
 const usHistoryPipeline = resolve(root, "pipelines/us_history_sync.py");
 const macroPipeline = resolve(root, "pipelines/macro_sync.py");
@@ -144,6 +145,7 @@ let breezeChild = null;
 let breezeRestartTimer = null;
 let breezeAccountChild = null;
 let breezeAccountTimer = null;
+let breezeAutoBuyChild = null;
 let newsRefreshTimer = null;
 let newsRefreshPromise = null;
 let mobileAlertTimer = null;
@@ -222,6 +224,34 @@ function scheduleBreezeAccountSync() {
     breezeAccountSyncIntervalMinutes * 60 * 1000,
   );
   setTimeout(() => runBreezeAccountSync("startup"), 10_000);
+}
+
+async function runBreezeAutoBuy() {
+  if (!python || !existsSync(breezeAutoBuyWorker) || breezeAutoBuyChild || !isIndiaMarketOpen()) return;
+  if (!process.env.CRON_SECRET) {
+    console.error("[breeze-auto-buy] CRON_SECRET is not configured");
+    return;
+  }
+  try {
+    const response = await fetch("http://127.0.0.1:3000/api/cron/breeze-auto-buy", {
+      headers: { authorization: `Bearer ${process.env.CRON_SECRET}` },
+    });
+    if (!response.ok) throw new Error(`candidate refresh failed (${response.status})`);
+  } catch (error) {
+    console.error(`[breeze-auto-buy] ${error instanceof Error ? error.message : String(error)}`);
+    return;
+  }
+  breezeAutoBuyChild = spawn(python, [breezeAutoBuyWorker], { cwd: root, env: process.env, stdio: "inherit" });
+  breezeAutoBuyChild.once("close", (code, signal) => {
+    breezeAutoBuyChild = null;
+    if (code !== 0 || signal) console.error(`[breeze-auto-buy] failed (${signal ?? `exit ${code}`})`);
+  });
+}
+
+function scheduleBreezeAutoBuy() {
+  console.log("[breeze-auto-buy] fail-closed evaluator every 5 minutes during India market hours");
+  setInterval(runBreezeAutoBuy, 5 * 60 * 1000);
+  setTimeout(runBreezeAutoBuy, 20_000);
 }
 
 import { Client } from "pg";
@@ -1516,6 +1546,7 @@ scheduleBackfillCron();
 scheduleEmailDigest();
 startEmbeddedBreezeWorker();
 scheduleBreezeAccountSync();
+scheduleBreezeAutoBuy();
 if (startupSyncDisabled) {
   console.log("[startup] immediate maintenance jobs disabled; recurring schedules remain active");
 } else {

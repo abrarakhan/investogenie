@@ -40,6 +40,7 @@ help/knowledge base, and recurring data sync jobs.
 | Auth | Local email/password, signed HTTP-only session cookie, signup, and host-authorized password recovery that preserves portfolio ownership | Working |
 | Portfolio terminal | Holdings, watchlist, trade ledger, benchmark cards | Working |
 | **Trade Ledger accounting** | Partial/final exits, broker-net acquisition/proceeds/P&L, cumulative trade turnover, inferred external capital employed, portfolio ROI and money-weighted XIRR | Working; ICICI Direct statement reconciled through 22 Sep 2026 |
+| **Breeze automatic buying** | Optional capped NSE cash limit buying from Execution Ready Strong Swing candidates and saved Adaptive Allocation strategies, with independent engine toggles, idempotent order intents and audit history | Implemented; disabled by default; no automatic selling/rebalancing |
 | Swing candidates | Buy-candidate screener with entry, target, stop, trail, score, days | Working; hourly scan repaired 2026-08-09 |
 | Stock Screener | US+India fundamental/price-action screener: filter engine, presets, saved screens, universes, CSV/Excel export | Working |
 | **NL Query (screener)** | Plain-English → filters, dispatched to a **user-chosen AI provider** (Anthropic/OpenAI/Google/DeepSeek), validated through the same filter-engine guard regardless of provider | Working |

@@ -57,6 +57,8 @@ describe("Gmail investment document classification", () => {
 
   it("extracts a disclosure month and otherwise uses the prior received month", () => {
     expect(inferSnapshotMonth({ filename: "portfolio_August_2026.xlsx" })).toBe("2026-08-01");
+    expect(inferSnapshotMonth({ filename: "monthly-portfolio.september-2026.xlsm" })).toBe("2026-09-01");
+    expect(inferSnapshotMonth({ filename: "holdings2026_07.csv" })).toBe("2026-07-01");
     expect(inferSnapshotMonth({ filename: "portfolio.xlsx", receivedAt: "2026-09-10T10:00:00Z" })).toBe("2026-08-01");
   });
 });

@@ -113,7 +113,7 @@ sudo bash /opt/investogenie/app/deploy/oracle/deploy-release.sh
 ```
 
 The release script installs locked dependencies, builds Next.js, applies the ordered migrations
-through `0048_adaptive_allocation.sql`, verifies required production relations, restarts the web
+through `0049_breeze_auto_buy.sql`, verifies required production relations, restarts the web
 scheduler and Breeze services, and checks the local login endpoint.
 
 Install the local PostgreSQL backup job:

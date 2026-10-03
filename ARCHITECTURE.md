@@ -152,10 +152,12 @@ The ledger supports:
 - Open, realized and overall P&L, cumulative trade turnover, capital-employed ROI and XIRR.
 - Five-minute current-price refresh during market hours.
 - Hourly stock-first News & AI assessment during the relevant trading session.
-- Read-only ICICI Breeze holdings, positions and order reconciliation for InvestoGenie-era trades.
+- ICICI Breeze holdings, positions and order reconciliation, plus separately authorized, capped,
+  buy-only NSE cash limit orders for Strong Swing and saved Adaptive Allocation strategies.
 
-Broker reconciliation does not alter orders or ledger rows automatically. Older long-term broker
-holdings are excluded from the InvestoGenie swing-trade reconciliation scope.
+Broker reconciliation does not alter orders or ledger rows automatically. Automatic buying is off
+by default, never sells or rebalances, and requires per-user acknowledgement and hard limits. Older
+long-term broker holdings are excluded from the InvestoGenie swing-trade reconciliation scope.
 
 Portfolio return accounting is cash-ledger based. Purchases consume retained cash, sales replenish
 it, and only a dated shortfall is treated as external capital. ROI divides overall P&L by those
