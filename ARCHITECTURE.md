@@ -77,6 +77,8 @@ The market workspace is parameterized by `in` or `us`:
 - `/terminal/[market]/trade-ledger`: open and closed swing trades, partial exits and P&L.
 - `/terminal/[market]/long-term`: long-horizon fundamentals candidates.
 - `/terminal/[market]/probability`: 21-session probability projections.
+- `/terminal/[market]/adaptive-allocation`: two-asset Universal Portfolio research, comparison
+  backtests and saved paper configurations.
 - `/terminal/[market]/forward-test`: out-of-sample signal tracking.
 - `/portfolio/fund-mapping`: CAS holding to AMC snapshot mapping and overlap.
 - `/terminal/in/cas`: CAS import.
@@ -98,6 +100,9 @@ The protected calculation layer includes:
 - `lib/swingTradeProjection.ts`: shared projection resolution used by web and mobile ledger flows.
 - `lib/swingTradeLedger.ts`: frozen plans, current state and P&L.
 - `lib/newsSwing.ts` and `lib/analytics/newsSwing.ts`: bounded news overlay.
+- `lib/analytics/universalPortfolio.ts`: isolated, cost-aware two-asset Cover allocation and
+  backtest engine. It consumes adjusted history and has no dependency into candidate rankings,
+  ledger projections or broker execution.
 
 The calculation flow is:
 

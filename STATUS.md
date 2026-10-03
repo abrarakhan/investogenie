@@ -1,6 +1,6 @@
 # InvestoGenie Status
 
-_Last updated: 2026-09-25 (US priority quotes/OHLCV brought to five-minute session parity with India)_
+_Last updated: 2026-10-03 (cost-aware Adaptive Allocation research and backtesting lab added)_
 
 This file summarizes what has been built so far, what is currently working, what is partial, and what to build next.
 
@@ -25,6 +25,19 @@ InvestoGenie is now a local-first market terminal and portfolio intelligence app
 - Portfolio import and Fund Overlap X-Ray using CAS and AMC disclosures.
 - Forward-testing infrastructure to judge strategies out of sample.
 - Data coverage visibility and repair workflows for fund mappings, source freshness, and stale strategy inputs.
+
+### Adaptive Allocation Lab
+
+- `/terminal/[market]/adaptive-allocation` implements a separate two-asset, discretized Cover
+  Universal Portfolio research engine for India and US. It does not feed or modify Swing, Strong
+  Swing, Momentum Ignition, News & AI, Trade Ledger, targets, stops, or rankings.
+- Backtests use common adjusted OHLCV sessions, a configurable cost assumption and no-trade band,
+  and fail closed when history is stale or contains a suspicious discontinuity.
+- The results compare net and gross Universal Portfolio wealth with equal-weight daily CRP,
+  equal-weight buy-and-hold and the hindsight-best fixed CRP. The screen reports CAGR, volatility,
+  maximum drawdown, turnover, estimated costs and an explicit success/mixed/failure verdict.
+- Saved configurations and results are paper research only. Migration
+  `0048_adaptive_allocation.sql` stores strategies and dated runs; no broker order path exists.
 
 ### US Market Tracking Parity
 
