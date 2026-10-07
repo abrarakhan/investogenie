@@ -294,11 +294,18 @@ def load_cash_instruments(conn, archive: ZipFile, exchanges: list[str], limit: i
         assets = cur.fetchall()
 
     instruments: list[CashInstrument] = []
+    seen_contracts: set[tuple[str, str]] = set()
     for asset_id, ticker, exchange in assets:
         match = masters[exchange].get(str(ticker).upper())
         if not match:
             continue
         breeze_code, token, company_name = match
+        contract = (exchange, breeze_code)
+        # Duplicate asset rows can resolve to the same Breeze cash contract.
+        # Subscribe once and retain the mapping that already owns that contract.
+        if contract in seen_contracts:
+            continue
+        seen_contracts.add(contract)
         instruments.append(CashInstrument(asset_id, ticker, exchange, breeze_code, token, company_name))
         if limit > 0 and len(instruments) >= limit:
             break
@@ -310,9 +317,7 @@ def load_cash_instruments(conn, archive: ZipFile, exchanges: list[str], limit: i
                 insert into public.breeze_instrument_map
                   (asset_id,exchange_code,stock_code,token,updated_at)
                 values %s
-                on conflict (asset_id) do update set
-                  exchange_code=excluded.exchange_code,
-                  stock_code=excluded.stock_code,
+                on conflict (exchange_code,stock_code) do update set
                   token=excluded.token,
                   updated_at=excluded.updated_at
                 """,
