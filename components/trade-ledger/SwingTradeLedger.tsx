@@ -39,18 +39,23 @@ export default function SwingTradeLedger({ market, trades, defaults }: {
 
   return (
     <div className="space-y-6">
-      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-9">
+      <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Summary label="Open trades" value={String(summary.openCount)} />
         <Summary label="Open capital" value={money(summary.openInvestedValue, currency)} />
-        <Summary label="Capital employed" value={money(summary.capitalEmployedValue, currency)} />
-        <Summary label="Trade turnover" value={money(summary.totalInvestedValue, currency)} />
-        <Summary label="Unrealized P&L" value={money(summary.unrealizedPnlValue, currency)} tone={summary.unrealizedPnlValue >= 0 ? "good" : "bad"} />
-        <Summary label={`Realized P&L · ${summary.closedCount} closed`} value={money(summary.realizedPnlValue, currency)} tone={summary.realizedPnlValue >= 0 ? "good" : "bad"} />
         <Summary label="Overall P&L" value={money(summary.overallPnlValue, currency)} tone={summary.overallPnlValue >= 0 ? "good" : "bad"} />
         <Summary label="ROI" value={pct(summary.roiPct)} tone={(summary.roiPct ?? 0) >= 0 ? "good" : "bad"} />
-        <Summary label="XIRR · annualized" value={pct(summary.xirrPct)} tone={(summary.xirrPct ?? 0) >= 0 ? "good" : "bad"} />
       </section>
-      <p className="text-[11px] leading-relaxed text-white/35">Capital employed is inferred from dated purchases after recycling retained sale proceeds. ROI uses that external capital, while trade turnover shows cumulative purchases. XIRR annualizes inferred capital additions and ending cash/open value; short periods can still produce large annualized percentages. Broker net values are used where reconciled.</p>
+      <details className="rounded-lg border border-white/10 bg-white/[0.02]">
+        <summary className="cursor-pointer list-none px-4 py-3 text-sm font-semibold text-white/55 [&::-webkit-details-marker]:hidden">Performance details · {summary.closedCount} closed trades</summary>
+        <div className="grid grid-cols-2 gap-3 border-t border-white/10 p-4 md:grid-cols-5">
+          <Summary label="Capital added" value={money(summary.capitalEmployedValue, currency)} />
+          <Summary label="Trade turnover" value={money(summary.totalInvestedValue, currency)} />
+          <Summary label="Unrealized P&L" value={money(summary.unrealizedPnlValue, currency)} tone={summary.unrealizedPnlValue >= 0 ? "good" : "bad"} />
+          <Summary label="Realized P&L" value={money(summary.realizedPnlValue, currency)} tone={summary.realizedPnlValue >= 0 ? "good" : "bad"} />
+          <Summary label="XIRR · annualized" value={pct(summary.xirrPct)} tone={(summary.xirrPct ?? 0) >= 0 ? "good" : "bad"} />
+        </div>
+        <p className="px-4 pb-4 text-[11px] leading-relaxed text-white/35">Capital added is the cash required to fund purchases before later sale proceeds are recycled. ROI is total P&amp;L divided by that cash. Turnover is cumulative purchases. XIRR is annualized and can be extreme for short periods.</p>
+      </details>
 
       <details open={Boolean(defaults.ticker)} className="rounded-lg border border-white/10 bg-white/[0.02]">
         <summary className="cursor-pointer list-none px-5 py-4 font-semibold [&::-webkit-details-marker]:hidden">
@@ -137,6 +142,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 
 function TradeCard({ trade, today }: { trade: SwingLedgerTrade; today: string }) {
   const state = STATE[trade.progress.state];
+  const exitNow = trade.status === "OPEN" && trade.revisedPlan.action === "EXIT";
   const progressWidth = Math.max(0, Math.min(100, trade.progress.targetProgressPct ?? 0));
   const tradeReturns = summarizeSwingTradeLedger([trade]);
   return (
@@ -144,12 +150,12 @@ function TradeCard({ trade, today }: { trade: SwingLedgerTrade; today: string })
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div><div className="flex items-center gap-2"><h3 className="text-xl font-black">{trade.ticker}</h3><span className="text-xs text-white/35">{trade.exchange}</span></div><div className="mt-1 text-sm text-white/45">{trade.strategyLabel} · bought {trade.boughtOn}</div></div>
         <div className="flex flex-wrap justify-end gap-2">
-          <span className={`rounded-full border px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide ${state.style}`}>{state.label}</span>
-          {trade.status === "OPEN" && <span className={`rounded-full border px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide ${RISK[trade.risk.state].style}`}>{RISK[trade.risk.state].label}</span>}
+          <span className={`rounded-full border px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide ${exitNow ? RISK.RISK_OFF.style : state.style}`}>{exitNow ? "Exit now" : state.label}</span>
+          {trade.status === "OPEN" && !exitNow && trade.risk.state !== "NORMAL" && <span className={`rounded-full border px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide ${RISK[trade.risk.state].style}`}>{RISK[trade.risk.state].label}</span>}
         </div>
       </div>
-      {trade.status === "OPEN" && <TradeRiskPanel trade={trade} />}
       {trade.status === "OPEN" && <RevisedPlanPanel trade={trade} />}
+      {trade.status === "OPEN" && <TradeRiskPanel trade={trade} />}
       {trade.status === "OPEN" && <GttProtectionPanel trade={trade} />}
       <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Metric label="Buy" value={price(trade.buyPrice)} />
@@ -303,28 +309,18 @@ function TradeRiskPanel({ trade }: { trade: SwingLedgerTrade }) {
     ? "text-rose-200"
     : trade.risk.recommendation === "STAY_CAUTION" ? "text-amber-200" : "text-emerald-200";
   return (
-    <div className={`mt-4 rounded-lg border p-4 ${panelClass}`}>
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h4 className={`text-sm font-bold ${headingClass}`}>
-          Hourly News &amp; AI trade check
-        </h4>
-        <span className={`rounded-full border px-3 py-1 text-xs font-bold tracking-wide ${
-          targetExtension
-            ? "border-cyan-400/35 bg-cyan-500/15 text-cyan-200"
-            : riskOff
-            ? "border-rose-400/35 bg-rose-500/15 text-rose-200"
-            : trade.risk.recommendation === "STAY_CAUTION"
-              ? "border-amber-400/35 bg-amber-500/15 text-amber-200"
-              : "border-emerald-400/35 bg-emerald-500/15 text-emerald-200"
-        }`}>{recommendation}</span>
+    <details className={`mt-4 rounded-lg border ${panelClass}`}>
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 [&::-webkit-details-marker]:hidden">
+        <span className={`text-sm font-bold ${headingClass}`}>News &amp; AI evidence</span>
+        <span className="text-xs font-semibold text-white/55">{recommendation} · score {trade.risk.newsAdjustment >= 0 ? "+" : ""}{trade.risk.newsAdjustment.toFixed(1)}</span>
+      </summary>
+      <div className="border-t border-white/10 p-4">
         <div className="flex gap-3 font-mono text-[11px] text-white/55">
           {trade.risk.stockMove1dPct !== null && <span>Stock 1d {pct(trade.risk.stockMove1dPct)}</span>}
           {trade.risk.stockMove2dPct !== null && <span>Stock 2d {pct(trade.risk.stockMove2dPct)}</span>}
           {trade.risk.marketMove1dPct !== null && <span>Market 1d {pct(trade.risk.marketMove1dPct)}</span>}
           {trade.risk.marketMove2dPct !== null && <span>Market 2d {pct(trade.risk.marketMove2dPct)}</span>}
-          <span>News score {trade.risk.newsAdjustment >= 0 ? "+" : ""}{trade.risk.newsAdjustment.toFixed(1)}</span>
         </div>
-      </div>
       {trade.risk.reasons.length > 0 && <ul className="mt-2 space-y-1 text-sm text-white/75">
         {trade.risk.reasons.map((reason) => <li key={reason}>• {reason}</li>)}
       </ul>}
@@ -346,7 +342,8 @@ function TradeRiskPanel({ trade }: { trade: SwingLedgerTrade }) {
         </div>
       </div>}
       <p className="mt-3 text-[11px] text-white/35">This assessment does not rewrite the frozen strategy plan or guarantee an outcome.</p>
-    </div>
+      </div>
+    </details>
   );
 }
 

@@ -126,7 +126,7 @@ export function summarizeSwingTradeLedger(trades: ReadonlyArray<{
   quantity?: number;
   exits?: SwingTradeExit[];
 }>): SwingTradeLedgerSummary {
-  const dailyTradingCashFlows = new Map<string, number>();
+  const tradingCashFlowEvents: Array<{ date: string; amount: number; order: number }> = [];
   const asOf = new Date().toISOString().slice(0, 10);
   const summary = trades.reduce<SwingTradeLedgerSummary>((summary, trade) => {
     const purchaseValue = trade.purchaseValue ?? trade.progress.investedValue;
@@ -139,19 +139,10 @@ export function summarizeSwingTradeLedger(trades: ReadonlyArray<{
     const unrealizedPnl = trade.status === "OPEN" ? currentOpenValue - remainingCost : 0;
     const realizedPnl = trade.realizedPnlValue
       ?? (trade.status === "CLOSED" ? trade.progress.pnlValue ?? 0 : 0);
-    if (trade.boughtOn) dailyTradingCashFlows.set(
-      trade.boughtOn,
-      (dailyTradingCashFlows.get(trade.boughtOn) ?? 0) - purchaseValue,
-    );
-    for (const exit of trade.exits ?? []) dailyTradingCashFlows.set(
-      exit.soldOn,
-      (dailyTradingCashFlows.get(exit.soldOn) ?? 0) + exit.saleValue,
-    );
+    if (trade.boughtOn) tradingCashFlowEvents.push({ date: trade.boughtOn, amount: -purchaseValue, order: 0 });
+    for (const exit of trade.exits ?? []) tradingCashFlowEvents.push({ date: exit.soldOn, amount: exit.saleValue, order: 1 });
     if (!(trade.exits?.length) && trade.status === "CLOSED" && trade.closedOn && trade.exitPrice && quantity > 0) {
-      dailyTradingCashFlows.set(
-        trade.closedOn,
-        (dailyTradingCashFlows.get(trade.closedOn) ?? 0) + trade.exitPrice * quantity,
-      );
+      tradingCashFlowEvents.push({ date: trade.closedOn, amount: trade.exitPrice * quantity, order: 1 });
     }
     if (trade.status === "OPEN") {
       summary.openCount += 1;
@@ -180,7 +171,9 @@ export function summarizeSwingTradeLedger(trades: ReadonlyArray<{
   });
   const capitalCashFlows: DatedCashFlow[] = [];
   let retainedCash = 0;
-  for (const [date, amount] of [...dailyTradingCashFlows.entries()].sort(([left], [right]) => left.localeCompare(right))) {
+  for (const { date, amount } of tradingCashFlowEvents.sort((left, right) => (
+    left.date.localeCompare(right.date) || left.order - right.order
+  ))) {
     retainedCash += amount;
     if (retainedCash < 0) {
       const contribution = -retainedCash;
@@ -192,7 +185,7 @@ export function summarizeSwingTradeLedger(trades: ReadonlyArray<{
   if (capitalCashFlows.length > 0) {
     const terminalDate = trades.some((trade) => trade.status === "OPEN")
       ? asOf
-      : [...dailyTradingCashFlows.keys()].sort().at(-1) ?? asOf;
+      : tradingCashFlowEvents.map((event) => event.date).sort().at(-1) ?? asOf;
     capitalCashFlows.push({ date: terminalDate, amount: retainedCash + summary.currentOpenValue });
   } else {
     summary.capitalEmployedValue = summary.totalInvestedValue;

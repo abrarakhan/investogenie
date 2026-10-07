@@ -121,6 +121,25 @@ describe("swing trade ledger progress", () => {
     expect(summary.xirrPct).not.toBeNull();
   });
 
+  it("funds a same-day purchase before crediting its sale proceeds", () => {
+    const summary = summarizeSwingTradeLedger([{
+      status: "CLOSED",
+      boughtOn: "2026-10-05",
+      closedOn: "2026-10-05",
+      purchaseValue: 178_415,
+      quantity: 850,
+      remainingQuantity: 0,
+      currentPrice: null,
+      progress: { investedValue: 178_415, pnlValue: -2_932.50 },
+      realizedPnlValue: -2_932.50,
+      exits: [{ id: "same-day", soldOn: "2026-10-05", quantity: 850, exitPrice: 206.45, saleValue: 175_482.50, realizedPnlValue: -2_932.50, reason: null }],
+    }]);
+
+    expect(summary.capitalEmployedValue).toBe(178_415);
+    expect(summary.roiPct).toBeCloseTo(-1.6436, 3);
+    expect(summary.xirrPct).toBeNull();
+  });
+
   it("recycles sale proceeds instead of counting every purchase as fresh capital", () => {
     const summary = summarizeSwingTradeLedger([
       {
