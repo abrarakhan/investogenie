@@ -85,6 +85,19 @@ def fetch_rows(fetch: Callable[[], Any], attempts: int = 3) -> list[dict[str, An
     raise last_error
 
 
+def summarize_errors(errors: list[str]) -> str | None:
+    """Collapse repeated broker errors while preserving first-seen order."""
+    if not errors:
+        return None
+    counts: dict[str, int] = {}
+    for error in errors:
+        counts[error] = counts.get(error, 0) + 1
+    return "; ".join(
+        f"{error} (repeated {count} times)" if count > 1 else error
+        for error, count in counts.items()
+    )
+
+
 def load_accounts(conn) -> list[tuple[str, str, str, str]]:
     master_key = env("CREDENTIAL_ENCRYPTION_KEY")
     if not master_key:
@@ -217,7 +230,7 @@ def sync_account(conn, user_id: str, api_key: str, api_secret: str, session_toke
                 where id=%s
                 """,
                 (status, counts["HOLDING"], counts["POSITION"], counts["ORDER"],
-                 counts["TRADE"], "; ".join(errors) or None, sync_id),
+                 counts["TRADE"], summarize_errors(errors), sync_id),
             )
         conn.commit()
         print(

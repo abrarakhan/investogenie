@@ -8,6 +8,7 @@ from breeze_account_sync import (
     fetch_rows,
     history_windows,
     response_rows,
+    summarize_errors,
 )
 
 
@@ -33,6 +34,19 @@ class BreezeAccountSyncTest(unittest.TestCase):
             return response
 
         self.assertEqual(fetch_rows(fetch, attempts=2), [{"order_id": "1"}])
+
+    def test_repeated_broker_errors_are_summarized_once(self):
+        self.assertEqual(
+            summarize_errors([
+                "ORDER: history window unavailable",
+                "ORDER: history window unavailable",
+                "TRADE: session expired",
+            ]),
+            "ORDER: history window unavailable (repeated 2 times); TRADE: session expired",
+        )
+
+    def test_empty_broker_errors_have_no_summary(self):
+        self.assertIsNone(summarize_errors([]))
 
     def test_reconciliation_starts_with_investogenie_activity(self):
         self.assertEqual(INVESTOGENIE_ACTIVITY_START.date().isoformat(), "2026-08-01")
