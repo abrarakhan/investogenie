@@ -75,7 +75,7 @@ const marketRefreshIntervalMinutes = Number(process.env.MARKET_REFRESH_INTERVAL_
 const marketHoursQuoteRefreshIntervalMinutes = Number(
   process.env.MARKET_HOURS_QUOTE_REFRESH_INTERVAL_MINUTES
     ?? process.env.INDIA_MARKET_QUOTE_REFRESH_INTERVAL_MINUTES
-    ?? 5,
+    ?? 2,
 );
 const marketHoursQuoteRefreshDisabled =
   process.env.MARKET_HOURS_QUOTE_REFRESH_DISABLED === "1"
@@ -84,7 +84,7 @@ const indiaQuoteBatchSize = process.env.INDIA_LIVE_QUOTE_BATCH_SIZE ?? "100";
 const indiaQuoteSleep = process.env.INDIA_LIVE_QUOTE_SLEEP_SECONDS ?? "0.2";
 const newsRefreshIntervalMinutes = Number(process.env.NEWS_REFRESH_INTERVAL_MINUTES ?? 60);
 const newsRefreshDisabled = process.env.NEWS_REFRESH_DISABLED === "1";
-const mobileAlertIntervalMinutes = Number(process.env.MOBILE_ALERT_INTERVAL_MINUTES ?? 5);
+const mobileAlertIntervalMinutes = Number(process.env.MOBILE_ALERT_INTERVAL_MINUTES ?? 2);
 const mobileAlertsDisabled = process.env.MOBILE_ALERTS_DISABLED === "1";
 const breezeAccountSyncIntervalMinutes = Number(process.env.BREEZE_ACCOUNT_SYNC_INTERVAL_MINUTES ?? 5);
 const breezeAccountSyncDisabled = process.env.BREEZE_ACCOUNT_SYNC_DISABLED === "1";

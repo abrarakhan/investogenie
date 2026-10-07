@@ -32,7 +32,7 @@ export async function registerDeviceNotifications(): Promise<string> {
   if (!projectId) return "Push alerts will activate after the EAS project is linked.";
   const token = (await Notifications.getExpoPushTokenAsync({ projectId })).data;
   await registerPushToken(token, Platform.OS === "ios" ? "ios" : "android");
-  return "Push alerts active. Notifications contain no financial details.";
+  return "Push alerts active for trade changes and ready swing candidates.";
 }
 
 export async function unlockWithBiometrics(): Promise<boolean> {

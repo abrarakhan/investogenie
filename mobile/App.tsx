@@ -37,8 +37,9 @@ export default function App() {
     }).finally(() => setBooting(false));
   }, []);
   useEffect(() => {
-    const response = Notifications.addNotificationResponseReceivedListener(() => {
-      setRequestedTab("ledger");
+    const response = Notifications.addNotificationResponseReceivedListener((notificationResponse) => {
+      const screen = notificationResponse.notification.request.content.data?.screen;
+      setRequestedTab(screen === "strong-swing" ? "strong" : "ledger");
       setUnlocked(true);
     });
     const appState = AppState.addEventListener("change", (state) => {

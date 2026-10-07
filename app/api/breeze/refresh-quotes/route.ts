@@ -11,16 +11,19 @@ const requests = new Map<string, number>();
 export async function POST(request: NextRequest) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
-  if (Date.now() - (requests.get(user.id) ?? 0) < 60_000) {
-    return NextResponse.json({ skipped: true });
-  }
   const body = await request.json().catch(() => null);
   const ids = body?.assetIds;
   if (!Array.isArray(ids) || ids.length > 50 || ids.some((id) => typeof id !== "string" || !/^[0-9a-f-]{36}$/i.test(id))) {
     return NextResponse.json({ error: "Invalid asset list" }, { status: 400 });
   }
   if (!ids.length) return NextResponse.json({ updated: 0 });
-  requests.set(user.id, Date.now());
+  // Rate-limit each batch independently. Pages can contain more than 50 assets,
+  // so a per-user key silently discarded every batch after the first one.
+  const requestKey = `${user.id}:${[...ids].sort().join(",")}`;
+  if (Date.now() - (requests.get(requestKey) ?? 0) < 60_000) {
+    return NextResponse.json({ skipped: true });
+  }
+  requests.set(requestKey, Date.now());
   try {
     const root = process.cwd();
     const python = process.env.PYTHON_BIN || [root, ".venv", "bin", "python"].join("/");

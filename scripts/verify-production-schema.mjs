@@ -17,6 +17,7 @@ const requiredRelations = [
   "public.mobile_sessions",
   "public.mobile_push_tokens",
   "public.mobile_trade_alert_state",
+  "public.mobile_candidate_alert_state",
   "public.mobile_notification_log",
   "public.adaptive_allocation_strategies",
   "public.adaptive_allocation_runs",
