@@ -42,6 +42,16 @@ export function isSyncOlderThanSession(
   return new Date(syncStartedAt).getTime() < new Date(sessionUpdatedAt).getTime();
 }
 
+export function summarizeReconciliationError(error: string | null): string | null {
+  if (!error) return null;
+  const messages = error.split("; ").map((message) => message.trim()).filter(Boolean);
+  const counts = new Map<string, number>();
+  for (const message of messages) counts.set(message, (counts.get(message) ?? 0) + 1);
+  return [...counts].map(([message, count]) => (
+    count > 1 ? `${message} (repeated ${count} times)` : message
+  )).join("; ");
+}
+
 export async function getBreezeReconciliation(userId: string): Promise<BreezeReconciliation> {
   const scopeStart = "2026-08-01";
   const empty: BreezeReconciliation = {
@@ -140,7 +150,7 @@ export async function getBreezeReconciliation(userId: string): Promise<BreezeRec
       scopeStart,
       status: superseded ? "RUNNING" : sync?.status ?? null,
       capturedAt: superseded ? null : sync?.finished_at ? new Date(sync.finished_at).toISOString() : null,
-      error: superseded ? null : sync?.error ?? null,
+      error: superseded ? null : summarizeReconciliationError(sync?.error ?? null),
       holdingsCount: Number(scopedCounts?.holdings_count ?? 0),
       positionsCount: Number(scopedCounts?.positions_count ?? 0),
       ordersCount: Number(sync?.orders_count ?? 0),
