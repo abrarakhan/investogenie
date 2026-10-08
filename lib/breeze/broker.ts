@@ -105,12 +105,16 @@ export async function getBreezeReconciliation(userId: string): Promise<BreezeRec
        ), broker as (
          select coalesce(a.ticker,s.stock_code) ticker,
                 coalesce(a.exchange,s.exchange_code) exchange,
-                sum(coalesce(s.quantity,0)) broker_quantity
+                sum(case
+                  when s.snapshot_type='POSITION' and lower(coalesce(s.action,''))='sell'
+                    then -abs(coalesce(s.quantity,0))
+                  else coalesce(s.quantity,0)
+                end) broker_quantity
            from public.breeze_broker_snapshots s
            left join public.breeze_instrument_map m
              on m.exchange_code=coalesce(s.exchange_code,'NSE') and upper(m.stock_code)=upper(s.stock_code)
            left join public.assets a on a.id=m.asset_id
-          where s.user_id=$1 and s.snapshot_type='HOLDING'
+          where s.user_id=$1 and s.snapshot_type in ('HOLDING','POSITION')
             and upper(coalesce(a.ticker,s.stock_code)) in (select ticker from tracked)
           group by coalesce(a.ticker,s.stock_code),coalesce(a.exchange,s.exchange_code)
        ), ledger as (
