@@ -1,5 +1,6 @@
 import { query, queryOne, tx } from "@/lib/db";
 import { resolveSignalProjection } from "@/lib/swingTradeProjection";
+import { validateShareQuantity } from "@/lib/tradeInput";
 
 type Market = "IN" | "US";
 
@@ -43,6 +44,7 @@ export async function createMobileTrade(userId: string, input: CreateMobileTrade
   const boughtOn = date(input.boughtOn, "purchase date");
   const buyPrice = positive(input.buyPrice, "Buy price");
   const quantity = positive(input.quantity, "Quantity");
+  validateShareQuantity(market, quantity);
   const asset = await queryOne<{ id: string; currency: string; country: Market }>(
     `select id,currency,country from public.assets
       where id=$1 and country=$2 and asset_class='STOCK' and is_active`,
@@ -68,8 +70,8 @@ export async function createMobileTrade(userId: string, input: CreateMobileTrade
     `insert into public.swing_trade_ledger
        (user_id,asset_id,market,status,bought_on,buy_price,quantity,currency,strategy_key,strategy_label,
         signal_verdict,signal_as_of,signal_score,projection_entry,projected_target,projected_stop,
-        projected_trailing_stop,projected_atr,trailing_distance,expected_holding_days,projection_snapshot,notes)
-     values ($1,$2,$3,'OPEN',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20::jsonb,null)
+        projected_trailing_stop,projected_atr,trailing_distance,expected_holding_days,projection_snapshot,notes,purchase_value)
+     values ($1,$2,$3,'OPEN',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20::jsonb,null,$5*$6)
      returning id`,
     [userId, asset.id, market, boughtOn, buyPrice, quantity, asset.currency, projection.strategyKey,
       projection.label, projection.row.verdict, projection.row.as_of,
@@ -88,6 +90,7 @@ export async function updateMobileTrade(userId: string, tradeId: string, input: 
   const boughtOn = date(input.boughtOn, "purchase date");
   const buyPrice = positive(input.buyPrice, "Buy price");
   const quantity = positive(input.quantity, "Quantity");
+  validateShareQuantity(market, quantity);
   const trade = await queryOne<{ sold_quantity: string }>(
     `select coalesce(sum(e.quantity),0)::text sold_quantity
        from public.swing_trade_ledger l left join public.swing_trade_exits e on e.trade_id=l.id
@@ -98,7 +101,7 @@ export async function updateMobileTrade(userId: string, tradeId: string, input: 
   if (quantity + 0.000001 < Number(trade.sold_quantity)) throw new Error("Quantity cannot be below shares already sold");
   await query(
     `update public.swing_trade_ledger
-        set bought_on=$1,buy_price=$2,quantity=$3,notes=$4,updated_at=now()
+        set bought_on=$1,buy_price=$2,quantity=$3,purchase_value=$2*$3,notes=$4,updated_at=now()
       where id=$5 and user_id=$6 and market=$7`,
     [boughtOn, buyPrice, quantity, String(input.notes ?? "").trim().slice(0, 500) || null, tradeId, userId, market],
   );

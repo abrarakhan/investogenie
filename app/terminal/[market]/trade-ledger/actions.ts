@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { getSessionUser } from "@/lib/auth";
 import { query, queryOne, tx } from "@/lib/db";
 import { resolveSignalProjection } from "@/lib/swingTradeProjection";
+import { validateShareQuantity } from "@/lib/tradeInput";
 
 const validMarket = (value: string): "IN" | "US" => value === "US" ? "US" : "IN";
 const cleanNumber = (formData: FormData, key: string): number | null => {
@@ -47,6 +48,7 @@ export async function addSwingTrade(formData: FormData) {
   const today = new Date().toISOString().slice(0, 10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(boughtOn) || boughtOn > today) throw new Error("Enter a valid purchase date");
   if (!buyPrice || buyPrice <= 0 || !quantity || quantity <= 0) throw new Error("Buy price and quantity must be greater than zero");
+  validateShareQuantity(market, quantity);
 
   const closedOn = entryStatus === "CLOSED" ? String(formData.get("closedOn") ?? "").slice(0, 10) : null;
   const exitPrice = entryStatus === "CLOSED" ? cleanNumber(formData, "exitPrice") : null;
@@ -84,9 +86,9 @@ export async function addSwingTrade(formData: FormData) {
     `insert into public.swing_trade_ledger
        (user_id,asset_id,market,status,bought_on,buy_price,quantity,currency,strategy_key,strategy_label,
         signal_verdict,signal_as_of,signal_score,projection_entry,projected_target,projected_stop,
-        projected_trailing_stop,projected_atr,trailing_distance,expected_holding_days,projection_snapshot,notes,
+        projected_trailing_stop,projected_atr,trailing_distance,expected_holding_days,projection_snapshot,notes,purchase_value,
         closed_on,exit_price,close_reason)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21::jsonb,$22,$23,$24,$25)`,
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21::jsonb,$22,$6*$7,$23,$24,$25)`,
     [user.id, asset.id, market, entryStatus, boughtOn, buyPrice, quantity, asset.currency, projection.strategyKey,
       projection.label, projection.row.verdict, projection.row.as_of, projection.strategyScore?.score ?? projection.row.score,
       suppliedEntry ?? projection.levels.entry, target, stop, trail, projection.levels.atr, trailingDistance,
@@ -108,6 +110,7 @@ export async function updateSwingTrade(formData: FormData) {
   const today = new Date().toISOString().slice(0, 10);
   if (!id || !/^\d{4}-\d{2}-\d{2}$/.test(boughtOn) || boughtOn > today) throw new Error("Enter a valid purchase date");
   if (!buyPrice || buyPrice <= 0 || !quantity || quantity <= 0) throw new Error("Buy price and quantity must be greater than zero");
+  validateShareQuantity(market, quantity);
 
   const trade = await queryOne<{ status: "OPEN" | "CLOSED"; sold_quantity: string }>(
     `select l.status,coalesce(sum(e.quantity),0)::text sold_quantity
@@ -142,7 +145,7 @@ export async function updateSwingTrade(formData: FormData) {
 
   await query(
     `update public.swing_trade_ledger
-        set bought_on=$1,buy_price=$2,quantity=$3,notes=$4,
+        set bought_on=$1,buy_price=$2,quantity=$3,purchase_value=$2*$3,notes=$4,
             closed_on=case when status='CLOSED' then $5::date else null end,
             exit_price=case when status='CLOSED' then $6::numeric else null end,
             close_reason=case when status='CLOSED' then $7 else null end,

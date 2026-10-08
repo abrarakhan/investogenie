@@ -79,8 +79,8 @@ export default function SwingTradeLedger({ market, trades, defaults }: {
             />
           </Field>
           <Field label="Purchase date"><input name="boughtOn" type="date" required max={today} defaultValue={defaults.boughtOn ?? today} className="field" /></Field>
-          <Field label="Actual buy price"><input name="buyPrice" type="number" min="0.000001" step="any" required defaultValue={defaults.buyPrice ?? defaults.current ?? ""} className="field" /></Field>
-          <Field label="Quantity"><input name="quantity" type="number" min="0.000001" step="any" required className="field" /></Field>
+          <Field label="Actual buy price (₹ per share)"><input name="buyPrice" type="number" inputMode="decimal" min="0.000001" step="any" required defaultValue={defaults.buyPrice ?? defaults.current ?? ""} className="field" /></Field>
+          <Field label={market === "IN" ? "Quantity (whole shares)" : "Quantity"}><input name="quantity" type="number" inputMode={market === "IN" ? "numeric" : "decimal"} min={market === "IN" ? "1" : "0.000001"} step={market === "IN" ? "1" : "any"} required className="field" /></Field>
           <input type="hidden" name="strategyKey" value={defaults.strategy ?? ""} />
           <input type="hidden" name="projectionEntry" value={defaults.entry ?? ""} />
           <input type="hidden" name="projectedTarget" value={defaults.target ?? ""} />
@@ -108,8 +108,8 @@ export default function SwingTradeLedger({ market, trades, defaults }: {
             <AssetPicker name="assetId" queryName="ticker" country={market} placeholder="e.g. RELIANCE" required />
           </Field>
           <Field label="Purchase date"><input name="boughtOn" type="date" required max={today} className="field" /></Field>
-          <Field label="Actual buy price"><input name="buyPrice" type="number" min="0.000001" step="any" required className="field" /></Field>
-          <Field label="Quantity"><input name="quantity" type="number" min="0.000001" step="any" required className="field" /></Field>
+          <Field label="Actual buy price"><input name="buyPrice" type="number" inputMode="decimal" min="0.000001" step="any" required className="field" /></Field>
+          <Field label={market === "IN" ? "Quantity (whole shares)" : "Quantity"}><input name="quantity" type="number" inputMode={market === "IN" ? "numeric" : "decimal"} min={market === "IN" ? "1" : "0.000001"} step={market === "IN" ? "1" : "any"} required className="field" /></Field>
           <Field label="Exit date"><input name="closedOn" type="date" required max={today} className="field" /></Field>
           <Field label="Exit price"><input name="exitPrice" type="number" min="0.000001" step="any" required className="field" /></Field>
           <Field label="Exit reason"><select name="closeReason" className="field bg-[#090c12]"><option>Target reached</option><option>Trailing stop</option><option>Stop loss</option><option>Holding window expired</option><option>Manual exit</option></select></Field>
