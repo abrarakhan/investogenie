@@ -23,6 +23,17 @@ const requiredRelations = [
   "public.adaptive_allocation_runs",
   "public.breeze_auto_buy_settings",
   "public.breeze_order_intents",
+  "public.ml_decision_calendar",
+  "public.ml_universe_snapshots",
+  "public.ml_feature_snapshots",
+  "public.ml_labels",
+  "public.ml_models",
+  "public.ml_walk_forward_runs",
+  "public.ml_promotion_decisions",
+  "public.swing_predictions",
+  "public.ml_serving_assignments",
+  "public.ml_serving_assignment_history",
+  "public.ml_monitor_observations",
 ];
 const client = new pg.Client({
   connectionString: url,

@@ -3,6 +3,7 @@ import { existsSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { isMarketOpenNow, isTradingDay, latestExpectedSessionDate, marketHolidayDates, refreshMarketHolidays } from "../lib/market-calendar.mjs";
 import { startEodScheduler } from "./eod-scheduler.mjs";
+import { startMlSnapshotScheduler } from "./ml-snapshot-scheduler.mjs";
 
 const mode = process.argv[2];
 if (mode !== "dev" && mode !== "start") {
@@ -26,6 +27,7 @@ const usPipeline = resolve(root, "pipelines/us_market_sync.py");
 const usHistoryPipeline = resolve(root, "pipelines/us_history_sync.py");
 const macroPipeline = resolve(root, "pipelines/macro_sync.py");
 const amfiSchemeMasterScript = resolve(root, "scripts/sync-amfi-scheme-master.mjs");
+const mlSnapshotScript = resolve(root, "scripts/capture-ml-snapshots.mjs");
 const pythonCandidates = [
   process.env.PYTHON_BIN,
   resolve(root, ".venv/bin/python"),
@@ -1534,7 +1536,23 @@ const stopEodScheduler = startEodScheduler({
       "--min-bars", usHistoryMinBars, "--sleep", usHistorySleep]);
   },
 });
+const stopMlSnapshotScheduler = startMlSnapshotScheduler({
+  databaseUrl: process.env.DATABASE_URL,
+  runIndia: (session) => new Promise((resolveRun, rejectRun) => {
+    if (shuttingDown) { rejectRun(new Error("Service is shutting down")); return; }
+    const child = spawn(process.execPath, [
+      "--import", resolve(root, "scripts/ts-alias-hook.mjs"),
+      mlSnapshotScript, "IN", session,
+    ], { cwd: root, env: process.env, stdio: "inherit", timeout: 15 * 60_000 });
+    child.once("error", rejectRun);
+    child.once("close", (code, signal) => {
+      if (code === 0 && !signal) resolveRun();
+      else rejectRun(new Error(`ML snapshot job exited ${signal ?? code}`));
+    });
+  }),
+});
 process.once("exit", stopEodScheduler);
+process.once("exit", stopMlSnapshotScheduler);
 scheduleDailyAmfiSync();
 scheduleNseCatchup();
 scheduleRecurringMarketRefresh();

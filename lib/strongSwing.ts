@@ -25,6 +25,16 @@ interface SignalContext {
   lower_circuit: string | number | null; quote_updated_at: string | null; quote_source: string | null;
 }
 
+export interface StrongSwingSnapshotCapture {
+  source: "interactive" | "scheduled";
+  decisionTime?: string;
+  schedulerRunId?: string;
+  marketDate?: string;
+  dataCutoff?: string;
+  featureVersion?: string;
+  calendarVersion?: string;
+}
+
 export interface StrongSwingCandidate extends ScreenRow, StrongSwingAssessment {
   baseSwingRank: number;
   strongSwingRank: number;
@@ -56,6 +66,7 @@ const meanVelocity = (bars: OHLCV[]): number => {
 async function captureStrongSwingSnapshot(
   market: MarketId,
   candidates: StrongSwingCandidate[],
+  capture: StrongSwingSnapshotCapture,
 ): Promise<void> {
   if (!candidates.length) return;
   const payload = candidates.map((candidate, index) => ({
@@ -81,12 +92,53 @@ async function captureStrongSwingSnapshot(
       stopRiskPct: candidate.stopRiskPct,
       entryExtensionAtr: candidate.entryExtensionAtr,
       circuitLikeSessions20: candidate.circuitLikeSessions20,
+      sma20: candidate.sma20,
+      sma50: candidate.sma50,
+      sma200: candidate.sma200,
+      relativeStrength20Pct: candidate.relativeStrength20Pct,
+      averageTradedValue20: candidate.averageTradedValue20,
+      volumeRatio: candidate.volumeRatio,
+      closeLocation: candidate.closeLocation,
+      triggerClearanceAtr: candidate.triggerClearanceAtr,
+      marketRegimePositive: candidate.marketRegimePositive,
+      confirmationMode: candidate.confirmationMode,
     },
   }));
+  const scheduled = capture.source === "scheduled";
+  const provenance = {
+    source: capture.source,
+    decisionTime: capture.decisionTime ?? null,
+    schedulerRunId: capture.schedulerRunId ?? null,
+    marketDate: capture.marketDate ?? null,
+    dataCutoff: capture.dataCutoff ?? null,
+    featureVersion: capture.featureVersion ?? (scheduled ? null : "legacy-interactive-v0"),
+    calendarVersion: capture.calendarVersion ?? (scheduled ? null : "legacy-calendar-v0"),
+  };
+  if (scheduled && Object.values(provenance).some((value) => value === null)) {
+    throw new Error("Scheduled Strong Swing snapshots require complete provenance");
+  }
+  const conflictClause = scheduled
+    ? `on conflict (market,market_date,decision_time,asset_id,source,feature_version)
+         where source='scheduled' do update set
+           rank=excluded.rank,status=excluded.status,strength_score=excluded.strength_score,
+           base_score=excluded.base_score,current_price=excluded.current_price,
+           confirmation_entry=excluded.confirmation_entry,projected_target=excluded.projected_target,
+           projected_stop=excluded.projected_stop,projected_trail=excluded.projected_trail,
+           expected_days=excluded.expected_days,latest_bar_date=excluded.latest_bar_date,
+           gates=excluded.gates,metrics=excluded.metrics,data_cutoff=excluded.data_cutoff,
+           scheduler_run_id=excluded.scheduler_run_id,calendar_version=excluded.calendar_version`
+    : `on conflict (captured_at,market,asset_id) do update set
+         rank=excluded.rank,status=excluded.status,strength_score=excluded.strength_score,
+         base_score=excluded.base_score,current_price=excluded.current_price,
+         confirmation_entry=excluded.confirmation_entry,projected_target=excluded.projected_target,
+         projected_stop=excluded.projected_stop,projected_trail=excluded.projected_trail,
+         expected_days=excluded.expected_days,latest_bar_date=excluded.latest_bar_date,
+         gates=excluded.gates,metrics=excluded.metrics`;
   await query(
     `with stamp as (
-       select date_trunc('hour', now())
-              + floor(extract(minute from now()) / 15) * interval '15 minutes' captured_at
+       select case when $3::text='scheduled' then now()
+              else date_trunc('hour', now())
+                   + floor(extract(minute from now()) / 15) * interval '15 minutes' end captured_at
      ), rows as (
        select * from jsonb_to_recordset($2::jsonb) as x(
          "assetId" uuid,"ticker" text,"rank" integer,"status" text,
@@ -98,26 +150,24 @@ async function captureStrongSwingSnapshot(
      insert into public.strong_swing_snapshots
        (captured_at,market,asset_id,ticker,rank,status,strength_score,base_score,
         current_price,confirmation_entry,projected_target,projected_stop,
-        projected_trail,expected_days,latest_bar_date,gates,metrics)
+        projected_trail,expected_days,latest_bar_date,gates,metrics,source,decision_time,
+        feature_version,scheduler_run_id,market_date,data_cutoff,calendar_version)
      select stamp.captured_at,$1,rows."assetId",rows."ticker",rows."rank",rows."status",
             rows."strengthScore",rows."baseScore",rows."currentPrice",rows."entry",
             rows."target",rows."stop",rows."trail",rows."expectedDays",rows."latestDate",
-            rows."gates",rows."metrics"
+            rows."gates",rows."metrics",$3,$4::time,$5,$6::uuid,$7::date,$8::timestamptz,$9
        from rows cross join stamp
-     on conflict (captured_at,market,asset_id) do update set
-       rank=excluded.rank,status=excluded.status,strength_score=excluded.strength_score,
-       base_score=excluded.base_score,current_price=excluded.current_price,
-       confirmation_entry=excluded.confirmation_entry,projected_target=excluded.projected_target,
-       projected_stop=excluded.projected_stop,projected_trail=excluded.projected_trail,
-       expected_days=excluded.expected_days,latest_bar_date=excluded.latest_bar_date,
-       gates=excluded.gates,metrics=excluded.metrics`,
-    [market, JSON.stringify(payload)],
+     ${conflictClause}`,
+    [market, JSON.stringify(payload), provenance.source, provenance.decisionTime,
+      provenance.featureVersion, provenance.schedulerRunId, provenance.marketDate,
+      provenance.dataCutoff, provenance.calendarVersion],
   );
 }
 
 export async function getStrongSwingCandidates(
   market: MarketId,
   settings: SwingSettings,
+  capture: StrongSwingSnapshotCapture = { source: "interactive" },
 ): Promise<StrongSwingCandidate[]> {
   const country = market;
   const base = await runScreener(
@@ -231,7 +281,7 @@ export async function getStrongSwingCandidates(
     strongSwingRank: index + 1,
   }));
   try {
-    await captureStrongSwingSnapshot(market, ranked);
+    await captureStrongSwingSnapshot(market, ranked, capture);
   } catch (error) {
     console.error("[strong-swing] failed to capture audit snapshot", error);
   }
