@@ -21,15 +21,42 @@ update public.strong_swing_snapshots
     or calendar_version is null;
 
 alter table public.strong_swing_snapshots
-  alter column snapshot_id set not null,
-  add constraint strong_swing_snapshots_snapshot_id_key unique (snapshot_id),
-  add constraint strong_swing_snapshots_source_check check (source in ('scheduled', 'interactive')),
-  add constraint strong_swing_snapshots_scheduled_provenance_check check (
-    source <> 'scheduled' or (
-      decision_time is not null and feature_version is not null and scheduler_run_id is not null
-      and market_date is not null and data_cutoff is not null and calendar_version is not null
-    )
-  );
+  alter column snapshot_id set not null;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+     where conrelid = 'public.strong_swing_snapshots'::regclass
+       and conname = 'strong_swing_snapshots_snapshot_id_key'
+  ) then
+    alter table public.strong_swing_snapshots
+      add constraint strong_swing_snapshots_snapshot_id_key unique (snapshot_id);
+  end if;
+  if not exists (
+    select 1 from pg_constraint
+     where conrelid = 'public.strong_swing_snapshots'::regclass
+       and conname = 'strong_swing_snapshots_source_check'
+  ) then
+    alter table public.strong_swing_snapshots
+      add constraint strong_swing_snapshots_source_check
+      check (source in ('scheduled', 'interactive'));
+  end if;
+  if not exists (
+    select 1 from pg_constraint
+     where conrelid = 'public.strong_swing_snapshots'::regclass
+       and conname = 'strong_swing_snapshots_scheduled_provenance_check'
+  ) then
+    alter table public.strong_swing_snapshots
+      add constraint strong_swing_snapshots_scheduled_provenance_check check (
+        source <> 'scheduled' or (
+          decision_time is not null and feature_version is not null and scheduler_run_id is not null
+          and market_date is not null and data_cutoff is not null and calendar_version is not null
+        )
+      );
+  end if;
+end;
+$$;
 
 create unique index if not exists strong_swing_snapshots_canonical_idx
   on public.strong_swing_snapshots(market, market_date, decision_time, asset_id, source, feature_version)
@@ -234,18 +261,22 @@ begin
 end;
 $$;
 
+drop trigger if exists ml_feature_snapshots_immutable on public.ml_feature_snapshots;
 create trigger ml_feature_snapshots_immutable
   before update or delete on public.ml_feature_snapshots
   for each row execute function public.prevent_ml_record_mutation();
 
+drop trigger if exists ml_labels_immutable on public.ml_labels;
 create trigger ml_labels_immutable
   before update or delete on public.ml_labels
   for each row execute function public.prevent_ml_record_mutation();
 
+drop trigger if exists ml_promotion_decisions_immutable on public.ml_promotion_decisions;
 create trigger ml_promotion_decisions_immutable
   before update or delete on public.ml_promotion_decisions
   for each row execute function public.prevent_ml_record_mutation();
 
+drop trigger if exists swing_predictions_immutable on public.swing_predictions;
 create trigger swing_predictions_immutable
   before update or delete on public.swing_predictions
   for each row execute function public.prevent_ml_record_mutation();
@@ -261,6 +292,7 @@ begin
 end;
 $$;
 
+drop trigger if exists ml_models_contract_immutable on public.ml_models;
 create trigger ml_models_contract_immutable
   before update on public.ml_models
   for each row execute function public.guard_ml_model_contract();
