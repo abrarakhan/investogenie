@@ -200,14 +200,15 @@ export async function getStrongSwingCandidates(
       `with chosen as (
          select a.id
            from public.assets a
-          where a.country=$1 and a.ticker=$2
-          order by (select count(*) from public.daily_ohlcv o where o.asset_id=a.id) desc
+          where a.country=$1 and a.ticker=any($2::text[])
+          order by array_position($2::text[],a.ticker),
+                   (select count(*) from public.daily_ohlcv o where o.asset_id=a.id) desc
           limit 1
        )
        select o.asset_id,o.date::text date,o.open,o.high,o.low,o.close,o.volume,o.open_interest
          from public.daily_ohlcv o join chosen c on c.id=o.asset_id
         order by o.date desc limit 260`,
-      [country, market === "IN" ? "NIFTYBEES" : "SPY"],
+      [country, market === "IN" ? ["NIFTY", "NIFTYBEES"] : ["SPY"]],
     ),
   ]);
 
@@ -224,7 +225,7 @@ export async function getStrongSwingCandidates(
   // missing reference data. Say so in the log; the gate details say so on screen.
   if (!benchmarkBars.length) {
     console.warn(
-      `[strong-swing] benchmark ${market === "IN" ? "NIFTYBEES" : "SPY"} has no bars for ${market}; `
+      `[strong-swing] benchmark ${market === "IN" ? "NIFTY/NIFTYBEES" : "SPY"} has no bars for ${market}; `
       + "regime, relative-strength and freshness gates will fail for every candidate.",
     );
   }

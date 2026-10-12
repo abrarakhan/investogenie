@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assessMomentumIgnition } from "./momentumIgnition";
+import { assessMomentumIgnition, observedTradingSessionDistance } from "./momentumIgnition";
 import type { OHLCV } from "@/lib/types";
 
 function momentumBars(count = 240): OHLCV[] {
@@ -35,6 +35,25 @@ function benchmark(count = 240): OHLCV[] {
 }
 
 describe("Momentum Ignition", () => {
+  it("treats Friday-to-Monday as one observed trading session", () => {
+    const stock = [
+      { ...momentumBars(1)[0], date: "2026-10-09" },
+      { ...momentumBars(1)[0], date: "2026-10-12" },
+    ];
+    const index = [{ ...benchmark(1)[0], date: "2026-10-09" }];
+    expect(observedTradingSessionDistance("2026-10-12", "2026-10-09", stock, index)).toBe(1);
+  });
+
+  it("rejects a benchmark that is two observed sessions behind", () => {
+    const stock = [
+      { ...momentumBars(1)[0], date: "2026-10-09" },
+      { ...momentumBars(1)[0], date: "2026-10-12" },
+      { ...momentumBars(1)[0], date: "2026-10-13" },
+    ];
+    const index = [{ ...benchmark(1)[0], date: "2026-10-09" }];
+    expect(observedTradingSessionDistance("2026-10-13", "2026-10-09", stock, index)).toBe(2);
+  });
+
   it("finds a liquid trend leader approaching its breakout", () => {
     const bars = momentumBars();
     const result = assessMomentumIgnition({

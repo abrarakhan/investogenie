@@ -160,7 +160,7 @@ const preliminarySql = (market: "IN" | "US") => {
 
 const marketConfig = (market: "IN" | "US") => market === "IN" ? {
   universeWhere: "a.country='IN' and a.exchange='NSE'",
-  benchmarkTicker: "NIFTYBEES",
+  benchmarkTickers: ["NIFTY", "NIFTYBEES"],
   benchmarkLabel: "Nifty",
   priceFloor: 20,
   preliminaryLiquidityFloor: 10_000_000,
@@ -168,7 +168,7 @@ const marketConfig = (market: "IN" | "US") => market === "IN" ? {
   liquidityRequirementLabel: "INR 5 crore",
 } : {
   universeWhere: "a.country='US' and a.exchange in ('NASDAQ','NYSE','AMEX','NYSEARCA','NYSEAMERICAN')",
-  benchmarkTicker: "SPY",
+  benchmarkTickers: ["SPY"],
   benchmarkLabel: "S&P 500",
   priceFloor: 5,
   preliminaryLiquidityFloor: 1_000_000,
@@ -200,14 +200,15 @@ export async function getMomentumIgnitionCandidates(
     query<BarRow>(
       `with chosen as (
          select a.id from public.assets a
-          where a.country=$1 and a.ticker=$2
-          order by (select count(*) from public.daily_ohlcv o where o.asset_id=a.id) desc
+          where a.country=$1 and a.ticker=any($2::text[])
+          order by array_position($2::text[],a.ticker),
+                   (select count(*) from public.daily_ohlcv o where o.asset_id=a.id) desc
           limit 1
        )
        select o.asset_id,o.date::text date,o.open,o.high,o.low,o.close,o.volume,o.open_interest
          from public.daily_ohlcv o join chosen c on c.id=o.asset_id
         order by o.date desc limit 260`,
-      [market, config.benchmarkTicker],
+      [market, config.benchmarkTickers],
     ),
   ]);
   const universeScanned = Number(countRows[0]?.count ?? 0);

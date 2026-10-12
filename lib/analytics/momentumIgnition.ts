@@ -104,6 +104,24 @@ function benchmarkReturn(
   return start && end && start !== end ? pctChange(start.close, end.close) : null;
 }
 
+export function observedTradingSessionDistance(
+  leftDate: string,
+  rightDate: string,
+  stockBars: OHLCV[],
+  benchmarkBars: OHLCV[],
+): number {
+  const left = leftDate.slice(0, 10);
+  const right = rightDate.slice(0, 10);
+  if (left === right) return 0;
+  const first = left < right ? left : right;
+  const last = left < right ? right : left;
+  const sessions = new Set([...stockBars, ...benchmarkBars]
+    .map((bar) => bar.date.slice(0, 10))
+    .filter((date) => date >= first && date <= last));
+  if (!sessions.has(left) || !sessions.has(right)) return Number.POSITIVE_INFINITY;
+  return Math.max(0, sessions.size - 1);
+}
+
 function gate(key: string, label: string, passed: boolean, detail: string): MomentumIgnitionGate {
   return { key, label, passed, detail };
 }
@@ -148,7 +166,7 @@ function assessNewListingMomentum(input: MomentumIgnitionInput): MomentumIgnitio
   const relativeStrength5Pct = stockReturn5 !== null && benchmark5 !== null ? stockReturn5 - benchmark5 : null;
   const relativeStrengthAcceleration = relativeStrength20Pct !== null && relativeStrength5Pct !== null
     ? relativeStrength5Pct - relativeStrength20Pct
-    : null;
+  : null;
 
   const benchmarkCloses = input.benchmarkBars.map((bar) => bar.close);
   const benchmarkSma50 = sma(benchmarkCloses, 50);
@@ -156,10 +174,10 @@ function assessNewListingMomentum(input: MomentumIgnitionInput): MomentumIgnitio
   const benchmarkLatest = input.benchmarkBars.at(-1);
   const marketRegimePositive = Boolean(benchmarkLatest && benchmarkSma50 !== null
     && benchmarkSma50Prior !== null && benchmarkLatest.close > benchmarkSma50 && benchmarkSma50 > benchmarkSma50Prior);
-  const dateGap = benchmarkLatest
-    ? Math.abs(Date.parse(`${latest.date}T00:00:00Z`) - Date.parse(`${benchmarkLatest.date}T00:00:00Z`)) / 86_400_000
+  const sessionGap = benchmarkLatest
+    ? observedTradingSessionDistance(latest.date, benchmarkLatest.date, bars, input.benchmarkBars)
     : Number.POSITIVE_INFINITY;
-  const dataFresh = dateGap <= 1;
+  const dataFresh = sessionGap <= 1;
   const trendAligned = input.currentPrice > fast && fast > slow && latest.close > fiveStart.close;
   const relativeStrengthPositive = (relativeStrength20Pct ?? Number.NEGATIVE_INFINITY) >= 5;
   const nearBreakout = input.currentPrice >= entryTrigger || (distanceToBreakoutPct >= 0 && distanceToBreakoutPct <= 5);
