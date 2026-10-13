@@ -1,5 +1,8 @@
 # Secure Credentials Storage
 
+_Security documentation reviewed: 2026-10-13. Production secrets remain outside Git and stored
+credentials use the documented authenticated-encryption boundary._
+
 InvestoGenie now provides encrypted credential storage for sensitive information like email passwords and AI API keys. This allows users to store their secrets securely in the database instead of relying on environment variables.
 
 ## Overview

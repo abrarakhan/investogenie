@@ -1,5 +1,8 @@
 # Local macOS deployment
 
+_Last reviewed: 2026-10-13. AWS Lightsail is the authoritative production deployment; this package
+remains the local development, rehearsal and private-fallback path._
+
 Local mode is the development and data-workstation deployment. It uses the
 Mac's PostgreSQL instance and `.env.local`; it does not read Oracle production
 secrets or connect to the cloud database.
@@ -148,5 +151,5 @@ seconds. Set `BREEZE_WORKER_DISABLED=1` only when the feed should remain off.
 - Never expose Oracle port 5432 or point routine local development directly at it.
 - Move data using `pg_dump`/`pg_restore` over SSH when a snapshot is needed.
 - Do not run local and Oracle schedulers against the same database.
-- Once Oracle is production, treat its database as authoritative and take a
+- When promoting a separate Ubuntu host to production, treat its database as authoritative and take a
   backup before replacing it with a local snapshot.

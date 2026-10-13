@@ -1,5 +1,8 @@
 # Stock Screener
 
+_Operational documentation reviewed 2026-10-13. Screener calculations remain independent of
+Momentum Ignition V2, the Strong Swing ML advisory foundation, and Breeze automatic buying._
+
 A Kite-style fundamental + price-action screener over US and Indian equities. It
 reuses the existing stack — Next.js 16 (App Router), local Postgres via `pg`,
 cookie-session auth, and the yfinance data pipelines — and adds a materialised

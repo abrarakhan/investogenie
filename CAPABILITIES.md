@@ -1,6 +1,8 @@
 # InvestoGenie - Capabilities
 
-> Current capability snapshot (2026-10-03) after adding the isolated, cost-aware Adaptive
+> Current capability snapshot (2026-10-13) at production revision `e09cfd8`, including the
+> trading-session-aware Momentum Ignition V2 freshness repair, NIFTY-first benchmark selection,
+> Python-only ML advisory data contracts, mobile candidate notifications, and the isolated, cost-aware Adaptive
 > Allocation backtesting lab, alongside broker-reconciled Trade Ledger returns and
 > calculating portfolio ROI/XIRR from capital employed while recycling retained sale proceeds,
 > alongside Android/iOS Phase 4 News & AI parity,
@@ -42,6 +44,8 @@ help/knowledge base, and recurring data sync jobs.
 | **Trade Ledger accounting** | Partial/final exits, broker-net acquisition/proceeds/P&L, cumulative trade turnover, inferred external capital employed, portfolio ROI and money-weighted XIRR | Working; ICICI Direct statement reconciled through 22 Sep 2026 |
 | **Breeze automatic buying** | Optional capped NSE cash limit buying from Execution Ready Strong Swing candidates and saved Adaptive Allocation strategies, with independent engine toggles, idempotent order intents and audit history | Implemented; disabled by default; no automatic selling/rebalancing |
 | Swing candidates | Buy-candidate screener with entry, target, stop, trail, score, days | Working; hourly scan repaired 2026-08-09 |
+| **Momentum Ignition V2** | Separate near-breakout discovery across the liquid NSE universe, with Momentum Ready, First Thrust, Pre-Ignition, Retest, Late Risk and Failed states | Working; freshness uses observed trading sessions and NIFTY with NIFTYBEES fallback |
+| **ML advisory foundation** | Immutable scheduled feature snapshots, deterministic Python labels, model lifecycle, serving pointer, promotion evidence and monitoring schema | Foundation implemented; no model ranking, alerts or buying enabled |
 | Stock Screener | US+India fundamental/price-action screener: filter engine, presets, saved screens, universes, CSV/Excel export | Working |
 | **NL Query (screener)** | Plain-English → filters, dispatched to a **user-chosen AI provider** (Anthropic/OpenAI/Google/DeepSeek), validated through the same filter-engine guard regardless of provider | Working |
 | **News & AI Swing** | Strong Swing candidates and frozen execution levels overlaid with source-linked, time-decayed event assessment; simultaneous Marketaux/GNews/NewsAPI/Alpha Vantage ingestion, incremental watermarks, canonical deduplication, cross-provider corroboration, and DeepSeek-compatible structured classification without changing either Swing calculation | Working |
@@ -58,7 +62,7 @@ help/knowledge base, and recurring data sync jobs.
 | **Help & knowledge base** | `/help` guided walkthrough + 13 code-accurate articles (swing engine + 5 swing strategies + probability method + Long-Term engine + 6 investor strategies) | Working |
 | Sync health | Browser-visible `/admin/sync` and `/data/health` freshness and provider status pages | Working |
 | Recurring sync | Startup, recurring, and daily jobs for quotes, OHLCV, fundamentals, macro, scans, and the email digest | Working |
-| **AWS production deployment** | Production Next.js + schedulers supervised by systemd on AWS Lightsail, serving the web terminal and versioned mobile APIs | Active; product revision `4e1a6af` deployed |
+| **AWS production deployment** | Production Next.js + schedulers supervised by systemd on AWS Lightsail, serving the web terminal and versioned mobile APIs | Active; product revision `e09cfd8` deployed and runtime audit clean |
 | **Private local fallback** | macOS `launchd`, localhost-only listener, AC-power sleep prevention and tailnet-only Tailscale Serve HTTPS | Available and previously verified; no longer primary production |
 | **Android / iOS Phase 1** | Expo SDK 57 client with secure device login, India/US selection, server-ranked Strong Swing detail, and read-only Trade Ledger/P&L/risk | API deployed on AWS; working in the Android client |
 | **Android / iOS Phase 2** | Execution Ready candidate-to-ledger flow, edit/delete, partial/final sale recording and correction, price profile, five-minute foreground refresh | Built and verified; server calculations remain authoritative |

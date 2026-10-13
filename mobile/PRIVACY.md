@@ -1,5 +1,7 @@
 # InvestoGenie Mobile Privacy
 
+_Last reviewed: 2026-10-13._
+
 InvestoGenie Mobile is a private companion to the owner's InvestoGenie deployment.
 
 - Authentication credentials are sent only to the configured InvestoGenie HTTPS server.

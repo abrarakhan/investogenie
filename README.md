@@ -18,6 +18,10 @@ development and an alternate Ubuntu/Oracle-compatible deployment.
 - Bhavcopy, Yahoo and Google fallbacks plus exchange-close OHLCV maintenance.
 - Android/iOS client backed by versioned server APIs; analytics remain on the server.
 - Cost-aware Adaptive Allocation research with saved paper configurations and comparative backtests.
+- Momentum Ignition V2 discovery with trading-session-aware freshness, NIFTY-first benchmarking,
+  and separate early, ready, late-risk and failed-breakout states.
+- A production ML advisory foundation whose feature, label, training, calibration and inference
+  calculations are Python-only; it remains outside candidate eligibility and broker execution.
 - Documentation follows `main`; production is deployed from a tested, pushed `main` revision.
 
 Detailed live status is maintained in [STATUS.md](STATUS.md), capabilities in
@@ -70,6 +74,7 @@ The scheduler in `scripts/run-with-nse-sync.mjs` runs alongside Next.js and coor
 - persistent OHLCV backfill workers and auditable exclusions;
 - fundamentals, macro, swing-scan and forward-test maintenance;
 - daily Strong Swing email digest;
+- deduplicated mobile notifications for execution-ready and momentum-ready candidates;
 - Gmail discovery for the latest CAS and AMC monthly disclosures.
 
 Provider credentials are encrypted per user where supported. Secrets and production environment
@@ -140,8 +145,9 @@ sudo bash /opt/investogenie/app/deploy/oracle/deploy-release.sh
 
 The historical directory name is retained for compatibility; the script is the active shared
 Ubuntu deployment path for AWS and Oracle-compatible hosts. It installs locked dependencies,
-builds the application, applies migrations through `0049_breeze_auto_buy.sql`, verifies the
-schema, and restarts `investogenie.service`.
+builds the application, runs the production dependency audit, applies migrations through
+`0051_ml_advisory_foundation.sql`, verifies the schema, prunes development dependencies, and
+restarts the web/scheduler and Breeze services.
 
 See [DEPLOYMENT.md](DEPLOYMENT.md), [deploy/local/README.md](deploy/local/README.md), and
 [deploy/oracle/README.md](deploy/oracle/README.md).

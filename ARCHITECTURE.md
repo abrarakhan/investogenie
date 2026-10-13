@@ -1,6 +1,6 @@
 # InvestoGenie Architecture
 
-_Living architecture reference. Last updated: 2026-10-03 at product revision `4e1a6af`._
+_Living architecture reference. Last updated: 2026-10-13 at product revision `e09cfd8`._
 
 ## System Overview
 
@@ -34,7 +34,7 @@ recalculate, reorder or reinterpret candidates.
 
 | Layer | Technology |
 | --- | --- |
-| Web and API | Next.js 16.3.4 App Router, React 19, TypeScript |
+| Web and API | Next.js 16.3.8 App Router, React 19, TypeScript |
 | Mobile | Expo SDK 57, React Native 0.86, TypeScript |
 | Database | PostgreSQL through `pg` / node-postgres |
 | Styling | Tailwind CSS 4 and CSS custom properties |
@@ -42,6 +42,7 @@ recalculate, reorder or reinterpret candidates.
 | Authentication | Signed HTTP-only web sessions; hashed, expiring bearer tokens for mobile |
 | Credentials | AES-256-GCM encrypted per-user provider credentials |
 | Background work | Node scheduler plus Python ingestion and Breeze workers |
+| ML calculation runtime | Python only for features, labels, training, calibration, evaluation and inference |
 | Production | AWS Lightsail, systemd, Nginx/HTTPS, local PostgreSQL |
 | Local fallback | macOS `launchd` and private Tailscale Serve HTTPS |
 
@@ -58,6 +59,7 @@ lib/breeze/             Breeze session, broker safety and reconciliation
 lib/backfill/           Persistent OHLCV repair queue
 lib/mobile*.ts          Mobile auth, mutations and alert delivery
 pipelines/              Python market/fundamental/history synchronization
+pipelines/ml/           Deterministic ML snapshots, labels and future model lifecycle calculations
 workers/                Breeze market, OI and account workers
 scripts/                Scheduler, sync, migration and deployment utilities
 db/migrations/          Ordered PostgreSQL schema migrations
@@ -306,7 +308,7 @@ password/OTP is handled by the provider and does not pass through InvestoGenie.
 - PostgreSQL is local to the instance and is not exposed publicly.
 - Release procedure: fetch the intended `main` revision, install locked dependencies, run
   migrations/tests/build, then restart and inspect systemd logs.
-- Product revision `4e1a6af` is deployed and `main` is aligned with `origin/main`.
+- Product revision `e09cfd8` is deployed and `main` is aligned with `origin/main`.
 
 ### Local fallback
 

@@ -1,5 +1,7 @@
 # Email Digest Setup Guide
 
+_Last reviewed: 2026-10-13. Email delivery remains advisory and cannot place broker orders._
+
 InvestoGenie can send daily morning emails with the top 5 stocks from your swing candidates and probability screens.
 
 ## Prerequisites

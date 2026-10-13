@@ -1,5 +1,7 @@
 # InvestoGenie Deployment Targets
 
+_Last verified: 2026-10-13 at production revision `e09cfd8`._
+
 InvestoGenie supports local development/fallback and AWS production from the same Git revision.
 
 | Target | Command | Configuration | Database | Purpose |
@@ -38,8 +40,10 @@ credentials require the original credential-encryption key.
    retained for compatibility).
 6. Verify HTTPS, Data Health, scheduler logs, and a fresh PostgreSQL backup.
 
-The release script applies migrations through `0049_breeze_auto_buy.sql` and verifies the Adaptive
-Allocation and Breeze automatic-buy settings/audit tables before restarting the application.
+The release script installs locked build dependencies, rejects high-severity production dependency
+findings, builds the app, applies replay-safe migrations through `0051_ml_advisory_foundation.sql`,
+verifies the Adaptive Allocation, Breeze, mobile-alert and ML advisory relations, prunes development
+dependencies, and restarts both application services.
 
 Application code is shared; environment files, databases, service management,
 and operational limits remain target-specific.

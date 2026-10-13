@@ -1,5 +1,8 @@
 # InvestoGenie ML Methodology — Production Contract v1
 
+_Contract reviewed 2026-10-13. Migration `0051_ml_advisory_foundation.sql` and the deterministic
+Python snapshot/label foundation are implemented. No model is currently assigned for serving._
+
 ## Purpose and boundary
 
 The ML layer estimates the probability that an already eligible Strong Swing candidate reaches its frozen target before its frozen stop. It is an advisory rank only. It cannot create a candidate, bypass a technical or execution gate, send an alert while in shadow, or place a broker order.
@@ -72,3 +75,12 @@ Insufficient folds are reported, never silently discarded. Threshold changes aft
 Production monitoring covers calibration, feature drift, invalid-label rate, ranked-versus-baseline performance and source freshness. Confirmed drift atomically removes the serving assignment, records the observation, notifies the operator and falls back to unranked Strong Swing. Data-pipeline failures alert separately. An unavailable or invalid model never blocks Strong Swing.
 
 No model from this lifecycle may drive screen-based or broker buying. Any future execution use requires a separate specification and promotion process.
+
+## Current implementation state
+
+The schema, scheduled canonical snapshot collector, deterministic Python labeler and shared golden
+vectors are the production foundation. Interactive snapshots remain excluded from training.
+Training eligibility is limited to `EXECUTION_READY` and `WAIT_FOR_ENTRY`; ticker identity and raw
+price are excluded from the feature vector. Until a model passes the registered gates and receives
+an explicit serving assignment, Strong Swing remains unranked by ML and all alerts and Breeze
+buying continue to use their existing non-ML controls.

@@ -1,5 +1,7 @@
 # Quick Start: Secure Credentials & Email Digest
 
+_Last reviewed: 2026-10-13. Use this only with the full security and deployment guidance._
+
 Get your email digest working in 5 minutes using the new encrypted credential storage.
 
 ## Step 1: Set Encryption Master Key (1 minute)

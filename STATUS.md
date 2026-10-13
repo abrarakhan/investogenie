@@ -1,6 +1,6 @@
 # InvestoGenie Status
 
-_Last updated: 2026-10-03 (capped Breeze automatic NSE cash buying added)_
+_Last updated: 2026-10-13 (Momentum Ignition V2 freshness repaired in production)_
 
 This file summarizes what has been built so far, what is currently working, what is partial, and what to build next.
 
@@ -10,6 +10,22 @@ This file summarizes what has been built so far, what is currently working, what
 - Production deploys pushed `main` revisions to AWS Lightsail.
 - Unrelated local edits in `.claude/context`, `AGENTS.md`, `CLAUDE.md`,
   `app/api/cron/backfill-nse/route.ts`, and `opencode.json` remain excluded from product commits.
+
+### Current Production Release
+
+- Revision `e09cfd8` is deployed on AWS Lightsail; both `investogenie` and
+  `investogenie-breeze` services are active, `/login` returns HTTP 200, and the production
+  dependency audit reports zero vulnerabilities.
+- Momentum Ignition V2 freshness now measures observed trading sessions instead of calendar days,
+  so Friday-to-Monday data is one session apart rather than falsely stale. India benchmarking
+  selects the current NIFTY index first and retains NIFTYBEES as a fallback.
+- Production verification scanned 2,330 active NSE stocks, assessed 177 near-breakout charts and
+  returned 37 qualifying V2 candidates: 1 Momentum Ready, 16 Pre-Ignition, 9 Late Risk and
+  11 Failed Breakout. These are point-in-time counts, not fixed expectations.
+- The validated release passed 260 Vitest tests, TypeScript, ESLint and the Next.js production build.
+- Migration `0051_ml_advisory_foundation.sql` establishes immutable ML advisory data contracts.
+  ML feature, labeling, training, calibration, evaluation and inference calculations are Python-only;
+  no ML ranking, alerting or buying behavior is enabled.
 
 ## Product Direction
 
@@ -45,7 +61,7 @@ InvestoGenie is now a local-first market terminal and portfolio intelligence app
 - Saved active India strategies can optionally feed the Breeze buy-only executor after the user
   explicitly enables live buying and sets daily, per-order and order-count caps. Automatic selling
   and rebalancing remain disabled.
-- Revision `4e1a6af` is on remote `main` and deployed on AWS. The production build, migration,
+- Revision `e09cfd8` is on remote `main` and deployed on AWS. The production build, migration,
   required-relation verification, authenticated-route redirect and both systemd services passed.
 
 ### US Market Tracking Parity
