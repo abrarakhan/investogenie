@@ -35,7 +35,8 @@ export async function resolveSignalProjection(
   const preferredScore = row.strategy_scores?.[preferredStrategy];
   const isStrongSwing = preferredStrategy === "STRONG_SWING";
   const isMomentumIgnition = preferredStrategy === "MOMENTUM_IGNITION";
-  const strategyKey = isStrongSwing || isMomentumIgnition
+  const isArmedSwing = preferredStrategy === "ARMED_SWING";
+  const strategyKey = isStrongSwing || isMomentumIgnition || isArmedSwing
     ? preferredStrategy
     : preferredStrategy && preferredScore?.dir === "LONG"
       ? preferredStrategy
@@ -45,11 +46,13 @@ export async function resolveSignalProjection(
     atr: num(row.atr), longTrigger: buyPrice, shortTrigger: num(row.short_trigger),
     hh22: Math.min(num(row.hh22) || buyPrice, buyPrice), ll22: num(row.ll22), dailyVelocity: num(row.daily_velocity),
   };
-  const strategyScore = isStrongSwing || isMomentumIgnition ? undefined : row.strategy_scores?.[strategyKey];
+  const strategyScore = isStrongSwing || isMomentumIgnition || isArmedSwing ? undefined : row.strategy_scores?.[strategyKey];
   const settings = await getUserSwingSettings(userId);
   const levels = deriveLevels(setup, "LONG", settings);
   const label = isStrongSwing
     ? "Strong Swing"
+    : isArmedSwing
+      ? "Armed Strong Swing"
     : isMomentumIgnition
       ? "Momentum Ignition"
       : STRATEGY_META.find((item) => item.key === strategyKey)?.label ?? "Default Swing";

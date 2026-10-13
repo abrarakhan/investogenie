@@ -8,6 +8,8 @@ import { getSessionUser } from "@/lib/auth";
 import { getActiveNewsConfigs } from "@/lib/credentials-actions";
 import { normalizeMarket } from "@/lib/markets";
 import { getSwingTradeLedger } from "@/lib/swingTradeLedger";
+import { getPendingOrders } from "@/lib/swingPendingOrders";
+import PendingOrders from "@/components/trade-ledger/PendingOrders";
 import { markLiveMarketTargets } from "@/lib/liveMarketTargets";
 import { getBreezeReconciliation } from "@/lib/breeze/broker";
 import BreezeReconciliationPanel from "@/components/trade-ledger/BreezeReconciliationPanel";
@@ -25,14 +27,18 @@ export default async function SwingTradeLedgerPage({ params, searchParams }: {
   if (!user) redirect("/login");
   const raw = await searchParams;
   const defaults = Object.fromEntries(Object.entries(raw).map(([key, value]) => [key, Array.isArray(value) ? value[0] : value]));
-  const [trades, newsConfig, breeze] = await Promise.all([
+  const [trades, pendingOrders, newsConfig, breeze] = await Promise.all([
     getSwingTradeLedger(user.id, market),
+    getPendingOrders(user.id, market),
     getActiveNewsConfigs(),
     market === "IN" ? getBreezeReconciliation(user.id) : Promise.resolve(null),
   ]);
   if (market === "IN") {
     await markLiveMarketTargets(
-      trades.filter((trade) => trade.status === "OPEN").map((trade) => trade.assetId),
+      [
+        ...trades.filter((trade) => trade.status === "OPEN").map((trade) => trade.assetId),
+        ...pendingOrders.map((order) => order.assetId),
+      ],
       "trade_ledger",
     );
   }
@@ -49,6 +55,7 @@ export default async function SwingTradeLedgerPage({ params, searchParams }: {
       <LedgerAutoRefresh market={market} />
       <MarketDataAutoRefresh market={market} assetIds={trades.filter((trade) => trade.status === "OPEN").map((trade) => trade.assetId)} />
       {breeze && <BreezeReconciliationPanel data={breeze} />}
+      <PendingOrders market={market} orders={pendingOrders} />
       <SwingTradeLedger market={market} trades={trades} defaults={defaults} />
     </AppShell>
   );

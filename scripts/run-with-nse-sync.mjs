@@ -23,6 +23,7 @@ const breezeHistoryPipeline = resolve(root, "pipelines/breeze_ohlcv_sync.py");
 const breezeMarketWorker = resolve(root, "workers/breeze_market_daemon.py");
 const breezeAccountWorker = resolve(root, "workers/breeze_account_sync.py");
 const breezeAutoBuyWorker = resolve(root, "workers/breeze_auto_buy.py");
+const corporateResultsPipeline = resolve(root, "pipelines/corporate_results_sync.py");
 const usPipeline = resolve(root, "pipelines/us_market_sync.py");
 const usHistoryPipeline = resolve(root, "pipelines/us_history_sync.py");
 const macroPipeline = resolve(root, "pipelines/macro_sync.py");
@@ -1321,6 +1322,35 @@ function millisecondsUntilNextIstTime(hour, minute) {
   return target - now.getTime();
 }
 
+let corporateResultsChild = null;
+
+/** Results-date calendar for the Armed Swing entry blackout. Assets without a recent
+ *  successful check are treated as unverified by the app, so a skipped run fails closed. */
+function runCorporateResults(trigger) {
+  if (process.env.CORPORATE_RESULTS_SYNC_DISABLED === "1" || !python || corporateResultsChild || shuttingDown) return;
+  const name = `corporate-results/${trigger}`;
+  const started = Date.now();
+  corporateResultsChild = spawn(python, [
+    corporateResultsPipeline, "--market", "IN", "--limit", process.env.CORPORATE_RESULTS_SYNC_LIMIT ?? "1000",
+  ], { cwd: root, env: process.env, stdio: "inherit", timeout: 60 * 60_000 });
+  corporateResultsChild.once("error", (error) => recordSyncJob(name, "error", error.message));
+  corporateResultsChild.once("close", (code, signal) => {
+    corporateResultsChild = null;
+    const ok = code === 0 && !signal;
+    recordSyncJob(name, ok ? "ok" : "error", ok ? null : `exit ${signal ?? code}`, 1, Date.now() - started);
+  });
+}
+
+/** NSE only (US Armed Swing is fail-closed). Two runs a day of up to 1,000 checks each, skipping
+ *  anything checked in the last 20 hours, cycle all of NSE in about a day and refresh the Armed
+ *  shortlist before the open (07:00) and after the close (17:00). */
+function scheduleCorporateResults(hour, minute, trigger) {
+  setTimeout(() => {
+    runCorporateResults(trigger);
+    scheduleCorporateResults(hour, minute, trigger);
+  }, millisecondsUntilNextIstTime(hour, minute));
+}
+
 function scheduleDailyAmfiSync() {
   if (amfiSyncDisabled) {
     console.log("[amfi-master] daily sync disabled");
@@ -1565,6 +1595,9 @@ scheduleEmailDigest();
 startEmbeddedBreezeWorker();
 scheduleBreezeAccountSync();
 scheduleBreezeAutoBuy();
+scheduleCorporateResults(7, 0, "pre-open");
+scheduleCorporateResults(17, 0, "post-close");
+setTimeout(() => runCorporateResults("startup"), 90_000);
 if (startupSyncDisabled) {
   console.log("[startup] immediate maintenance jobs disabled; recurring schedules remain active");
 } else {

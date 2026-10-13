@@ -5,6 +5,9 @@ import { redirect } from "next/navigation";
 import { getSessionUser } from "@/lib/auth";
 import { query, queryOne, tx } from "@/lib/db";
 import { resolveSignalProjection } from "@/lib/swingTradeProjection";
+import { armedEditViolation, loadArmedPlan, validatePlanForPurchase, type StoredArmedPlan } from "@/lib/armedSwingPlans";
+import { loadExecutionPlan, protectedExecutionEditViolation, validateExecutionPlanPurchase, type StoredExecutionPlan } from "@/lib/swingExecutionPlans";
+import { zonedMarketClock } from "@/lib/market-calendar.mjs";
 import { validateShareQuantity } from "@/lib/tradeInput";
 
 const validMarket = (value: string): "IN" | "US" => value === "US" ? "US" : "IN";
@@ -66,21 +69,48 @@ export async function addSwingTrade(formData: FormData) {
 
   const preferredStrategy = String(formData.get("strategyKey") ?? "").toUpperCase();
   const projection = await resolveSignalProjection(asset.id, market, preferredStrategy, buyPrice);
-  const suppliedEntry = cleanNumber(formData, "projectionEntry");
-  const suppliedTarget = cleanNumber(formData, "projectedTarget");
-  const suppliedStop = cleanNumber(formData, "projectedStop");
-  const suppliedTrail = cleanNumber(formData, "projectedTrailingStop");
+  // An Armed Swing purchase is accepted only against the server-held BUY_ZONE plan, and every
+  // level comes from that row. Browser-supplied entry/target/stop/trail are ignored for it, so
+  // an altered request cannot place an Armed position below the real trigger.
+  let armedPlan: StoredArmedPlan | null = null;
+  let executionPlan: StoredExecutionPlan | null = null;
+  if (preferredStrategy === "ARMED_SWING") {
+    if (entryStatus !== "OPEN") throw new Error("Armed Swing purchases are recorded from a Buy zone card");
+    armedPlan = await loadArmedPlan(user.id, String(formData.get("planId") ?? "").trim());
+    const planError = validatePlanForPurchase(armedPlan, { assetId: asset.id, market, boughtOn, buyPrice });
+    if (planError) throw new Error(planError);
+  } else if (preferredStrategy === "STRONG_SWING" || preferredStrategy === "MOMENTUM_IGNITION") {
+    if (entryStatus !== "OPEN") throw new Error("Candidate purchases must be recorded from the current candidate card");
+    executionPlan = await loadExecutionPlan(user.id, String(formData.get("planId") ?? "").trim());
+    const planError = validateExecutionPlanPurchase(executionPlan, {
+      assetId: asset.id, market, strategyKey: preferredStrategy, boughtOn, buyPrice,
+      today: zonedMarketClock(market).date, nowMs: Date.now(),
+    });
+    if (planError) throw new Error(planError);
+  }
+  const suppliedEntry = armedPlan ? armedPlan.trigger : executionPlan ? executionPlan.entry : cleanNumber(formData, "projectionEntry");
+  const suppliedTarget = armedPlan ? armedPlan.target : executionPlan ? executionPlan.target : cleanNumber(formData, "projectedTarget");
+  const suppliedStop = armedPlan ? armedPlan.stop : executionPlan ? executionPlan.stop : cleanNumber(formData, "projectedStop");
+  const suppliedTrail = armedPlan ? armedPlan.trail : executionPlan ? executionPlan.trail : cleanNumber(formData, "projectedTrailingStop");
   const target = suppliedTarget !== null && suppliedTarget > buyPrice ? suppliedTarget : projection.levels.target;
   const stop = suppliedStop !== null && suppliedStop >= 0 && suppliedStop < buyPrice ? suppliedStop : projection.levels.stopLoss;
   const trail = suppliedTrail !== null && suppliedTrail >= 0 && suppliedTrail < buyPrice ? suppliedTrail : projection.levels.trailingStop;
-  const expectedDays = Math.round(cleanNumber(formData, "expectedHoldingDays") ?? projection.levels.expectedDays);
+  const expectedDays = armedPlan
+    ? armedPlan.expectedDays
+    : executionPlan
+      ? executionPlan.expectedDays
+    : Math.round(cleanNumber(formData, "expectedHoldingDays") ?? projection.levels.expectedDays);
   if (target <= buyPrice || target <= stop || stop < 0 || expectedDays < 1 || expectedDays > 365) {
     throw new Error("For a buy trade, the target must be above your buy price and above the stop");
   }
   const notes = null;
-  const trailingDistance = projection.levels.atr > 0 && trail !== null
-    ? projection.trailingDistance
-    : null;
+  const trailingDistance = armedPlan
+    ? armedPlan.trailingDistance
+    : executionPlan
+      ? executionPlan.trailingDistance
+    : projection.levels.atr > 0 && trail !== null
+      ? projection.trailingDistance
+      : null;
 
   await query(
     `insert into public.swing_trade_ledger
@@ -92,8 +122,12 @@ export async function addSwingTrade(formData: FormData) {
              $6::numeric*$7::numeric,$23,$24,$25)`,
     [user.id, asset.id, market, entryStatus, boughtOn, buyPrice, quantity, asset.currency, projection.strategyKey,
       projection.label, projection.row.verdict, projection.row.as_of, projection.strategyScore?.score ?? projection.row.score,
-      suppliedEntry ?? projection.levels.entry, target, stop, trail, projection.levels.atr, trailingDistance,
-      expectedDays, JSON.stringify({ levels: projection.levels, strategyScore: projection.strategyScore ?? null }), notes,
+      suppliedEntry ?? projection.levels.entry, target, stop, trail, armedPlan ? armedPlan.atr : executionPlan ? executionPlan.atr : projection.levels.atr, trailingDistance,
+      expectedDays, JSON.stringify(armedPlan
+        ? { armedPlanId: armedPlan.id, plan: armedPlan }
+        : executionPlan
+          ? { executionPlanId: executionPlan.id, plan: executionPlan }
+        : { levels: projection.levels, strategyScore: projection.strategyScore ?? null }), notes,
       closedOn, exitPrice, closeReason],
   );
   revalidatePath(`/terminal/${market.toLowerCase()}/trade-ledger`);
@@ -113,8 +147,10 @@ export async function updateSwingTrade(formData: FormData) {
   if (!buyPrice || buyPrice <= 0 || !quantity || quantity <= 0) throw new Error("Buy price and quantity must be greater than zero");
   validateShareQuantity(market, quantity);
 
-  const trade = await queryOne<{ status: "OPEN" | "CLOSED"; sold_quantity: string }>(
-    `select l.status,coalesce(sum(e.quantity),0)::text sold_quantity
+  const trade = await queryOne<{
+    status: "OPEN" | "CLOSED"; sold_quantity: string; strategy_key: string; projection_entry: string | null;
+  }>(
+    `select l.status,coalesce(sum(e.quantity),0)::text sold_quantity,l.strategy_key,l.projection_entry::text
        from public.swing_trade_ledger l
        left join public.swing_trade_exits e on e.trade_id=l.id
       where l.id=$1 and l.user_id=$2 and l.market=$3
@@ -122,6 +158,12 @@ export async function updateSwingTrade(formData: FormData) {
     [id, user.id, market],
   );
   if (!trade) throw new Error("Trade entry was not found");
+  const armedError = armedEditViolation(trade.strategy_key,
+    trade.projection_entry === null ? null : Number(trade.projection_entry), buyPrice);
+  if (armedError) throw new Error(armedError);
+  const protectedError = protectedExecutionEditViolation(trade.strategy_key,
+    trade.projection_entry === null ? null : Number(trade.projection_entry), buyPrice);
+  if (protectedError) throw new Error(protectedError);
   const soldQuantity = Number(trade.sold_quantity);
   if (quantity + 0.000001 < soldQuantity) {
     throw new Error(`Quantity cannot be below the ${soldQuantity.toLocaleString("en-IN")} shares already sold`);

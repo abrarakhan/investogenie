@@ -1,4 +1,6 @@
 import { query, queryOne, tx } from "@/lib/db";
+import { armedEditViolation } from "@/lib/armedSwingPlans";
+import { protectedExecutionEditViolation } from "@/lib/swingExecutionPlans";
 import { resolveSignalProjection } from "@/lib/swingTradeProjection";
 import { validateShareQuantity } from "@/lib/tradeInput";
 
@@ -52,7 +54,12 @@ export async function createMobileTrade(userId: string, input: CreateMobileTrade
   );
   if (!asset) throw new Error("Stock was not found in this market");
 
-  const preferredStrategy = String(input.strategyKey ?? "STRONG_SWING").toUpperCase();
+  const preferredStrategy = String(input.strategyKey ?? "").toUpperCase();
+  // Armed Swing positions are created only from a server-held plan on the web (Buy zone purchase
+  // or a confirmed pending buy-stop fill); the mobile API cannot assert that strategy.
+  if (["ARMED_SWING", "STRONG_SWING", "MOMENTUM_IGNITION"].includes(preferredStrategy)) {
+    throw new Error("Strategy trades must be recorded from the protected web candidate workflow");
+  }
   const projection = await resolveSignalProjection(asset.id, market, preferredStrategy, buyPrice, userId);
   const suppliedEntry = optionalLevel(input.projectionEntry);
   const suppliedTarget = optionalLevel(input.projectedTarget);
@@ -91,13 +98,19 @@ export async function updateMobileTrade(userId: string, tradeId: string, input: 
   const buyPrice = positive(input.buyPrice, "Buy price");
   const quantity = positive(input.quantity, "Quantity");
   validateShareQuantity(market, quantity);
-  const trade = await queryOne<{ sold_quantity: string }>(
-    `select coalesce(sum(e.quantity),0)::text sold_quantity
+  const trade = await queryOne<{ sold_quantity: string; strategy_key: string; projection_entry: string | null }>(
+    `select coalesce(sum(e.quantity),0)::text sold_quantity,l.strategy_key,l.projection_entry::text
        from public.swing_trade_ledger l left join public.swing_trade_exits e on e.trade_id=l.id
       where l.id=$1 and l.user_id=$2 and l.market=$3 group by l.id`,
     [tradeId, userId, market],
   );
   if (!trade) throw new Error("Trade entry was not found");
+  const armedError = armedEditViolation(trade.strategy_key,
+    trade.projection_entry === null ? null : Number(trade.projection_entry), buyPrice);
+  if (armedError) throw new Error(armedError);
+  const protectedError = protectedExecutionEditViolation(trade.strategy_key,
+    trade.projection_entry === null ? null : Number(trade.projection_entry), buyPrice);
+  if (protectedError) throw new Error(protectedError);
   if (quantity + 0.000001 < Number(trade.sold_quantity)) throw new Error("Quantity cannot be below shares already sold");
   await query(
     `update public.swing_trade_ledger

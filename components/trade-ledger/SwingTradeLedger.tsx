@@ -59,7 +59,7 @@ export default function SwingTradeLedger({ market, trades, defaults }: {
 
       <details open={Boolean(defaults.ticker)} className="rounded-lg border border-white/10 bg-white/[0.02]">
         <summary className="cursor-pointer list-none px-5 py-4 font-semibold [&::-webkit-details-marker]:hidden">
-          {(defaults.strategy === "STRONG_SWING" || defaults.strategy === "MOMENTUM_IGNITION") && defaults.ticker
+          {(defaults.strategy === "STRONG_SWING" || defaults.strategy === "MOMENTUM_IGNITION" || defaults.strategy === "ARMED_SWING") && defaults.ticker
             ? `Buy & track ${defaults.ticker}`
             : "Log a purchased swing trade"}
           <span className="ml-2 text-sm font-normal text-white/40">Freeze the plan you bought against</span>
@@ -82,6 +82,8 @@ export default function SwingTradeLedger({ market, trades, defaults }: {
           <Field label="Actual buy price (₹ per share)"><input name="buyPrice" type="number" inputMode="decimal" min="0.000001" step="any" required defaultValue={defaults.buyPrice ?? defaults.current ?? ""} className="field" /></Field>
           <Field label={market === "IN" ? "Quantity (whole shares)" : "Quantity"}><input name="quantity" type="number" inputMode={market === "IN" ? "numeric" : "decimal"} min={market === "IN" ? "1" : "0.000001"} step={market === "IN" ? "1" : "any"} required className="field" /></Field>
           <input type="hidden" name="strategyKey" value={defaults.strategy ?? ""} />
+          {/* Candidate purchases are validated against this server-held plan; its levels are read from the database. */}
+          <input type="hidden" name="planId" value={defaults.planId ?? ""} />
           <input type="hidden" name="projectionEntry" value={defaults.entry ?? ""} />
           <input type="hidden" name="projectedTarget" value={defaults.target ?? ""} />
           <input type="hidden" name="projectedStop" value={defaults.stop ?? ""} />
@@ -91,7 +93,7 @@ export default function SwingTradeLedger({ market, trades, defaults }: {
             Strategy, target, stop, trailing stop, and projected holding period are captured automatically from the latest swing candidate data.
           </p>
           <button className="h-11 self-end rounded-lg bg-[var(--ig-accent)] px-5 text-sm font-bold text-black transition-opacity hover:opacity-90">
-            {defaults.strategy === "STRONG_SWING" || defaults.strategy === "MOMENTUM_IGNITION" ? "Confirm purchase & track" : "Add to ledger"}
+            {defaults.strategy === "STRONG_SWING" || defaults.strategy === "MOMENTUM_IGNITION" || defaults.strategy === "ARMED_SWING" ? "Confirm purchase & track" : "Add to ledger"}
           </button>
         </form>
       </details>

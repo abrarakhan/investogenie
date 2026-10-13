@@ -27,7 +27,7 @@ const breakoutDistance = (value: number) => value >= 0
   ? `${number(value, 1)}% below`
   : `${number(Math.abs(value), 1)}% above`;
 
-function IgnitionCard({ candidate, rank, market }: { candidate: MomentumIgnitionCandidate; rank: number; market: "IN" | "US" }) {
+function IgnitionCard({ candidate, rank, market, planId }: { candidate: MomentumIgnitionCandidate; rank: number; market: "IN" | "US"; planId: string | null }) {
   const keyGates = candidate.gates.filter((item) => [
     "trend", "relative_strength", "compression", "dry_up", "live_volume", "liquidity", "volatility", "circuit",
   ].includes(item.key));
@@ -36,6 +36,7 @@ function IgnitionCard({ candidate, rank, market }: { candidate: MomentumIgnition
     assetId: candidate.assetId,
     ticker: candidate.ticker,
     strategy: "MOMENTUM_IGNITION",
+    planId: planId ?? "",
     current: String(candidate.currentPrice),
     entry: String(candidate.projectedEntry),
     target: String(candidate.projectedTarget),
@@ -101,11 +102,12 @@ function IgnitionCard({ candidate, rank, market }: { candidate: MomentumIgnition
       </details>
 
       <div className="mt-3 border-t border-white/8 pt-3">
-        {canTrack ? <Link
+        {canTrack && planId ? <Link
           href={`/terminal/${market.toLowerCase()}/trade-ledger?${ledgerParams.toString()}`}
           className="inline-flex min-h-11 items-center rounded-lg border border-emerald-400/35 bg-emerald-400/10 px-4 text-sm font-bold text-emerald-200 hover:bg-emerald-400/15"
         >Buy &amp; Track</Link> : <p className="text-[11px] leading-relaxed text-white/38">
-          {candidate.status === "ENTRY_READY"
+          {canTrack && !planId ? "Plan unavailable — reload."
+            : candidate.status === "ENTRY_READY"
             ? candidate.strongStatus
               ? `Buy blocked: Strong Swing is ${candidate.strongStatus.toLowerCase().replaceAll("_", " ")}.`
               : "Buy blocked: awaiting a current-session Strong Swing assessment."
@@ -136,12 +138,14 @@ function CandidateGroup({
   color,
   market,
   defaultOpen = false,
+  planIds,
 }: {
   title: string;
   candidates: Array<{ candidate: MomentumIgnitionCandidate; rank: number }>;
   color: string;
   market: "IN" | "US";
   defaultOpen?: boolean;
+  planIds: Record<string, string>;
 }) {
   if (!candidates.length) return null;
   return <details open={defaultOpen} className="group rounded-lg border border-white/10 bg-white/[0.012]">
@@ -153,12 +157,12 @@ function CandidateGroup({
       <span className="hidden shrink-0 text-xs font-semibold text-white/45 group-open:inline">Collapse</span>
     </summary>
     <div className="space-y-3 border-t border-white/8 p-3 sm:p-4">
-      {candidates.map(({ candidate, rank }) => <IgnitionCard key={candidate.assetId} candidate={candidate} rank={rank} market={market} />)}
+      {candidates.map(({ candidate, rank }) => <IgnitionCard key={candidate.assetId} candidate={candidate} rank={rank} market={market} planId={planIds[`MOMENTUM_IGNITION:${candidate.status}:${candidate.assetId}`] ?? null} />)}
     </div>
   </details>;
 }
 
-export default function MomentumIgnitionCandidates({ result }: { result: MomentumIgnitionResult }) {
+export default function MomentumIgnitionCandidates({ result, planIds }: { result: MomentumIgnitionResult; planIds: Record<string, string> }) {
   const marketLabel = result.market === "IN" ? "NSE" : "US";
   const ranked = result.candidates.map((candidate, index) => ({ candidate, rank: index + 1 }));
   const executionReady = ranked.filter(({ candidate }) => candidate.status === "ENTRY_READY" && candidate.strongStatus === "EXECUTION_READY");
@@ -202,11 +206,11 @@ export default function MomentumIgnitionCandidates({ result }: { result: Momentu
       {ranked.length === 0
         ? <div className="rounded-lg border border-white/10 px-4 py-8 text-center text-sm text-white/45">No {marketLabel} stock currently passes the Momentum Ignition discovery floor.</div>
         : <div className="space-y-3">
-          <CandidateGroup title="Execution ready" candidates={executionReady} color="text-emerald-200" market={result.market} defaultOpen />
-          <CandidateGroup title="Momentum ready" candidates={momentumReady} color="text-emerald-300" market={result.market} />
-          <CandidateGroup title="Triggered" candidates={triggered} color="text-cyan-200" market={result.market} />
-          <CandidateGroup title="Early watch" candidates={early} color="text-amber-200" market={result.market} />
-          <CandidateGroup title="Wait for pullback" candidates={pullback} color="text-orange-200" market={result.market} />
+          <CandidateGroup title="Execution ready" candidates={executionReady} planIds={planIds} color="text-emerald-200" market={result.market} defaultOpen />
+          <CandidateGroup title="Momentum ready" candidates={momentumReady} planIds={planIds} color="text-emerald-300" market={result.market} />
+          <CandidateGroup title="Triggered" candidates={triggered} planIds={planIds} color="text-cyan-200" market={result.market} />
+          <CandidateGroup title="Early watch" candidates={early} planIds={planIds} color="text-amber-200" market={result.market} />
+          <CandidateGroup title="Wait for pullback" candidates={pullback} planIds={planIds} color="text-orange-200" market={result.market} />
         </div>}
     </section>
   );

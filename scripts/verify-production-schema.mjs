@@ -34,6 +34,12 @@ const requiredRelations = [
   "public.ml_serving_assignments",
   "public.ml_serving_assignment_history",
   "public.ml_monitor_observations",
+  "public.corporate_events",
+  "public.corporate_event_sync_state",
+  "public.armed_swing_plans",
+  "public.swing_pending_orders",
+  "public.swing_pending_order_fills",
+  "public.swing_execution_plans",
 ];
 const client = new pg.Client({
   connectionString: url,

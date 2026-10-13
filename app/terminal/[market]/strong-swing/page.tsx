@@ -11,6 +11,8 @@ import { getMomentumIgnitionCandidates as getLegacyMomentumIgnitionCandidates } 
 import { getStrongSwingCandidates } from "@/lib/strongSwing";
 import MarketDataAutoRefresh from "@/components/app/MarketDataAutoRefresh";
 import { markLiveMarketTargets } from "@/lib/liveMarketTargets";
+import { zonedMarketClock } from "@/lib/market-calendar.mjs";
+import { captureExecutionPlans, type ExecutionPlanInput } from "@/lib/swingExecutionPlans";
 
 export const dynamic = "force-dynamic";
 
@@ -31,6 +33,29 @@ export default async function StrongSwingPage({
     getLegacyMomentumIgnitionCandidates(market, settings),
     getMomentumIgnitionCandidates(market, settings),
   ]);
+  const executionPlans: ExecutionPlanInput[] = [
+    ...candidates.filter((candidate) => candidate.status === "EXECUTION_READY").map((candidate) => ({
+      assetId: candidate.assetId, strategyKey: "STRONG_SWING" as const, status: candidate.status,
+      entry: candidate.strongEntry, target: candidate.strongTarget, stop: candidate.strongStop,
+      trail: candidate.strongTrail, atr: (candidate.strongEntry - candidate.strongTrail) / settings.trailAtrMult, expectedDays: candidate.strongExpectedDays,
+      signalAsOf: candidate.latestDate, score: candidate.strengthScore / 100, snapshot: { gates: candidate.gates },
+    })),
+    ...legacyMomentumIgnition.candidates.filter((candidate) => candidate.status === "ENTRY_READY" && candidate.strongStatus === "EXECUTION_READY").map((candidate) => ({
+      assetId: candidate.assetId, strategyKey: "MOMENTUM_IGNITION" as const, status: candidate.status,
+      entry: candidate.projectedEntry, target: candidate.projectedTarget, stop: candidate.projectedStop,
+      trail: candidate.projectedTrail, atr: candidate.atr14, expectedDays: candidate.projectedDays,
+      signalAsOf: candidate.latestDate, score: candidate.score / 100, snapshot: { model: "LEGACY", gates: candidate.gates },
+    })),
+    ...momentumIgnition.candidates.filter((candidate) => candidate.status === "MOMENTUM_READY" && candidate.strongStatus === "EXECUTION_READY").map((candidate) => ({
+      assetId: candidate.assetId, strategyKey: "MOMENTUM_IGNITION" as const, status: candidate.status,
+      entry: candidate.projectedEntry, target: candidate.projectedTarget, stop: candidate.projectedStop,
+      trail: candidate.projectedTrail, atr: candidate.atr14, expectedDays: candidate.projectedDays,
+      signalAsOf: candidate.latestDate, score: candidate.score / 100, snapshot: { model: "V2", gates: candidate.gates },
+    })),
+  ];
+  const planIds = await captureExecutionPlans(
+    user.id, market, zonedMarketClock(market).date, executionPlans, settings.trailAtrMult,
+  );
   await markLiveMarketTargets(
     [
       ...candidates.map((candidate) => candidate.assetId),
@@ -62,13 +87,13 @@ export default async function StrongSwingPage({
           <h2 className="mt-1 text-2xl font-black">Strong Swing Confirmation</h2>
           <p className="mt-1 text-sm text-white/45">The same base Swing signals are re-ranked only after the two-close confirmation and execution-safety gates.</p>
         </div>}
-        <StrongSwingCandidates candidates={candidates} />
+        <StrongSwingCandidates candidates={candidates} planIds={Object.fromEntries(planIds)} />
       </section>
       <section className="mt-12 border-t border-white/10 pt-8">
-        <MomentumIgnitionLegacyCandidates result={legacyMomentumIgnition} />
+        <MomentumIgnitionLegacyCandidates result={legacyMomentumIgnition} planIds={Object.fromEntries(planIds)} />
       </section>
       <section className="mt-12 border-t border-white/10 pt-8">
-        <MomentumIgnitionCandidates result={momentumIgnition} />
+        <MomentumIgnitionCandidates result={momentumIgnition} planIds={Object.fromEntries(planIds)} />
       </section>
     </AppShell>
   );

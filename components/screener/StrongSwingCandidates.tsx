@@ -47,12 +47,13 @@ function rankReason(candidate: StrongSwingCandidate): string {
     : "Strong score reflects the confirmation gates passed.";
 }
 
-function CandidateCard({ candidate }: { candidate: StrongSwingCandidate }) {
+function CandidateCard({ candidate, planId }: { candidate: StrongSwingCandidate; planId: string | null }) {
   const passed = candidate.gates.filter((gate) => gate.passed).length;
   const ledgerParams = new URLSearchParams({
     assetId: candidate.assetId,
     ticker: candidate.ticker,
     strategy: "STRONG_SWING",
+    planId: planId ?? "",
     current: String(candidate.strongEntry),
     entry: String(candidate.strongEntry),
     target: String(candidate.strongTarget),
@@ -140,7 +141,7 @@ function CandidateCard({ candidate }: { candidate: StrongSwingCandidate }) {
         <span>Suggested exposure {candidate.suggestedExposurePct}%</span>
       </div>
       <div className="mt-4 border-t border-white/8 pt-4">
-        {candidate.status === "EXECUTION_READY" ? (
+        {candidate.status === "EXECUTION_READY" && planId ? (
           <>
           <Link
             href={`/terminal/${candidate.country.toLowerCase()}/trade-ledger?${ledgerParams.toString()}`}
@@ -159,7 +160,7 @@ function CandidateCard({ candidate }: { candidate: StrongSwingCandidate }) {
               disabled
               className="inline-flex min-h-11 cursor-not-allowed items-center rounded-lg border border-white/10 bg-white/[0.025] px-4 text-sm font-bold text-white/30"
             >
-              {blockedBuyLabel[candidate.status]}
+              {candidate.status === "EXECUTION_READY" ? "Plan unavailable — reload" : blockedBuyLabel[candidate.status]}
             </button>
             <p className="mt-2 text-[11px] leading-relaxed text-white/38">
               Buy &amp; Track unlocks only after every technical and execution-safety gate passes.
@@ -178,6 +179,7 @@ function CandidateGroup({
   defaultOpen = false,
   note,
   totalCount,
+  planIds,
 }: {
   title: string;
   candidates: StrongSwingCandidate[];
@@ -185,6 +187,7 @@ function CandidateGroup({
   defaultOpen?: boolean;
   note?: string;
   totalCount?: number;
+  planIds: Record<string, string>;
 }) {
   if (candidates.length === 0) return null;
   return (
@@ -200,13 +203,13 @@ function CandidateGroup({
         <span className="hidden shrink-0 text-xs font-semibold text-white/45 group-open:inline">Collapse</span>
       </summary>
       <div className="space-y-3 border-t border-white/8 p-3 sm:p-4">
-        {candidates.map((candidate) => <CandidateCard key={candidate.assetId} candidate={candidate} />)}
+        {candidates.map((candidate) => <CandidateCard key={candidate.assetId} candidate={candidate} planId={planIds[`STRONG_SWING:${candidate.status}:${candidate.assetId}`] ?? null} />)}
       </div>
     </details>
   );
 }
 
-export default function StrongSwingCandidates({ candidates }: { candidates: StrongSwingCandidate[] }) {
+export default function StrongSwingCandidates({ candidates, planIds }: { candidates: StrongSwingCandidate[]; planIds: Record<string, string> }) {
   const ranked = rankStrongSwingCandidates(candidates);
   const executionReady = ranked.filter((candidate) => candidate.status === "EXECUTION_READY");
   const waitingForEntry = ranked.filter((candidate) => candidate.status === "WAIT_FOR_ENTRY");
@@ -242,19 +245,21 @@ export default function StrongSwingCandidates({ candidates }: { candidates: Stro
         </div>
       )}
 
-      <CandidateGroup title="Execution ready" candidates={executionReady} color="text-emerald-300" defaultOpen />
-      <CandidateGroup title="Wait for entry" candidates={waitingForEntry} color="text-cyan-200" />
+      <CandidateGroup title="Execution ready" candidates={executionReady} planIds={planIds} color="text-emerald-300" defaultOpen />
+      <CandidateGroup title="Wait for entry" candidates={waitingForEntry} planIds={planIds} color="text-cyan-200" />
       <CandidateGroup
         title="Awaiting confirmation"
         candidates={visibleWatchlist}
+        planIds={planIds}
         totalCount={watchlist.length}
         color="text-amber-200"
         note={watchlist.length > visibleWatchlist.length ? `Showing the strongest ${visibleWatchlist.length} of ${watchlist.length}` : undefined}
       />
-      <CandidateGroup title="Risk off" candidates={riskOff.slice(0, 30)} totalCount={riskOff.length} color="text-orange-200" />
+      <CandidateGroup title="Risk off" candidates={riskOff.slice(0, 30)} planIds={planIds} totalCount={riskOff.length} color="text-orange-200" />
       <CandidateGroup
         title="Invalidated"
         candidates={visibleInvalidated}
+        planIds={planIds}
         totalCount={invalidated.length}
         color="text-rose-300"
         note={invalidated.length > visibleInvalidated.length ? `Showing the highest-ranked ${visibleInvalidated.length} of ${invalidated.length}` : undefined}
