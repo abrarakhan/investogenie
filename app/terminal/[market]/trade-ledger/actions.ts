@@ -88,7 +88,8 @@ export async function addSwingTrade(formData: FormData) {
         signal_verdict,signal_as_of,signal_score,projection_entry,projected_target,projected_stop,
         projected_trailing_stop,projected_atr,trailing_distance,expected_holding_days,projection_snapshot,notes,purchase_value,
         closed_on,exit_price,close_reason)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21::jsonb,$22,$6*$7,$23,$24,$25)`,
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21::jsonb,$22,
+             $6::numeric*$7::numeric,$23,$24,$25)`,
     [user.id, asset.id, market, entryStatus, boughtOn, buyPrice, quantity, asset.currency, projection.strategyKey,
       projection.label, projection.row.verdict, projection.row.as_of, projection.strategyScore?.score ?? projection.row.score,
       suppliedEntry ?? projection.levels.entry, target, stop, trail, projection.levels.atr, trailingDistance,
@@ -145,7 +146,7 @@ export async function updateSwingTrade(formData: FormData) {
 
   await query(
     `update public.swing_trade_ledger
-        set bought_on=$1,buy_price=$2,quantity=$3,purchase_value=$2*$3,notes=$4,
+        set bought_on=$1,buy_price=$2,quantity=$3,purchase_value=$2::numeric*$3::numeric,notes=$4,
             closed_on=case when status='CLOSED' then $5::date else null end,
             exit_price=case when status='CLOSED' then $6::numeric else null end,
             close_reason=case when status='CLOSED' then $7 else null end,
