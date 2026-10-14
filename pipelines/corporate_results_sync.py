@@ -17,6 +17,7 @@ whole NSE universe in about a day and the shortlist is never more than a day old
 from __future__ import annotations
 
 import argparse
+import csv
 import os
 import time
 from datetime import date, datetime, timedelta, timezone
@@ -37,6 +38,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--recheck-hours", type=float, default=20.0,
                         help="Skip assets successfully checked within this many hours")
     parser.add_argument("--symbols", help="Comma-separated tickers for a targeted run")
+    parser.add_argument(
+        "--nse-calendar-csv",
+        help="Import an official NSE corporate-events CSV instead of querying Yahoo",
+    )
     parser.add_argument("--sleep", type=float, default=0.25)
     return parser.parse_args()
 
@@ -64,6 +69,68 @@ def usable_dates(values, today: date) -> list[date]:
         if parsed and today - timedelta(days=KEEP_PAST_DAYS) <= parsed <= today + timedelta(days=KEEP_FUTURE_DAYS):
             out.add(parsed)
     return sorted(out)
+
+
+def parse_nse_calendar_csv(path: str, today: date) -> dict[str, list[date]]:
+    """Read an NSE corporate-events export and retain financial-results meetings only."""
+    events: dict[str, set[date]] = {}
+    with open(path, encoding="utf-8-sig", newline="") as handle:
+        reader = csv.DictReader(handle)
+        for raw in reader:
+            row = {(key or "").strip().upper(): (value or "").strip() for key, value in raw.items()}
+            ticker = row.get("SYMBOL", "").upper()
+            purpose = row.get("PURPOSE", "")
+            details = row.get("DETAILS", "")
+            raw_date = row.get("DATE", "")
+            if not ticker or "financial results" not in f"{purpose} {details}".lower():
+                continue
+            try:
+                event_date = datetime.strptime(raw_date, "%d-%b-%Y").date()
+            except ValueError as exc:
+                raise ValueError(f"Invalid NSE calendar date for {ticker}: {raw_date!r}") from exc
+            if today - timedelta(days=KEEP_PAST_DAYS) <= event_date <= today + timedelta(days=KEEP_FUTURE_DAYS):
+                events.setdefault(ticker, set()).add(event_date)
+    return {ticker: sorted(dates) for ticker, dates in sorted(events.items())}
+
+
+def import_nse_calendar(conn, path: str, today: date) -> tuple[int, int, list[str]]:
+    """Store authoritative NSE result dates using exact NSE ticker matches."""
+    events = parse_nse_calendar_csv(path, today)
+    if not events:
+        raise ValueError("NSE calendar contains no financial-results events in the supported date window")
+    with conn.cursor() as cur:
+        cur.execute(
+            """select id::text,ticker from public.assets
+                where country='IN' and exchange='NSE' and asset_class='STOCK'
+                  and ticker=any(%s)""",
+            (list(events),),
+        )
+        assets = {ticker: asset_id for asset_id, ticker in cur.fetchall()}
+        imported = 0
+        for ticker, dates in events.items():
+            asset_id = assets.get(ticker)
+            if not asset_id:
+                continue
+            for event_date in dates:
+                cur.execute(
+                    """insert into public.corporate_events (asset_id,event_type,event_date,source)
+                       values (%s,'RESULTS',%s,'NSE_CALENDAR')
+                       on conflict (asset_id,event_type,event_date)
+                       do update set source='NSE_CALENDAR',fetched_at=now()""",
+                    (asset_id, event_date),
+                )
+                imported += 1
+            cur.execute(
+                """insert into public.corporate_event_sync_state
+                     (asset_id,last_attempt_at,last_success_at,error)
+                   values (%s,now(),now(),null)
+                   on conflict (asset_id) do update
+                     set last_attempt_at=now(),last_success_at=now(),error=null""",
+                (asset_id,),
+            )
+    conn.commit()
+    unmatched = sorted(set(events) - set(assets))
+    return imported, len(assets), unmatched
 
 
 def fetch_results_dates(symbol: str) -> list:
@@ -191,8 +258,10 @@ def store(conn, asset_id: str, dates: list[date]) -> None:
     today = datetime.now(timezone.utc).date()
     with conn.cursor() as cur:
         # Scheduled dates move; replace the future window with what the provider says now.
+        # Yahoo dates move, but a Yahoo refresh must never erase an authoritative NSE import.
         cur.execute("""delete from public.corporate_events
-                        where asset_id=%s and event_type='RESULTS' and event_date >= %s""", (asset_id, today))
+                        where asset_id=%s and event_type='RESULTS' and source='YAHOO'
+                          and event_date >= %s""", (asset_id, today))
         for event_date in dates:
             cur.execute("""
                 insert into public.corporate_events (asset_id,event_type,event_date,source)
@@ -223,6 +292,17 @@ def main() -> int:
     symbols = [s.strip().upper() for s in args.symbols.split(",")] if args.symbols else None
     today = datetime.now(timezone.utc).date()
     with psycopg2.connect(args.database_url) as conn:
+        if args.nse_calendar_csv:
+            imported, matched, unmatched = import_nse_calendar(conn, args.nse_calendar_csv, today)
+            checked, verified, total = coverage(conn, "IN")
+            print(
+                f"[corporate-results] NSE calendar: imported {imported} dates for {matched} symbols; "
+                f"unmatched {len(unmatched)}; verified {verified}/{total}",
+                flush=True,
+            )
+            if unmatched:
+                print(f"[corporate-results] unmatched NSE symbols: {','.join(unmatched)}", flush=True)
+            return 0
         assets = select_assets(conn, args.market, symbols, args.limit, args.recheck_hours)
         failures = 0
         for asset_id, ticker, exchange, country, _tier in assets:

@@ -1,7 +1,9 @@
 import unittest
 from datetime import date, datetime
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
-from corporate_results_sync import usable_dates, yahoo_symbol
+from corporate_results_sync import parse_nse_calendar_csv, store, usable_dates, yahoo_symbol
 
 
 class ResultsDateTests(unittest.TestCase):
@@ -13,6 +15,35 @@ class ResultsDateTests(unittest.TestCase):
     def test_symbols(self):
         self.assertEqual(yahoo_symbol("TCS", "NSE", "IN"), "TCS.NS")
         self.assertEqual(yahoo_symbol("BRK.B", "NYSE", "US"), "BRK-B")
+
+    def test_parses_only_financial_results_from_nse_export(self):
+        content = ("SYMBOL ,COMPANY ,PURPOSE ,DETAILS ,DATE \n"
+                   "ANGELONE,Angel One,Financial Results,Quarterly results,15-Oct-2026\n"
+                   "ANGELONE,Angel One,Dividend,Interim dividend,15-Oct-2026\n"
+                   "ABC,ABC Ltd,Other business matters,Approve financial results,16-Oct-2026\n"
+                   "XYZ,XYZ Ltd,Fund Raising,Issue shares,17-Oct-2026\n")
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "events.csv"
+            path.write_text(content, encoding="utf-8-sig")
+            self.assertEqual(parse_nse_calendar_csv(str(path), date(2026, 10, 14)), {
+                "ABC": [date(2026, 10, 16)],
+                "ANGELONE": [date(2026, 10, 15)],
+            })
+
+    def test_rejects_bad_nse_date(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "events.csv"
+            path.write_text("SYMBOL,PURPOSE,DETAILS,DATE\nABC,Financial Results,,tomorrow\n")
+            with self.assertRaisesRegex(ValueError, "Invalid NSE calendar date"):
+                parse_nse_calendar_csv(str(path), date(2026, 10, 14))
+
+    def test_yahoo_refresh_preserves_nse_calendar_rows(self):
+        from unittest.mock import MagicMock
+        conn = MagicMock()
+        cursor = conn.cursor.return_value.__enter__.return_value
+        store(conn, "asset-id", [date(2026, 10, 20)])
+        delete_sql = cursor.execute.call_args_list[0].args[0]
+        self.assertIn("source='YAHOO'", delete_sql)
 
 
 
