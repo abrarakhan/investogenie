@@ -263,7 +263,11 @@ select
                                               - make_interval(days => %(check_days)s)) checked,
   count(*) filter (where s.last_success_at >= ((select d from today)::timestamp at time zone 'UTC')
                                               - make_interval(days => %(check_days)s)
-                     and (exists (select 1 from public.corporate_events e
+                     and ((s.authoritative_source='NSE_CALENDAR'
+                           and s.authoritative_as_of=(select d from today)
+                           and s.authoritative_coverage_from <= (select d from today) + 1
+                           and s.authoritative_coverage_through >= (select d from today) + 7)
+                          or exists (select 1 from public.corporate_events e
                                    where e.asset_id=a.id and e.event_type='RESULTS'
                                      and e.event_date >= (select d from today))
                           or exists (select 1 from public.corporate_events e

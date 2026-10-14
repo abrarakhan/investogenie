@@ -98,6 +98,8 @@ class CoverageTests(unittest.TestCase):
         # Verified needs a usable date, not just a successful request.
         self.assertIn("e.event_date >= (select d from today)", sql)
         self.assertIn("e.event_date >= (select d from today) - %(recent_days)s", sql)
+        self.assertIn("s.authoritative_as_of=(select d from today)", sql)
+        self.assertIn("s.authoritative_coverage_through >= (select d from today) + 7", sql)
         self.assertEqual(params["tz"], "Asia/Kolkata")
         # Same thresholds as resultsCalendarCoverage() in lib/analytics/armedSwing.ts.
         self.assertEqual(VERIFIED_MAX_CHECK_AGE_DAYS, 7)

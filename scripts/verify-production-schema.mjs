@@ -41,6 +41,13 @@ const requiredRelations = [
   "public.swing_pending_order_fills",
   "public.swing_execution_plans",
 ];
+const requiredColumns = [
+  ["corporate_event_sync_state", "authoritative_source"],
+  ["corporate_event_sync_state", "authoritative_as_of"],
+  ["corporate_event_sync_state", "authoritative_coverage_from"],
+  ["corporate_event_sync_state", "authoritative_coverage_through"],
+  ["corporate_event_sync_state", "authoritative_imported_at"],
+];
 const client = new pg.Client({
   connectionString: url,
   ssl: /127\.0\.0\.1|localhost/.test(url) ? false : { rejectUnauthorized: false },
@@ -54,6 +61,18 @@ try {
   );
   const missing = result.rows.filter((row) => row.relation === null).map((row) => row.name);
   if (missing.length) throw new Error(`Required production relations are missing: ${missing.join(", ")}`);
+  const columns = await client.query(
+    `select table_name,column_name from information_schema.columns
+      where table_schema='public' and (table_name,column_name) in (
+        select * from unnest($1::text[],$2::text[])
+      )`,
+    [requiredColumns.map(([table]) => table), requiredColumns.map(([, column]) => column)],
+  );
+  const present = new Set(columns.rows.map((row) => `${row.table_name}.${row.column_name}`));
+  const missingColumns = requiredColumns
+    .map(([table, column]) => `${table}.${column}`)
+    .filter((name) => !present.has(name));
+  if (missingColumns.length) throw new Error(`Required production columns are missing: ${missingColumns.join(", ")}`);
   console.log(`Verified production schema: ${requiredRelations.join(", ")}`);
 } catch (error) {
   console.error("Production schema verification failed:", error instanceof Error ? error.message : error);
