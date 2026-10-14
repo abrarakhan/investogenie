@@ -11,6 +11,7 @@ import {
   latestExpectedSessionDate,
   refreshMarketHolidays,
   tradingSessionLag,
+  tradingDayOffset,
   zonedMarketClock,
 } from "@/lib/market-calendar.mjs";
 import type { SwingSettings } from "@/lib/settings";
@@ -51,6 +52,8 @@ type ShortlistRow = {
 
 type ResultsRow = {
   asset_id: string; next_date: string | null; last_past_date: string | null; last_success_at: string | null;
+  authoritative_source: string | null; authoritative_as_of: string | null;
+  authoritative_coverage_from: string | null; authoritative_coverage_through: string | null;
 };
 
 const CONFIG = {
@@ -199,7 +202,10 @@ export async function getArmedSwingCandidates(
                 where e.asset_id=a.id and e.event_type='RESULTS' and e.event_date >= $2::date) next_date,
               (select max(e.event_date)::text from public.corporate_events e
                 where e.asset_id=a.id and e.event_type='RESULTS' and e.event_date < $2::date) last_past_date,
-              s.last_success_at::text last_success_at
+              s.last_success_at::text last_success_at,
+              s.authoritative_source,s.authoritative_as_of::text authoritative_as_of,
+              s.authoritative_coverage_from::text authoritative_coverage_from,
+              s.authoritative_coverage_through::text authoritative_coverage_through
          from unnest($1::uuid[]) a(id)
          left join public.corporate_event_sync_state s on s.asset_id=a.id`,
       [ids, sessionDate],
@@ -224,6 +230,8 @@ export async function getArmedSwingCandidates(
 
   const assessed: Omit<ArmedSwingCandidate, "rank">[] = [];
   let resultsVerifiedCount = 0;
+  const requiredCoverageFrom = tradingDayOffset(market, sessionDate, 1);
+  const requiredCoverageThrough = tradingDayOffset(market, sessionDate, 3);
   for (const row of shortlist) {
     const bars = barsByAsset.get(row.asset_id) ?? [];
     if (bars.length < 60) continue;
@@ -240,6 +248,12 @@ export async function getArmedSwingCandidates(
         lastSuccessAt: calendar.last_success_at,
         nextDate: calendar.next_date,
         lastPastDate: calendar.last_past_date,
+        authoritativeSource: calendar.authoritative_source,
+        authoritativeAsOf: calendar.authoritative_as_of,
+        authoritativeCoverageFrom: calendar.authoritative_coverage_from,
+        authoritativeCoverageThrough: calendar.authoritative_coverage_through,
+        requiredCoverageFrom,
+        requiredCoverageThrough,
       })
       : null;
     if (coverage?.verified) resultsVerifiedCount++;

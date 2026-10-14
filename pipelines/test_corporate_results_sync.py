@@ -3,7 +3,7 @@ from datetime import date, datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from corporate_results_sync import parse_nse_calendar_csv, store, usable_dates, yahoo_symbol
+from corporate_results_sync import parse_nse_calendar_csv, read_nse_calendar_csv, store, usable_dates, yahoo_symbol
 
 
 class ResultsDateTests(unittest.TestCase):
@@ -36,6 +36,19 @@ class ResultsDateTests(unittest.TestCase):
             path.write_text("SYMBOL,PURPOSE,DETAILS,DATE\nABC,Financial Results,,tomorrow\n")
             with self.assertRaisesRegex(ValueError, "Invalid NSE calendar date"):
                 parse_nse_calendar_csv(str(path), date(2026, 10, 14))
+
+    def test_reads_authoritative_window_and_filename_date(self):
+        content = ("SYMBOL,COMPANY,PURPOSE,DETAILS,DATE\n"
+                   "ABC,ABC Ltd,Other business matters,General,15-Oct-2026\n"
+                   "XYZ,XYZ Ltd,Financial Results,Quarterly results,13-Nov-2026\n")
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "CF-Event-equities-14-Oct-2026.csv"
+            path.write_text(content)
+            events, as_of, coverage_from, coverage_through = read_nse_calendar_csv(str(path), date(2026, 10, 14))
+            self.assertEqual(events, {"XYZ": [date(2026, 11, 13)]})
+            self.assertEqual(as_of, date(2026, 10, 14))
+            self.assertEqual(coverage_from, date(2026, 10, 15))
+            self.assertEqual(coverage_through, date(2026, 11, 13))
 
     def test_yahoo_refresh_preserves_nse_calendar_rows(self):
         from unittest.mock import MagicMock

@@ -5,6 +5,7 @@ import {
   latestExpectedSessionDate,
   marketHolidayDates,
   refreshMarketHolidays,
+  tradingDayOffset,
   tradingSessionLag,
 } from "./market-calendar.mjs";
 
@@ -29,6 +30,11 @@ describe("market calendar", () => {
   it("counts missing exchange sessions rather than calendar days", () => {
     expect(tradingSessionLag("IN", "2026-09-11", "2026-09-14")).toBe(0);
     expect(tradingSessionLag("IN", "2026-09-11", "2026-09-15")).toBe(1);
+  });
+
+  it("advances by trading sessions across weekends and exchange holidays", () => {
+    expect(tradingDayOffset("IN", "2026-10-16", 1)).toBe("2026-10-19");
+    expect(tradingDayOffset("IN", "2026-10-16", 2)).toBe("2026-10-21");
   });
 
   it("recognizes US exchange holidays", () => {

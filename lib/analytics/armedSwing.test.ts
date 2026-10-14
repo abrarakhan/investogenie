@@ -175,4 +175,22 @@ describe("resultsCalendarCoverage", () => {
     expect(resultsCalendarCoverage({ today, lastSuccessAt: "2026-10-12T02:00:00Z", nextDate: null, lastPastDate: null }).verified).toBe(false);
     expect(resultsCalendarCoverage({ today, lastSuccessAt: "2026-10-12T02:00:00Z", nextDate: null, lastPastDate: "2026-06-01" }).verified).toBe(false);
   });
+  it("accepts same-day authoritative NSE negative coverage for the full blackout window", () => {
+    expect(resultsCalendarCoverage({
+      today, lastSuccessAt: "2026-10-13T02:00:00Z", nextDate: null, lastPastDate: null,
+      authoritativeSource: "NSE_CALENDAR", authoritativeAsOf: today,
+      authoritativeCoverageFrom: "2026-10-14", authoritativeCoverageThrough: "2026-11-13",
+      requiredCoverageFrom: "2026-10-14", requiredCoverageThrough: "2026-10-16",
+    }).verified).toBe(true);
+  });
+  it("rejects stale or incomplete authoritative NSE coverage", () => {
+    const base = {
+      today, lastSuccessAt: "2026-10-13T02:00:00Z", nextDate: null, lastPastDate: null,
+      authoritativeSource: "NSE_CALENDAR", authoritativeAsOf: "2026-10-12",
+      authoritativeCoverageFrom: "2026-10-14", authoritativeCoverageThrough: "2026-11-13",
+      requiredCoverageFrom: "2026-10-14", requiredCoverageThrough: "2026-10-16",
+    };
+    expect(resultsCalendarCoverage(base).verified).toBe(false);
+    expect(resultsCalendarCoverage({ ...base, authoritativeAsOf: today, authoritativeCoverageThrough: "2026-10-15" }).verified).toBe(false);
+  });
 });

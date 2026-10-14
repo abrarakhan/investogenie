@@ -73,6 +73,12 @@ export function resultsCalendarCoverage(input: {
   lastSuccessAt: string | null;
   nextDate: string | null;
   lastPastDate: string | null;
+  authoritativeSource?: string | null;
+  authoritativeAsOf?: string | null;
+  authoritativeCoverageFrom?: string | null;
+  authoritativeCoverageThrough?: string | null;
+  requiredCoverageFrom?: string | null;
+  requiredCoverageThrough?: string | null;
 }): { verified: boolean; detail: string } {
   const day = 86_400_000;
   const todayMs = Date.parse(`${input.today}T00:00:00Z`);
@@ -80,6 +86,17 @@ export function resultsCalendarCoverage(input: {
     return { verified: false, detail: "Results calendar not checked in the last 7 days." };
   }
   if (input.nextDate) return { verified: true, detail: `Next results ${input.nextDate}.` };
+  if (input.authoritativeSource === "NSE_CALENDAR"
+      && input.authoritativeAsOf === input.today
+      && input.authoritativeCoverageFrom && input.requiredCoverageFrom
+      && input.authoritativeCoverageFrom <= input.requiredCoverageFrom
+      && input.authoritativeCoverageThrough && input.requiredCoverageThrough
+      && input.authoritativeCoverageThrough >= input.requiredCoverageThrough) {
+    return {
+      verified: true,
+      detail: `NSE calendar checked through ${input.authoritativeCoverageThrough}; no result is announced in the blackout window.`,
+    };
+  }
   if (input.lastPastDate && todayMs - Date.parse(`${input.lastPastDate}T00:00:00Z`) <= 70 * day) {
     return { verified: true, detail: `Last results ${input.lastPastDate}; next is not due within the blackout.` };
   }

@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import csv
 import os
+import re
 import time
 from datetime import date, datetime, timedelta, timezone
 
@@ -71,9 +72,10 @@ def usable_dates(values, today: date) -> list[date]:
     return sorted(out)
 
 
-def parse_nse_calendar_csv(path: str, today: date) -> dict[str, list[date]]:
-    """Read an NSE corporate-events export and retain financial-results meetings only."""
+def read_nse_calendar_csv(path: str, today: date) -> tuple[dict[str, list[date]], date, date, date]:
+    """Read a complete NSE corporate-events snapshot and its authoritative date window."""
     events: dict[str, set[date]] = {}
+    covered_dates: set[date] = set()
     with open(path, encoding="utf-8-sig", newline="") as handle:
         reader = csv.DictReader(handle)
         for raw in reader:
@@ -82,20 +84,35 @@ def parse_nse_calendar_csv(path: str, today: date) -> dict[str, list[date]]:
             purpose = row.get("PURPOSE", "")
             details = row.get("DETAILS", "")
             raw_date = row.get("DATE", "")
-            if not ticker or "financial results" not in f"{purpose} {details}".lower():
+            if not ticker:
                 continue
             try:
                 event_date = datetime.strptime(raw_date, "%d-%b-%Y").date()
             except ValueError as exc:
                 raise ValueError(f"Invalid NSE calendar date for {ticker}: {raw_date!r}") from exc
             if today - timedelta(days=KEEP_PAST_DAYS) <= event_date <= today + timedelta(days=KEEP_FUTURE_DAYS):
-                events.setdefault(ticker, set()).add(event_date)
-    return {ticker: sorted(dates) for ticker, dates in sorted(events.items())}
+                covered_dates.add(event_date)
+                if "financial results" in f"{purpose} {details}".lower():
+                    events.setdefault(ticker, set()).add(event_date)
+    if not covered_dates:
+        raise ValueError("NSE calendar contains no events in the supported date window")
+    filename_date = re.search(r"(\d{2}-[A-Za-z]{3}-\d{4})", os.path.basename(path))
+    as_of = datetime.strptime(filename_date.group(1), "%d-%b-%Y").date() if filename_date else today
+    return (
+        {ticker: sorted(dates) for ticker, dates in sorted(events.items())},
+        as_of,
+        min(covered_dates),
+        max(covered_dates),
+    )
+
+
+def parse_nse_calendar_csv(path: str, today: date) -> dict[str, list[date]]:
+    return read_nse_calendar_csv(path, today)[0]
 
 
 def import_nse_calendar(conn, path: str, today: date) -> tuple[int, int, list[str]]:
     """Store authoritative NSE result dates using exact NSE ticker matches."""
-    events = parse_nse_calendar_csv(path, today)
+    events, as_of, coverage_from, coverage_through = read_nse_calendar_csv(path, today)
     if not events:
         raise ValueError("NSE calendar contains no financial-results events in the supported date window")
     with conn.cursor() as cur:
@@ -128,6 +145,24 @@ def import_nse_calendar(conn, path: str, today: date) -> tuple[int, int, list[st
                      set last_attempt_at=now(),last_success_at=now(),error=null""",
                 (asset_id,),
             )
+        # Explicitly approved policy: a complete same-day NSE export proves negative coverage
+        # for absent symbols, but only inside the date window carried by that snapshot.
+        cur.execute(
+            """insert into public.corporate_event_sync_state
+                 (asset_id,last_attempt_at,last_success_at,error,authoritative_source,
+                  authoritative_as_of,authoritative_coverage_from,
+                  authoritative_coverage_through,authoritative_imported_at)
+               select id,now(),now(),null,'NSE_CALENDAR',%s,%s,%s,now()
+                 from public.assets
+                where country='IN' and exchange='NSE' and asset_class='STOCK' and is_active
+               on conflict (asset_id) do update set
+                 last_attempt_at=now(),last_success_at=now(),error=null,
+                 authoritative_source='NSE_CALENDAR',authoritative_as_of=excluded.authoritative_as_of,
+                 authoritative_coverage_from=excluded.authoritative_coverage_from,
+                 authoritative_coverage_through=excluded.authoritative_coverage_through,
+                 authoritative_imported_at=now()""",
+            (as_of, coverage_from, coverage_through),
+        )
     conn.commit()
     unmatched = sorted(set(events) - set(assets))
     return imported, len(assets), unmatched
