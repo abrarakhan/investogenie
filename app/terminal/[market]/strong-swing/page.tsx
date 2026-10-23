@@ -13,6 +13,7 @@ import MarketDataAutoRefresh from "@/components/app/MarketDataAutoRefresh";
 import { markLiveMarketTargets } from "@/lib/liveMarketTargets";
 import { zonedMarketClock } from "@/lib/market-calendar.mjs";
 import { captureExecutionPlans, type ExecutionPlanInput } from "@/lib/swingExecutionPlans";
+import { isMomentumExecutionReady } from "@/lib/momentumExecution";
 
 export const dynamic = "force-dynamic";
 
@@ -40,13 +41,13 @@ export default async function StrongSwingPage({
       trail: candidate.strongTrail, atr: (candidate.strongEntry - candidate.strongTrail) / settings.trailAtrMult, expectedDays: candidate.strongExpectedDays,
       signalAsOf: candidate.latestDate, score: candidate.strengthScore / 100, snapshot: { gates: candidate.gates },
     })),
-    ...legacyMomentumIgnition.candidates.filter((candidate) => candidate.status === "ENTRY_READY" && candidate.strongStatus === "EXECUTION_READY").map((candidate) => ({
+    ...legacyMomentumIgnition.candidates.filter((candidate) => isMomentumExecutionReady(candidate.status)).map((candidate) => ({
       assetId: candidate.assetId, strategyKey: "MOMENTUM_IGNITION" as const, status: candidate.status,
       entry: candidate.projectedEntry, target: candidate.projectedTarget, stop: candidate.projectedStop,
       trail: candidate.projectedTrail, atr: candidate.atr14, expectedDays: candidate.projectedDays,
       signalAsOf: candidate.latestDate, score: candidate.score / 100, snapshot: { model: "LEGACY", gates: candidate.gates },
     })),
-    ...momentumIgnition.candidates.filter((candidate) => candidate.status === "MOMENTUM_READY" && candidate.strongStatus === "EXECUTION_READY").map((candidate) => ({
+    ...momentumIgnition.candidates.filter((candidate) => isMomentumExecutionReady(candidate.status)).map((candidate) => ({
       assetId: candidate.assetId, strategyKey: "MOMENTUM_IGNITION" as const, status: candidate.status,
       entry: candidate.projectedEntry, target: candidate.projectedTarget, stop: candidate.projectedStop,
       trail: candidate.projectedTrail, atr: candidate.atr14, expectedDays: candidate.projectedDays,

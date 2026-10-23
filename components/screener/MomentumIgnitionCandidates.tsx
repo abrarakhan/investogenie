@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { MomentumIgnitionCandidate, MomentumIgnitionResult } from "@/lib/momentumIgnition";
 import type { MomentumIgnitionV2Status } from "@/lib/analytics/momentumIgnitionV2";
+import { isMomentumExecutionReady } from "@/lib/momentumExecution";
 
 const STATUS_STYLE: Record<MomentumIgnitionV2Status, string> = {
   MOMENTUM_READY: "border-emerald-400/35 bg-emerald-400/10 text-emerald-200",
@@ -35,7 +36,7 @@ function IgnitionCard({ candidate, rank, market, planId }: { candidate: Momentum
   const keyGates = candidate.gates.filter((item) => [
     "trend", "relative_strength", "compression", "dry_up", "live_volume", "liquidity", "volatility", "circuit",
   ].includes(item.key));
-  const canTrack = candidate.status === "MOMENTUM_READY" && candidate.strongStatus === "EXECUTION_READY";
+  const canTrack = isMomentumExecutionReady(candidate.status);
   const ledgerParams = new URLSearchParams({
     assetId: candidate.assetId,
     ticker: candidate.ticker,
@@ -117,11 +118,7 @@ function IgnitionCard({ candidate, rank, market, planId }: { candidate: Momentum
           className="inline-flex min-h-11 items-center rounded-lg border border-emerald-400/35 bg-emerald-400/10 px-4 text-sm font-bold text-emerald-200 hover:bg-emerald-400/15"
         >Buy &amp; Track</Link> : <p className="text-[11px] leading-relaxed text-white/38">
           {canTrack && !planId ? "Plan unavailable — reload."
-            : candidate.status === "MOMENTUM_READY"
-            ? candidate.strongStatus
-              ? `Buy blocked: Strong Swing is ${candidate.strongStatus.toLowerCase().replaceAll("_", " ")}.`
-              : "Buy blocked: awaiting a current-session Strong Swing assessment."
-            : "Buy & Track unlocks only at Momentum ready after early-timing checks and Strong Swing confirmation pass."}
+            : "Buy & Track unlocks only at Momentum ready after freshness, liquidity, early-timing, volatility and circuit checks pass."}
         </p>}
       </div>
     </article>
@@ -175,8 +172,7 @@ function CandidateGroup({
 export default function MomentumIgnitionCandidates({ result, planIds }: { result: MomentumIgnitionResult; planIds: Record<string, string> }) {
   const marketLabel = result.market === "IN" ? "NSE" : "US";
   const ranked = result.candidates.map((candidate, index) => ({ candidate, rank: index + 1 }));
-  const executionReady = ranked.filter(({ candidate }) => candidate.status === "MOMENTUM_READY" && candidate.strongStatus === "EXECUTION_READY");
-  const momentumReady = ranked.filter(({ candidate }) => candidate.status === "MOMENTUM_READY" && candidate.strongStatus !== "EXECUTION_READY");
+  const momentumReady = ranked.filter(({ candidate }) => isMomentumExecutionReady(candidate.status));
   const firstThrust = ranked.filter(({ candidate }) => candidate.status === "FIRST_THRUST");
   const preIgnition = ranked.filter(({ candidate }) => candidate.status === "PRE_IGNITION");
   const retest = ranked.filter(({ candidate }) => candidate.status === "RETEST_SETUP");
@@ -198,9 +194,8 @@ export default function MomentumIgnitionCandidates({ result, planIds }: { result
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-7">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
         {[
-          ["Execution ready", executionReady.length, "text-emerald-200"],
           ["Momentum ready", momentumReady.length, "text-emerald-300"],
           ["First thrust", firstThrust.length, "text-cyan-200"],
           ["Pre-ignition", preIgnition.length, "text-amber-200"],
@@ -214,14 +209,13 @@ export default function MomentumIgnitionCandidates({ result, planIds }: { result
       </div>
 
       <div className="rounded-lg border border-cyan-400/15 bg-cyan-400/[0.035] px-4 py-3 text-xs leading-relaxed text-cyan-100/65">
-        V2 discovery targets the first thrust or first retest over the next 1–2 sessions. It penalizes repeated highs, nearby resistance, decelerating relative strength and intraday rejection. Strong Swing remains the execution authority.
+        V2 targets the first thrust or first retest over the next 1–2 sessions. Momentum ready is independently actionable after its freshness, liquidity, trend, volume, volatility, circuit and early-timing checks pass. Strong Swing remains a separate, later-confirmation strategy.
       </div>
 
       {ranked.length === 0
         ? <div className="rounded-lg border border-white/10 px-4 py-8 text-center text-sm text-white/45">No {marketLabel} stock currently passes the Momentum Ignition discovery floor.</div>
         : <div className="space-y-3">
-          <CandidateGroup title="Execution ready" candidates={executionReady} planIds={planIds} color="text-emerald-200" market={result.market} defaultOpen />
-          <CandidateGroup title="Momentum ready" candidates={momentumReady} planIds={planIds} color="text-emerald-300" market={result.market} />
+          <CandidateGroup title="Momentum ready" candidates={momentumReady} planIds={planIds} color="text-emerald-300" market={result.market} defaultOpen />
           <CandidateGroup title="First thrust" candidates={firstThrust} planIds={planIds} color="text-cyan-200" market={result.market} />
           <CandidateGroup title="Pre-ignition" candidates={preIgnition} planIds={planIds} color="text-amber-200" market={result.market} />
           <CandidateGroup title="Retest setup" candidates={retest} planIds={planIds} color="text-sky-200" market={result.market} />
