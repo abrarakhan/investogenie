@@ -1326,19 +1326,28 @@ let corporateResultsChild = null;
 
 /** Results-date calendar for the Armed Swing entry blackout. Assets without a recent
  *  successful check are treated as unverified by the app, so a skipped run fails closed. */
-function runCorporateResults(trigger) {
-  if (process.env.CORPORATE_RESULTS_SYNC_DISABLED === "1" || !python || corporateResultsChild || shuttingDown) return;
-  const name = `corporate-results/${trigger}`;
+function runCorporateResultsStep(name, args, next) {
   const started = Date.now();
-  corporateResultsChild = spawn(python, [
-    corporateResultsPipeline, "--market", "IN", "--limit", process.env.CORPORATE_RESULTS_SYNC_LIMIT ?? "1000",
-  ], { cwd: root, env: process.env, stdio: "inherit", timeout: 60 * 60_000 });
+  corporateResultsChild = spawn(python, [corporateResultsPipeline, ...args],
+    { cwd: root, env: process.env, stdio: "inherit", timeout: 60 * 60_000 });
   corporateResultsChild.once("error", (error) => recordSyncJob(name, "error", error.message));
   corporateResultsChild.once("close", (code, signal) => {
     corporateResultsChild = null;
     const ok = code === 0 && !signal;
     recordSyncJob(name, ok ? "ok" : "error", ok ? null : `exit ${signal ?? code}`, 1, Date.now() - started);
+    if (next && !shuttingDown) next();
   });
+}
+
+/** Official NSE event calendar first (complete, authoritative for its window, trusted only on
+ *  its own IST date), then the Yahoo rotation as a secondary source. Either failing leaves the
+ *  affected stocks unverified, so entries fail closed. */
+function runCorporateResults(trigger) {
+  if (process.env.CORPORATE_RESULTS_SYNC_DISABLED === "1" || !python || corporateResultsChild || shuttingDown) return;
+  const yahoo = () => runCorporateResultsStep(`corporate-results/${trigger}`,
+    ["--market", "IN", "--limit", process.env.CORPORATE_RESULTS_SYNC_LIMIT ?? "1000"]);
+  if (process.env.NSE_EVENT_CALENDAR_DISABLED === "1") return yahoo();
+  runCorporateResultsStep(`nse-event-calendar/${trigger}`, ["--fetch-nse-calendar"], yahoo);
 }
 
 /** NSE only (US Armed Swing is fail-closed). Two runs a day of up to 1,000 checks each, skipping

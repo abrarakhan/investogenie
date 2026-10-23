@@ -43,6 +43,10 @@ def parse_args() -> argparse.Namespace:
         "--nse-calendar-csv",
         help="Import an official NSE corporate-events CSV instead of querying Yahoo",
     )
+    parser.add_argument(
+        "--fetch-nse-calendar", action="store_true",
+        help="Download today's official NSE event-calendar CSV and import it instead of querying Yahoo",
+    )
     parser.add_argument("--sleep", type=float, default=0.25)
     return parser.parse_args()
 
@@ -106,6 +110,48 @@ def read_nse_calendar_csv(path: str, today: date) -> tuple[dict[str, list[date]]
     )
 
 
+# The CSV behind https://www.nseindia.com/companies-listing/corporate-filings-event-calendar.
+# Fetched with one plain, identified request per run; nothing imitates a browser. If NSE ever
+# refuses it, the run fails and coverage lapses to unverified (fail closed) rather than retrying
+# around the refusal.
+NSE_EVENT_CALENDAR_URL = "https://www.nseindia.com/api/event-calendar?index=equities&csv=true"
+NSE_CALENDAR_HEADER = ("SYMBOL", "COMPANY", "PURPOSE", "DETAILS", "DATE")
+IST = timezone(timedelta(hours=5, minutes=30))
+
+
+def validate_nse_calendar_payload(content_type: str, body: bytes) -> None:
+    """Reject anything that is not the NSE event-calendar CSV (error pages, HTML, empty)."""
+    if "csv" not in (content_type or "").lower():
+        raise ValueError(f"NSE event calendar returned {content_type or 'no content type'}, not CSV")
+    import io
+    text = body.decode("utf-8-sig", errors="replace") if body else ""
+    # NSE quotes its header cells and may embed line breaks in them, so parse as CSV.
+    header = next(csv.reader(io.StringIO(text)), [])
+    columns = tuple(cell.strip().upper() for cell in header)
+    if columns[:5] != NSE_CALENDAR_HEADER:
+        raise ValueError(f"Unexpected NSE event-calendar header: {header[:5]!r}")
+
+
+def fetch_nse_calendar(dest_dir: str, as_of: date, opener=None) -> str:
+    """Download the calendar to a file named with its as-of date, so the importer dates it."""
+    import urllib.request
+
+    request = urllib.request.Request(
+        NSE_EVENT_CALENDAR_URL,
+        headers={"User-Agent": "InvestoGenie/1.0 (+personal research; results-calendar sync)", "Accept": "text/csv"},
+    )
+    with (opener or urllib.request.urlopen)(request, timeout=30) as response:
+        status = getattr(response, "status", 200)
+        if status != 200:
+            raise ValueError(f"NSE event calendar returned HTTP {status}")
+        body = response.read()
+        validate_nse_calendar_payload(response.headers.get("Content-Type", ""), body)
+    path = os.path.join(dest_dir, f"NSE-event-calendar-{as_of.strftime('%d-%b-%Y')}.csv")
+    with open(path, "wb") as handle:
+        handle.write(body)
+    return path
+
+
 def parse_nse_calendar_csv(path: str, today: date) -> dict[str, list[date]]:
     return read_nse_calendar_csv(path, today)[0]
 
@@ -123,6 +169,14 @@ def import_nse_calendar(conn, path: str, today: date) -> tuple[int, int, list[st
             (list(events),),
         )
         assets = {ticker: asset_id for asset_id, ticker in cur.fetchall()}
+        # The snapshot is complete for its window: dates inside it that it no longer lists
+        # (postponed or cancelled meetings) must not linger as phantom blackouts.
+        cur.execute(
+            """delete from public.corporate_events
+                where source='NSE_CALENDAR' and event_type='RESULTS'
+                  and event_date between %s and %s""",
+            (coverage_from, coverage_through),
+        )
         imported = 0
         for ticker, dates in events.items():
             asset_id = assets.get(ticker)
@@ -331,8 +385,14 @@ def main() -> int:
     symbols = [s.strip().upper() for s in args.symbols.split(",")] if args.symbols else None
     today = datetime.now(timezone.utc).date()
     with psycopg2.connect(args.database_url) as conn:
-        if args.nse_calendar_csv:
-            imported, matched, unmatched = import_nse_calendar(conn, args.nse_calendar_csv, today)
+        if args.fetch_nse_calendar or args.nse_calendar_csv:
+            calendar_path = args.nse_calendar_csv
+            if args.fetch_nse_calendar:
+                import tempfile
+                # Dated in IST: the verified rule trusts an export only on its own Indian session date.
+                ist_today = datetime.now(IST).date()
+                calendar_path = fetch_nse_calendar(tempfile.mkdtemp(prefix="nse-calendar-"), ist_today)
+            imported, matched, unmatched = import_nse_calendar(conn, calendar_path, today)
             checked, verified, total = coverage(conn, "IN")
             print(
                 f"[corporate-results] NSE calendar: imported {imported} dates for {matched} symbols; "
