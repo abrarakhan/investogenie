@@ -26,7 +26,9 @@ export default function MarketDataAutoRefresh({ market, assetIds = [] }: { marke
         if (cancelled) return;
         const incomplete = results.some(({ response, result }) => !response.ok || result.errors?.length || result.unmapped);
         setWarning(incomplete ? "Some Breeze quotes could not be refreshed. Last known prices remain visible." : null);
-        if (results.some(({ result }) => result.updated > 0)) router.refresh();
+        // A REST refresh can touch freshness without changing anything shown.
+        // Recompute the analytics pages only for a material quote/depth change.
+        if (results.some(({ result }) => result.changed > 0)) router.refresh();
       } catch {
         if (!cancelled) setWarning("Breeze refresh unavailable; last known prices remain visible.");
       }
@@ -40,18 +42,6 @@ export default function MarketDataAutoRefresh({ market, assetIds = [] }: { marke
       document.removeEventListener("visibilitychange", refreshQuotes);
     };
   }, [market, ids, router]);
-
-  useEffect(() => {
-    const refresh = () => {
-      if (document.visibilityState === "visible") router.refresh();
-    };
-    const timer = window.setInterval(refresh, 60_000);
-    document.addEventListener("visibilitychange", refresh);
-    return () => {
-      window.clearInterval(timer);
-      document.removeEventListener("visibilitychange", refresh);
-    };
-  }, [market, router]);
 
   return warning ? <p role="status" className="mb-3 text-xs text-amber-200">{warning}</p> : null;
 }

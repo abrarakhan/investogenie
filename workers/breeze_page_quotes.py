@@ -21,12 +21,31 @@ def execution_fields(row):
     }
 
 
+def materially_changed(previous, current, tolerance=1e-9):
+    """Compare displayed/execution fields, deliberately excluding freshness."""
+    if previous is None:
+        return True
+    for old, new in zip(previous, current):
+        if old is None or new is None:
+            if old is not None or new is not None:
+                return True
+            continue
+        try:
+            if abs(float(old) - float(new)) > tolerance:
+                return True
+        except (TypeError, ValueError):
+            if old != new:
+                return True
+    return False
+
+
 def main():
     from breeze_connect import BreezeConnect
 
     user_id = sys.argv[1]
     ids = json.loads(sys.argv[2])[:50]
     updated = 0
+    changed = 0
     errors = []
     with psycopg2.connect(database_url()) as conn:
         with conn.cursor() as cur:
@@ -48,6 +67,25 @@ def main():
                 stamp = dt.datetime.strptime(row["ltt"], "%d-%b-%Y %H:%M:%S").replace(tzinfo=IST)
                 execution = execution_fields(row)
                 with conn.cursor() as cur:
+                    cur.execute(
+                        """select price,change_pct,best_bid,best_ask,
+                                  lower_circuit,upper_circuit,as_of
+                             from public.latest_quotes where asset_id=%s""",
+                        (asset_id,),
+                    )
+                    previous = cur.fetchone()
+                    effective_lower = execution["lower_circuit"]
+                    effective_upper = execution["upper_circuit"]
+                    if previous is not None and previous[6].date() == stamp.date():
+                        if effective_lower is None:
+                            effective_lower = previous[4]
+                        if effective_upper is None:
+                            effective_upper = previous[5]
+                    current = (
+                        row["ltp"], row.get("ltp_percent_change"),
+                        execution["best_bid"], execution["best_ask"],
+                        effective_lower, effective_upper,
+                    )
                     cur.execute("""insert into public.latest_quotes(
                         asset_id,price,change_pct,currency,as_of,source,updated_at,
                         best_bid,best_ask,bid_quantity,ask_quantity,lower_circuit,upper_circuit)
@@ -72,17 +110,19 @@ def main():
                           execution["lower_circuit"],execution["upper_circuit"],
                       ))
                     updated += cur.rowcount
+                    if cur.rowcount and materially_changed(previous, current):
+                        changed += 1
                 conn.commit()
             except Exception as exc:
                 conn.rollback()
                 errors.append(f"{code}: {exc}")
             time.sleep(0.7)
-    print(json.dumps({"updated": updated, "unmapped": len(ids)-len(assets), "errors": errors}))
+    print(json.dumps({"updated": updated, "changed": changed, "unmapped": len(ids)-len(assets), "errors": errors}))
 
 
 if __name__ == "__main__":
     try:
         main()
     except Exception as exc:
-        print(json.dumps({"updated": 0, "errors": [str(exc)]}))
+        print(json.dumps({"updated": 0, "changed": 0, "errors": [str(exc)]}))
         sys.exit(1)

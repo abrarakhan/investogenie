@@ -45,7 +45,7 @@ function MarketSwitch({ market, activeArea }: { market: MarketId; activeArea: st
   return (
     <div className="grid grid-cols-2 rounded-lg border border-white/10 bg-black/25 p-1 text-xs font-semibold">
       {(["US", "IN"] as MarketId[]).map((m) => (
-        <a
+        <Link
           key={m}
           href={`${target}/${marketPath(m)}${activeArea === "stock-screener" ? "/stocks" : activeArea === "swing" ? "/screener" : activeArea === "strong-swing" ? "/strong-swing" : activeArea === "armed-swing" ? "/armed-swing" : activeArea === "news-swing" ? "/news-swing" : activeArea === "long-term" ? "/long-term" : activeArea === "probability" ? "/probability" : activeArea === "adaptive-allocation" ? "/adaptive-allocation" : activeArea === "forward-test" ? "/forward-test" : activeArea === "trade-ledger" ? "/trade-ledger" : ""}`}
           className={cx(
@@ -56,7 +56,7 @@ function MarketSwitch({ market, activeArea }: { market: MarketId; activeArea: st
           )}
         >
           {MARKETS[m].flag} {m}
-        </a>
+        </Link>
       ))}
     </div>
   );
@@ -238,7 +238,7 @@ export default function AppShell({
                       </div>
                       <div className="grid grid-cols-2 gap-2 sm:grid-cols-1">
                         {section.items.map((item) => (
-                          <a
+                          <Link
                             key={`${section.title}:${item.label}`}
                             href={item.href}
                             aria-current={item.active ? "page" : undefined}
@@ -263,7 +263,7 @@ export default function AppShell({
                                 </span>
                               )}
                             </span>
-                          </a>
+                          </Link>
                         ))}
                       </div>
                     </div>
