@@ -3,6 +3,7 @@ import { scoreNewsSwing, type NewsDirection, type NewsScope } from "@/lib/analyt
 import { assessTradeRisk, type TradeRiskAssessment, type TradeRiskState } from "@/lib/analytics/tradeRisk";
 import { reviseSwingTradePlan, type TradePlanRevision } from "@/lib/analytics/tradePlanRevision";
 import { isMarketOpenNow, refreshMarketHolidays } from "@/lib/market-calendar.mjs";
+import { calculateRecoveryTargets } from "@/lib/tradeRecoveryTargets";
 
 export type SwingTradeState =
   | "ON_TRACK"
@@ -481,6 +482,25 @@ export async function getSwingTradeLedger(userId: string, market: "IN" | "US"): 
     ? ((benchmarkPrice / twoSessionReference) - 1) * 100
     : null;
 
+  const cutoffDate = new Intl.DateTimeFormat("en-CA", {
+    timeZone: market === "IN" ? "Asia/Kolkata" : "America/New_York",
+    year: "numeric", month: "2-digit", day: "2-digit",
+  }).format(new Date());
+  const recoveryTargets = await calculateRecoveryTargets(openRows.flatMap((row) => {
+    const currentPrice = nullableNumber(row.current_price);
+    const atr = nullableNumber(row.current_atr) ?? nullableNumber(row.projected_atr);
+    const priorClose = nullableNumber(row.prior_close);
+    const twoSessionClose = nullableNumber(row.two_session_close);
+    if (!currentPrice || !atr || currentPrice <= 0 || atr <= 0) return [];
+    return [{
+      tradeId: String(row.id), assetId: String(row.asset_id), market, cutoffDate,
+      currentPrice, atr,
+      move1dPct: priorClose && priorClose > 0 ? ((currentPrice / priorClose) - 1) * 100 : null,
+      move2dPct: twoSessionClose && twoSessionClose > 0 ? ((currentPrice / twoSessionClose) - 1) * 100 : null,
+      horizon: Math.max(2, Number(row.expected_holding_days)),
+    }];
+  }));
+
   return rows.map((row) => {
     const boughtOn = dateText(row.bought_on) ?? "";
     const status = String(row.status) as "OPEN" | "CLOSED";
@@ -607,6 +627,10 @@ export async function getSwingTradeLedger(userId: string, market: "IN" | "US"): 
       externalExitReasons: assessment.recommendation === "EXIT"
         ? assessment.reasons.filter((reason) => !reason.startsWith("The recorded strategy target has been reached"))
         : [],
+      recoveryTarget: recoveryTargets.get(trade.id)?.recoveryTarget ?? null,
+      historicalTarget: recoveryTargets.get(trade.id)?.historicalTarget ?? null,
+      historicalSampleSize: recoveryTargets.get(trade.id)?.sampleSize ?? 0,
+      historicalHorizon: recoveryTargets.get(trade.id)?.horizon ?? 0,
     });
     return {
       ...trade,

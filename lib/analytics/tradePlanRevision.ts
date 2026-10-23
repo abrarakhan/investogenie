@@ -22,12 +22,19 @@ export interface TradePlanRevisionInput {
   remainingQuantity: number;
   externalExitRisk: boolean;
   externalExitReasons: string[];
+  recoveryTarget: number | null;
+  historicalTarget: number | null;
+  historicalSampleSize: number;
+  historicalHorizon: number;
 }
 
 export interface TradePlanRevision {
   action: RevisedTradeAction;
   label: string;
   revisedTarget: number | null;
+  historicalTarget: number | null;
+  historicalSampleSize: number;
+  historicalHorizon: number;
   protectiveStop: number | null;
   remainingUpsidePct: number | null;
   originalPlanBreached: boolean;
@@ -57,6 +64,7 @@ export function reviseSwingTradePlan(input: TradePlanRevisionInput): TradePlanRe
   if (input.status === "CLOSED" || !positive(current) || input.remainingQuantity <= 0) {
     return {
       action: "UNAVAILABLE", label: "No open position", revisedTarget: null,
+      historicalTarget: null, historicalSampleSize: 0, historicalHorizon: 0,
       protectiveStop: null, remainingUpsidePct: null, originalPlanBreached,
       atUpperCircuit, reasons: ["A revised plan is shown only for an open position with a current quote."],
     };
@@ -65,6 +73,7 @@ export function reviseSwingTradePlan(input: TradePlanRevisionInput): TradePlanRe
   if (current! <= protectiveStop) {
     return {
       action: "EXIT", label: "Exit condition active", revisedTarget: null,
+      historicalTarget: null, historicalSampleSize: 0, historicalHorizon: 0,
       protectiveStop, remainingUpsidePct: null, originalPlanBreached: true,
       atUpperCircuit, reasons: ["The current quote is at or below the effective protective stop."],
     };
@@ -73,6 +82,7 @@ export function reviseSwingTradePlan(input: TradePlanRevisionInput): TradePlanRe
   if (input.externalExitRisk) {
     return {
       action: "EXIT", label: "Exit risk remains active", revisedTarget: null,
+      historicalTarget: null, historicalSampleSize: 0, historicalHorizon: 0,
       protectiveStop, remainingUpsidePct: null, originalPlanBreached,
       atUpperCircuit, reasons: input.externalExitReasons.length
         ? input.externalExitReasons
@@ -83,12 +93,17 @@ export function reviseSwingTradePlan(input: TradePlanRevisionInput): TradePlanRe
   if (originalPlanBreached) {
     const reasons = [
       "A session low after purchase traded through the frozen stop; a later rebound does not restore the original setup.",
-      "Manage the remaining shares as a recovery position and protect them with the effective trail instead of extending the target.",
+      "The recovery objectives are advisory exit references for a position that remains open; they do not restore the breached setup.",
     ];
     if (input.soldQuantity > 0) reasons.push("The guidance applies only to the shares still remaining after partial sales.");
     return {
-      action: "PROTECT_RECOVERY", label: "Protect recovery", revisedTarget: null,
-      protectiveStop, remainingUpsidePct: null, originalPlanBreached: true,
+      action: "PROTECT_RECOVERY", label: "Recovery objectives", revisedTarget: input.recoveryTarget,
+      historicalTarget: input.historicalTarget,
+      historicalSampleSize: input.historicalSampleSize,
+      historicalHorizon: input.historicalHorizon,
+      protectiveStop,
+      remainingUpsidePct: input.recoveryTarget === null ? null : ((input.recoveryTarget / current!) - 1) * 100,
+      originalPlanBreached: true,
       atUpperCircuit, reasons,
     };
   }
@@ -108,6 +123,7 @@ export function reviseSwingTradePlan(input: TradePlanRevisionInput): TradePlanRe
     if (input.soldQuantity > 0) reasons.push("The extension applies only to the remaining runner quantity.");
     return {
       action: "EXTEND_RUNNER", label: "Trail remaining runner", revisedTarget,
+      historicalTarget: null, historicalSampleSize: 0, historicalHorizon: 0,
       protectiveStop, remainingUpsidePct: ((revisedTarget / current!) - 1) * 100,
       originalPlanBreached: false, atUpperCircuit, reasons,
     };
@@ -116,6 +132,7 @@ export function reviseSwingTradePlan(input: TradePlanRevisionInput): TradePlanRe
   if (targetReached) {
     return {
       action: "PROTECT_PROFIT", label: "Protect achieved profit", revisedTarget: null,
+      historicalTarget: null, historicalSampleSize: 0, historicalHorizon: 0,
       protectiveStop, remainingUpsidePct: null, originalPlanBreached: false,
       atUpperCircuit, reasons: [
         "The frozen target has been reached, but current momentum does not support an automatic target extension.",
@@ -127,6 +144,7 @@ export function reviseSwingTradePlan(input: TradePlanRevisionInput): TradePlanRe
   return {
     action: "FOLLOW_ORIGINAL", label: "Original plan remains active",
     revisedTarget: input.originalTarget, protectiveStop,
+    historicalTarget: null, historicalSampleSize: 0, historicalHorizon: 0,
     remainingUpsidePct: ((input.originalTarget / current!) - 1) * 100,
     originalPlanBreached: false, atUpperCircuit,
     reasons: ["No stop breach or completed target is detected; continue measuring against the frozen target and effective trail."],

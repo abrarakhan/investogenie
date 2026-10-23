@@ -8,6 +8,7 @@ const base: TradePlanRevisionInput = {
   stockMove1dPct: 2, stockMove2dPct: 4, soldQuantity: 0,
   remainingQuantity: 10,
   externalExitRisk: false, externalExitReasons: [],
+  recoveryTarget: 112, historicalTarget: 116, historicalSampleSize: 20, historicalHorizon: 8,
 };
 
 describe("revised swing trade plan", () => {
@@ -30,12 +31,14 @@ describe("revised swing trade plan", () => {
     expect(result.revisedTarget).toBeNull();
   });
 
-  it("does not revive a plan whose stop traded through before recovery", () => {
+  it("shows advisory recovery targets without reviving a breached plan", () => {
     const result = reviseSwingTradePlan({
       ...base, currentPrice: 108, lowestLowSinceEntry: 92, soldQuantity: 4, remainingQuantity: 6,
     });
     expect(result.action).toBe("PROTECT_RECOVERY");
-    expect(result.revisedTarget).toBeNull();
+    expect(result.revisedTarget).toBe(112);
+    expect(result.historicalTarget).toBe(116);
+    expect(result.historicalSampleSize).toBe(20);
     expect(result.originalPlanBreached).toBe(true);
   });
 

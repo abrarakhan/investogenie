@@ -251,7 +251,7 @@ function RevisedPlanPanel({ trade }: { trade: SwingLedgerTrade }) {
   const actionCopy = exitNow
     ? `Exit the remaining ${trade.remainingQuantity.toLocaleString("en-IN")} shares at the next executable market price. Do not wait for the frozen target.`
     : plan.action === "PROTECT_RECOVERY"
-      ? `Hold only while price remains above ${price(plan.protectiveStop)}; exit the remaining ${trade.remainingQuantity.toLocaleString("en-IN")} shares if that level trades.`
+      ? `The original stop was missed. If you continue holding, use ${price(plan.protectiveStop)} as protection and treat the recovery objectives as exit references, not a restored trade setup.`
       : plan.action === "PROTECT_PROFIT"
         ? `Protect the gain on the remaining ${trade.remainingQuantity.toLocaleString("en-IN")} shares at ${price(plan.protectiveStop)}; there is no approved higher target yet.`
         : plan.action === "EXTEND_RUNNER"
@@ -280,14 +280,17 @@ function RevisedPlanPanel({ trade }: { trade: SwingLedgerTrade }) {
       </div>
       <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
         <Metric label={exitNow ? "Old target · reference only" : "Frozen target"} value={price(trade.projectedTarget)} tone="muted" />
-        <Metric label="Revised objective" value={price(plan.revisedTarget)} tone={plan.revisedTarget ? "good" : "muted"} />
+        <Metric label={plan.action === "PROTECT_RECOVERY" ? "Volatility recovery target" : "Revised objective"} value={price(plan.revisedTarget)} tone={plan.revisedTarget ? "good" : "muted"} />
         <Metric label={exitNow ? "Old stop · no longer actionable" : "Protect at"} value={exitNow ? "—" : price(plan.protectiveStop)} tone={exitNow ? "muted" : "warn"} />
         <Metric label="Upside left" value={pct(plan.remainingUpsidePct)} tone={(plan.remainingUpsidePct ?? 0) > 0 ? "good" : "muted"} />
       </div>
+      {plan.action === "PROTECT_RECOVERY" && <div className="mt-2">
+        <Metric label={`Past-movement target · ${plan.historicalSampleSize || 0} analogues`} value={price(plan.historicalTarget)} tone={plan.historicalTarget ? "good" : "muted"} />
+      </div>}
       <ul className="mt-3 space-y-1 text-xs leading-relaxed text-white/65">
         {plan.reasons.map((reason) => <li key={reason}>• {reason}</li>)}
       </ul>
-      <p className="mt-3 text-[11px] text-white/35">The frozen entry plan remains unchanged. Revised objectives are volatility-scaled guidance for the remaining quantity, not guaranteed prices or automatic broker orders.</p>
+      <p className="mt-3 text-[11px] text-white/35">The frozen entry plan remains unchanged. Revised objectives are advisory guidance for the remaining quantity, not guaranteed prices or automatic broker orders.{plan.action === "PROTECT_RECOVERY" && plan.historicalTarget ? ` The past-movement target is the 60th-percentile maximum advance over ${plan.historicalHorizon} sessions among the 20 closest prior momentum-and-volatility paths.` : ""}</p>
     </div>
   );
 }
