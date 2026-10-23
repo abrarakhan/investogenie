@@ -5,12 +5,25 @@ import sys
 import time
 
 import psycopg2
-from breeze_connect import BreezeConnect
-from breeze_market_daemon import database_url, decrypt_credential, env, IST
+from breeze_market_daemon import database_url, decrypt_credential, env, integer, number, IST
 from breeze_account_sync import response_rows
 
 
+def execution_fields(row):
+    """Normalize the execution fields exposed by Breeze's cash REST quote."""
+    return {
+        "best_bid": number(row.get("best_bid_price")),
+        "best_ask": number(row.get("best_offer_price")),
+        "bid_quantity": integer(row.get("best_bid_quantity")),
+        "ask_quantity": integer(row.get("best_offer_quantity")),
+        "lower_circuit": number(row.get("lower_circuit")),
+        "upper_circuit": number(row.get("upper_circuit")),
+    }
+
+
 def main():
+    from breeze_connect import BreezeConnect
+
     user_id = sys.argv[1]
     ids = json.loads(sys.argv[2])[:50]
     updated = 0
@@ -33,13 +46,31 @@ def main():
                 if not row:
                     raise RuntimeError("No valid cash quote returned")
                 stamp = dt.datetime.strptime(row["ltt"], "%d-%b-%Y %H:%M:%S").replace(tzinfo=IST)
+                execution = execution_fields(row)
                 with conn.cursor() as cur:
-                    cur.execute("""insert into public.latest_quotes(asset_id,price,change_pct,currency,as_of,source,updated_at)
-                      values(%s,%s,%s,'INR',%s,'BREEZE_LIVE',now())
+                    cur.execute("""insert into public.latest_quotes(
+                        asset_id,price,change_pct,currency,as_of,source,updated_at,
+                        best_bid,best_ask,bid_quantity,ask_quantity,lower_circuit,upper_circuit)
+                      values(%s,%s,%s,'INR',%s,'BREEZE_LIVE',now(),%s,%s,%s,%s,%s,%s)
                       on conflict(asset_id) do update set price=excluded.price,change_pct=excluded.change_pct,
-                      as_of=excluded.as_of,source=excluded.source,updated_at=now()
+                      as_of=excluded.as_of,source=excluded.source,updated_at=now(),
+                      best_bid=excluded.best_bid,best_ask=excluded.best_ask,
+                      bid_quantity=excluded.bid_quantity,ask_quantity=excluded.ask_quantity,
+                      lower_circuit=case
+                        when excluded.lower_circuit is not null then excluded.lower_circuit
+                        when public.latest_quotes.as_of::date=excluded.as_of::date then public.latest_quotes.lower_circuit
+                        else null end,
+                      upper_circuit=case
+                        when excluded.upper_circuit is not null then excluded.upper_circuit
+                        when public.latest_quotes.as_of::date=excluded.as_of::date then public.latest_quotes.upper_circuit
+                        else null end
                       where public.latest_quotes.as_of <= excluded.as_of""",
-                      (asset_id,row["ltp"],row.get("ltp_percent_change"),stamp))
+                      (
+                          asset_id,row["ltp"],row.get("ltp_percent_change"),stamp,
+                          execution["best_bid"],execution["best_ask"],
+                          execution["bid_quantity"],execution["ask_quantity"],
+                          execution["lower_circuit"],execution["upper_circuit"],
+                      ))
                     updated += cur.rowcount
                 conn.commit()
             except Exception as exc:

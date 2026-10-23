@@ -404,7 +404,17 @@ class MarketBatcher:
                     on conflict (asset_id) do update set
                       price=excluded.price,change_pct=excluded.change_pct,
                       currency=excluded.currency,as_of=excluded.as_of,
-                      source=excluded.source,updated_at=excluded.updated_at,best_bid=excluded.best_bid,best_ask=excluded.best_ask,bid_quantity=excluded.bid_quantity,ask_quantity=excluded.ask_quantity,lower_circuit=excluded.lower_circuit,upper_circuit=excluded.upper_circuit
+                      source=excluded.source,updated_at=excluded.updated_at,
+                      best_bid=excluded.best_bid,best_ask=excluded.best_ask,
+                      bid_quantity=excluded.bid_quantity,ask_quantity=excluded.ask_quantity,
+                      lower_circuit=case
+                        when excluded.lower_circuit is not null then excluded.lower_circuit
+                        when public.latest_quotes.as_of::date=excluded.as_of::date then public.latest_quotes.lower_circuit
+                        else null end,
+                      upper_circuit=case
+                        when excluded.upper_circuit is not null then excluded.upper_circuit
+                        when public.latest_quotes.as_of::date=excluded.as_of::date then public.latest_quotes.upper_circuit
+                        else null end
                     where public.latest_quotes.as_of is null or public.latest_quotes.as_of <= excluded.as_of
                     """,
                     [(r["asset_id"], r["price"], r["change_pct"], "INR", r["timestamp"], "BREEZE_LIVE", dt.datetime.now(dt.timezone.utc),r["bid"],r["ask"],r["bid_qty"],r["ask_qty"],r["lower_circuit"],r["upper_circuit"]) for r in rows],
