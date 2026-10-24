@@ -3,6 +3,7 @@ import unittest
 
 from breeze_account_sync import (
     INVESTOGENIE_ACTIVITY_START,
+    enrich_holdings_with_prices,
     as_number,
     external_key,
     fetch_rows,
@@ -68,6 +69,25 @@ class BreezeAccountSyncTest(unittest.TestCase):
 
     def test_number_parser_handles_broker_format(self):
         self.assertEqual(str(as_number("1,180.50")), "1180.50")
+
+
+class HoldingPriceTests(unittest.TestCase):
+    def test_attaches_breeze_price_and_cost_keeping_demat_quantity(self):
+        demat = [{"stock_code": "RELIND", "quantity": "10", "stock_ISIN": "INE002A01018"},
+                 {"stock_code": "NOPRICE", "quantity": "5"}]
+        portfolio = [{"stock_code": "relind", "quantity": "12", "current_market_price": "2950.5",
+                      "average_price": "2400", "change_percentage": "-1.2"}]
+        rows = enrich_holdings_with_prices(demat, portfolio)
+        self.assertEqual(rows[0]["quantity"], "10")  # custody quantity wins
+        self.assertEqual(rows[0]["current_market_price"], "2950.5")
+        self.assertEqual(rows[0]["average_price"], "2400")
+        self.assertEqual(rows[0]["price_source"], "BREEZE_PORTFOLIO")
+        self.assertNotIn("price_source", rows[1])
+
+    def test_ignores_portfolio_rows_without_a_price(self):
+        rows = enrich_holdings_with_prices([{"stock_code": "X", "quantity": "1"}],
+                                           [{"stock_code": "X", "current_market_price": ""}])
+        self.assertNotIn("current_market_price", rows[0])
 
 
 if __name__ == "__main__":

@@ -10,6 +10,7 @@ const day = (value: string | null) => value
   : "—";
 
 export function HoldingsGroup({ title, rows, note, total }: { title: string; rows: ConsolidatedHolding[]; note: string; total: number }) {
+  const showCost = rows.some((row) => row.invested !== null);
   return (
     <div>
       <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
@@ -27,7 +28,9 @@ export function HoldingsGroup({ title, rows, note, total }: { title: string; row
                 <th className="py-2">Holding</th>
                 <th className="py-2 text-right">Qty</th>
                 <th className="py-2 text-right">Price</th>
+                {showCost && <th className="py-2 text-right">Invested</th>}
                 <th className="py-2 text-right">Value</th>
+                {showCost && <th className="py-2 text-right">P/L</th>}
                 <th className="py-2 text-right">Share</th>
               </tr>
             </thead>
@@ -44,7 +47,13 @@ export function HoldingsGroup({ title, rows, note, total }: { title: string; row
                     {row.priceSource === "STATEMENT" && <span className="ml-1 text-[10px] text-amber-200/80">CAS</span>}
                     {row.stale && <span className="block text-[10px] text-amber-200/80">as of {day(row.asOf)}</span>}
                   </td>
+                  {showCost && <td className="py-2 text-right tabular-nums text-white/70">{inr(row.invested)}</td>}
                   <td className="py-2 text-right tabular-nums">{inr(row.value)}</td>
+                  {showCost && (
+                    <td className={`py-2 text-right tabular-nums ${row.value !== null && row.invested !== null && row.value < row.invested ? "text-rose-400" : "text-emerald-400"}`}>
+                      {row.value !== null && row.invested !== null ? `${row.value >= row.invested ? "+" : ""}${inr(row.value - row.invested)}` : "—"}
+                    </td>
+                  )}
                   <td className="py-2 text-right tabular-nums text-white/55">
                     {row.value === null || total <= 0 ? "—" : `${((row.value / total) * 100).toFixed(1)}%`}
                   </td>
@@ -64,6 +73,9 @@ export function HoldingsGroup({ title, rows, note, total }: { title: string; row
  */
 export default function ConsolidatedHoldingsSection({ data, manualValue }: { data: ConsolidatedHoldings; manualValue: number }) {
   const icici = data.holdings.filter((row) => row.source === "ICICI");
+  const iciciCosted = icici.filter((row) => row.invested !== null && row.value !== null);
+  const iciciInvested = iciciCosted.reduce((sum, row) => sum + (row.invested ?? 0), 0);
+  const iciciGain = iciciCosted.reduce((sum, row) => sum + (row.value ?? 0), 0) - iciciInvested;
   const total = data.totalValue + manualValue;
   const unpriced = data.totals.ICICI.unpriced + data.totals.MUTUAL_FUND.unpriced;
   return (
@@ -80,9 +92,14 @@ export default function ConsolidatedHoldingsSection({ data, manualValue }: { dat
         <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-5">
           <div className="text-xs uppercase tracking-widest text-white/45">ICICI stocks</div>
           <div className="mt-1 text-2xl font-bold tabular-nums">{inr(data.totals.ICICI.value)}</div>
+          {iciciCosted.length > 0 && (
+            <div className={`text-sm tabular-nums ${iciciGain >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+              {iciciGain >= 0 ? "▲" : "▼"} {inr(Math.abs(iciciGain))} on {inr(iciciInvested)} invested
+            </div>
+          )}
           <div className="mt-1 text-xs text-white/45">
             {data.totals.ICICI.count} holdings · synced {day(data.iciciCapturedAt)}
-            {data.totals.ICICI.unpriced > 0 && <span className="block text-amber-200/80">{data.totals.ICICI.unpriced} not matched to a quote</span>}
+            {data.totals.ICICI.unpriced > 0 && <span className="block text-amber-200/80">{data.totals.ICICI.unpriced} without a Breeze price</span>}
           </div>
         </div>
         <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-5">
@@ -98,7 +115,7 @@ export default function ConsolidatedHoldingsSection({ data, manualValue }: { dat
         title="ICICI Direct stocks"
         rows={icici}
         total={data.totals.ICICI.value}
-        note="Demat holdings from the latest Breeze account sync, valued at the latest quote. ICICI's demat feed carries no purchase price, so cost and P/L are not shown."
+        note="ICICI demat holdings valued by Breeze: the live Breeze quote when newer than the last account sync, otherwise the market price and average cost Breeze reported at that sync."
       />
     </section>
   );

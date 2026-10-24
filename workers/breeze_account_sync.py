@@ -136,6 +136,35 @@ def external_key(kind: str, row: dict[str, Any], index: int) -> str:
     return f"{kind.lower()}-{index}-{digest}"
 
 
+PRICE_FIELDS = ("current_market_price", "average_price", "change_percentage", "unrealized_profit")
+
+
+def enrich_holdings_with_prices(
+    demat_rows: list[dict[str, Any]], portfolio_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Attach Breeze portfolio prices to demat holdings.
+
+    get_demat_holdings returns quantities only; get_portfolio_holdings carries the broker's
+    current market price and average buy price. Match by stock code, keep the demat quantity
+    (the custody record), and mark the price source so the app can tell Breeze-valued holdings
+    from unpriced ones.
+    """
+    prices: dict[str, dict[str, Any]] = {}
+    for row in portfolio_rows:
+        code = str(first(row, "stock_code", "stockcode") or "").strip().upper()
+        if code and as_number(row.get("current_market_price")) is not None:
+            prices.setdefault(code, row)
+    enriched = []
+    for row in demat_rows:
+        code = str(first(row, "stock_code", "stockcode") or "").strip().upper()
+        match = prices.get(code)
+        if match:
+            row = {**row, **{field: match.get(field) for field in PRICE_FIELDS if match.get(field) not in (None, "")},
+                   "price_source": "BREEZE_PORTFOLIO"}
+        enriched.append(row)
+    return enriched
+
+
 def replace_snapshot(conn, user_id: str, kind: str, rows: list[dict[str, Any]]) -> None:
     captured_at = dt.datetime.now(dt.timezone.utc)
     payload = []
@@ -217,6 +246,23 @@ def sync_account(conn, user_id: str, api_key: str, api_secret: str, session_toke
                 successful.add(kind)
             except Exception as exc:
                 errors.append(f"{kind}: {exc}")
+
+        if "HOLDING" in successful and collected["HOLDING"]:
+            # Value holdings at Breeze's own market price and average cost. A failure here leaves
+            # quantities syncing (unpriced) rather than dropping the holdings snapshot.
+            portfolio_rows: list[dict[str, Any]] = []
+            price_errors: list[str] = []
+            for exchange in ("NSE", "BSE"):
+                try:
+                    portfolio_rows.extend(fetch_rows(
+                        lambda exchange=exchange: breeze.get_portfolio_holdings(exchange, "", "", "", "")))
+                except Exception as exc:
+                    price_errors.append(f"PORTFOLIO_HOLDING {exchange}: {exc}")
+            # An exchange with no holdings can answer with an error; only report when no
+            # prices came back at all.
+            if not portfolio_rows:
+                errors.extend(price_errors)
+            collected["HOLDING"] = enrich_holdings_with_prices(collected["HOLDING"], portfolio_rows)
 
         for kind in successful:
             replace_snapshot(conn, user_id, kind, collected[kind])

@@ -53,16 +53,22 @@ export async function getConsolidatedIndiaHoldings(userId: string): Promise<Cons
   const [icici, funds] = await Promise.all([
     query<{
       id: string; stock_code: string | null; quantity: string | number | null; captured_at: Date | string;
-      ticker: string | null; name: string | null; quote: string | number | null; quote_as_of: Date | string | null;
-      isin: string | null; change_pct: string | number | null;
+      ticker: string | null; name: string | null; isin: string | null;
+      broker_price: string | number | null; broker_avg: string | number | null; broker_change: string | null;
+      live_price: string | number | null; live_change: string | number | null; live_at: Date | string | null;
     }>(
-      `select s.id::text,s.stock_code,s.quantity,s.captured_at,a.ticker,a.name,q.price quote,q.as_of quote_as_of,q.change_pct,
-              s.raw_data->>'stock_ISIN' isin
+      // ICICI holdings are valued only from Breeze: the broker's own price and average cost
+      // captured with the holding, or a newer Breeze live tick. Exchange-file or Yahoo quotes
+      // are deliberately not used here.
+      `select s.id::text,s.stock_code,s.quantity,s.captured_at,a.ticker,a.name,
+              s.raw_data->>'stock_ISIN' isin,
+              s.market_price broker_price,s.average_price broker_avg,s.raw_data->>'change_percentage' broker_change,
+              q.price live_price,q.change_pct live_change,q.updated_at live_at
          from public.breeze_broker_snapshots s
          left join public.breeze_instrument_map m
            on m.exchange_code=coalesce(s.exchange_code,'NSE') and upper(m.stock_code)=upper(s.stock_code)
          left join public.assets a on a.id=m.asset_id
-         left join public.latest_quotes q on q.asset_id=a.id
+         left join public.latest_quotes q on q.asset_id=a.id and q.source='BREEZE_LIVE' 
         where s.user_id=$1 and s.snapshot_type='HOLDING' and coalesce(s.quantity,0) > 0
         order by coalesce(a.ticker,s.stock_code)`,
       [userId],
@@ -92,14 +98,23 @@ export async function getConsolidatedIndiaHoldings(userId: string): Promise<Cons
   const holdings: ConsolidatedHolding[] = [];
   for (const row of icici) {
     const quantity = Number(row.quantity ?? 0);
-    const price = num(row.quote);
+    const brokerPrice = num(row.broker_price);
+    const livePrice = num(row.live_price);
+    const capturedAt = iso(row.captured_at);
+    const liveAt = iso(row.live_at);
+    const useLive = livePrice !== null && livePrice > 0 && liveAt !== null
+      && (brokerPrice === null || (capturedAt !== null && Date.parse(liveAt) > Date.parse(capturedAt)));
+    const price = useLive ? livePrice : brokerPrice !== null && brokerPrice > 0 ? brokerPrice : null;
+    const asOf = useLive ? liveAt : capturedAt;
+    const average = num(row.broker_avg);
+    const value = price === null ? null : price * quantity;
     holdings.push({
       key: `icici:${row.id}`, source: "ICICI", ticker: row.ticker ?? row.stock_code ?? row.isin ?? "Unmapped",
       name: row.name, quantity, price, priceSource: price === null ? null : "LIVE",
-      value: price === null ? null : price * quantity, invested: null,
-      asOf: iso(row.quote_as_of) ?? iso(row.captured_at),
-      stale: price !== null && isStale(iso(row.quote_as_of)),
-      ...dayMove(price === null ? null : price * quantity, num(row.change_pct), price !== null && !isStale(iso(row.quote_as_of))),
+      value, invested: average !== null && average > 0 ? average * quantity : null,
+      asOf,
+      stale: price !== null && isStale(asOf),
+      ...dayMove(value, useLive ? num(row.live_change) : num(row.broker_change), price !== null && !isStale(asOf)),
     });
   }
   for (const row of funds) {
