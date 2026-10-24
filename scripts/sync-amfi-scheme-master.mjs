@@ -185,6 +185,50 @@ async function bridgeSnapshotIdentifiers(records, schemes) {
   };
 }
 
+/**
+ * Price held mutual funds from the AMFI master. A fund is priced only by its holding's OWN
+ * ISIN (from the CAS row, or the fund's metadata when that holds an ISIN). A Fund Mapping link
+ * is deliberately not used: it identifies the portfolio disclosure, which is plan-agnostic, and
+ * may point at a different plan (Regular vs Direct) with a different NAV. Never moves a quote
+ * backwards in time.
+ */
+async function refreshHeldFundNavs() {
+  const result = await client.query(
+    `with held as (
+       select distinct a.id asset_id,
+              upper(coalesce(nullif(chd.isin,''),
+                             case when mfm.amfi_code_in ~* '^IN[A-Z0-9]{10}$' then mfm.amfi_code_in end)) isin
+         from public.holdings h
+         join public.assets a on a.id=h.asset_id and a.asset_class='MUTUAL_FUND'
+         left join public.cas_holding_details chd on chd.holding_id=h.id and chd.user_id=h.user_id
+         left join public.mutual_fund_meta mfm on mfm.asset_id=a.id
+        where h.quantity > 0
+     ), nav as (
+       select distinct on (held.asset_id) held.asset_id, s.nav, s.nav_date
+         from held
+         join public.amfi_scheme_master s
+           on held.isin is not null
+          and (upper(s.isin_payout_or_growth)=held.isin or upper(s.isin_reinvestment)=held.isin)
+        where s.nav > 0
+        order by held.asset_id, s.nav_date desc
+     ), written as (
+       insert into public.latest_quotes (asset_id,price,change_pct,currency,as_of,source,updated_at)
+       select asset_id,nav,null,'INR',nav_date,'AMFI_NAV',now() from nav
+       on conflict (asset_id) do update set
+         price=excluded.price,
+         change_pct=case when latest_quotes.price > 0
+                         then round(((excluded.price/latest_quotes.price)-1)*100, 4) end,
+         as_of=excluded.as_of, source='AMFI_NAV', updated_at=now()
+       where latest_quotes.as_of is null or latest_quotes.as_of::date <= excluded.as_of::date
+       returning asset_id
+     )
+     select (select count(*) from held)::int held,
+            (select count(*) from held where isin is null)::int without_isin,
+            (select count(*) from written)::int priced`,
+  );
+  return result.rows[0];
+}
+
 async function logRun(status, detail, error, startedAt) {
   try {
     await client.query(
@@ -218,12 +262,16 @@ async function main() {
     await upsertMaster(rows);
     const schemes = await loadSnapshotSchemes();
     const bridge = await bridgeSnapshotIdentifiers(records, schemes);
+    const heldNavs = await refreshHeldFundNavs();
     await client.query("commit");
 
     const result = {
       source: url,
       parsed: rows.length,
       active: rows.filter((row) => row.is_active).length,
+      heldFunds: heldNavs.held,
+      heldFundsPriced: heldNavs.priced,
+      heldFundsWithoutIsin: heldNavs.without_isin,
       ...bridge,
     };
     await logRun("ok", result, null, startedAt);

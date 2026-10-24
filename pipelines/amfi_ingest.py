@@ -64,7 +64,12 @@ def fetch_amfi_nav() -> list[NavRow]:
         parts = line.split(";")
         if len(parts) < 6 or parts[0].strip() == "Scheme Code":
             continue  # header / fund-house separator / blank
-        code, isin_payout, _isin_reinvest, name, nav_raw, date_raw = parts[:6]
+        # 2026 layout adds Plan;Option before NAV;Date (8 fields); NAV/date are always last.
+        code, isin_payout, _isin_reinvest, name = parts[:4]
+        nav_raw, date_raw = parts[-2], parts[-1]
+        qualifiers = [p.strip() for p in parts[4:-2] if p.strip() and p.strip() != "-"]
+        if qualifiers:
+            name = " - ".join([name.strip(), *qualifiers])
         try:
             nav = float(nav_raw)
             nav_date = datetime.strptime(date_raw.strip(), "%d-%b-%Y").date()

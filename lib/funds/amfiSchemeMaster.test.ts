@@ -16,7 +16,35 @@ HDFC Mutual Fund
 101003;INF179K01AA1;INF179K01AA2;HDFC Flexi Cap Fund - Regular Plan - IDCW;102.5000;24-Jul-2026
 `;
 
+// Layout AMFI switched to in 2026: separate Plan and Option columns before NAV and Date.
+const SAMPLE_2026 = `Scheme Code;ISIN Div Payout/ ISIN Growth;ISIN Div Reinvestment;Scheme Name;Plan;Option;Net Asset Value;Date
+
+Open Ended Schemes(Children’s Fund - Childrens' Fund)
+
+Axis Mutual Fund
+
+135762;INF846K01WO1;-;Axis Children's Fund;Direct Plan;Growth Option;28.6173;23-Oct-2026
+135765;INF846K01WP8;INF846K01WQ6;Axis Children's Fund;Regular Plan;IDCW Option;19.1200;23-Oct-2026
+`;
+
 describe("AMFI scheme-master parser", () => {
+  it("parses the 2026 layout with separate Plan and Option columns", () => {
+    const rows = parseAmfiSchemeMaster(SAMPLE_2026);
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({
+      amfiCode: "135762",
+      amc: "Axis Mutual Fund",
+      isinPayoutOrGrowth: "INF846K01WO1",
+      nav: 28.6173,
+      navDate: "2026-10-23",
+      planType: "DIRECT",
+    });
+    expect(rows[0].schemeName).toBe("Axis Children's Fund - Direct Plan - Growth Option");
+    expect(rows[1]).toMatchObject({ planType: "REGULAR", optionType: "IDCW", isinReinvestment: "INF846K01WQ6", nav: 19.12 });
+    // Plan/option variants still group under one portfolio identity.
+    expect(new Set(rows.map((row) => row.portfolioKey)).size).toBe(1);
+  });
+
   it("retains AMC/category context and both ISIN columns", () => {
     const rows = parseAmfiSchemeMaster(SAMPLE);
     expect(rows).toHaveLength(3);
