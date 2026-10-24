@@ -127,6 +127,23 @@ export default function GmailDisclosurePanel({
             Connected to {gmail.connection.email} · last scanned {formatDate(gmail.connection.lastScanAt)}
           </p>
         </div>
+        {(gmail.connection.needsReconnect || gmail.connection.lastError) && (
+          <div className="w-full rounded-lg border border-rose-400/30 bg-rose-400/[0.06] p-3 text-sm text-rose-100">
+            <p className="font-semibold">
+              {gmail.connection.needsReconnect ? "Gmail access expired — CAS and disclosure imports are paused." : "The last Gmail scan failed."}
+            </p>
+            {gmail.connection.lastError && (
+              <p className="mt-1 text-xs text-rose-100/75">
+                {gmail.connection.lastError}{gmail.connection.lastErrorAt ? ` (${formatDate(gmail.connection.lastErrorAt)})` : ""}
+              </p>
+            )}
+            {gmail.connection.needsReconnect && (
+              <a href="/api/gmail/connect" className="mt-2 inline-block rounded-lg bg-rose-300 px-3 py-1.5 text-xs font-bold text-black">
+                Reconnect Gmail
+              </a>
+            )}
+          </div>
+        )}
         <div className="flex flex-wrap gap-2">
           <button
             disabled={pending}

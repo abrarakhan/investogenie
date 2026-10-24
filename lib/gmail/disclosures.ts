@@ -38,6 +38,9 @@ export interface GmailDisclosureData {
     configured: boolean;
     email: string | null;
     lastScanAt: string | null;
+    needsReconnect: boolean;
+    lastError: string | null;
+    lastErrorAt: string | null;
     casPasswordSet: boolean;
     autoImportEnabled: boolean;
   };
@@ -53,6 +56,9 @@ type ConnectionRow = {
   last_scan_at: Date | string | null;
   cas_pdf_password_encrypted?: string | null;
   auto_import_enabled?: boolean;
+  needs_reconnect?: boolean;
+  last_error?: string | null;
+  last_error_at?: Date | string | null;
 };
 
 const iso = (value: Date | string | null) => value
@@ -111,6 +117,18 @@ type TokenResponse = {
   error?: string; error_description?: string;
 };
 
+/** Google's token error, keeping its OAuth error code (e.g. invalid_grant) for handling. */
+export class GmailTokenError extends Error {
+  constructor(message: string, readonly code: string | null) { super(message); }
+}
+
+/**
+ * invalid_grant means Google will not refresh this grant again: the user revoked access, the
+ * password changed, or the OAuth app is in "Testing" mode, where refresh tokens expire 7 days
+ * after consent. Only a fresh consent fixes it.
+ */
+export const isRevokedGrant = (error: unknown) => error instanceof GmailTokenError && error.code === "invalid_grant";
+
 async function tokenRequest(body: URLSearchParams): Promise<TokenResponse> {
   const response = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" },
@@ -118,7 +136,7 @@ async function tokenRequest(body: URLSearchParams): Promise<TokenResponse> {
   });
   const payload = await response.json() as TokenResponse;
   if (!response.ok || !payload.access_token) {
-    throw new Error(payload.error_description || payload.error || "Google token exchange failed");
+    throw new GmailTokenError(payload.error_description || payload.error || "Google token exchange failed", payload.error ?? null);
   }
   return payload;
 }
@@ -143,7 +161,8 @@ export async function completeGmailConnection(input: { userId: string; code: str
     "values ($1,$2,$3,$4,now()+($5 || ' seconds')::interval,$6,now(),now()) " +
     "on conflict (user_id) do update set gmail_email=excluded.gmail_email,access_token_encrypted=excluded.access_token_encrypted," +
     "refresh_token_encrypted=coalesce(excluded.refresh_token_encrypted,gmail_connections.refresh_token_encrypted)," +
-    "token_expires_at=excluded.token_expires_at,scope=excluded.scope,connected_at=now(),updated_at=now()",
+    "token_expires_at=excluded.token_expires_at,scope=excluded.scope,connected_at=now(),updated_at=now()," +
+    "needs_reconnect=false,last_error=null,last_error_at=null",
     [input.userId, profile.emailAddress, encryptCredential(token.access_token!),
       token.refresh_token ? encryptCredential(token.refresh_token) : existing?.refresh_token_encrypted ?? null,
       String(token.expires_in ?? 3600), token.scope ?? GMAIL_READONLY_SCOPE],
@@ -162,10 +181,24 @@ async function getAccessToken(userId: string) {
   if (!connection.refresh_token_encrypted) throw new Error("Gmail authorization expired; reconnect Gmail");
   const config = await getGmailOAuthConfig(userId);
   if (!config) throw new Error("Gmail OAuth is not configured");
-  const token = await tokenRequest(new URLSearchParams({
-    refresh_token: decryptCredential(connection.refresh_token_encrypted),
-    client_id: config.clientId, client_secret: config.clientSecret, grant_type: "refresh_token",
-  }));
+  let token: TokenResponse;
+  try {
+    token = await tokenRequest(new URLSearchParams({
+      refresh_token: decryptCredential(connection.refresh_token_encrypted),
+      client_id: config.clientId, client_secret: config.clientSecret, grant_type: "refresh_token",
+    }));
+  } catch (cause) {
+    if (isRevokedGrant(cause)) {
+      await query(
+        "update public.gmail_connections set needs_reconnect=true,updated_at=now() where user_id=$1", [userId],
+      );
+      throw new Error(
+        `Google stopped accepting this Gmail authorization (${(cause as Error).message}). Reconnect Gmail. ` +
+        "If this recurs every 7 days, publish the Google OAuth consent screen from Testing to In production.",
+      );
+    }
+    throw cause;
+  }
   await query(
     "update public.gmail_connections set access_token_encrypted=$2,token_expires_at=now()+($3 || ' seconds')::interval,updated_at=now() where user_id=$1",
     [userId, encryptCredential(token.access_token!), String(token.expires_in ?? 3600)],
@@ -372,18 +405,27 @@ export async function scanAllConnectedGmailDisclosures() {
   for (const connection of connections) {
     try {
       const result = await scanGmailDisclosures(connection.user_id);
+      await query(
+        "update public.gmail_connections set last_error=null,last_error_at=null where user_id=$1", [connection.user_id],
+      );
       results.push({
         userId: connection.user_id,
         email: connection.gmail_email,
         ...result,
       });
     } catch (cause) {
+      const error = cause instanceof Error ? cause.message : String(cause);
+      // Recorded so the inbox can show why imports stopped, instead of only a failed count.
+      await query(
+        "update public.gmail_connections set last_error=$2,last_error_at=now() where user_id=$1",
+        [connection.user_id, error.slice(0, 500)],
+      ).catch(() => {});
       results.push({
         userId: connection.user_id,
         email: connection.gmail_email,
         messages: 0,
         attachments: 0,
-        error: cause instanceof Error ? cause.message : String(cause),
+        error,
       });
     }
   }
@@ -477,7 +519,7 @@ export async function downloadGmailDisclosureAttachment(userId: string, recordId
 export async function getGmailDisclosureData(userId: string): Promise<GmailDisclosureData> {
   const [connection, rows, oauthConfig] = await Promise.all([
     queryOne<ConnectionRow>(
-      "select gmail_email,access_token_encrypted,refresh_token_encrypted,token_expires_at,scope,last_scan_at,cas_pdf_password_encrypted,auto_import_enabled from public.gmail_connections where user_id=$1",
+      "select gmail_email,access_token_encrypted,refresh_token_encrypted,token_expires_at,scope,last_scan_at,cas_pdf_password_encrypted,auto_import_enabled,needs_reconnect,last_error,last_error_at from public.gmail_connections where user_id=$1",
       [userId],
     ),
     query<{
@@ -503,6 +545,9 @@ export async function getGmailDisclosureData(userId: string): Promise<GmailDiscl
     connection: {
       connected: Boolean(connection), configured: Boolean(oauthConfig),
       email: connection?.gmail_email ?? null, lastScanAt: iso(connection?.last_scan_at ?? null),
+      needsReconnect: Boolean(connection?.needs_reconnect),
+      lastError: connection?.last_error ?? null,
+      lastErrorAt: iso(connection?.last_error_at ?? null),
       casPasswordSet: Boolean(connection?.cas_pdf_password_encrypted),
       autoImportEnabled: connection?.auto_import_enabled ?? true,
     },

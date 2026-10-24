@@ -75,7 +75,7 @@ export default function AppShell({
   children: React.ReactNode;
   email?: string;
   market: MarketId;
-  active: "overview" | "terminal" | "stock-screener" | "swing" | "strong-swing" | "armed-swing" | "news-swing" | "long-term" | "probability" | "adaptive-allocation" | "forward-test" | "trade-ledger" | "import-holdings" | "fund-mapping" | "data" | "settings";
+  active: "overview" | "terminal" | "stock-screener" | "swing" | "strong-swing" | "armed-swing" | "news-swing" | "long-term" | "probability" | "adaptive-allocation" | "forward-test" | "trade-ledger" | "import-holdings" | "mutual-funds" | "fund-mapping" | "data" | "settings";
   title: string;
   subtitle?: string;
   actions?: React.ReactNode;
@@ -109,9 +109,9 @@ export default function AppShell({
     {
       title: "Portfolio",
       items: [
+        { label: "Mutual Funds", href: "/portfolio/mutual-funds", active: active === "mutual-funds", badge: market === "IN" ? undefined : "IN" },
         { label: "Import Holdings", href: "/terminal/in/cas", active: active === "import-holdings", badge: market === "IN" ? undefined : "IN" },
         { label: "Fund Mapping", href: "/portfolio/fund-mapping", active: active === "fund-mapping", badge: market === "IN" ? undefined : "IN" },
-        { label: "Fund X-Ray", href: "/terminal/in", active: false, muted: market !== "IN" },
       ],
     },
     {

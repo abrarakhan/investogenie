@@ -4,12 +4,14 @@ import { query } from "@/lib/db";
 import AppShell from "@/components/app/AppShell";
 import EngineSection from "@/components/dashboard/EngineSection";
 import AssetPicker from "@/components/dashboard/AssetPicker";
-import { getFundOverlap, getMacroMatrix, getTopSwingSetups } from "@/lib/engines-runtime";
+import { getMacroMatrix, getTopSwingSetups } from "@/lib/engines-runtime";
 import { getUserSwingSettings } from "@/lib/settings";
 import { getQuotesByAssetIds } from "@/lib/quotes";
 import { MARKETS, MARKET_COUNTRY, normalizeMarket, formatMoney, formatPct } from "@/lib/markets";
 import { addToWatchlist, ensureScaffold, recordTrade, removeWatchlistItem } from "@/lib/dashboard-actions";
 import ScreenerWidget from "@/components/stock-screener/ScreenerWidget";
+import ConsolidatedHoldingsSection from "@/components/dashboard/ConsolidatedHoldings";
+import { getConsolidatedIndiaHoldings } from "@/lib/portfolioHoldings";
 
 export const dynamic = "force-dynamic";
 
@@ -63,7 +65,7 @@ export default async function TerminalPage({
   const settings = await getUserSwingSettings();
   const buyOnlySettings = { ...settings, includeShort: false };
 
-  const [holdingRows, watchRows, benchmarkQuoteRows, swing, macro] = await Promise.all([
+  const [holdingRows, watchRows, benchmarkQuoteRows, swing, macro, consolidated] = await Promise.all([
     query<HoldingRow>(
       `select h.id as hid, h.quantity, h.avg_cost,
               a.id, a.ticker, a.name, a.asset_class, a.exchange, a.currency, a.country
@@ -88,8 +90,9 @@ export default async function TerminalPage({
     ),
     getTopSwingSetups(country, buyOnlySettings, 6),
     getMacroMatrix(marketId),
+    // ICICI demat + CAS mutual funds exist only for the India workspace.
+    marketId === "IN" ? getConsolidatedIndiaHoldings(user.id) : Promise.resolve(null),
   ]);
-  const overlap = marketId === "IN" ? await getFundOverlap() : null;
 
   const asset = (r: AssetLite): AssetLite => ({
     id: r.id, ticker: r.ticker, name: r.name, asset_class: r.asset_class,
@@ -145,8 +148,12 @@ export default async function TerminalPage({
       subtitle="Portfolio, watchlist, market benchmarks, and engine intelligence in one market-scoped workspace."
     >
       <div className="space-y-10">
+        {consolidated && (consolidated.holdings.length > 0 || valued.length > 0) && (
+          <ConsolidatedHoldingsSection data={consolidated} manualValue={marketVal} />
+        )}
+
         {/* Portfolio value (single currency for this market) */}
-        <section>
+        {!consolidated && <section>
           <h2 className="mb-4 text-sm uppercase tracking-[0.25em] text-white/40">
             {cfg.label} portfolio
           </h2>
@@ -165,7 +172,7 @@ export default async function TerminalPage({
               </div>
             </div>
           )}
-        </section>
+        </section>}
 
         {/* Market benchmarks (this market only) */}
         <section>
@@ -198,7 +205,7 @@ export default async function TerminalPage({
         <div className="grid gap-8 lg:grid-cols-[1.5fr_1fr]">
           {/* Holdings + trade ticket */}
           <section className="rounded-3xl border border-white/10 bg-white/[0.02] p-6">
-            <h2 className="mb-4 text-lg font-bold">Holdings</h2>
+            <h2 className="mb-4 text-lg font-bold">{consolidated ? "Recorded positions" : "Holdings"}</h2>
             {valued.length === 0 ? (
               <p className="mb-6 text-sm text-white/50">No positions yet.</p>
             ) : (
@@ -310,7 +317,7 @@ export default async function TerminalPage({
           <ScreenerWidget market={marketId as "US" | "IN"} universe={marketId === "US" ? "SP_500" : "NIFTY_500"} />
         </section>
 
-        <EngineSection swing={swing} overlap={overlap} macro={macro} />
+        <EngineSection swing={swing} macro={macro} />
       </div>
     </AppShell>
   );

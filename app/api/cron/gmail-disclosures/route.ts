@@ -26,14 +26,16 @@ export async function GET(request: NextRequest) {
       imported: result.imported,
       review: result.review,
     };
+    // Google's messages only; they carry no tokens. Without them the log said "failed=1" for weeks.
+    const errors = result.results.filter((item) => item.error).map((item) => item.error!.slice(0, 300));
     await logCronRun(databaseUrl, {
       job: "gmail-disclosures",
       status,
-      detail,
-      error: result.failed > 0 ? `${result.failed} Gmail connection(s) failed` : null,
+      detail: { ...detail, errors },
+      error: result.failed > 0 ? `${result.failed} Gmail connection(s) failed: ${errors.join(" | ")}`.slice(0, 1000) : null,
       durationMs: Date.now() - started,
     });
-    return NextResponse.json({ ok: result.failed === 0, skipped: result.connections === 0, ...detail });
+    return NextResponse.json({ ok: result.failed === 0, skipped: result.connections === 0, ...detail, errors });
   } catch (cause) {
     const message = cause instanceof Error ? cause.message : String(cause);
     await logCronRun(databaseUrl, {

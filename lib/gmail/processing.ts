@@ -132,6 +132,27 @@ export async function processPendingGmailAttachments(userId: string) {
              or (a.status='processing' and a.processing_started_at < now()-interval '30 minutes'))`,
     [userId],
   );
+  // The newest CAS must be imported once. An older release marked it 'ignored' without ever
+  // importing it, and only discovered/needs_password rows are picked up, so it stayed stuck.
+  // Re-queue the newest CAS when it is ignored and nothing at least as new was imported.
+  await query(
+    `with newest as (
+       select id,received_at from public.gmail_disclosure_attachments
+        where user_id=$1 and document_type='nsdl_cas'
+        order by received_at desc nulls last,discovered_at desc,id desc
+        limit 1
+     )
+     update public.gmail_disclosure_attachments a
+        set status='discovered',error_message=null,updated_at=now()
+       from newest
+      where a.id=newest.id and a.status='ignored' and a.imported_at is null
+        and not exists (
+          select 1 from public.gmail_disclosure_attachments done
+           where done.user_id=$1 and done.document_type='nsdl_cas' and done.status='imported'
+             and done.received_at >= newest.received_at
+        )`,
+    [userId],
+  );
   const candidates = await query<{ id: string; document_type: GmailDocumentType; inferred_amc: string | null; filename: string; email_subject: string | null; received_at: Date | string | null }>(
     `select id,document_type,inferred_amc,filename,email_subject,received_at
        from public.gmail_disclosure_attachments
