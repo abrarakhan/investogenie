@@ -216,8 +216,14 @@ async function refreshHeldFundNavs() {
        select asset_id,nav,null,'INR',nav_date,'AMFI_NAV',now() from nav
        on conflict (asset_id) do update set
          price=excluded.price,
-         change_pct=case when latest_quotes.price > 0
-                         then round(((excluded.price/latest_quotes.price)-1)*100, 4) end,
+         -- 1D change only against the previous AMFI NAV within 5 days. Against an older CAS
+         -- statement NAV it would show weeks of movement as one day's change.
+         change_pct=case
+           when latest_quotes.as_of::date = excluded.as_of::date then latest_quotes.change_pct
+           when latest_quotes.source='AMFI_NAV' and latest_quotes.price > 0
+                and excluded.as_of::date - latest_quotes.as_of::date between 1 and 5
+             then round(((excluded.price/latest_quotes.price)-1)*100, 4)
+         end,
          as_of=excluded.as_of, source='AMFI_NAV', updated_at=now()
        where latest_quotes.as_of is null or latest_quotes.as_of::date <= excluded.as_of::date
        returning asset_id

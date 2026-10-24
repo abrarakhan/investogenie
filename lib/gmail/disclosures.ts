@@ -119,7 +119,11 @@ type TokenResponse = {
 
 /** Google's token error, keeping its OAuth error code (e.g. invalid_grant) for handling. */
 export class GmailTokenError extends Error {
-  constructor(message: string, readonly code: string | null) { super(message); }
+  readonly code: string | null;
+  constructor(message: string, code: string | null) {
+    super(message);
+    this.code = code;
+  }
 }
 
 /**

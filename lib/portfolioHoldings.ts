@@ -16,6 +16,9 @@ export interface ConsolidatedHolding {
   asOf: string | null;
   /** The price is more than five days old, so the value is not current. */
   stale: boolean;
+  /** Latest one-day move, only when the price is a current AMFI NAV / quote. */
+  dayChangePct: number | null;
+  dayChange: number | null;
 }
 
 export interface ConsolidatedHoldings {
@@ -31,6 +34,14 @@ const iso = (value: Date | string | null) => value ? new Date(value).toISOString
 const STALE_AFTER_MS = 5 * 86_400_000;
 const isStale = (asOf: string | null) => !asOf || Date.now() - Date.parse(asOf) > STALE_AFTER_MS;
 
+/** Rupee move implied by today's % change: value - value / (1 + pct). */
+function dayMove(value: number | null, pct: number | null, current: boolean) {
+  if (!current || value === null || pct === null || !Number.isFinite(pct) || pct <= -100) {
+    return { dayChangePct: null, dayChange: null };
+  }
+  return { dayChangePct: pct, dayChange: value - value / (1 + pct / 100) };
+}
+
 /**
  * India holdings across sources for the Terminal:
  * - ICICI demat holdings from the latest Breeze account sync, valued at the latest quote.
@@ -43,9 +54,9 @@ export async function getConsolidatedIndiaHoldings(userId: string): Promise<Cons
     query<{
       id: string; stock_code: string | null; quantity: string | number | null; captured_at: Date | string;
       ticker: string | null; name: string | null; quote: string | number | null; quote_as_of: Date | string | null;
-      isin: string | null;
+      isin: string | null; change_pct: string | number | null;
     }>(
-      `select s.id::text,s.stock_code,s.quantity,s.captured_at,a.ticker,a.name,q.price quote,q.as_of quote_as_of,
+      `select s.id::text,s.stock_code,s.quantity,s.captured_at,a.ticker,a.name,q.price quote,q.as_of quote_as_of,q.change_pct,
               s.raw_data->>'stock_ISIN' isin
          from public.breeze_broker_snapshots s
          left join public.breeze_instrument_map m
@@ -61,10 +72,12 @@ export async function getConsolidatedIndiaHoldings(userId: string): Promise<Cons
     }),
     query<{
       holding_id: string; ticker: string; name: string | null; quantity: string | number; avg_cost: string | number | null;
-      nav: string | number | null; nav_as_of: Date | string | null; statement_value: string | number | null;
+      nav: string | number | null; nav_as_of: Date | string | null; nav_source: string | null;
+      nav_change_pct: string | number | null; statement_value: string | number | null;
       cost_value: string | number | null; statement_date: Date | string | null;
     }>(
       `select h.id holding_id,a.ticker,a.name,h.quantity,h.avg_cost,q.price nav,q.as_of nav_as_of,
+              q.source nav_source,q.change_pct nav_change_pct,
               chd.market_value statement_value,chd.cost_value,coalesce(chd.as_of_date,chd.imported_at::date) statement_date
          from public.holdings h
          join public.assets a on a.id=h.asset_id
@@ -86,6 +99,7 @@ export async function getConsolidatedIndiaHoldings(userId: string): Promise<Cons
       value: price === null ? null : price * quantity, invested: null,
       asOf: iso(row.quote_as_of) ?? iso(row.captured_at),
       stale: price !== null && isStale(iso(row.quote_as_of)),
+      ...dayMove(price === null ? null : price * quantity, num(row.change_pct), price !== null && !isStale(iso(row.quote_as_of))),
     });
   }
   for (const row of funds) {
@@ -102,6 +116,7 @@ export async function getConsolidatedIndiaHoldings(userId: string): Promise<Cons
       value, invested: cost !== null && cost > 0 ? cost : null,
       asOf: live ? iso(row.nav_as_of) : iso(row.statement_date),
       stale: value !== null && isStale(live ? iso(row.nav_as_of) : iso(row.statement_date)),
+      ...dayMove(value, num(row.nav_change_pct), live && row.nav_source === "AMFI_NAV" && !isStale(iso(row.nav_as_of))),
     });
   }
 

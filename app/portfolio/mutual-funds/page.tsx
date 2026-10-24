@@ -2,7 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import AppShell from "@/components/app/AppShell";
 import FundXRay from "@/components/funds/FundXRay";
-import { HoldingsGroup } from "@/components/dashboard/ConsolidatedHoldings";
+import FundHoldingCards from "@/components/funds/FundHoldingCards";
 import { getConsolidatedIndiaHoldings } from "@/lib/portfolioHoldings";
 import { getSessionUser } from "@/lib/auth";
 import { getFundOverlap } from "@/lib/engines-runtime";
@@ -73,13 +73,9 @@ export default async function MutualFundsPage() {
           </div>
         </div>
       </section>
-      <section className="mb-8 rounded-3xl border border-white/10 bg-white/[0.02] p-6">
-        <HoldingsGroup
-          title="Mutual fund holdings"
-          rows={funds}
-          total={holdings.totals.MUTUAL_FUND.value}
-          note={`Units from your CAS${holdings.fundStatementDate ? ` (statement ${formatDate(holdings.fundStatementDate)})` : ""}, valued at the latest NAV; "CAS" marks funds still valued at the statement value, and "as of" marks an NAV older than 5 days.`}
-        />
+      <section className="mb-10">
+        <h2 className="mb-4 text-lg font-bold">Your funds <span className="font-normal text-white/40">({funds.length})</span></h2>
+        <FundHoldingCards funds={funds} />
       </section>
       <FundXRay overlap={overlap} />
     </AppShell>

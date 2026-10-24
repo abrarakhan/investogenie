@@ -13,8 +13,10 @@ const execFileAsync = promisify(execFile);
 export type CasImportErrorCode = "encrypted" | "bad_password" | "parser_missing" | "no_text" | "crypto_missing" | "empty";
 
 export class CasImportError extends Error {
-  constructor(readonly code: CasImportErrorCode, message: string) {
+  readonly code: CasImportErrorCode;
+  constructor(code: CasImportErrorCode, message: string) {
     super(message);
+    this.code = code;
     this.name = "CasImportError";
   }
 }
@@ -87,8 +89,13 @@ async function upsertAsset(c: PoolClient, row: ParsedHoldingRow) {
   return asset.id;
 }
 
+/** NPS pension schemes come through CAS without an ISIN; they are real holdings, not placeholders. */
+const NPS_NAME = "(pension|\\mnps\\M|tier\\s*-?\\s*i\\M)";
+
 /** Add/update holdings from a consolidated statement. Background imports do
- * not delete absent holdings because an emailed statement may be partial. */
+ * not delete absent holdings because an emailed statement may be partial — a
+ * CAMS statement, for instance, omits every KFintech-serviced fund. The one
+ * exception is placeholders: see `retireSupersededPlaceholders`. */
 export async function importCasStatementBytes(input: { userId: string; bytes: Buffer; filename: string; password?: string }) {
   const text = (await extractText(input.bytes, input.filename, input.password ?? "")).trim();
   if (!text) throw new CasImportError("empty", "CAS statement is empty");
@@ -98,6 +105,10 @@ export async function importCasStatementBytes(input: { userId: string; bytes: Bu
   if (!portfolio) portfolio = await queryOne<{ id: string }>("insert into public.portfolios (user_id,name) values ($1,'My Portfolio') returning id", [input.userId]);
   if (!portfolio) throw new Error("Could not create the user's portfolio");
 
+  // Every row identified by ISIN means the CAMS/KFintech section parser read the statement.
+  const identifiedStatement = rows.every((row) => row.assetClass === "MUTUAL_FUND" && Boolean(row.isin));
+  const importedAssetIds: string[] = [];
+  let retired = 0;
   await tx(async (c) => {
     await c.query(
       "update public.cas_import_rejected_holdings set resolved_at=now() where user_id=$1 and resolved_at is null",
@@ -105,6 +116,7 @@ export async function importCasStatementBytes(input: { userId: string; bytes: Bu
     );
     for (const row of rows) {
       const assetId = await upsertAsset(c, row);
+      importedAssetIds.push(assetId);
       const currentPrice = row.price && row.price > 0 ? row.price : row.value / row.quantity;
       const costPerUnit = row.costValue && row.costValue > 0 ? row.costValue / row.quantity : currentPrice;
       const holding = (await c.query<{ id: string }>(
@@ -114,9 +126,12 @@ export async function importCasStatementBytes(input: { userId: string; bytes: Bu
          returning id`, [input.userId, portfolio.id, assetId, row.quantity, costPerUnit],
       )).rows[0];
       await c.query(
+        // Dated with the statement's own NAV date: stamping today would block the daily AMFI NAV
+        // refresh (which never moves a quote backwards) and hide how old this price is.
         `insert into public.latest_quotes (asset_id,price,change_pct,currency,as_of,source)
-         values ($1,$2,null,'INR',now(),'CAS')
-         on conflict (asset_id) do update set price=excluded.price,currency='INR',as_of=excluded.as_of,source='CAS',updated_at=now()`, [assetId, currentPrice],
+         values ($1,$2,null,'INR',coalesce($3::date,current_date),'CAS')
+         on conflict (asset_id) do update set price=excluded.price,currency='INR',as_of=excluded.as_of,source='CAS',updated_at=now()
+         where latest_quotes.as_of is null or latest_quotes.as_of <= excluded.as_of`, [assetId, currentPrice, row.asOfDate ?? null],
       );
       if (row.assetClass === "MUTUAL_FUND" && holding) {
         await c.query(
@@ -132,6 +147,37 @@ export async function importCasStatementBytes(input: { userId: string; bytes: Bu
         console.log(`[CAS] Parsed: ${row.name} (${row.isin ?? "no ISIN"}) folio ${normalizeFolio(row.folio) ?? "-"} — ${row.quantity.toFixed(3)} units`);
       }
     }
+    if (identifiedStatement) {
+      retired = await retireSupersededPlaceholders(c, input.userId, importedAssetIds, rows.map((row) => row.isin!.toUpperCase()));
+    }
   });
-  return { rows: rows.length, funds: rows.filter((row) => row.assetClass === "MUTUAL_FUND").length, stocks: rows.filter((row) => row.assetClass === "STOCK").length };
+  return { rows: rows.length, retired, funds: rows.filter((row) => row.assetClass === "MUTUAL_FUND").length, stocks: rows.filter((row) => row.assetClass === "STOCK").length };
+}
+
+/**
+ * After a fully identified statement imports, remove CAS fund holdings that cannot be real:
+ *  - placeholders with no ISIN (produced by older heuristic parsing of boilerplate text), except
+ *    NPS pension schemes, which genuinely carry no ISIN;
+ *  - older records of an ISIN this statement now reports under its own holding.
+ * Holdings of funds the statement does not mention (e.g. KFintech funds absent from a CAMS
+ * statement) are left untouched.
+ */
+async function retireSupersededPlaceholders(
+  c: import("pg").PoolClient, userId: string, importedAssetIds: string[], importedIsins: string[],
+): Promise<number> {
+  const result = await c.query(
+    `delete from public.holdings h
+       using public.assets a
+      where h.asset_id=a.id and h.user_id=$1
+        and a.asset_class='MUTUAL_FUND' and a.exchange='CAS_MF'
+        and h.asset_id <> all($2::uuid[])
+        and (
+          (not exists (select 1 from public.cas_holding_details d where d.holding_id=h.id and nullif(d.isin,'') is not null)
+           and coalesce(a.name,a.ticker) !~* '${NPS_NAME}')
+          or exists (select 1 from public.cas_holding_details d
+                      where d.holding_id=h.id and upper(d.isin) = any($3::text[]))
+        )`,
+    [userId, importedAssetIds, importedIsins],
+  );
+  return result.rowCount ?? 0;
 }

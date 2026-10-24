@@ -163,6 +163,100 @@ describe("parseCasHoldings (end to end)", () => {
     }
   });
 
+  it("joins a scheme name that wraps onto its ISIN line", () => {
+    const text = [
+      "ICICI Prudential Mutual Fund",
+      "P1191 -ICICI Prudential Large Cap Fund (erstwhile Bluechip Fund ) - Growth (formerly ICICI Prudential Focused Bluechip",
+      "Equity Fund) (Non -Demat ) - ISIN: INF109K01BL4(Advisor: ARN-0000 ) Registrar : CAMS",
+      "Folio No: 1111111 / 11",
+      "Test Investor",
+      "NAV on 23-Oct-2026: INR 100.00 Market Value on 23-Oct-2026: INR 1,000.00",
+      "Closing Unit Balance: 10.000 Total Cost Value: 800.00",
+    ].join("\n");
+    const [row] = parseCamsKfintechFundSections(text);
+    expect(row).toMatchObject({ isin: "INF109K01BL4", name: "ICICI Prudential Large Cap Fund - Growth", costValue: 800 });
+  });
+
+  it("parses KFintech sections: advisor code before the ISIN, INR-prefixed cost, capitalised name", () => {
+    const text = [
+      "RMFSCGPG-NIPPON INDIA SMALL CAP FUND - GROWTH PLAN GROWTH OPTION (Non Demat)  (Advisor:INZ000000000) - ISIN:INF204K01HY3",
+      " PAN: ABCDE1234F Folio No : 4444444 / 44 KYC : OK PAN : OK",
+      "Registrar : KFINTECH",
+      "Opening Unit  Balance 0.000",
+      "Test Investor",
+      "05-Feb-2018 Purchase 5,000.00 111.122 44.9954 111.122",
+      "Closing Unit Balance: 100.000  NAV on 23-OCT-2026 : INR 250.00  Market Value on 23-OCT-2026 : INR 25,000.00Total Cost Value : INR 10,000.00",
+    ].join("\n");
+    const [row] = parseCamsKfintechFundSections(text);
+    expect(row).toMatchObject({
+      isin: "INF204K01HY3",
+      name: "Nippon India Small Cap Fund - Growth Plan Growth Option",
+      quantity: 100,
+      value: 25000,
+      costValue: 10000,
+      folio: "4444444/44",
+    });
+  });
+
+  it("keeps a scheme whose KFintech page heading is extracted after its own body", () => {
+    // Page 1 ends one scheme; page 2 starts a new scheme at its top, and the extractor emits that
+    // page's heading block (with the scheme header) after the page body.
+    const text = [
+      "--- PAGE 1 ---",
+      "Consolidated Account Statement",
+      "D138-DSP Mid Cap Fund - Regular Plan - Growth (Non-Demat) (Advisor:ARN-0000) - ISIN:INF740K01128",
+      " PAN: ABCDE1234F Folio No : 5555555 / 55 KYC : OK",
+      "Registrar : CAMS",
+      "Closing Unit Balance: 10.000  NAV on 23-OCT-2026 : INR 100.00  Market Value on 23-OCT-2026 : INR 1,000.00Total Cost Value : INR 500.00",
+      "1 2ofPage",
+      "--- PAGE 2 ---",
+      "  10-Feb-2020 SIP Purchase 4,000.00 69.699 57.390 20.000",
+      "Closing Unit Balance: 20.000  NAV on 23-OCT-2026 : INR 200.00  Market Value on 23-OCT-2026 : INR 4,000.00Total Cost Value : INR 1,000.00",
+      "Consolidated Account Statement",
+      "01-Oct-2014 To 24-Oct-2026",
+      "DSP Mutual Fund",
+      "D157-DSP Small Cap Fund - Regular Plan - Growth (formerly DSP Micro Cap Fund) (Non-Demat) (Advisor:ARN-0000) - ISIN:INF740K01797",
+      " PAN: ABCDE1234F Folio No : 5555555 / 55 KYC : OK",
+      "Registrar : CAMS",
+      "2 2ofPage",
+    ].join("\n");
+    const rows = parseCamsKfintechFundSections(text);
+    expect(rows.map((row) => [row.isin, row.value, row.costValue])).toEqual([
+      ["INF740K01128", 1000, 500],
+      ["INF740K01797", 4000, 1000],
+    ]);
+    expect(rows[1].name).toBe("DSP Small Cap Fund - Regular Plan - Growth");
+  });
+
+  it("rejoins an ISIN split across two lines", () => {
+    const text = [
+      "P8176 -ICICI Prudential Value Fund (erstwhile Value Discovery Fund ) - Direct Plan - Growth (Non -Demat ) - ISIN: INF109K012",
+      "K1(Advisor: INA000000000 ) Registrar : CAMS",
+      "Folio No: 2222222 / 22",
+      "Test Investor",
+      "NAV on 23-Oct-2026: INR 480.00 Market Value on 23-Oct-2026: INR 4,800.00",
+      "Closing Unit Balance: 10.000 Total Cost Value: 2,500.00",
+    ].join("\n");
+    const [row] = parseCamsKfintechFundSections(text);
+    expect(row).toMatchObject({ isin: "INF109K012K1", name: "ICICI Prudential Value Fund - Direct Plan - Growth", value: 4800 });
+  });
+
+  it("does not turn CAMS boilerplate into holdings once fund sections parse", () => {
+    const text = [
+      "HPREG-HDFC Aggressive Hybrid Fund - Regular Plan - Growth (formerly HDFC Premier Multi -Cap Fund , erstwhile HDFC",
+      "Balanced Fund merged ) (Non -Demat ) - ISIN: INF179K01AS4(Advisor: ARN-0000 ) Registrar : CAMS",
+      "Folio No: 3333333 / 33",
+      "Test Investor",
+      "NAV on 23-Oct-2026: INR 108.00 Market Value on 23-Oct-2026: INR 10,800.00",
+      "Closing Unit Balance: 100.000 Total Cost Value: 6,000.00",
+      "Current Load Structure : Entry Load: Not Applicable 12.50 1,234.00 99,999.00",
+      "19-Jan -2021 ***Invalid Purchase12-JAN-2021_Reject 1,000.00 10.00 100.000",
+    ].join("\n");
+    const rows = parseCasHoldings(text);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ name: "HDFC Aggressive Hybrid Fund - Regular Plan - Growth", isin: "INF179K01AS4" });
+  });
+
   it("splits multiple schemes under one folio by ISIN", () => {
     const text = [
       "HDFC Mutual Fund",

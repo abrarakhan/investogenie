@@ -170,15 +170,23 @@ function parseCasDate(value: string): string | null {
   return `${match[3]}-${month}-${match[1].padStart(2, "0")}`;
 }
 
+/** KFintech prints some scheme names in capitals; show them in title case like the rest. */
+function titleCaseIfShouting(name: string): string {
+  if (name !== name.toUpperCase() || !/[A-Z]{4}/.test(name)) return name;
+  const keep = new Set(["IDCW", "ETF", "FOF", "PSU", "SBI", "HDFC", "ICICI", "DSP", "UTI", "LIC", "IT", "NPS", "II", "III"]);
+  return name.toLowerCase().replace(/\b([a-z][a-z']*)\b/g, (word) =>
+    keep.has(word.toUpperCase()) ? word.toUpperCase() : word[0].toUpperCase() + word.slice(1));
+}
+
 function cleanSchemeName(raw: string): string {
-  return raw
+  return titleCaseIfShouting(raw
     .replace(/\b[A-Z0-9]{1,12}\s*-\s*/i, "")
     .replace(/\s*\((?:Non\s*-?\s*Demat|Non\s+Demat|Demat)\s*\).*$/i, "")
     .replace(/\s*\((?:formerly|erstwhile)[^)]+\)/ig, "")
     .replace(/\s+[-–]\s*$/g, "")
     .replace(/\s+/g, " ")
     .trim()
-    .replace(/^quant\b/i, "Quant");
+    .replace(/^quant\b/i, "Quant"));
 }
 
 function holderNameAfter(lines: string[], folioLineIndex: number): string | null {
@@ -190,6 +198,66 @@ function holderNameAfter(lines: string[], folioLineIndex: number): string | null
     return compact.replace(/\s+/g, " ");
   }
   return null;
+}
+
+const PAGE_MARKER = /^--- PAGE \d+ ---$/;
+const PAGE_HEADING = /^Consolidated Account Statement$/i;
+const SECTION_BODY = /Closing\s+Unit\s+Balance|^\d{2}-[A-Za-z]{3}\s*-?\s*\d{4}\b/;
+
+/**
+ * KFintech CAS PDFs extract each page's heading block (statement title, period, fund house and,
+ * when a scheme starts at the top of the page, that scheme's header and folio) AFTER the page
+ * body. A scheme beginning at a page top then has its transactions and closing balance ahead of
+ * its own header, and the section parser misses it. Move a trailing heading block back to the top
+ * of its page. Pages whose heading already comes first (CAMS) are left untouched.
+ */
+export function restorePageHeadings(lines: string[]): string[] {
+  const out: string[] = [];
+  let page: string[] = [];
+  const flush = () => {
+    const heading = page.findLastIndex((line) => PAGE_HEADING.test(line));
+    const bodyBefore = heading > 0 && page.slice(0, heading).some((line) => SECTION_BODY.test(line));
+    if (bodyBefore) {
+      const markerAtStart = PAGE_MARKER.test(page[0] ?? "") ? 1 : 0;
+      page = [...page.slice(0, markerAtStart), ...page.slice(heading), ...page.slice(markerAtStart, heading)];
+    }
+    out.push(...page);
+    page = [];
+  };
+  for (const line of lines) {
+    if (PAGE_MARKER.test(line)) flush();
+    page.push(line);
+  }
+  flush();
+  return out;
+}
+
+/** "P1191 -ICICI Prudential ..." / "HPREG-HDFC ...": a scheme code, then the scheme name. */
+const SCHEME_CODE_START = /^[A-Z0-9]{1,12}\s*-\s*\S/;
+
+/**
+ * PDF text wraps long scheme headers. Two wraps break the section parser: an ISIN split across
+ * lines ("ISIN: INF109K012" / "K1(Advisor..."), and a scheme name that starts on the line above
+ * its ISIN line. Rejoin the ISIN first so every header carries a complete 12-character ISIN.
+ */
+export function joinWrappedIsins(lines: string[]): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const partial = line.match(/\bISIN\s*:\s*(IN[A-Z0-9]{0,9})$/i);
+    const next = lines[i + 1];
+    if (partial && next) {
+      const needed = 12 - partial[1].length;
+      const rest = next.match(new RegExp(`^([A-Z0-9]{${needed}})(?![A-Z0-9])`, "i"));
+      if (rest) {
+        out.push(line + rest[1] + next.slice(rest[1].length));
+        i++;
+        continue;
+      }
+    }
+    out.push(line);
+  }
+  return out;
 }
 
 function isSchemeHeaderLine(line: string): boolean {
@@ -211,18 +279,30 @@ function nextSchemeHeaderIndex(lines: string[], start: number): number {
  * ISIN under multiple folios are preserved as separate holdings.
  */
 export function parseCamsKfintechFundSections(text: string): ParsedHoldingRow[] {
-  const lines = text.split(/\r?\n/).map((l) => l.replace(/\s+/g, " ").trim()).filter(Boolean);
+  const lines = joinWrappedIsins(restorePageHeadings(
+    text.split(/\r?\n/).map((l) => l.replace(/\s+/g, " ").trim()).filter(Boolean),
+  ));
   const rows: ParsedHoldingRow[] = [];
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     if (!isSchemeHeaderLine(line)) continue;
-    const isin = line.match(/\b(IN[A-Z0-9]{9}\s?[A-Z0-9])\b/i)?.[1].replace(/\s+/g, "").toUpperCase();
-    if (!isin) continue;
+    // Take the code after "ISIN:". KFintech prints the advisor/broker code first, and a SEBI
+    // registration such as "INZ000305337" (a broker) or "INA..." (an adviser) is also IN + 10.
+    const isin = (line.match(/\bISIN\s*:\s*(IN[A-Z0-9]{9}\s?[A-Z0-9])\b/i)?.[1]
+      ?? line.match(/\b(IN[A-Z0-9]{9}\s?[A-Z0-9])\b/i)?.[1])?.replace(/\s+/g, "").toUpperCase();
+    if (!isin || !/^INF/.test(isin)) continue;
 
     const beforeIsinOnLine = line.split(/\bISIN\s*:/i)[0] ?? "";
-    const header = /^[-(]?\s*(?:Non\s*)?-?\s*Demat\b/i.test(beforeIsinOnLine) || !/fund|scheme|growth|idcw|regular|direct/i.test(beforeIsinOnLine)
-      ? `${lines[i - 1] ?? ""} ${line}`
+    const previous = lines[i - 1] ?? "";
+    // The name continues from the line above when this line has no scheme code of its own and
+    // the line above starts one (and is not itself a complete header).
+    const continuesPrevious = !SCHEME_CODE_START.test(beforeIsinOnLine.trim())
+      && SCHEME_CODE_START.test(previous) && !isSchemeHeaderLine(previous);
+    const header = continuesPrevious
+      || /^[-(]?\s*(?:Non\s*)?-?\s*Demat\b/i.test(beforeIsinOnLine)
+      || !/fund|scheme|growth|idcw|regular|direct/i.test(beforeIsinOnLine)
+      ? `${previous} ${line}`
       : line;
     const nameBeforeIsin = header.split(/\bISIN\s*:/i)[0] ?? "";
     const name = cleanSchemeName(nameBeforeIsin);
@@ -231,7 +311,11 @@ export function parseCamsKfintechFundSections(text: string): ParsedHoldingRow[] 
     const end = nextSchemeHeaderIndex(lines, i + 1);
     const section = lines.slice(i, end);
     const folioLineIndex = section.findIndex((sectionLine) => /folio\s+no\s*:/i.test(sectionLine));
-    const folioMatch = folioLineIndex >= 0 ? section[folioLineIndex].match(/folio\s+no\s*:\s*([A-Z0-9\s/.-]+)/i) : null;
+    // "7933973 / 38" — stop at the folio and its optional "/ suffix"; KFintech continues the same
+    // line with "KYC : OK PAN : OK", which a looser pattern would absorb into the folio.
+    const folioMatch = folioLineIndex >= 0
+      ? section[folioLineIndex].match(/folio\s+no\s*:\s*([A-Z0-9.-]+(?:\s*\/\s*[A-Z0-9.-]+)?)/i)
+      : null;
     const folio = normalizeFolio(folioMatch?.[1] ?? null);
     if (!folio) continue;
 
@@ -241,7 +325,8 @@ export function parseCamsKfintechFundSections(text: string): ParsedHoldingRow[] 
     if (!navLine || !closingLine) continue;
 
     const navMatch = navLine.match(/NAV\s+on\s+([^:]+):\s*INR\s*([0-9,.]+).*?Market\s+Value\s+on\s+[^:]+:\s*INR\s*([0-9,.]+)/i);
-    const closingMatch = closingLine.match(/Closing\s+Unit\s+Balance\s*:\s*([0-9,.]+).*?Total\s+Cost\s+Value\s*:\s*([0-9,.]+)/i);
+    // CAMS prints "Total Cost Value: 114,281.68"; KFintech prints "Total Cost Value : INR 6,74,000.00".
+    const closingMatch = closingLine.match(/Closing\s+Unit\s+Balance\s*:\s*([0-9,.]+).*?Total\s+Cost\s+Value\s*:\s*(?:INR\s*)?([0-9,.]+)/i);
     if (!navMatch || !closingMatch) continue;
 
     const price = money(navMatch[2]);
@@ -519,9 +604,11 @@ export function parseNumericTailRows(text: string): ParsedHoldingRow[] {
 /** All parsing strategies + sanity gate + dedupe, in one call. */
 export function parseCasHoldings(text: string): ParsedHoldingRow[] {
   const sectionRows = parseCamsKfintechFundSections(text);
-  const heuristicRows = parseStructured(text)
-    .concat(parseLooseText(text), parseIsinRows(text), parseNumericTailRows(text))
-    .filter((row) => sectionRows.length === 0 || row.assetClass !== "MUTUAL_FUND");
+  // A CAMS/KFintech statement lists mutual-fund folios only. Once its sections parse, the loose
+  // heuristics only turn boilerplate (load structures, "Folio No:", FATCA notices) into bogus
+  // holdings, so they run only for formats the section parser does not recognise.
+  const heuristicRows = sectionRows.length > 0 ? [] : parseStructured(text)
+    .concat(parseLooseText(text), parseIsinRows(text), parseNumericTailRows(text));
   const parsed = sectionRows.concat(heuristicRows)
     .map(sanitizeParsedRow)
     .filter((row): row is ParsedHoldingRow => row !== null);
