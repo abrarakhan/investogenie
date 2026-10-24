@@ -47,6 +47,9 @@ const requiredColumns = [
   ["corporate_event_sync_state", "authoritative_coverage_from"],
   ["corporate_event_sync_state", "authoritative_coverage_through"],
   ["corporate_event_sync_state", "authoritative_imported_at"],
+  ["gmail_connections", "last_error"],
+  ["gmail_connections", "last_error_at"],
+  ["gmail_connections", "needs_reconnect"],
 ];
 const client = new pg.Client({
   connectionString: url,
