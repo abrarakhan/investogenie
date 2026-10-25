@@ -13,6 +13,7 @@ const intent = (over: Partial<ScreenIntent>): ScreenIntent => ({
   universe: null,
   valueBelowSectorMedian: false,
   search: null,
+  backtestYears: null,
   notes: "",
   ...over,
 });

@@ -27,6 +27,8 @@ export interface FieldDef {
   defaultColumn?: boolean;
   /** One-line help shown in the filter builder. */
   help?: string;
+  /** Available point-in-time in screener_technical_daily and safe to backtest. */
+  historical?: boolean;
 }
 
 // NOTE: `market_cap` and `free_cash_flow` are in Rs. Crore for IN rows and USD
@@ -58,6 +60,37 @@ export const FIELDS: FieldDef[] = [
   { key: "pct_from_52w_low", label: "% From 52W Low", column: "pct_from_52w_low", type: "number", format: "percent", unit: "%", sortable: true, help: "≥ 0; how far above the 52-week low" },
   { key: "gap_pct", label: "Gap %", column: "gap_pct", type: "number", format: "percent", unit: "%", sortable: true, help: "Open vs previous close" },
   { key: "intraday_vol_pct", label: "Intraday Vol %", column: "intraday_vol_pct", type: "number", format: "percent", unit: "%", sortable: true, help: "(High − Low) / prev close" },
+
+  { key: "sma_20", label: "SMA 20", column: "sma_20", type: "number", format: "price", sortable: true, historical: true },
+  { key: "sma_50", label: "SMA 50", column: "sma_50", type: "number", format: "price", sortable: true, historical: true },
+  { key: "sma_100", label: "SMA 100", column: "sma_100", type: "number", format: "price", sortable: true, historical: true },
+  { key: "sma_150", label: "SMA 150", column: "sma_150", type: "number", format: "price", sortable: true, historical: true },
+  { key: "sma_200", label: "SMA 200", column: "sma_200", type: "number", format: "price", sortable: true, historical: true },
+  { key: "ema_20", label: "EMA 20", column: "ema_20", type: "number", format: "price", sortable: true, historical: true },
+  { key: "ema_50", label: "EMA 50", column: "ema_50", type: "number", format: "price", sortable: true, historical: true },
+  { key: "distance_sma_20_pct", label: "% vs SMA 20", column: "distance_sma_20_pct", type: "number", format: "percent", unit: "%", sortable: true, historical: true, help: "Positive means price is above its 20-day average" },
+  { key: "distance_sma_50_pct", label: "% vs SMA 50", column: "distance_sma_50_pct", type: "number", format: "percent", unit: "%", sortable: true, historical: true, help: "Positive means price is above its 50-day average" },
+  { key: "distance_sma_100_pct", label: "% vs SMA 100", column: "distance_sma_100_pct", type: "number", format: "percent", unit: "%", sortable: true, historical: true, help: "Positive means price is above its 100-day average" },
+  { key: "distance_sma_150_pct", label: "% vs SMA 150", column: "distance_sma_150_pct", type: "number", format: "percent", unit: "%", sortable: true, historical: true, help: "Positive means price is above its 150-day average" },
+  { key: "distance_sma_200_pct", label: "% vs SMA 200", column: "distance_sma_200_pct", type: "number", format: "percent", unit: "%", sortable: true, historical: true, help: "Positive means price is above its 200-day average" },
+  { key: "distance_ema_20_pct", label: "% vs EMA 20", column: "distance_ema_20_pct", type: "number", format: "percent", unit: "%", sortable: true, historical: true, help: "Positive means price is above its 20-day exponential average" },
+  { key: "distance_ema_50_pct", label: "% vs EMA 50", column: "distance_ema_50_pct", type: "number", format: "percent", unit: "%", sortable: true, historical: true, help: "Positive means price is above its 50-day exponential average" },
+  { key: "sma_20_vs_50_pct", label: "SMA 20 vs 50 %", column: "sma_20_vs_50_pct", type: "number", format: "percent", unit: "%", sortable: true, historical: true, help: "Positive means SMA 20 is above SMA 50" },
+  { key: "sma_20_vs_100_pct", label: "SMA 20 vs 100 %", column: "sma_20_vs_100_pct", type: "number", format: "percent", unit: "%", sortable: true, historical: true },
+  { key: "sma_20_vs_150_pct", label: "SMA 20 vs 150 %", column: "sma_20_vs_150_pct", type: "number", format: "percent", unit: "%", sortable: true, historical: true },
+  { key: "sma_20_vs_200_pct", label: "SMA 20 vs 200 %", column: "sma_20_vs_200_pct", type: "number", format: "percent", unit: "%", sortable: true, historical: true },
+  { key: "sma_50_vs_100_pct", label: "SMA 50 vs 100 %", column: "sma_50_vs_100_pct", type: "number", format: "percent", unit: "%", sortable: true, historical: true },
+  { key: "sma_50_vs_150_pct", label: "SMA 50 vs 150 %", column: "sma_50_vs_150_pct", type: "number", format: "percent", unit: "%", sortable: true, historical: true },
+  { key: "sma_50_vs_200_pct", label: "SMA 50 vs 200 %", column: "sma_50_vs_200_pct", type: "number", format: "percent", unit: "%", sortable: true, historical: true, help: "Positive means SMA 50 is above SMA 200" },
+  { key: "sma_100_vs_150_pct", label: "SMA 100 vs 150 %", column: "sma_100_vs_150_pct", type: "number", format: "percent", unit: "%", sortable: true, historical: true },
+  { key: "sma_100_vs_200_pct", label: "SMA 100 vs 200 %", column: "sma_100_vs_200_pct", type: "number", format: "percent", unit: "%", sortable: true, historical: true },
+  { key: "sma_150_vs_200_pct", label: "SMA 150 vs 200 %", column: "sma_150_vs_200_pct", type: "number", format: "percent", unit: "%", sortable: true, historical: true },
+  { key: "rsi_14", label: "RSI 14", column: "rsi_14", type: "number", format: "number", sortable: true, historical: true },
+  { key: "atr_pct_14", label: "ATR 14 %", column: "atr_pct_14", type: "number", format: "percent", unit: "%", sortable: true, historical: true },
+  { key: "volume_ratio_20", label: "Volume / 20D Avg", column: "volume_ratio_20", type: "number", format: "number", sortable: true, historical: true },
+  { key: "return_5d", label: "Return 5D", column: "return_5d", type: "number", format: "percent", unit: "%", sortable: true, historical: true },
+  { key: "return_20d", label: "Return 20D", column: "return_20d", type: "number", format: "percent", unit: "%", sortable: true, historical: true },
+  { key: "return_63d", label: "Return 3M", column: "return_63d", type: "number", format: "percent", unit: "%", sortable: true, historical: true },
 ];
 
 export const FIELD_BY_KEY: Record<string, FieldDef> = Object.fromEntries(

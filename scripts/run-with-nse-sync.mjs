@@ -29,6 +29,8 @@ const usHistoryPipeline = resolve(root, "pipelines/us_history_sync.py");
 const macroPipeline = resolve(root, "pipelines/macro_sync.py");
 const amfiSchemeMasterScript = resolve(root, "scripts/sync-amfi-scheme-master.mjs");
 const mlSnapshotScript = resolve(root, "scripts/capture-ml-snapshots.mjs");
+const screenerFeaturePipeline = resolve(root, "pipelines/screener_technical_features.py");
+const screenerRefreshScript = resolve(root, "scripts/refresh-screener.mjs");
 const pythonCandidates = [
   process.env.PYTHON_BIN,
   resolve(root, ".venv/bin/python"),
@@ -1549,11 +1551,21 @@ try {
 }
 console.log(`[market-calendar] NSE capital-market holidays ${refreshedNseCalendar ? "refreshed" : "using bundled fallback"}`);
 scheduleDailySync();
+async function refreshTechnicalScreener(market) {
+  const run = (command, args) => new Promise((resolveRun, rejectRun) => {
+    const child = spawn(command, args, { cwd: root, env: process.env, stdio: "inherit", timeout: 30 * 60_000 });
+    child.once("error", rejectRun);
+    child.once("close", (code, signal) => code === 0 && !signal ? resolveRun() : rejectRun(new Error(`technical screener exited ${signal ?? code}`)));
+  });
+  await run(python, [screenerFeaturePipeline, "--market", market, "--incremental"]);
+  await run(process.execPath, [screenerRefreshScript, market]);
+}
 const stopEodScheduler = startEodScheduler({
   databaseUrl: process.env.DATABASE_URL,
   runIndia: async () => {
     if (syncDisabled) throw new Error("NSE_SYNC_DISABLED disables India EOD updates");
     if (!await runBhavcopyNseSync("exchange-close")) throw new Error("India EOD update failed");
+    await refreshTechnicalScreener("IN");
   },
   runUS: async () => {
     if (usQuoteDisabled || usHistoryDisabled) throw new Error("US quote/history updates disabled");

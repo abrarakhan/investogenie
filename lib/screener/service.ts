@@ -48,6 +48,17 @@ export interface ScreenerStock {
   free_cash_flow: number | null;
   revenue_growth_yoy: number | null;
   profit_growth_yoy: number | null;
+  sma_20: number | null; sma_50: number | null; sma_100: number | null;
+  sma_150: number | null; sma_200: number | null; ema_20: number | null; ema_50: number | null;
+  distance_sma_20_pct: number | null; distance_sma_50_pct: number | null; distance_sma_100_pct: number | null;
+  distance_sma_150_pct: number | null; distance_sma_200_pct: number | null;
+  distance_ema_20_pct: number | null; distance_ema_50_pct: number | null;
+  sma_20_vs_50_pct: number | null; sma_20_vs_100_pct: number | null; sma_20_vs_150_pct: number | null;
+  sma_20_vs_200_pct: number | null; sma_50_vs_100_pct: number | null; sma_50_vs_150_pct: number | null;
+  sma_50_vs_200_pct: number | null; sma_100_vs_150_pct: number | null; sma_100_vs_200_pct: number | null;
+  sma_150_vs_200_pct: number | null; rsi_14: number | null;
+  atr_pct_14: number | null; volume_ratio_20: number | null; return_5d: number | null;
+  return_20d: number | null; return_63d: number | null;
   refreshed_at: string;
 }
 
@@ -81,6 +92,12 @@ const NUMERIC_COLS: (keyof ScreenerStock)[] = [
   "day_low", "high_52w", "low_52w", "pct_from_52w_high", "pct_from_52w_low", "gap_pct",
   "intraday_vol_pct", "market_cap", "mcap_rank", "pe_ratio", "roe", "roce", "debt_to_equity",
   "dividend_yield", "free_cash_flow", "revenue_growth_yoy", "profit_growth_yoy",
+  "sma_20", "sma_50", "sma_100", "sma_150", "sma_200", "ema_20", "ema_50",
+  "distance_sma_20_pct", "distance_sma_50_pct", "distance_sma_100_pct", "distance_sma_150_pct",
+  "distance_sma_200_pct", "distance_ema_20_pct", "distance_ema_50_pct", "sma_20_vs_50_pct",
+  "sma_20_vs_100_pct", "sma_20_vs_150_pct", "sma_20_vs_200_pct", "sma_50_vs_100_pct",
+  "sma_50_vs_150_pct", "sma_50_vs_200_pct", "sma_100_vs_150_pct", "sma_100_vs_200_pct",
+  "sma_150_vs_200_pct", "rsi_14", "atr_pct_14", "volume_ratio_20", "return_5d", "return_20d", "return_63d",
 ];
 
 function coerce(row: Record<string, unknown>): ScreenerStock {
@@ -97,7 +114,14 @@ const SELECT_COLS = `
   s.ltp, s.change_pct_1d, s.volume, s.trade_value, s.prev_close, s.day_open, s.day_high, s.day_low,
   s.high_52w, s.low_52w, s.pct_from_52w_high, s.pct_from_52w_low, s.gap_pct, s.intraday_vol_pct,
   s.market_cap, s.mcap_rank, s.pe_ratio, s.roe, s.roce, s.debt_to_equity, s.dividend_yield,
-  s.free_cash_flow, s.revenue_growth_yoy, s.profit_growth_yoy, s.refreshed_at`;
+  s.free_cash_flow, s.revenue_growth_yoy, s.profit_growth_yoy,
+  s.sma_20,s.sma_50,s.sma_100,s.sma_150,s.sma_200,s.ema_20,s.ema_50,
+  s.distance_sma_20_pct,s.distance_sma_50_pct,s.distance_sma_100_pct,s.distance_sma_150_pct,s.distance_sma_200_pct,
+  s.distance_ema_20_pct,s.distance_ema_50_pct,
+  s.sma_20_vs_50_pct,s.sma_20_vs_100_pct,s.sma_20_vs_150_pct,s.sma_20_vs_200_pct,
+  s.sma_50_vs_100_pct,s.sma_50_vs_150_pct,s.sma_50_vs_200_pct,s.sma_100_vs_150_pct,s.sma_100_vs_200_pct,s.sma_150_vs_200_pct,
+  s.rsi_14,s.atr_pct_14,s.volume_ratio_20,
+  s.return_5d,s.return_20d,s.return_63d,s.refreshed_at`;
 
 /** Run a screen: filter + sort + paginate. Filters are validated up front so a
  *  malformed clause fails fast with a clear message rather than a SQL error. */

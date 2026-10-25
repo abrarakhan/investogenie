@@ -9,6 +9,7 @@ import {
   addToWatchlistById, saveScreen, deleteScreen, renameScreen, type SavedScreen,
 } from "@/lib/screener-actions";
 import type { ScreenIntent } from "@/lib/screener/nlQuery";
+import type { ScreenerBacktestResult } from "@/lib/screener/backtest";
 import FilterPanel from "./FilterPanel";
 import NlQueryBar from "./NlQueryBar";
 import ResultsTable, { type HeldPosition } from "./ResultsTable";
@@ -64,6 +65,10 @@ export default function StockScreener(props: Props) {
   const [error, setError] = useState<string | null>(null);
   const [watchlist, setWatchlist] = useState<string[]>(props.watchlist[props.initialMarket] ?? []);
   const [saved, setSaved] = useState<SavedScreen[]>(props.savedScreens);
+  const [backtestYears, setBacktestYears] = useState(3);
+  const [backtest, setBacktest] = useState<ScreenerBacktestResult | null>(null);
+  const [backtestError, setBacktestError] = useState<string | null>(null);
+  const [backtestLoading, setBacktestLoading] = useState(false);
 
   const reqId = useRef(0);
   const isFirst = useRef(true);
@@ -112,6 +117,20 @@ export default function StockScreener(props: Props) {
 
   // Same setters as applyPreset — the debounced effect re-queries, and the
   // generated filters land in the existing chip row, individually removable.
+  const runBacktest = async (years = backtestYears, selectedFilters = filters, selectedUniverse = universe) => {
+    setBacktestLoading(true); setBacktestError(null); setBacktest(null);
+    try {
+      const response = await fetch("/api/screener/backtest", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ market, universe: selectedUniverse, filters: selectedFilters, years }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Backtest failed");
+      setBacktest(data as ScreenerBacktestResult);
+    } catch (error) { setBacktestError(error instanceof Error ? error.message : "Backtest failed"); }
+    finally { setBacktestLoading(false); }
+  };
+
   const applyIntent = (i: ScreenIntent) => {
     setFilters(i.filters);
     if (i.sort) setSort(i.sort);
@@ -120,6 +139,10 @@ export default function StockScreener(props: Props) {
     if (i.search !== null) setSearch(i.search);
     setActivePreset(null);
     setPage(1);
+    if (i.backtestYears !== null) {
+      setBacktestYears(i.backtestYears);
+      void runBacktest(i.backtestYears, i.filters, i.universe ?? universe);
+    } else { setBacktest(null); setBacktestError(null); }
   };
 
   const addFilter = (f: Filter) => { setFilters((prev) => [...prev, f]); setActivePreset(null); setPage(1); };
@@ -258,6 +281,35 @@ export default function StockScreener(props: Props) {
         activePreset={activePreset}
         onApplyPreset={applyPreset}
       />
+
+      <div className="rounded-xl border border-white/10 bg-white/[0.02] p-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs font-semibold uppercase tracking-wide text-white/50">Historical test</span>
+          <select value={backtestYears} onChange={(e) => setBacktestYears(Number(e.target.value))} className="rounded border border-white/15 bg-[#0a0e17] px-2 py-1 text-sm text-white/80">
+            {[1, 3, 5].map((years) => <option key={years} value={years}>{years} year{years === 1 ? "" : "s"}</option>)}
+          </select>
+          <button onClick={() => void runBacktest()} disabled={backtestLoading || filters.length === 0} className="rounded border border-[var(--ig-accent,#22d3ee)]/40 px-3 py-1 text-sm text-white/80 disabled:opacity-30">
+            {backtestLoading ? "Testing…" : "Backtest current technical filters"}
+          </button>
+          <span className="text-xs text-white/35">Weekly point-in-time observations; forward 5/20/60-session returns.</span>
+        </div>
+        {backtestError && <p className="mt-2 text-xs text-rose-400">{backtestError}</p>}
+        {backtest && (
+          <div className="mt-3">
+            <div className="grid gap-2 sm:grid-cols-3">
+              {backtest.horizons.map((h) => (
+                <div key={h.sessions} className="rounded-lg border border-white/10 bg-black/20 p-3 text-xs">
+                  <div className="font-semibold text-white/80">Next {h.sessions} sessions</div>
+                  <div className="mt-1 text-white/55">{h.observations.toLocaleString()} observations · positive {h.positiveRatePct?.toFixed(1) ?? "—"}%</div>
+                  <div className="text-white/55">Avg {h.averageReturnPct?.toFixed(2) ?? "—"}% · median {h.medianReturnPct?.toFixed(2) ?? "—"}%</div>
+                  <div className="text-white/35">Universe baseline {h.baselineAverageReturnPct?.toFixed(2) ?? "—"}%</div>
+                </div>
+              ))}
+            </div>
+            {backtest.warning && <p className="mt-2 text-xs text-amber-300/80">{backtest.warning}</p>}
+          </div>
+        )}
+      </div>
 
       {/* Result meta */}
       <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-white/40">

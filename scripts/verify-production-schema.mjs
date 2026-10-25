@@ -40,6 +40,7 @@ const requiredRelations = [
   "public.swing_pending_orders",
   "public.swing_pending_order_fills",
   "public.swing_execution_plans",
+  "public.screener_technical_daily",
 ];
 const requiredColumns = [
   ["corporate_event_sync_state", "authoritative_source"],
@@ -50,6 +51,7 @@ const requiredColumns = [
   ["gmail_connections", "last_error"],
   ["gmail_connections", "last_error_at"],
   ["gmail_connections", "needs_reconnect"],
+  ["stock_snapshot", "distance_sma_200_pct"],
 ];
 const client = new pg.Client({
   connectionString: url,

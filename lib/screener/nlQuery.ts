@@ -37,6 +37,8 @@ export interface ScreenIntent {
   /** "cheap for its sector" — resolved as a sector-median CTE, not a filter. */
   valueBelowSectorMedian: boolean;
   search: string | null;
+  /** Optional historical evaluation window requested by the user. */
+  backtestYears: number | null;
   /** What could NOT be expressed. Shown to the user; empty when nothing was lost. */
   notes: string;
 }
@@ -58,6 +60,7 @@ const ScreenIntentSchema = z.object({
   universe: z.string().nullable(),
   valueBelowSectorMedian: z.boolean(),
   search: z.string().nullable(),
+  backtestYears: z.number().int().min(1).max(5).nullable(),
   notes: z.string(),
 });
 
@@ -79,6 +82,7 @@ function presetExamples(): string {
         universe: null,
         valueBelowSectorMedian: p.dynamic === "value",
         search: null,
+        backtestYears: null,
         notes: "",
       };
       return `"${p.description}"\n${JSON.stringify(intent)}`;
@@ -138,6 +142,18 @@ NOT FILTERS — these have their own slots. Never emit them as filter clauses:
   search                  a specific company name or symbol fragment
   sort                    "highest ROE" → {"field":"roe","dir":"desc"}
   market is fixed by the page — never a filter.
+
+TECHNICAL LANGUAGE
+  "price above/below N DMA/SMA" → distance_sma_N_pct gt/lt 0 (available N: 20, 50, 100, 150, 200)
+  "price above/below N EMA" → distance_ema_N_pct gt/lt 0 (available N: 20, 50)
+  "fast DMA above slow DMA" → sma_FAST_vs_SLOW_pct gt 0. Every pair among 20, 50, 100, 150, 200 is available.
+  "volume 2x average" → volume_ratio_20 gte 2
+  RSI, ATR %, and 5/20/63-session returns map directly to their named fields.
+  Multiple conditions are combined with AND.
+  "backtest/test over the last N years" → backtestYears: N. Do not put it in notes.
+  A historical test can use only fields marked by their labels as technical. Current fundamentals
+  are not point-in-time history; if a backtest request includes fundamentals, retain the current
+  screen but explain in notes that those clauses cannot be historically tested without archived fundamentals.
 
 NULLS — a numeric filter EXCLUDES every row where that field is null, and not all
 stocks have fundamentals. When a request leans on absence ("no debt", "companies
@@ -273,6 +289,7 @@ const LooseIntentSchema = z.object({
   universe: z.string().nullable().default(null),
   valueBelowSectorMedian: z.boolean().default(false),
   search: z.string().nullable().default(null),
+  backtestYears: z.number().nullable().default(null),
   notes: z.string().default(""),
 });
 
@@ -299,6 +316,7 @@ function parseLooseIntent(text: string): ScreenIntent {
     universe: d.universe,
     valueBelowSectorMedian: d.valueBelowSectorMedian,
     search: d.search,
+    backtestYears: d.backtestYears === null ? null : Math.max(1, Math.min(5, Math.round(d.backtestYears))),
     notes: d.notes,
   };
 }
@@ -309,7 +327,7 @@ function systemText(market: string, sectors: string[], universes: string[]): str
 }
 
 const JSON_ONLY_SUFFIX =
-  '\n\nRespond with ONLY a single JSON object with these keys: filters, sort, universe, valueBelowSectorMedian, search, notes. No prose, no code fences.';
+  '\n\nRespond with ONLY a single JSON object with these keys: filters, sort, universe, valueBelowSectorMedian, search, backtestYears, notes. No prose, no code fences.';
 
 // --- Anthropic (native structured output via the SDK) ---
 async function callAnthropic(
