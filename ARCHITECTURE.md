@@ -1,345 +1,108 @@
 # InvestoGenie Architecture
 
-_Living architecture reference. Last updated: 2026-10-13 at product revision `e09cfd8`._
+_Source reviewed 25 October 2026 at main revision `42eea8f`; runtime deployment state was not inspected._
 
-## System Overview
-
-InvestoGenie is a server-authoritative market terminal for Indian and US equities. The active
-production system runs on AWS Lightsail. A Next.js application serves the web UI, versioned mobile
-APIs, authentication and server actions; PostgreSQL is the system of record; Node and Python jobs
-maintain market, broker, news, fund and portfolio data.
+## System flow
 
 ```text
-Market/news/broker sources
-  |-- NSE/BSE Bhavcopy, Yahoo, Google, FRED
-  |-- ICICI Breeze
-  |-- GNews, Marketaux, NewsAPI, Alpha Vantage
-  |-- AMFI, AMC disclosures, Gmail CAS/disclosures
-  v
-Schedulers and ingestion workers
-  v
-PostgreSQL
-  ^
-  |-- Next.js server actions and web routes
-  |-- /api/v1/mobile/*
-  v
-Web terminal                    Android / iOS client
+Exchange / Yahoo / Google / FRED / news / Breeze / AMFI / Gmail
+                       |
+             Node scheduler + Python jobs
+                       |
+                   PostgreSQL
+                       |
+        Next.js pages, actions and API routes
+                  /                \
+             Web terminal       Expo mobile client
 ```
 
-Trading calculations and ranking remain on the server. The web and mobile clients display the
-same server-produced Strong Swing, News & AI and Trade Ledger results. Mobile refreshes do not
-recalculate, reorder or reinterpret candidates.
+The web stack is Next.js 16.4.2 App Router, React 19.2.4 and TypeScript. PostgreSQL is accessed through `pg`. Tailwind CSS 4, Lightweight Charts and Three.js support presentation. Mobile uses Expo ~57.0.24 / React Native 0.86.3; financial analytics remain server-owned.
 
-## Technology Stack
+## Repository boundaries
 
-| Layer | Technology |
+| Path | Responsibility |
 | --- | --- |
-| Web and API | Next.js 16.3.8 App Router, React 19, TypeScript |
-| Mobile | Expo SDK 57, React Native 0.86, TypeScript |
-| Database | PostgreSQL through `pg` / node-postgres |
-| Styling | Tailwind CSS 4 and CSS custom properties |
-| Charts | Lightweight Charts on web; native SVG OHLC candles on mobile |
-| Authentication | Signed HTTP-only web sessions; hashed, expiring bearer tokens for mobile |
-| Credentials | AES-256-GCM encrypted per-user provider credentials |
-| Background work | Node scheduler plus Python ingestion and Breeze workers |
-| ML calculation runtime | Python only for features, labels, training, calibration, evaluation and inference |
-| Production | AWS Lightsail, systemd, Nginx/HTTPS, local PostgreSQL |
-| Local fallback | macOS `launchd` and private Tailscale Serve HTTPS |
+| `app/` | Pages, server actions, cron handlers and mobile APIs |
+| `components/` | Web presentation |
+| `lib/analytics/` | Signal, ranking, risk and strategy calculations |
+| `lib/screener/` | Fundamental/price-action snapshot and filter engine |
+| `lib/news/` | Provider aggregation, evidence and classification |
+| `lib/cas/`, `lib/funds/`, `lib/gmail/` | Portfolio parsing, identifiers, snapshots and disclosure processing |
+| `lib/breeze/` | Broker integration and execution safety |
+| `lib/backfill/` | Persistent OHLCV repair |
+| `lib/mobile*.ts` | Sessions, ledger API support and notifications |
+| `pipelines/`, `workers/` | Python ingestion and broker workers |
+| `pipelines/ml/` | Deterministic ML feature collection and labels |
+| `scripts/` | Scheduling, ingestion and operational checks |
+| `db/migrations/` | Ordered schema through 0057 |
+| `mobile/` | Isolated React Native client |
+| `deploy/` | macOS and Ubuntu service/deployment packages |
 
-## Repository Boundaries
+The [README route table](README.md#workspaces) maps each workspace. In particular, `stocks` is the filter/NL Stock Screener, `screener` is ordinary Swing Candidates, and `armed-swing` is the earlier Armed workflow.
 
-```text
-app/                    Next.js pages, route handlers and server actions
-components/             Web presentation components
-lib/analytics/          Pure signal, ranking, risk and strategy calculations
-lib/news/               News providers, deduplication, evidence and classification
-lib/cas/                CAS parsing and import
-lib/funds/              AMFI/snapshot identity and fund mapping
-lib/breeze/             Breeze session, broker safety and reconciliation
-lib/backfill/           Persistent OHLCV repair queue
-lib/mobile*.ts          Mobile auth, mutations and alert delivery
-pipelines/              Python market/fundamental/history synchronization
-pipelines/ml/           Deterministic ML snapshots, labels and future model lifecycle calculations
-workers/                Breeze market, OI and account workers
-scripts/                Scheduler, sync, migration and deployment utilities
-db/migrations/          Ordered PostgreSQL schema migrations
-mobile/                 Isolated Android/iOS React Native client
-deploy/                 AWS-compatible Linux, Oracle and local Mac operations
-```
+## Calculations and candidate flow
 
-## Web Application Surfaces
+`swingClassifier.ts` and `legendaryStrategies.ts` produce technical setups persisted in `swing_signals`. User risk settings, Strong Swing confirmation/execution gates and `candidateRanking.ts` produce ranked candidates. News & AI adds bounded source evidence to existing setups.
 
-The market workspace is parameterized by `in` or `us`:
+Momentum Ignition legacy and V2 have separate discovery modules. Armed Swing has a separate pure assessment in `lib/analytics/armedSwing.ts` and database loader in `lib/armedSwing.ts`. The loader scans market-relative strength and near-pivot candidates, then assesses at most 250 shortlisted stocks. It excludes the in-progress bar from base construction and uses live volume only for breakout pace.
 
-- `/terminal/[market]`: terminal overview.
-- `/terminal/[market]/stocks`: stock screener.
-- `/terminal/[market]/screener`: filter/NL screener workspace.
-- `/terminal/[market]/strong-swing`: execution-gated Strong Swing candidates.
-- `/terminal/[market]/news-swing`: Strong Swing candidates with bounded news intelligence.
-- `/terminal/[market]/trade-ledger`: open and closed swing trades, partial exits and P&L.
-- `/terminal/[market]/long-term`: long-horizon fundamentals candidates.
-- `/terminal/[market]/probability`: 21-session probability projections.
-- `/terminal/[market]/adaptive-allocation`: two-asset Universal Portfolio research, comparison
-  backtests and saved paper configurations.
-- `/terminal/[market]/forward-test`: out-of-sample signal tracking.
-- `/portfolio/fund-mapping`: CAS holding to AMC snapshot mapping and overlap.
-- `/terminal/in/cas`: CAS import.
-- `/data/health` and `/admin/sync`: freshness, gaps, jobs and repair operations.
-- `/settings`: risk, AI/news, email, Gmail and ICICI Breeze credentials.
+Armed actionability depends on live execution quotes, bid/ask, circuit bands, liquidity, structure, regime and verified results-calendar coverage. India requires a fresh `BREEZE_LIVE` quote. Missing evidence produces unverified or blocked states. Results within three trading sessions block entries.
 
-Server components load authenticated data directly. Client components handle filtering,
-interaction and refresh without owning the financial calculations.
+`pipelines/corporate_results_sync.py` imports the official NSE event calendar and supplements dates through Yahoo. Authoritative negative coverage requires a complete same-day window covering the required sessions; an empty Yahoo result alone does not verify safety.
 
-## Calculation Boundary
+Long-term, probability and Universal Portfolio calculations live in their own analytics modules. Adaptive Allocation is a research/backtest surface with saved strategies that can separately supply the explicitly enabled Breeze buy-only workflow.
 
-The protected calculation layer includes:
+## Immutable plans and ledger writes
 
-- `lib/analytics/swingClassifier.ts`: technical setup classification and raw setup fields.
-- `lib/analytics/legendaryStrategies.ts`: Qullamaggie, Minervini, Darvas, PTJ and Simons rules.
-- `lib/analytics/strongSwing.ts` and `lib/strongSwing.ts`: execution and confirmation gates.
-- `lib/analytics/candidateRanking.ts`: deterministic candidate ordering.
-- `lib/analytics/tradeRisk.ts`: market/execution risk checks.
-- `lib/swingTradeProjection.ts`: shared projection resolution used by web and mobile ledger flows.
-- `lib/swingTradeLedger.ts`: frozen plans, current state and P&L.
-- `lib/newsSwing.ts` and `lib/analytics/newsSwing.ts`: bounded news overlay.
-- `lib/analytics/universalPortfolio.ts`: isolated, cost-aware two-asset Cover allocation and
-  backtest engine. It consumes adjusted history and has no dependency into candidate rankings,
-  ledger projections or broker execution.
+`lib/armedSwingPlans.ts` persists immutable Armed calculations, including status, levels, ATR, gates and a five-minute capture bucket. Actions load plans by ID and user ownership rather than trusting browser-submitted levels.
 
-The calculation flow is:
+- Pending Armed buy-stops require a same-session `ARMED` plan captured within 30 minutes.
+- Direct Armed purchases require a matching `BUY_ZONE` plan and purchase date, with a fill inside the frozen trigger/limit band subject to tolerance.
+- `lib/swingExecutionPlans.ts` persists Strong Swing/Momentum plans. Purchase validation checks matching asset/market/strategy, actionable state, current session, capture age and price range.
+- Edits cannot move protected purchases below their frozen entry/trigger.
 
-```text
-OHLCV + latest quote + fundamentals/context
-  -> swing classifier and strategy detectors
-  -> persisted swing_signals
-  -> user risk settings applied at read time
-  -> Strong Swing confirmation/execution gates
-  -> deterministic candidate ranking
-  -> optional News & AI overlay (cannot create a technical setup)
-  -> ledger freezes the selected entry plan at purchase
-```
+Pending-order actions in `app/terminal/[market]/trade-ledger/pendingOrderActions.ts` record orders without placing broker instructions. Default validity is seven calendar days. Fill recording locks the order row, validates remaining quantity/price/date, inserts a purchased ledger trade and fill audit, then updates the remainder atomically. Each partial fill is a separate trade; cancellation preserves filled trades.
 
-Targets, stops, trail and holding windows are projections, not guarantees. Ledger records retain
-the plan that existed at purchase so later strategy changes cannot silently rewrite a live trade.
-Phase 1-4 mobile work did not modify these formulas or ranking rules.
+Ledger projection/risk calculations are shared through `lib/swingTradeProjection.ts` and `lib/swingTradeLedger.ts`. Cash-flow accounting distinguishes turnover from external capital after retained proceeds are reused. ROI and XIRR use that capital model. Broker reconciliation and explicitly enabled capped NSE cash limit buying are separate paths; no automatic selling/rebalancing is implemented.
 
-## News Intelligence
+## News and fund data
 
-`lib/news/providers.ts` queries configured providers independently and merges successful results.
-Provider failure is isolated so one unavailable API does not erase the other providers' evidence.
-Watermarks fetch only newer articles; canonicalization and similarity rules remove duplicates.
+News providers are queried independently and successful results merged. Watermarks, canonical deduplication and corroboration preserve provenance. Priority starts with open ledger trades, then Strong Swing, then broader Swing. Evidence quality and stock specificity constrain risk assessment; broad or unverified stories are cautionary.
 
-Priority is:
+CAS holdings use user/ISIN/folio identities. Explicit mappings and AMFI identifiers link them to AMC snapshots for look-through and overlap. Gmail uses read-only OAuth and encrypted tokens; enabled auto-import processes suitable CAS and disclosures, while ambiguous matches remain reviewable. Attachment bytes and email bodies are not retained as document storage. Revoked grants set `needs_reconnect`; scan failures record the latest error and timestamp.
 
-1. Open Trade Ledger symbols.
-2. Current Strong Swing candidates.
-3. Ordinary Swing candidates for broader context.
+## Schedulers and providers
 
-Structured classification may use the user's selected Anthropic, OpenAI, Google or DeepSeek
-provider. Evidence quality, source trust, stock specificity, age and corroboration constrain the
-result. Broad macro stories can add caution but cannot independently force a stock-specific exit.
-Only verified severe stock-specific evidence can activate the News & AI risk-off veto.
+`scripts/run-with-nse-sync.mjs` supervises Next.js and jobs under `dev`/`start`. Bare Next.js scripts skip this wrapper.
 
-## Trade Ledger
+Schedules cover market-hours priority quotes, EOD Bhavcopy/history, repair queues, fundamentals, macro, AMFI, scans, forward tests, news, Gmail, mobile alerts, email and ML snapshots. Corporate results run at 07:00/17:00 IST plus startup work. Breeze can be embedded or supervised separately.
 
-Migration `0030_swing_trade_ledger.sql` introduced the ledger, migration
-`0034_swing_trade_partial_exits.sql` added partial exits, and migration
-`0046_trade_ledger_returns.sql` added broker-reconciled acquisition, sale and realized-P&L values.
-The ledger supports:
+India live quotes prefer Breeze, with Yahoo/Google/exchange fallback elsewhere. Bhavcopy maintains EOD history; US recurring history uses Yahoo. The optional Tiingo history module is separate from that recurring Python path. Market-calendar helpers support session-aware freshness.
 
-- Logging a purchase from an existing server signal or manually supplied symbol, date, price and
-  quantity while resolving the remaining plan from stored signal data.
-- Editing and deleting an entry.
-- Partial and final sales, plus correction of recorded sales.
-- Open, realized and overall P&L, cumulative trade turnover, capital-employed ROI and XIRR.
-- Five-minute current-price refresh during market hours.
-- Hourly stock-first News & AI assessment during the relevant trading session.
-- ICICI Breeze holdings, positions and order reconciliation, plus separately authorized, capped,
-  buy-only NSE cash limit orders for Strong Swing and saved Adaptive Allocation strategies.
+Email defaults to 07:00 IST with wrapper catch-up and retry limits. The actual digest uses per-user encrypted SMTP and India Strong Swing/Probability results. Stored user send times and last-sent timestamps are not enforced by the sender's enabled-user query; partial retries can duplicate successful deliveries.
 
-Broker reconciliation does not alter orders or ledger rows automatically. Automatic buying is off
-by default, never sells or rebalances, and requires per-user acknowledgement and hard limits. Older
-long-term broker holdings are excluded from the InvestoGenie swing-trade reconciliation scope.
+## Mobile and secrets
 
-Portfolio return accounting is cash-ledger based. Purchases consume retained cash, sales replenish
-it, and only a dated shortfall is treated as external capital. ROI divides overall P&L by those
-inferred contributions. XIRR uses the dated contributions and terminal retained cash plus current
-open-position value. This prevents repeatedly circulated sale proceeds from inflating the capital
-denominator. Per-trade returns continue to use that trade's broker-reconciled cash flows.
+Mobile APIs are under `/api/v1/mobile/`: login/logout, me, Strong Swing, News & AI, ledger and sale mutations, asset search, candles and push registration. Random 256-bit device tokens are held in SecureStore; the server stores SHA-256 hashes with 30-day expiry and revocation. Biometrics guard restored sessions when available.
 
-## Mobile Architecture
+Expo receives push tokens and notification text. Ledger alerts are generic; candidate alerts contain ticker, engine and readiness. Candidate details exclude price, quantity and portfolio/broker values. Notifications do not place orders.
 
-`mobile/` is an isolated client. It uses these versioned endpoints:
+App metadata is 0.1.1, Android version code 2 and iOS build 2; `mobile/package.json` remains 0.1.0. The documented local build path is Expo Prebuild then Gradle/Xcode. EAS scripts/configuration remain in source, and release validation checks EAS profile URLs; it does not prove a locally built binary uses the right URL.
 
-- `/api/v1/mobile/auth/login` and `/auth/logout`.
-- `/api/v1/mobile/me`.
-- `/api/v1/mobile/strong-swing`.
-- `/api/v1/mobile/news-swing`.
-- `/api/v1/mobile/trade-ledger` and nested trade/sale mutation routes.
-- `/api/v1/mobile/assets/search` and `/candles`.
-- `/api/v1/mobile/push-token`.
+Web sessions use signed HTTP-only cookies. Credentials use AES-256-GCM with a scrypt-derived key and random IV; `getUserCredentials()` returns metadata/presence flags. Server-only resolvers decrypt secrets when needed. Cron callers send the configured bearer secret; handlers must be reviewed individually rather than assumed to share identical checks.
 
-Authentication creates a random 256-bit token. SecureStore holds the raw token on-device;
-PostgreSQL stores only its SHA-256 hash. Tokens expire after 30 days and can be revoked. Biometric
-authentication protects restored sessions after backgrounding.
+## ML foundation
 
-The client provides India/US selection and visible `Strong`, `News & AI`, and `Ledger` workspaces.
-Version `0.1.1` / Android `versionCode` 2 / iOS build 2 includes the safe-area navigation fix.
-The first installed Android APK predates this fix and must be replaced by a new local build.
+Migration 0051 defines snapshots, labels, models, promotion evidence, serving pointers and monitoring records. Node captures canonical Strong Swing candidates and invokes Python feature collection. Python implements features and first-touch labels with golden vectors.
 
-### Mobile build and distribution
+Training, calibration, inference, model promotion and drift-response automation are specified in [the methodology contract](docs/ml-methodology.md), but complete runtime pipelines are not present. Schema existence does not establish an active model or monitoring service.
 
-Expo SDK packages remain open-source runtime dependencies, but Expo cloud build/update services
-are not the approved distribution path. Native projects and binaries will be generated locally:
+## Deployment and verification
 
-```text
-mobile source -> expo prebuild -> Gradle/Android Studio -> signed APK/AAB
-                              -> Xcode/CocoaPods       -> signed iOS app
-```
+Ubuntu packages use systemd, Nginx, external environment configuration and private PostgreSQL. The historical `deploy/oracle/` path also supports AWS hosts. macOS uses launchd and optional Tailscale access.
 
-No EAS Build, Expo Updates or cloud source upload is required. The Mac still needs full Xcode,
-CocoaPods and Apple signing configured before the first local iOS build. Free Apple-ID development
-signing can install on the owner's device with periodic re-signing; TestFlight/App Store delivery
-requires Apple Developer Program membership.
+The release script fetches main, installs/audits/builds/prunes Node dependencies, installs Python requirements, applies an explicit 0033–0057 migration list, verifies required schema, installs service units, restarts and checks login. It assumes the earlier schema and does not execute lint/tests.
 
-Push payloads are deliberately generic and contain no ticker, price, recommendation or financial
-detail. The authenticated client fetches current ledger state after opening. Delivery currently
-uses the Expo push relay; direct FCM/APNs is the future transport-hardening step.
+Use `npm test`, `npm run lint`, `npm run build` and deployment checks before promotion. Mobile has separate typecheck/release validation; Python suites need separate execution. Runtime coverage, installed builds and production revision require host/database inspection.
 
-## Market Data and Scheduling
-
-`npm start` runs `scripts/run-with-nse-sync.mjs`, which supervises Next.js and recurring jobs in the
-same systemd service on AWS. Important schedules include:
-
-- India/US market-hours priority quote and current-session OHLCV refresh, default every five minutes.
-- Breeze market worker and five-minute read-only account reconciliation when credentials/session
-  are valid.
-- Hourly News & AI refresh during the India and US trading sessions.
-- Five-minute mobile ledger alert evaluation during market hours.
-- India end-of-day Bhavcopy with bounded publication-delay retries.
-- US quote, OHLCV and fundamentals updates.
-- Daily macro, AMFI scheme-master, Gmail disclosure, email digest and signal jobs.
-- Persistent OHLCV backfill queue after the configured India/US sessions.
-
-Market-calendar helpers distinguish trading sessions, weekends and configured exchange holidays.
-Health logic compares data to the latest expected completed session instead of wall-clock age, so
-a valid Friday close is not marked stale on a weekend or exchange holiday.
-
-### Provider authority and fallback
-
-- India live priority set: ICICI Breeze when connected; Yahoo/Google and exchange sources remain
-  fallbacks.
-- India end-of-day authority: NSE/BSE Bhavcopy.
-- US live priority set: open ledger positions, recently visible stocks, and the top 120 existing
-  actionable signals; Yahoo five-minute bars are primary and Google is a bounded quote fallback.
-- US end-of-day: full eligible-universe Yahoo quote/history pass after the New York close.
-- India Yahoo fallback upserts escape SQL wildcard characters before passing statements through
-  `psycopg2.execute_values`; this keeps the NSE/BSE five-minute fallback operational when Breeze
-  is unavailable or does not resolve a priority instrument.
-- Macro: FRED-backed pipeline.
-- All writes carry timestamps/source metadata; stale or unavailable assets are excluded from
-  candidate calculations until repaired or intentionally retired.
-
-## Portfolio, CAS and Fund Look-through
-
-The fund flow is:
-
-```text
-CAS PDF or Gmail attachment
-  -> CAS parser
-  -> user_mutual_fund_holdings keyed by user + ISIN + folio
-  -> AMFI identifier resolution / user_fund_mappings
-  -> fund_schemes + fund_holdings_snapshot
-  -> stock-level fund composition and pairwise overlap
-```
-
-The parser preserves multiple schemes in one folio, the same ISIN in different folios, child-holder
-names inside a consolidated statement and current scheme names. Rejected records are auditable;
-resolved errors from older CAS imports are retired when a newer successful statement supersedes
-them. Gmail import limits CAS processing to the latest relevant statement and separately discovers
-monthly AMC disclosures.
-
-Mappings are explicit in `user_fund_mappings`, not inferred on every X-Ray request. Exact ISIN
-matches can be accepted automatically when unambiguous; name-only matches require confirmation.
-Fund valuation comes from current CAS holdings, while stock composition and overlap come from the
-latest mapped AMC snapshots.
-
-## Database Domains
-
-The schema is migration-driven. Main domains are:
-
-| Domain | Principal objects |
-| --- | --- |
-| Identity/auth | `users`, web sessions, password-reset tokens, `mobile_sessions` |
-| Market reference | `assets`, listings/identifiers, exclusions |
-| Prices | `latest_quotes`, `daily_ohlcv`, source/sync state |
-| Signals | `swing_signals`, Strong Swing snapshots, forward-test records |
-| Fundamentals/macro | financial reports, normalized statements, macro indicators |
-| Portfolio | portfolios, holdings, transactions, watchlists |
-| Ledger | swing trades and partial exits |
-| Funds | CAS holdings/rejections, AMFI master, fund schemes/snapshots/mappings |
-| News | articles, analyses, stock impacts, providers/source trust |
-| Credentials | encrypted user provider, Gmail, SMTP and Breeze credentials |
-| Broker | Breeze holdings/positions/orders snapshots and execution-safety metadata |
-| Operations | `cron_logs`, backfill queue, tracking exclusions, sync alerts |
-| Mobile | hashed sessions, push devices and notification audit/deduplication |
-
-All user-owned queries are scoped by `user_id`. `lib/db.ts` owns the shared PostgreSQL pool and the
-application follows the existing parameterized-query pattern.
-
-## Authentication and Secrets
-
-Web login writes a signed, HTTP-only session cookie. Mobile uses bearer tokens as described above.
-Cron routes require `CRON_SECRET`; an unset secret is treated as configuration failure, never as an
-open endpoint. User-entered API credentials are encrypted before persistence and can be managed in
-Settings, avoiding ordinary provider keys in client bundles.
-
-OAuth integrations use server-side callbacks for Gmail and Breeze. The user's Google or ICICI
-password/OTP is handled by the provider and does not pass through InvestoGenie.
-
-## Deployment
-
-### AWS production
-
-- AWS Lightsail is the active production host.
-- `investogenie.service` runs `npm start` from `/opt/investogenie/app` with an external environment
-  file and restarts the web server/scheduler together.
-- Nginx terminates HTTPS and proxies to the localhost Next.js listener.
-- PostgreSQL is local to the instance and is not exposed publicly.
-- Release procedure: fetch the intended `main` revision, install locked dependencies, run
-  migrations/tests/build, then restart and inspect systemd logs.
-- Product revision `e09cfd8` is deployed and `main` is aligned with `origin/main`.
-
-### Local fallback
-
-`deploy/local/` retains the macOS `launchd` and Tailscale Serve setup for development and private
-fallback access. `deploy/oracle/` remains an alternate Linux deployment package, not an active OCI
-environment.
-
-## Verification and Change Safety
-
-The normal verification gates are:
-
-```bash
-npm run lint
-npm test
-npm run build
-cd mobile && npm run typecheck && npm run validate:release
-```
-
-The Adaptive Allocation release passed its focused numerical tests, TypeScript, lint, the Next
-production build, production migration/schema verification and service health checks. When
-mobile/platform or research work is requested without a strategy change, diffs must remain empty
-for the protected calculation and ranking modules listed under Calculation Boundary.
-
-## Current Architectural Gaps
-
-- The web server and scheduler share one systemd service/process tree; heavy ingestion can still
-  contend with interactive requests. Separate worker services are the durable next step.
-- The replacement Android APK has not yet been built locally from `5b1bd0b`.
-- Local iOS build is blocked on Xcode, CocoaPods, simulator/runtime and Apple signing setup.
-- Push delivery still depends on Expo's relay; direct FCM/APNs would remove that external hop.
-- Some long-term normalized statement coverage and fund snapshot coverage remain incomplete.
-- Market/provider limits and unsupported symbols require ongoing exclusion/backfill maintenance.
-- Probability weights and some investor-strategy proxies remain disclosed heuristics pending
-  outcome calibration and broader historical validation.
+Heavy jobs share the web service process tree unless separately managed. Provider limits, missing execution depth, incomplete statements/fund mappings, Expo relay dependence and unfinished ML lifecycle runtime remain operational boundaries.

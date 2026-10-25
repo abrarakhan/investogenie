@@ -1,129 +1,78 @@
 # InvestoGenie
 
-InvestoGenie is a self-hosted market intelligence and trade-management platform for Indian and US
-equities. It combines technical screening, execution-gated Strong Swing candidates, source-linked
-News & AI analysis, long-term fundamentals, live market data, mutual-fund look-through, and a
-broker-reconciled trade ledger in one server-authoritative system.
+InvestoGenie is a self-hosted market research and trade-management application for Indian and US equities. Next.js serves the web terminal and mobile APIs; PostgreSQL stores market data, user portfolios, frozen trade plans and operational history.
 
-The active production deployment runs on AWS Lightsail. The same codebase supports local macOS
-development and an alternate Ubuntu/Oracle-compatible deployment.
+_Code reference reviewed 25 October 2026 against main revision `42eea8f3045a0114345d3df00d3733d783ee34d8`. This review describes repository behavior; it does not verify a running production deployment or database._
 
-## Current Production
-
-- Next.js 16.3 App Router, React 19 and TypeScript.
-- PostgreSQL as the system of record; direct access through `pg`.
-- AWS Lightsail with systemd, Nginx/HTTPS and recurring ingestion workers.
-- India-first market coverage with NSE/BSE trading-session and holiday awareness.
-- ICICI Breeze for priority live market data, broker reconciliation, and explicitly enabled capped NSE cash limit buying.
-- Bhavcopy, Yahoo and Google fallbacks plus exchange-close OHLCV maintenance.
-- Android/iOS client backed by versioned server APIs; analytics remain on the server.
-- Cost-aware Adaptive Allocation research with saved paper configurations and comparative backtests.
-- Momentum Ignition V2 discovery with trading-session-aware freshness, NIFTY-first benchmarking,
-  and separate early, ready, late-risk and failed-breakout states.
-- A production ML advisory foundation whose feature, label, training, calibration and inference
-  calculations are Python-only; it remains outside candidate eligibility and broker execution.
-- Documentation follows `main`; production is deployed from a tested, pushed `main` revision.
-
-Detailed live status is maintained in [STATUS.md](STATUS.md), capabilities in
-[CAPABILITIES.md](CAPABILITIES.md), and system boundaries in [ARCHITECTURE.md](ARCHITECTURE.md).
-
-## Core Workspaces
-
-| Workspace | Purpose |
-| --- | --- |
-| Market overview | India/US quotes, breadth, charts and market context |
-| Stock Screener | Fundamental and price-action filters, presets, saved screens and exports |
-| Swing Candidates | Broad strategy discovery with frozen entry, target, stop and holding window |
-| Strong Swing | Stricter execution-readiness, liquidity, regime and exchange-safety gates |
-| News & AI Swing | Strong Swing base with bounded, source-linked event intelligence |
-| Long-Term Candidates | Multi-year financial evidence and investor-inspired rankings |
-| Probability | 21-session return distribution, upside probability and drawdown range |
-| Adaptive Allocation | Two-asset Universal Portfolio research with costs, drawdown and baseline comparisons |
-| Trade Ledger | Purchases, partial/final sales, revised plans, news risk, P&L, ROI and XIRR |
-| Fund Mapping | CAS holdings, AMFI identities, AMC disclosures and stock-overlap analysis |
-| Data Health | Source freshness, coverage gaps, backfill queue and repair controls |
-
-## Trade Ledger Accounting
-
-The ledger stores gross trade data and broker-reconciled acquisition value, sale proceeds and
-realized P&L. It distinguishes:
-
-- **Capital employed:** external capital inferred chronologically after recycling retained sale
-  proceeds.
-- **Trade turnover:** cumulative acquisition value across every purchase.
-- **ROI:** overall P&L divided by capital employed; it is not annualized.
-- **XIRR:** annualized money-weighted return using dated capital additions and ending retained
-  cash plus current open-position value.
-
-The ICICI Direct reconciliation through 22 September 2026 currently records INR 3,83,657.44 of
-capital employed, INR 8,76,695.04 of trade turnover and INR 22,712.85 of realized profit. This is
-5.92% ROI over 18 August-22 September 2026; the short-period XIRR is 170.91% annualized.
-
-Trade-ledger accounting does not alter Swing, Strong Swing, News & AI, target, stop or ranking
-calculations.
-
-## Data And Automation
-
-The scheduler in `scripts/run-with-nse-sync.mjs` runs alongside Next.js and coordinates:
-
-- five-minute priority quote/OHLCV refreshes during Indian and US market hours;
-- ledger/visible/actionable-stock priority ordering for bounded intraday provider calls;
-- hourly ledger-focused news assessment during active sessions;
-- NSE/BSE and US exchange-close quote/history synchronization;
-- market-calendar-aware freshness and catch-up jobs;
-- persistent OHLCV backfill workers and auditable exclusions;
-- fundamentals, macro, swing-scan and forward-test maintenance;
-- daily Strong Swing email digest;
-- deduplicated mobile notifications for execution-ready and momentum-ready candidates;
-- Gmail discovery for the latest CAS and AMC monthly disclosures.
-
-Provider credentials are encrypted per user where supported. Secrets and production environment
-files are never committed.
-
-## Main Routes
+## Workspaces
 
 | Route | Purpose |
 | --- | --- |
-| `/terminal/in` | India terminal |
-| `/terminal/us` | US terminal |
-| `/terminal/[market]/stocks` | Stock screener |
-| `/terminal/[market]/strong-swing` | Strong Swing and Momentum Ignition |
-| `/terminal/[market]/news-swing` | News & AI Swing |
-| `/terminal/[market]/trade-ledger` | Trade Ledger and broker reconciliation |
-| `/terminal/[market]/long-term` | Long-Term Candidates |
-| `/terminal/[market]/probability` | Probability workspace |
-| `/terminal/[market]/adaptive-allocation` | Cost-aware allocation backtests and saved paper strategies |
-| `/portfolio/fund-mapping` | CAS/AMC mapping and fund overlap |
-| `/data/health` | Data coverage and backfill health |
-| `/settings` | User, provider, Breeze and Gmail settings |
-| `/help` | Product and methodology guides |
+| `/markets/in`, `/markets/us` | Market overview and charts |
+| `/terminal/[market]` | India (`in`) or US (`us`) terminal |
+| `/terminal/[market]/stocks` | Fundamental and price-action Stock Screener, saved screens, natural-language queries and exports |
+| `/terminal/[market]/screener` | Buy-side Swing Candidates; India is NSE-only and capped to the top 20 |
+| `/terminal/[market]/strong-swing` | Strong Swing plus legacy and V2 Momentum Ignition discovery |
+| `/terminal/[market]/armed-swing` | Earlier pre-breakout Armed Strong Swing plans |
+| `/terminal/[market]/news-swing` | Strong Swing with source-linked news and AI assessment |
+| `/terminal/[market]/trade-ledger` | Purchases, pending buy-stops, partial fills/exits, reconciliation and returns |
+| `/terminal/[market]/long-term` | Multi-year fundamentals and investor-inspired rankings |
+| `/terminal/[market]/probability` | 21-session probability forecasts |
+| `/terminal/[market]/adaptive-allocation` | Cost-aware two-asset backtests and saved strategies |
+| `/terminal/[market]/forward-test` | Forward measurement of recorded signals |
+| `/terminal/in/cas`, `/portfolio/fund-mapping` | CAS import, Gmail disclosures, AMFI mapping and fund overlap |
+| `/data/health`, `/admin/sync` | Freshness, coverage and ingestion health |
+| `/settings`, `/help` | Account/provider configuration and product guidance |
 
-## Technology
+## Execution and accounting
 
-| Layer | Technology |
+Analytics run on the server. Strong Swing and Momentum purchase flows use stored execution plans; Armed Swing stores its own immutable trigger, limit, stop, target and gate snapshot. Pending buy-stops are ledger records: creating one sends no broker order and creates no position or P&L. Confirmed partial fills create separate purchased trades while preserving the unfilled remainder.
+
+Armed setups require verified results-calendar coverage and live execution data. Missing evidence blocks actionable states. India execution quotes require `BREEZE_LIVE`; a fallback quote alone cannot authorize an Armed entry.
+
+The ledger separates cumulative purchase turnover from external capital employed after recycling retained sale proceeds. ROI uses capital employed; XIRR uses dated contributions and terminal cash plus open-position value. Broker-reconciled acquisition/proceeds/P&L can replace gross values.
+
+Breeze automatic buying is a separate, disabled-by-default, explicitly enabled path for capped NSE cash limit buys from Strong Swing and saved Adaptive Allocation strategies. It does not automatically sell or rebalance. Research projections and notification delivery do not place orders.
+
+## Stack
+
+| Layer | Repository dependency/configuration |
 | --- | --- |
-| Web/API | Next.js 16.3, React 19, TypeScript |
-| Mobile | React Native / Expo SDK 57, locally generated native projects |
-| Database | PostgreSQL |
-| UI | Tailwind CSS 4, Lightweight Charts |
-| Ingestion | Node.js and Python workers |
-| Production | AWS Lightsail, systemd, Nginx, HTTPS |
-| Authentication | Signed web sessions and hashed expiring mobile tokens |
-| Credential storage | AES-256-GCM encrypted per-user secrets |
+| Web | Next.js 16.4.2, React 19.2.4, TypeScript |
+| UI | Tailwind CSS 4, Lightweight Charts, Three.js |
+| Database | PostgreSQL through `pg` |
+| Mobile | Expo ~57.0.24, React Native 0.86.3, React 19.2.3 |
+| Jobs | Node scheduler and Python pipelines/workers |
+| Credentials | AES-256-GCM per-user encrypted secrets |
+| Deployment package | macOS launchd or Ubuntu systemd/Nginx; Linux scripts support AWS/Oracle hosts |
 
-## Local Development
+## Local setup
 
-Requirements: Node.js, Python 3, PostgreSQL, and the environment variables documented in
-`.env.example`.
+The supplied local commands target macOS/Linux. Use a current compatible Node.js runtime, Python 3 and PostgreSQL; several package scripts expect `.venv/bin/python`.
 
 ```bash
-npm install
+cp .env.example .env.local
+npm ci
+python3 -m venv .venv
+.venv/bin/pip install -r pipelines/requirements.txt -r workers/requirements.txt
+```
+
+Create the database named in `DATABASE_URL`. Set distinct random `SESSION_SECRET`, `CRON_SECRET` and `CREDENTIAL_ENCRYPTION_KEY` values. Set one nonempty `NEXT_PUBLIC_APP_URL` (the example currently lists it twice). For a fresh database, apply the ordered SQL migrations before starting; see [local setup](deploy/local/README.md).
+
+```bash
+npm run deploy:check:local
 npm run dev
 ```
 
-Open `http://localhost:3000`.
+Open `http://localhost:3000`. Both `npm run dev` and `npm start` run the scheduler wrapper. `dev:next` and `start:next` start only Next.js.
 
-Useful verification commands:
+## Jobs and providers
+
+The wrapper coordinates market-hours quotes, EOD ingestion, history repair, fundamentals, macro, AMFI, scans, forward tests, news, email, mobile alerts, Gmail processing, results calendars and scheduled ML snapshots. Breeze supplies live India data; exchange Bhavcopy, Yahoo/Google and FRED support the other ingestion paths. News providers include Marketaux, GNews, NewsAPI and Alpha Vantage.
+
+The ML implementation is a Python feature/label foundation and lifecycle schema. The repository does not include a complete training, promotion or inference pipeline. See [ML methodology](docs/ml-methodology.md).
+
+## Verification and deployment
 
 ```bash
 npm test
@@ -131,41 +80,6 @@ npm run lint
 npm run build
 ```
 
-The Universal Portfolio engine has focused tests for allocation bounds, transaction costs and
-corporate-action discontinuities. Database integration checks require the local PostgreSQL test
-environment.
+Database checks need a configured PostgreSQL instance. Linux releases use `deploy/oracle/deploy-release.sh`; it applies its explicit migration list from 0033 through 0057 and assumes the earlier schema already exists. It runs dependency audit/build/schema checks, but does not run the test suite.
 
-## Deployment
-
-Production releases are committed to `main`, pushed to GitHub, and deployed on AWS with:
-
-```bash
-sudo bash /opt/investogenie/app/deploy/oracle/deploy-release.sh
-```
-
-The historical directory name is retained for compatibility; the script is the active shared
-Ubuntu deployment path for AWS and Oracle-compatible hosts. It installs locked dependencies,
-builds the application, runs the production dependency audit, applies migrations through
-`0051_ml_advisory_foundation.sql`, verifies the schema, prunes development dependencies, and
-restarts the web/scheduler and Breeze services.
-
-See [DEPLOYMENT.md](DEPLOYMENT.md), [deploy/local/README.md](deploy/local/README.md), and
-[deploy/oracle/README.md](deploy/oracle/README.md).
-
-## Mobile
-
-The mobile client displays the same server-ranked Strong Swing and News & AI candidates and the
-same server-calculated ledger results. Approved builds are generated locally with Expo Prebuild and
-then signed through Gradle/Android Studio or Xcode; source is not uploaded to EAS Build and Expo
-Updates is not enabled.
-
-See [mobile/README.md](mobile/README.md) and [mobile/PRIVACY.md](mobile/PRIVACY.md).
-
-## Important Boundary
-
-InvestoGenie is a personal research and trade-management system. Targets, stops, probabilities,
-news classifications and AI assessments are decision support, not guarantees or autonomous broker
-instructions. Broker/exchange restrictions and executable order state must still be confirmed.
-Adaptive Allocation remains research-led; saved active strategies can fund buy-only NSE cash
-positions only when the user separately enables Breeze automatic buying with hard spending limits.
-No automatic selling or rebalancing is performed.
+See [architecture](ARCHITECTURE.md), [capabilities](CAPABILITIES.md), [status](STATUS.md), [deployment](DEPLOYMENT.md), [Stock Screener](README-screener.md), [email setup](docs/EMAIL_SETUP.md), and [mobile](mobile/README.md).

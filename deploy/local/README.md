@@ -1,7 +1,6 @@
 # Local macOS deployment
 
-_Last reviewed: 2026-10-13. AWS Lightsail is the authoritative production deployment; this package
-remains the local development, rehearsal and private-fallback path._
+_Source reviewed 25 October 2026 at main revision `42eea8f`; this guide covers the local macOS package._
 
 Local mode is the development and data-workstation deployment. It uses the
 Mac's PostgreSQL instance and `.env.local`; it does not read Oracle production
@@ -12,7 +11,7 @@ secrets or connect to the cloud database.
 Install Node.js 20+, Python 3, and PostgreSQL. Then:
 
 ```bash
-cd /Users/abrarahmedkhan/Projects/investogenie
+cd /path/to/investogenie
 cp .env.example .env.local
 openssl rand -hex 32
 ```
@@ -26,12 +25,21 @@ Create/start PostgreSQL and install dependencies:
 ```bash
 brew services start postgresql@16
 createdb investogenie 2>/dev/null || true
-npm install
+npm ci
 python3 -m venv .venv
 .venv/bin/pip install -r pipelines/requirements.txt
 .venv/bin/pip install -r workers/requirements.txt
+# Fresh empty database only: export DATABASE_URL from your configured environment.
+for migration in db/migrations/*.sql; do
+  psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$migration" || break
+done
 npm run deploy:check:local
 ```
+
+Confirm every migration completed before starting. The schema extends through
+`0057_gmail_connection_health.sql`. Existing databases require applying only their missing
+migrations in order; inspect their schema and take a backup first. `npm run dev` does not
+automatically apply the complete migration chain.
 
 For an existing machine, use the one-click `Launch InvestoGenie.command` file.
 It starts PostgreSQL when possible, prepares dependencies, launches the app and
@@ -68,8 +76,8 @@ the ignored `logs/` directory.
 
 Fund Mapping can discover monthly AMC portfolio attachments in a connected
 Gmail account. The connector requests only Gmail read access; it stores
-encrypted OAuth tokens and message metadata, while attachment bytes are fetched
-only when an import is confirmed.
+encrypted OAuth tokens and message metadata. Discovery and enabled auto-import can fetch
+attachment bytes during processing; attachment bytes and email bodies are not retained as document storage.
 
 1. In Google Cloud Console, enable the Gmail API for a project.
 2. Configure the OAuth consent screen as External/Testing and add the Gmail
@@ -87,8 +95,10 @@ GMAIL_DISCLOSURE_SYNC_INTERVAL_HOURS=24
 
 Restart the service, open Portfolio > Fund Mapping, and choose **Connect
 Gmail**. The startup wrapper scans connected inboxes once at startup and every
-24 hours. Discovery never imports automatically: select the matching CAS fund
-and disclosure month before accepting each snapshot.
+24 hours. With auto-import enabled, suitable latest CAS statements and unambiguous AMC
+fund/month matches can be imported automatically. Ambiguous documents remain in Needs review.
+Configure the encrypted CAS PDF password when required. Revoked grants show a reconnect
+requirement, and scan failures expose their last error/timestamp; reconnect Gmail when prompted.
 
 Google classifies `gmail.readonly` as a restricted scope. Personal use in OAuth
 testing mode is appropriate; a public multi-user release requires Google's
@@ -120,8 +130,8 @@ still stop scheduled updates.
 Double-click `Reset InvestoGenie Password.command` on the host Mac to reset an
 existing account. The helper requires physical access to the Mac, hides the new
 password while it is entered, and updates only the password hash. It does not
-delete or move portfolio data. No unauthenticated password-reset endpoint is
-exposed over Tailscale.
+delete or move portfolio data. The login reset option is additionally available when `PASSWORD_RESET_KEY` is configured;
+it is gated by that key. The host helper remains available without that configuration.
 
 ## Local run modes
 

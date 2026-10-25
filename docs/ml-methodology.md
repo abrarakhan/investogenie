@@ -1,11 +1,25 @@
 # InvestoGenie ML Methodology — Production Contract v1
 
-_Contract reviewed 2026-10-13. Migration `0051_ml_advisory_foundation.sql` and the deterministic
-Python snapshot/label foundation are implemented. No model is currently assigned for serving._
+_Contract reviewed 25 October 2026 against main revision `42eea8f`. The Python snapshot/feature/label foundation is present; no live serving assignment was inspected._
+
+## Implemented versus specified
+
+Implemented source includes migration `0051_ml_advisory_foundation.sql`,
+`scripts/ml-snapshot-scheduler.mjs`, `scripts/capture-ml-snapshots.mjs`, Python
+`collect_snapshots.py`, `features.py`, `labeler.py`, golden vectors and feature/label tests.
+
+The model lifecycle, promotion gates, walk-forward training, calibration, serving and drift
+response below are design requirements. Complete training/calibration/inference, promotion and
+monitoring automation are not present in the repository. Tables and policy contracts alone do not
+implement those services. A current serving assignment requires database inspection.
+
+Migration 0051 is the ML schema boundary; the application schema extends through
+`0057_gmail_connection_health.sql`. Later Armed/pending/execution-plan workflows do not extend ML
+inclusion statuses or authorize ML broker buying.
 
 ## Purpose and boundary
 
-The ML layer estimates the probability that an already eligible Strong Swing candidate reaches its frozen target before its frozen stop. It is an advisory rank only. It cannot create a candidate, bypass a technical or execution gate, send an alert while in shadow, or place a broker order.
+The intended ML layer estimates the probability that an already eligible Strong Swing candidate reaches its frozen target before its frozen stop. It is an advisory rank only. It cannot create a candidate, bypass a technical or execution gate, send an alert while in shadow, or place a broker order.
 
 Python is the only calculation runtime for feature construction, labeling, training, calibration, evaluation and inference. Next.js schedules Python jobs and reads persisted results; web and mobile clients only render them. A calculation must not be independently reimplemented in TypeScript.
 
@@ -48,7 +62,7 @@ Outcomes are `TARGET_FIRST`, `STOP_FIRST`, `SAME_BAR_AMBIGUOUS`, `WINDOW_EXPIRED
 
 The implementation is [`pipelines/ml/labeler.py`](../pipelines/ml/labeler.py). Decimal arithmetic and canonical JSON outputs make repeated runs deterministic. [`pipelines/ml/golden_vectors.json`](../pipelines/ml/golden_vectors.json) is the executable policy contract.
 
-## Model lifecycle and serving
+## Model lifecycle and serving contract
 
 Models move through `CANDIDATE`, `SHADOW`, `VALIDATED`, `SUSPENDED`, and `RETIRED`. Lifecycle and serving are separate: `ml_serving_assignments` holds at most one served model per market, and rollback is an atomic pointer swap. Every transition or assignment requires a recorded promotion decision. Model artifacts are immutable and checksum verified before loading.
 
@@ -70,7 +84,7 @@ These initial thresholds must be inserted before the final test is inspected:
 
 Insufficient folds are reported, never silently discarded. Threshold changes after test inspection invalidate the run.
 
-## Monitoring and failure behavior
+## Monitoring and failure-behavior contract
 
 Production monitoring covers calibration, feature drift, invalid-label rate, ranked-versus-baseline performance and source freshness. Confirmed drift atomically removes the serving assignment, records the observation, notifies the operator and falls back to unranked Strong Swing. Data-pipeline failures alert separately. An unavailable or invalid model never blocks Strong Swing.
 
@@ -78,9 +92,17 @@ No model from this lifecycle may drive screen-based or broker buying. Any future
 
 ## Current implementation state
 
-The schema, scheduled canonical snapshot collector, deterministic Python labeler and shared golden
+The schema, scheduled canonical snapshot collector, deterministic Python feature builder/labeler and shared golden
 vectors are the production foundation. Interactive snapshots remain excluded from training.
 Training eligibility is limited to `EXECUTION_READY` and `WAIT_FOR_ENTRY`; ticker identity and raw
 price are excluded from the feature vector. Until a model passes the registered gates and receives
 an explicit serving assignment, Strong Swing remains unranked by ML and all alerts and Breeze
 buying continue to use their existing non-ML controls.
+
+## Verification
+
+The Python feature and label regression tests are `pipelines/test_ml_features.py` and
+`pipelines/test_ml_labeler.py`; they consume the feature/label code and golden vectors.
+They require a Python environment and are separate from `npm test`. Scheduled collection needs
+PostgreSQL and the matching schema. This documentation review did not execute database collection
+or evaluate a trained model.

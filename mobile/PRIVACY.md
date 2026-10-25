@@ -1,20 +1,27 @@
 # InvestoGenie Mobile Privacy
 
-_Last reviewed: 2026-10-13._
+_Source behavior reviewed 25 October 2026 at main revision `42eea8f`._
 
-InvestoGenie Mobile is a private companion to the owner's InvestoGenie deployment.
+InvestoGenie Mobile connects to the owner's configured InvestoGenie server.
 
-- Authentication credentials are sent only to the configured InvestoGenie HTTPS server.
-- The device session token is stored in the operating system's secure storage. The server stores
-  only its SHA-256 hash.
-- Trade, portfolio and news details remain in InvestoGenie. Ready-candidate notifications include
-  the stock ticker, readiness state and engine name so the owner can identify the setup.
-- Expo push delivery receives the device push token and the notification text. Detailed prices,
-  quantities, portfolio values and broker data are not included in push payloads.
-- Biometric verification is handled by Android or iOS. Biometric data is never available to or
-  stored by InvestoGenie.
-- The app does not place broker orders. Trade entries and sales are user-recorded ledger events.
-- External news links open only when selected by the user.
+- Login credentials are sent to the configured API origin. Use HTTPS for deployed builds.
+- The raw session token is stored in OS-backed SecureStore. The server stores its SHA-256 hash,
+  expiry and device/session metadata.
+- Trade, portfolio and detailed candidate data are fetched from authenticated server APIs.
+- Ledger notifications contain generic state-change text.
+- Ready-candidate notifications include the stock ticker, readiness state and engine name.
+  Expo push delivery receives that text and the device push token. Detailed prices, quantities,
+  portfolio values and broker data are excluded from these payloads.
+- Biometric checks use platform authentication; the app does not receive or store biometric
+  templates. Device fallback may be used where supported.
+- Mobile purchase/sale actions record ledger events. They do not directly submit broker orders.
+  Separately enabled server-side Breeze automation has its own controls.
+- External news links open when selected and are subject to the destination's data practices.
 
-Access can be revoked by signing out, which revokes the active mobile session and disables its push
-token. Server-side records follow the retention and backup policy of the owner's deployment.
+Sign-out revokes the active mobile session and disables its registered push token. Existing
+server-side records follow the deployment owner's retention and backup policy; sign-out does not
+erase ledger history.
+
+Local native builds avoid uploading source through EAS Build when that path is used, but push
+delivery still uses Expo. EAS Build scripts remain available in the repository and must be chosen
+deliberately. See [mobile setup](README.md) for configuration limits.
