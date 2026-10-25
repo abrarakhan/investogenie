@@ -1,325 +1,78 @@
-# Secure Credentials Storage
+# Credential Storage
 
-_Security documentation reviewed: 2026-10-13. Production secrets remain outside Git and stored
-credentials use the documented authenticated-encryption boundary._
+_Source reviewed 25 October 2026 against main revision `42eea8f`._
 
-InvestoGenie now provides encrypted credential storage for sensitive information like email passwords and AI API keys. This allows users to store their secrets securely in the database instead of relying on environment variables.
+## Implementation
 
-## Overview
+`lib/crypto/credentials.ts` uses AES-256-GCM. A 32-byte key is derived from `CREDENTIAL_ENCRYPTION_KEY` using scrypt and the fixed application salt `investogenie-credential-salt`. Each encrypted value uses a random 16-byte IV and an authentication tag.
 
-**Credentials stored:**
-- 📧 SMTP configuration (host, port, username, password)
-- 🤖 One active AI model: **provider** (Anthropic / OpenAI / Google), **model** (preset or custom ID), and **API key**
+Stored format:
 
-The NL screener sends each query to the chosen provider/model using the stored
-key. Switching provider/model in Settings → AI model takes effect immediately.
-Provider dispatch lives in `lib/screener/nlQuery.ts` (Anthropic via the SDK's
-structured output; OpenAI via Chat Completions JSON mode; Google via Gemini
-`generateContent` JSON) — all funnel through the same `validateFilter` +
-`sanitizeIntent` safety pipeline. Resolution helper: `getActiveAIConfig()` in
-`lib/credentials-actions.ts` (falls back to `ANTHROPIC_API_KEY` env when unset).
-
-**Encryption:**
-- Algorithm: AES-256-GCM (Advanced Encryption Standard with Galois/Counter Mode)
-- Key derivation: scrypt (memory-hard function)
-- Random IV per credential (prevents pattern analysis)
-- Authentication tag validation (detects tampering)
-
-## Architecture
-
-### Encryption Flow
-
-```
-User enters password → Credentials Form (client-side) →
-  ↓
-Server action (updateCredentials) →
-  ↓
-encryptCredential(value) → AES-256-GCM encrypt with random IV →
-  ↓
-Save to database: "iv:authTag:encryptedData" (hex format) →
-  ↓
-Database (encrypted at rest)
+```text
+iv:authTag:ciphertext
 ```
 
-### Decryption Flow
+All three components are hexadecimal. The master key comes from the environment, not the database. This encrypts selected secret fields; it does not encrypt the entire database or backups.
 
-```
-Read from database: "iv:authTag:encryptedData" →
-  ↓
-decryptCredential(encryptedValue) →
-  ↓
-Extract IV and authTag from format →
-  ↓
-Create decipher with key and IV, set authTag for validation →
-  ↓
-Decrypt and verify authenticity →
-  ↓
-Return plaintext to application
-```
+## Credential domains
 
-## Setup
+| Data | Storage/resolution |
+| --- | --- |
+| SMTP password and host/port/user metadata | `user_credentials`; password encrypted |
+| Active AI provider/model/key | Provider/model metadata plus encrypted key |
+| News provider keys | Legacy credential fields and multi-provider `user_news_providers` |
+| Breeze API key, secret and session token | Encrypted user credential fields |
+| Gmail OAuth tokens and optional CAS password | Gmail connection domain, encrypted secrets |
+| Mobile device session | Raw token in SecureStore; only SHA-256 hash on server |
 
-### 1. Set Encryption Master Key
+The baseline credential schema is migration 0021; later migrations extend AI, news and Breeze. Gmail health fields are added by 0057. Apply the full ordered schema for a fresh database; startup is not a general migration runner.
 
-The master key must be stored as an environment variable (secure, random, unique per deployment):
+## Setup and recovery
+
+Generate a high-entropy master value:
 
 ```bash
-# Generate a strong key (e.g., with openssl)
 openssl rand -hex 32
-
-# Add to .env.local (development)
-CREDENTIAL_ENCRYPTION_KEY=abc123def456...
-
-# Or set in your deployment platform:
-# - Vercel: Settings → Environment Variables
-# - Render: Settings → Environment
-# - AWS/Heroku: Secrets manager
 ```
 
-**Important:**
-- This key is NEVER stored in the database
-- Different key = unable to decrypt existing credentials
-- Treat like a password — secure and back it up
+Save it as `CREDENTIAL_ENCRYPTION_KEY=...` in local `.env.local` or the deployment's protected environment file. Generate session/cron secrets independently.
 
-### 2. Database Migration
+Preserve the original master key alongside recoverable backups using a separate protected storage location. Restoring encrypted records under another key will not decrypt them. Changing the variable alone is not credential rotation: decrypt/re-encrypt under controlled migration or re-enter secrets. If the original key is lost, existing encrypted secrets cannot be recovered.
 
-The migration creates the `user_credentials` table:
+## Settings and server access
 
-```sql
-create table public.user_credentials (
-  id uuid primary key,
-  user_id uuid unique,
-  -- SMTP (plaintext: host/port/user, encrypted: password)
-  smtp_host text,
-  smtp_port integer,
-  smtp_user text,
-  smtp_password_encrypted text,
-  -- AI Keys (encrypted)
-  anthropic_api_key_encrypted text,
-  openai_api_key_encrypted text,
-  created_at, updated_at
-);
-```
+`lib/credentials-actions.ts` requires authentication for user-facing updates and scopes rows to the user. `getUserCredentials()` returns client-safe metadata and flags such as `smtpPasswordSet` and `aiApiKeySet`. It does not return decrypted passwords or keys.
 
-The migration is applied automatically on `npm run dev`.
+`updateCredentials()` encrypts submitted secret values before writing. Clearing is explicit through `clearCredential()`; blank update fields preserve existing encrypted values.
 
-## Usage
-
-### In Settings UI
-
-Go to **Settings → Secured credentials**:
-
-1. **Email (SMTP)** section:
-   - Host: `smtp.gmail.com` (or your provider)
-   - Port: `587` (TLS) or `465` (SSL)
-   - Username: Your email address
-   - Password: App password (for Gmail) or regular password
-   - Click "Save SMTP"
-
-2. **AI Providers** section:
-   - Anthropic API key: Get from `console.anthropic.com`
-   - OpenAI API key: Get from `platform.openai.com/api-keys`
-   - Click "Save API Keys"
-
-### In Server Actions
-
-Retrieve decrypted credentials:
-
-```typescript
-import { getUserCredentials, getAIProviderKey, getSMTPConfig } from "@/lib/credentials-actions";
-
-// Get all credentials for current user
-const creds = await getUserCredentials();
-console.log(creds.anthropicApiKey); // Decrypted
-
-// Get a specific AI provider key
-const claudeKey = await getAIProviderKey("anthropic");
-const gptKey = await getAIProviderKey("openai");
-
-// Get SMTP config (prefers DB, falls back to env)
-const smtpConfig = await getSMTPConfig();
-```
-
-### Encryption / Decryption
+Server-only resolvers such as `getActiveAIConfig()`, `getSystemAIConfig()`, news resolvers and `getSMTPConfig()` may return plaintext secrets for provider calls. Never pass these results to client props, logs or API responses.
 
 ```typescript
 import { encryptCredential, decryptCredential } from "@/lib/crypto/credentials";
 
-// Encrypt before storage (done automatically in actions)
-const encrypted = encryptCredential("my-secret-key");
-// Returns: "a1b2c3:d4e5f6:g7h8i9..." (iv:authTag:ciphertext in hex)
-
-// Decrypt for use (done automatically in actions)
-const decrypted = decryptCredential(encrypted);
-// Returns: "my-secret-key"
+// Server-only operations; do not log either value.
+const stored = encryptCredential(secret);
+const restored = decryptCredential(stored);
 ```
 
-## Integration with Features
+There is no current `getAIProviderKey()` API. The natural-language screener resolves the chosen provider/model/key through `getActiveAIConfig()` and dispatches through `lib/screener/nlQuery.ts`.
 
-### Email Digest
+## Fallbacks are caller-specific
 
-The email digest cron can use SMTP credentials from the database:
+Interactive AI first uses the user's saved configuration; system AI has its own environment/default-user resolution. Multi-provider news resolution differs from legacy single-provider fallback. Read the relevant resolver before assuming an environment key is used.
 
-```typescript
-// In sendEmailDigest()
-const smtpConfig = await getSMTPConfig();
-if (smtpConfig) {
-  await sendEmail({
-    from: smtpConfig.user,
-    to: userEmail,
-    // ... email content
-  });
-}
-```
+`getSMTPConfig()` supports database/environment resolution for its callers. The daily digest does not use that helper: `sendEmailDigest(userId)` requires that user's stored SMTP host/user/encrypted password. Environment `SMTP_*` values alone do not enable digest delivery.
 
-### Natural Language Queries
-
-The NL query feature can use the user's Claude API key:
-
-```typescript
-// In nlQuery.ts
-const apiKey = await getAIProviderKey("anthropic");
-const client = new Anthropic({ apiKey });
-```
-
-## Security Considerations
-
-### What's Protected
-
-✅ API keys: Encrypted before storage  
-✅ SMTP passwords: Encrypted before storage  
-✅ Master key: Never exposed in database  
-✅ Credentials: Decrypted only when needed  
-✅ Validation: Auth tag detects tampering  
-
-### What's NOT Protected
-
-❌ Network: Use HTTPS in production  
-❌ Backups: Encrypt database backups  
-❌ Logs: Don't log credentials  
-❌ Master key: Secure your env vars  
-
-### Best Practices
-
-1. **Master Key:**
-   - Use a strong, random key (32+ bytes)
-   - Store only in secure environment (not git)
-   - Rotate periodically if possible
-   - Different key per environment (dev/staging/prod)
-
-2. **Credential Usage:**
-   - Decrypt only when needed
-   - Don't log decrypted values
-   - Clear credentials when user revokes access
-   - Consider rate limiting API usage
-
-3. **Backup & Recovery:**
-   - Backup the master key securely
-   - Test decryption on restore
-   - Document recovery procedures
-   - Have fallback to env vars during recovery
+Gmail refresh errors can set `needs_reconnect`; Fund Mapping exposes the last scan error/timestamp. A new OAuth consent clears reconnect/error state on successful reconnection. Repeated failures require inspecting the connector's reported error, not changing the encryption key.
 
 ## Troubleshooting
 
-**"CREDENTIAL_ENCRYPTION_KEY env var is required"**
-- The master key is not set in your environment
-- Set it: `export CREDENTIAL_ENCRYPTION_KEY=...`
+- Missing master-key error: configure the same key in every process that reads encrypted records.
+- Invalid encrypted format: verify the stored three-part value and restore a valid backup or re-enter it.
+- Authentication/decryption failure after restore: verify the original master key before replacing records.
+- Credentials appear unset: confirm the user and saved presence flags; do not inspect secrets in logs.
+- Provider authentication failure with valid storage: verify the provider key/session separately.
 
-**"Invalid encrypted credential format"**
-- The stored value is corrupted
-- The decryption failed auth tag validation (tampering detection)
-- The encryption key changed (can't decrypt old values)
-- Solution: Clear and re-enter the credential
+Access control, HTTPS, host security and protected backups remain separate controls. This storage implementation alone is not evidence of regulatory certification.
 
-**"Failed to decrypt"**
-- The master key changed since encryption
-- Database was restored from backup encrypted with different key
-- Solution: Restore the correct master key or re-enter credentials
-
-**Can't retrieve API keys in application code**
-- Ensure `getUserCredentials()` or `getAIProviderKey()` is awaited
-- Check user is authenticated (`getSessionUser()`)
-- Verify credentials were actually saved (check database)
-
-## Examples
-
-### Complete Email Digest with DB Credentials
-
-```typescript
-import { getSMTPConfig } from "@/lib/credentials-actions";
-import { sendEmail } from "@/lib/email/nodemailer-service";
-
-export async function sendEmailDigest(userId: string) {
-  const smtpConfig = await getSMTPConfig();
-  if (!smtpConfig) throw new Error("SMTP not configured");
-
-  // Configure Nodemailer with DB credentials
-  const transporter = nodemailer.createTransport({
-    host: smtpConfig.host,
-    port: smtpConfig.port,
-    secure: smtpConfig.port === 465,
-    auth: {
-      user: smtpConfig.user,
-      pass: smtpConfig.password,
-    },
-  });
-
-  await transporter.sendMail({
-    from: smtpConfig.user,
-    to: userEmail,
-    subject: "Daily Digest",
-    html: htmlContent,
-  });
-}
-```
-
-### NL Query with User's Claude Key
-
-```typescript
-import { getAIProviderKey } from "@/lib/credentials-actions";
-import Anthropic from "@anthropic-ai/sdk";
-
-export async function parseScreenQuery(input: ParseScreenQueryInput) {
-  const apiKey = await getAIProviderKey("anthropic");
-  if (!apiKey) throw new Error("Anthropic API key not configured");
-
-  const client = new Anthropic({ apiKey });
-  const message = await client.messages.create({
-    model: "claude-opus-4-8",
-    max_tokens: 2048,
-    messages: [{ role: "user", content: input.query }],
-  });
-
-  return message;
-}
-```
-
-## Migration from Environment Variables
-
-If you're currently using `.env` for credentials:
-
-1. Set `CREDENTIAL_ENCRYPTION_KEY` in your secure env var storage
-2. Go to Settings → Secured credentials
-3. Enter your SMTP and API key values
-4. Click "Save"
-5. The values are now encrypted in the database
-6. Remove from `.env` files
-7. Optionally remove from deployed environment
-
-The application will fall back to env vars if database credentials aren't set, so this migration is non-breaking.
-
-## Data Privacy
-
-- Credentials are stored per user (isolated by `user_id`)
-- A user can only access their own credentials (enforced at the application level)
-- No user can view another user's credentials
-- Credentials are cleared if user account is deleted (`on delete cascade`)
-
-## Compliance
-
-This encryption scheme helps meet:
-- **PCI DSS**: Encrypted storage of authentication credentials
-- **GDPR**: User control over their API keys
-- **SOC 2**: Encryption of sensitive data at rest
-
-Check your compliance requirements before deploying to production.
+See [email setup](EMAIL_SETUP.md), [quick start](QUICK_START_CREDENTIALS.md) and [deployment](../DEPLOYMENT.md).

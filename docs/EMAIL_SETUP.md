@@ -1,167 +1,68 @@
-# Email Digest Setup Guide
+# Email Digest Setup
 
-_Last reviewed: 2026-10-13. Email delivery remains advisory and cannot place broker orders._
+_Source reviewed 25 October 2026 at main revision `42eea8f`._
 
-InvestoGenie can send daily morning emails with the top 5 stocks from your swing candidates and probability screens.
-
-## Prerequisites
-
-1. **Nodemailer** (already installed): handles SMTP email delivery
-2. **SMTP Server**: email provider that supports SMTP (Gmail, Outlook, SendGrid relay, etc.)
-3. **Environment variables**: configured for your SMTP server
+The daily digest uses the same server sources as India Strong Swing and Probability. Each enabled section includes up to five rows. Email delivery does not place orders.
 
 ## Configuration
 
-### Step 1: Set up SMTP credentials
+1. Apply the database migrations, including 0020 email preferences, 0021 credentials and later credential schema updates.
+2. Set `CREDENTIAL_ENCRYPTION_KEY`, `CRON_SECRET` and the correct `NEXT_PUBLIC_APP_URL` in the environment.
+3. Sign in, open Settings and save the user's SMTP host, port, username and password under secured credentials.
+4. Enable Email digest and select its content.
 
-Add these environment variables to your `.env.local` file:
+`lib/email-actions.ts:sendEmailDigest()` loads SMTP from that user's `user_credentials` row and decrypts the stored password. It does not call the environment-fallback SMTP resolver. Missing saved credentials produces `SMTP credentials not configured for user`.
 
-```bash
-# SMTP Configuration
-SMTP_HOST=smtp.gmail.com        # Your SMTP server hostname
-SMTP_PORT=587                   # Typically 587 (TLS) or 465 (SSL)
-SMTP_USER=your-email@gmail.com  # SMTP username
-SMTP_PASS=your-app-password     # App-specific password (not your regular password)
-SMTP_FROM=noreply@investogenie  # Display email (optional)
+The transport uses TLS mode according to port configuration; use the settings required by your SMTP service. SMTP authentication is separate from the read-only Gmail disclosure OAuth integration.
 
-# Cron job authorization
-CRON_SECRET=your-secret-key     # Shared secret for cron endpoints
-```
+## Scheduling
 
-### Step 2: Gmail setup (if using Gmail)
+Both `npm run dev` and `npm start` invoke `scripts/run-with-nse-sync.mjs`, including its daily digest scheduler. Keep the application running to receive scheduled work. Bare `dev:next`/`start:next` commands skip the wrapper.
 
-If using Gmail:
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `EMAIL_DIGEST_HOUR_IST` | 7 | Global send hour in IST |
+| `EMAIL_DIGEST_MINUTE_IST` | 0 | Global send minute |
+| `EMAIL_DIGEST_CRON_DISABLED` | unset | Set 1 to disable wrapper delivery |
+| `EMAIL_DIGEST_MAX_ATTEMPTS` | 5 | Attempt budget per IST day |
+| `EMAIL_DIGEST_RETRY_MINUTES` | 5 | Retry delay |
 
-1. Enable 2-factor authentication on your Google account
-2. Create an [App Password](https://myaccount.google.com/apppasswords)
-3. Use the 16-character app password as `SMTP_PASS`
-4. Set `SMTP_HOST=smtp.gmail.com` and `SMTP_PORT=587`
+The scheduler checks every minute, supports catch-up after the target and seeds its last successful day from database logs. A partial/error response can trigger another bounded attempt.
 
-### Step 3: Enable for users
+The UI stores a per-user `send_time`, but the current scheduler does not use it. The enabled-user query also does not filter by `last_sent_at`. Successful sends update that timestamp, but it is not an exactly-once guard: a retry after a partial batch may resend to users whose earlier send succeeded.
 
-Users can opt into email digests in **Settings → Email digest**:
+## Manual and external invocation
 
-- Toggle "Enable daily email digest"
-- Choose send time (default: 7:00 AM IST)
-- Select what to include (swing candidates, probability screen)
-- Save preferences
+`GET /api/cron/send-email-digest` accepts the configured `Authorization: Bearer` header. Configure a real nonempty `CRON_SECRET`; do not rely on missing-secret behavior.
 
-## Cron Job Setup
-
-The email digest is sent via the `/api/cron/send-email-digest` endpoint. You must schedule it to run daily at your chosen time.
-
-### Option 1: External cron service (Recommended)
-
-Use [cron-job.org](https://cron-job.org) or [EasyCron](https://www.easycron.com):
-
-```
-URL: https://your-domain.com/api/cron/send-email-digest
-Headers: Authorization: Bearer YOUR_CRON_SECRET
-Schedule: Daily at 7:00 AM IST (02:30 UTC)
-```
-
-### Option 2: Local cron (for development)
-
-Add to your crontab:
+The following sends real email to all enabled users; export the configured secret in the shell first:
 
 ```bash
-# 7:00 AM IST = 01:30 UTC
-30 1 * * * curl -H "Authorization: Bearer $CRON_SECRET" https://localhost:3000/api/cron/send-email-digest
+curl http://localhost:3000/api/cron/send-email-digest \
+  -H "Authorization: Bearer $CRON_SECRET"
 ```
 
-### Option 3: Cloud deployment
+Responses include `status` (`success`, `partial` or failure), `sent`, `errors`, elapsed `duration` and error details. A partial batch is reported in the JSON body, so inspect it even when HTTP succeeds.
 
-If deployed to Vercel/Render/etc., use their cron scheduling:
+If running without the wrapper, use one external scheduler. 07:00 IST equals 01:30 UTC; a five-field UTC cron expression is `30 1 * * *`. The committed `vercel.json` does not currently contain the digest endpoint. Disable wrapper delivery if intentionally moving scheduling elsewhere.
 
-**Vercel (vercel.json):**
-```json
-{
-  "crons": [
-    {
-      "path": "/api/cron/send-email-digest",
-      "schedule": "0 1:30 * * *"
-    }
-  ]
-}
-```
-
-## How it works
-
-1. **User opts in** via Settings → Email digest
-2. **Daily trigger** at scheduled time (7 AM IST by default)
-3. **Top 5 fetched** from swing candidates and probability screens (configurable per user)
-4. **Email formatted** with company name, symbol, price, P/E, ROE, ROA, sector
-5. **Sent to user** with links back to InvestoGenie for further analysis
-6. **Last sent timestamp** recorded in database
-
-## Environment Variables Summary
-
-| Variable | Required | Example | Notes |
-|----------|----------|---------|-------|
-| `SMTP_HOST` | ✅ | `smtp.gmail.com` | SMTP server hostname |
-| `SMTP_PORT` | ✅ | `587` | 587 for TLS, 465 for SSL |
-| `SMTP_USER` | ✅ | `user@gmail.com` | SMTP login username |
-| `SMTP_PASS` | ✅ | `xxxx xxxx xxxx xxxx` | App password (Gmail) or regular password |
-| `SMTP_FROM` | ❌ | `noreply@investogenie` | Display sender (defaults to `SMTP_USER`) |
-| `CRON_SECRET` | ✅ | `super-secret-key-123` | Secret for authorizing cron requests |
-
-## Database
-
-A new migration adds the `email_preferences` table:
+## Monitoring and troubleshooting
 
 ```sql
-create table public.email_preferences (
-  id uuid primary key,
-  user_id uuid not null unique,
-  enabled boolean default false,
-  email text not null,
-  send_time text default '07:00',
-  include_swing_candidates boolean default true,
-  include_probability boolean default true,
-  last_sent_at timestamptz,
-  created_at timestamptz default now(),
-  updated_at timestamptz default now()
-);
+select *
+from public.cron_logs
+where job = 'send-email-digest'
+order by created_at desc
+limit 10;
 ```
 
-Migration applied automatically on `npm run dev` if not yet applied.
+- Missing SMTP: save complete credentials for each enabled user.
+- Decryption failure: restore the original encryption key or re-enter the affected secret.
+- Unauthorized request: ensure the bearer matches the configured cron secret.
+- Missing scheduled send: inspect wrapper uptime, disable flags, global IST target, retry budget and logs.
+- Repeated email: check manual callers, multiple schedulers and partial-batch retries.
+- Empty candidates: inspect the India Strong Swing and Probability data sources; there is no separate documented freshness gate in the mail sender.
 
-## Troubleshooting
+The route processes users independently and logs a batch summary; one user's failure does not prevent attempts for the others.
 
-**"ANTHROPIC_API_KEY is not configured"** → NL queries need this for stock filtering. Set `ANTHROPIC_API_KEY` in your `.env.local`.
-
-**"Email configuration incomplete"** → Missing SMTP env vars. Double-check `SMTP_HOST`, `SMTP_USER`, `SMTP_PASS`.
-
-**Emails not sending** → Check `/api/cron/send-email-digest` logs via:
-- Vercel: Deployments → Functions tab
-- Local: `npm run dev` output
-- Database: `select * from public.cron_logs order by created_at desc limit 5;`
-
-**Cron endpoint returns 401** → `Authorization: Bearer` header value doesn't match `CRON_SECRET`.
-
-## Testing
-
-To test sending manually:
-
-```bash
-curl -X GET http://localhost:3000/api/cron/send-email-digest \
-  -H "Authorization: Bearer test-secret"
-```
-
-Expected response:
-
-```json
-{
-  "status": "success",
-  "sent": 2,
-  "errors": 0,
-  "duration": "543ms"
-}
-```
-
-## Architecture Notes
-
-- **Three-layer email safety**: Only enabled users, only valid SMTP, only if market data is fresh
-- **One email per user per day**: Deduplication via `last_sent_at` timestamp
-- **Graceful degradation**: If one user's email fails, others still send
-- **Logging**: All send attempts logged to `cron_logs` table with full error details
+See [quick start](QUICK_START_CREDENTIALS.md) and [credential storage](SECURE_CREDENTIALS.md).

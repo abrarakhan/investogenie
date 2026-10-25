@@ -1,14 +1,14 @@
 # InvestoGenie on AWS Lightsail or Oracle-compatible Ubuntu
 
-_Last verified on AWS Lightsail: 2026-10-13 at revision `e09cfd8`._
+_Source reviewed 25 October 2026 at main revision `42eea8f`; no running host was inspected._
 
 This deployment package runs Next.js, PostgreSQL, Nginx, and the existing Node/Python scheduler on
-one Ubuntu VM. It is the active AWS Lightsail production layout and remains compatible with Oracle
-Cloud Ubuntu. PostgreSQL and port 3000 remain private; only SSH, HTTP, and HTTPS are exposed.
+one Ubuntu VM. The package supports AWS Lightsail and Oracle-compatible
+Ubuntu hosts; confirm actual production placement with the operator. PostgreSQL and port 3000 remain private; only SSH, HTTP, and HTTPS are exposed.
 
 ## 1. Create the VM
 
-The active production host is AWS Lightsail. Create an Ubuntu instance with a static public IP,
+For AWS Lightsail, create an Ubuntu instance with a static public IP,
 SSH key authentication, and enough memory/storage for PostgreSQL, Next.js and ingestion workers.
 
 For Oracle Cloud, use the tenancy home region and create one `VM.Standard.A1.Flex` instance:
@@ -61,7 +61,7 @@ cannot be decrypted. Set `NEXT_PUBLIC_APP_URL` to the final HTTPS URL.
 On the Mac:
 
 ```bash
-cd /Users/abrarahmedkhan/Projects/investogenie
+cd /path/to/investogenie
 pg_dump --format=custom --compress=6 --no-owner --no-acl \
   --file="$HOME/Desktop/investogenie.dump" investogenie
 scp "$HOME/Desktop/investogenie.dump" ubuntu@YOUR_RESERVED_IP:/tmp/
@@ -78,7 +78,8 @@ sudo -u postgres pg_restore --no-owner --no-acl \
 rm /tmp/investogenie.dump
 ```
 
-The custom dump includes all existing migrations and market data.
+The dump contains the source database's schema and market data. Verify its actual migration level;
+a restore does not automatically add schema changes newer than the dump.
 
 ## 5. Build, start, and enable HTTPS
 
@@ -115,7 +116,7 @@ sudo bash /opt/investogenie/app/deploy/oracle/deploy-release.sh
 ```
 
 The release script installs locked dependencies, builds Next.js, applies the ordered migrations
-through `0051_ml_advisory_foundation.sql`, verifies required production relations, restarts the web
+from `0033_breeze_credentials.sql` through `0057_gmail_connection_health.sql`, verifies required production relations, restarts the web
 scheduler and Breeze services, and checks the local login endpoint.
 
 Install the local PostgreSQL backup job:
@@ -164,10 +165,29 @@ reconciliation and corporate-action continuity.
    encrypted in PostgreSQL and are never returned to the browser.
 5. Follow logs with `sudo journalctl -u investogenie-breeze -f`.
 
-The worker does not place, modify, or cancel orders. It only reads market data
+The cash-market data worker does not place, modify, or cancel orders. It only reads market data
 and writes `BREEZE_LIVE` rows to `latest_quotes` plus the current daily bar to
 `daily_ohlcv`.
 
 The separate derivatives/OI bridge uses the same Settings credentials but is
 kept operator-started to avoid opening a second Breeze session unintentionally:
 `npm run worker:breeze-oi`. It requires populated derivative contract metadata.
+
+## Schema and release verification
+
+The release script assumes migrations 0001–0032 already exist. A fresh empty database needs all
+migration files in filename order before running the service. A restored older database needs its
+missing migrations applied deliberately. Startup is not a general migration runner.
+
+The script runs `npm ci --include=dev`, production dependency audit, build and prune; installs Python
+requirements; applies the explicit migrations; checks required relations/columns; and restarts the
+web and Breeze services. Lint/tests are separate pre-release gates, not steps in this script.
+
+The schema verifier includes corporate results/coverage, Armed plans, pending orders/fill audits,
+protected execution plans and Gmail reconnect/error columns. Inspect calendar coverage and Gmail
+connection health after promotion.
+
+The separate Breeze automatic-buying path is disabled by default and requires user acknowledgement
+and spending limits. Its supported engines are Strong Swing and saved Adaptive Allocation strategies.
+Ledger pending buy-stops and confirmed fill records do not send broker orders. The read-only cash
+market worker and broker account synchronization must not be confused with that optional buying path.

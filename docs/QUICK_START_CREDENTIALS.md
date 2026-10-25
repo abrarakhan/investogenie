@@ -1,171 +1,53 @@
-# Quick Start: Secure Credentials & Email Digest
+# Quick Start: Credentials and Email Digest
 
-_Last reviewed: 2026-10-13. Use this only with the full security and deployment guidance._
+_Source reviewed 25 October 2026 at main revision `42eea8f`._
 
-Get your email digest working in 5 minutes using the new encrypted credential storage.
+## 1. Prepare the application
 
-## Step 1: Set Encryption Master Key (1 minute)
+Follow [local setup](../deploy/local/README.md) or [deployment](../DEPLOYMENT.md), including the ordered database migrations. Copy `.env.example` to `.env.local` for local use.
 
-Generate a random encryption key and add to `.env.local`:
-
-```bash
-# Option A: Use openssl (macOS/Linux)
-openssl rand -hex 32 >> .env.local
-
-# Option B: Use Node (anywhere)
-node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
-```
-
-Copy the output and add to `.env.local`:
+Generate separate random secrets:
 
 ```bash
-CREDENTIAL_ENCRYPTION_KEY=your_generated_hex_here
+openssl rand -hex 32
 ```
 
-## Step 2: Enable Email Digest in Settings (1 minute)
+Copy generated values into named assignments; do not append an unlabeled random line to the environment file.
 
-1. Start the dev server:
-   ```bash
-   npm run dev
-   ```
+```dotenv
+CREDENTIAL_ENCRYPTION_KEY=YOUR_GENERATED_VALUE
+CRON_SECRET=A_DIFFERENT_GENERATED_VALUE
+SESSION_SECRET=ANOTHER_GENERATED_VALUE
+NEXT_PUBLIC_APP_URL=http://localhost:3000
+```
 
-2. Go to `http://localhost:3000/settings`
+Keep exactly one nonempty app URL assignment. Preserve the original credential key when restoring an encrypted database.
 
-3. Scroll to "Email digest" section:
-   - Toggle "Enable daily email digest"
-   - Choose time (7 AM IST default is fine)
-   - Check both options: ☑️ Swing candidates + ☑️ Probability screen
-   - Click "Save preferences"
+## 2. Save SMTP credentials
 
-## Step 3: Store SMTP Credentials (2 minutes)
+Start `npm run dev`, sign in and open `/settings`. In secured credentials, enter your SMTP host, port, username and password and save. The digest sender specifically requires the signed-in user's stored SMTP credentials; SMTP environment variables alone do not configure it.
 
-Still in Settings, scroll to "Secured credentials" section:
+## 3. Enable the digest
 
-### For Gmail:
+Enable Email digest and select Strong Swing and/or Probability content. Current digest data is for India and includes up to five rows per selected section.
 
-1. Get an app password:
-   - Go to [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords)
-   - Select "Mail" → "Windows Computer"
-   - Copy the 16-character password Google generates
+The wrapper schedules all enabled users at a global time: 07:00 IST by default. The per-user time field is saved but does not control scheduling in the current implementation.
 
-2. In Settings → SMTP:
-   - Host: `smtp.gmail.com`
-   - Port: `587`
-   - Username: `abrar.akhan@gmail.com`
-   - Password: Paste the 16-char app password
-   - Click "Save SMTP"
+## 4. Optional AI/news setup
 
-### For Other Email Providers:
+Settings supports an active Anthropic, OpenAI, Google or DeepSeek provider/model/key. News supports Marketaux, GNews, NewsAPI and Alpha Vantage. AI/news keys are independent of SMTP. Saved secrets are encrypted; the UI receives presence flags.
 
-| Provider | Host | Port |
-|----------|------|------|
-| Gmail | `smtp.gmail.com` | 587 |
-| Outlook | `smtp-mail.outlook.com` | 587 |
-| SendGrid | `smtp.sendgrid.net` | 587 |
-| AWS SES | `email-smtp.{region}.amazonaws.com` | 587 |
+## 5. Verify
 
-## Step 4: (Optional) Store AI API Keys
+`npm run dev` and `npm start` already run the scheduler. No external cron is required for that setup. A host with only Next.js running needs a separate scheduler.
 
-In Settings → AI Providers:
-
-**For Claude (Anthropic):**
-1. Go to [console.anthropic.com](https://console.anthropic.com)
-2. Create API key
-3. Paste in "Anthropic (Claude)" field
-4. Click "Save API Keys"
-
-**For ChatGPT (OpenAI):**
-1. Go to [platform.openai.com/api-keys](https://platform.openai.com/api-keys)
-2. Create secret key
-3. Paste in "OpenAI (GPT)" field
-4. Click "Save API Keys"
-
-## Step 5: Test Email Sending (1 minute)
-
-Trigger the email digest manually:
+An operator can trigger an actual send to all enabled users with the configured secret exported in the shell:
 
 ```bash
-curl -X GET http://localhost:3000/api/cron/send-email-digest \
-  -H "Authorization: Bearer local-dev-cron-secret"
+curl http://localhost:3000/api/cron/send-email-digest \
+  -H "Authorization: Bearer $CRON_SECRET"
 ```
 
-**Expected response:**
-```json
-{
-  "status": "success",
-  "sent": 1,
-  "errors": 0,
-  "duration": "543ms"
-}
-```
+Inspect `sent`, `errors` and `errorList`, then check `cron_logs` for `send-email-digest`. Repeated manual calls and partial retries can resend to successful recipients; the sender does not enforce `last_sent_at` deduplication.
 
-**Check your inbox** for the email from noreply@investogenie!
-
-### If it doesn't work:
-
-```bash
-# Check the cron logs
-psql postgresql://localhost:5432/investogenie -c \
-  "select * from public.cron_logs where job = 'send-email-digest' order by created_at desc limit 1;"
-```
-
-Look for error details in the `detail` column.
-
-## What Happens Now
-
-✅ Email digest enabled  
-✅ SMTP credentials encrypted in database  
-✅ (Optional) AI keys securely stored  
-✅ Ready for scheduled sends  
-
-### Next: Schedule Daily Sends
-
-You'll need to set up external scheduling since local dev doesn't auto-run crons:
-
-**Option A: cron-job.org (free, easy)**
-1. Sign up at [cron-job.org](https://cron-job.org)
-2. Create new cronjob:
-   - URL: `http://your-domain.com/api/cron/send-email-digest`
-   - Headers: `Authorization: Bearer local-dev-cron-secret`
-   - Schedule: Daily at 7:00 AM IST (02:30 UTC)
-3. Save
-
-**Option B: Deploy to Vercel**
-```bash
-# Push to GitHub, then:
-# 1. Deploy to Vercel via GitHub integration
-# 2. Add to vercel.json:
-{
-  "crons": [{
-    "path": "/api/cron/send-email-digest",
-    "schedule": "0 1:30 * * *"
-  }]
-}
-# 3. Push again to activate cron
-```
-
-**Option C: Local cron (macOS/Linux)**
-```bash
-# Edit crontab:
-crontab -e
-
-# Add (sends at 7 AM IST = 1:30 AM UTC):
-30 1 * * * curl -X GET http://localhost:3000/api/cron/send-email-digest -H "Authorization: Bearer local-dev-cron-secret" >> /tmp/email-digest.log 2>&1
-```
-
-## Security Reminder
-
-🔒 Your encryption key (`CREDENTIAL_ENCRYPTION_KEY`):
-- Is never stored in the database
-- Is never logged
-- Must be different per environment
-- Should be backed up securely
-- If lost, existing credentials can't be recovered (but app falls back to env vars)
-
-That's it! You now have:
-- 📧 Secure email credential storage
-- 🔐 AES-256-GCM encryption
-- 🤖 Optional AI API key storage
-- 📨 Daily email digest of top stocks
-
-Enjoy your morning stock alerts! 🚀
+See [email setup](EMAIL_SETUP.md) for scheduling controls and [credential security](SECURE_CREDENTIALS.md) for storage and recovery.
