@@ -1,6 +1,9 @@
 import { query, queryOne, tx } from "@/lib/db";
 import { armedEditViolation } from "@/lib/armedSwingPlans";
-import { protectedExecutionEditViolation } from "@/lib/swingExecutionPlans";
+import {
+  loadExecutionPlan, protectedExecutionEditViolation, validateExecutionPlanPurchase, type StoredExecutionPlan,
+} from "@/lib/swingExecutionPlans";
+import { zonedMarketClock } from "@/lib/market-calendar.mjs";
 import { resolveSignalProjection } from "@/lib/swingTradeProjection";
 import { validateShareQuantity } from "@/lib/tradeInput";
 
@@ -12,9 +15,10 @@ function positive(value: unknown, label: string): number {
   return number;
 }
 
-function date(value: unknown, label: string, minimum?: string): string {
+function date(value: unknown, label: string, market: Market, minimum?: string): string {
   const result = String(value ?? "").slice(0, 10);
-  const today = new Date().toISOString().slice(0, 10);
+  // The market's own date: a UTC "today" rejects an Indian trade logged before 05:30 IST.
+  const today = zonedMarketClock(market).date;
   if (!/^\d{4}-\d{2}-\d{2}$/.test(result) || result > today || (minimum && result < minimum)) {
     throw new Error(`Enter a valid ${label}`);
   }
@@ -34,6 +38,8 @@ export interface CreateMobileTradeInput {
   buyPrice: number;
   quantity: number;
   strategyKey?: string;
+  /** Server-held execution plan id, required for a Strong Swing purchase. */
+  planId?: string;
   projectionEntry?: number;
   projectedTarget?: number;
   projectedStop?: number;
@@ -43,7 +49,7 @@ export interface CreateMobileTradeInput {
 
 export async function createMobileTrade(userId: string, input: CreateMobileTradeInput): Promise<string> {
   const market: Market = input.market === "US" ? "US" : "IN";
-  const boughtOn = date(input.boughtOn, "purchase date");
+  const boughtOn = date(input.boughtOn, "purchase date", market);
   const buyPrice = positive(input.buyPrice, "Buy price");
   const quantity = positive(input.quantity, "Quantity");
   validateShareQuantity(market, quantity);
@@ -55,24 +61,36 @@ export async function createMobileTrade(userId: string, input: CreateMobileTrade
   if (!asset) throw new Error("Stock was not found in this market");
 
   const preferredStrategy = String(input.strategyKey ?? "").toUpperCase();
-  // Armed Swing positions are created only from a server-held plan on the web (Buy zone purchase
-  // or a confirmed pending buy-stop fill); the mobile API cannot assert that strategy.
-  if (["ARMED_SWING", "STRONG_SWING", "MOMENTUM_IGNITION"].includes(preferredStrategy)) {
+  // Armed Swing and Momentum Ignition purchases come only from their protected web workflows. A
+  // Strong Swing purchase must reference the server-held plan the mobile API returned; every
+  // level is read from that plan and client-supplied levels are ignored.
+  if (["ARMED_SWING", "MOMENTUM_IGNITION"].includes(preferredStrategy)) {
     throw new Error("Strategy trades must be recorded from the protected web candidate workflow");
   }
+  let plan: StoredExecutionPlan | null = null;
+  if (preferredStrategy === "STRONG_SWING") {
+    plan = await loadExecutionPlan(userId, String(input.planId ?? "").trim());
+    const planError = validateExecutionPlanPurchase(plan, {
+      assetId: asset.id, market, strategyKey: "STRONG_SWING", boughtOn, buyPrice,
+      today: zonedMarketClock(market).date, nowMs: Date.now(),
+    });
+    if (planError) throw new Error(planError);
+  }
   const projection = await resolveSignalProjection(asset.id, market, preferredStrategy, buyPrice, userId);
-  const suppliedEntry = optionalLevel(input.projectionEntry);
-  const suppliedTarget = optionalLevel(input.projectedTarget);
-  const suppliedStop = optionalLevel(input.projectedStop);
-  const suppliedTrail = optionalLevel(input.projectedTrailingStop);
+  const suppliedEntry = plan ? plan.entry : optionalLevel(input.projectionEntry);
+  const suppliedTarget = plan ? plan.target : optionalLevel(input.projectedTarget);
+  const suppliedStop = plan ? plan.stop : optionalLevel(input.projectedStop);
+  const suppliedTrail = plan ? plan.trail : optionalLevel(input.projectedTrailingStop);
   const target = suppliedTarget !== null && suppliedTarget > buyPrice ? suppliedTarget : projection.levels.target;
   const stop = suppliedStop !== null && suppliedStop >= 0 && suppliedStop < buyPrice ? suppliedStop : projection.levels.stopLoss;
   const trail = suppliedTrail !== null && suppliedTrail >= 0 && suppliedTrail < buyPrice ? suppliedTrail : projection.levels.trailingStop;
-  const expectedDays = Math.round(Number(input.expectedHoldingDays ?? projection.levels.expectedDays));
+  const expectedDays = plan ? plan.expectedDays : Math.round(Number(input.expectedHoldingDays ?? projection.levels.expectedDays));
   if (target <= buyPrice || target <= stop || stop < 0 || expectedDays < 1 || expectedDays > 365) {
     throw new Error("For a buy trade, the target must be above your buy price and above the stop");
   }
-  const trailingDistance = projection.levels.atr > 0 && trail !== null ? projection.trailingDistance : null;
+  const trailingDistance = plan
+    ? plan.trailingDistance
+    : projection.levels.atr > 0 && trail !== null ? projection.trailingDistance : null;
   const inserted = await queryOne<{ id: string }>(
     `insert into public.swing_trade_ledger
        (user_id,asset_id,market,status,bought_on,buy_price,quantity,currency,strategy_key,strategy_label,
@@ -83,8 +101,10 @@ export async function createMobileTrade(userId: string, input: CreateMobileTrade
     [userId, asset.id, market, boughtOn, buyPrice, quantity, asset.currency, projection.strategyKey,
       projection.label, projection.row.verdict, projection.row.as_of,
       projection.strategyScore?.score ?? projection.row.score, suppliedEntry ?? projection.levels.entry,
-      target, stop, trail, projection.levels.atr, trailingDistance, expectedDays,
-      JSON.stringify({ levels: projection.levels, strategyScore: projection.strategyScore ?? null })],
+      target, stop, trail, plan ? plan.atr : projection.levels.atr, trailingDistance, expectedDays,
+      JSON.stringify(plan
+        ? { executionPlanId: plan.id, plan }
+        : { levels: projection.levels, strategyScore: projection.strategyScore ?? null })],
   );
   if (!inserted) throw new Error("Trade could not be recorded");
   return inserted.id;
@@ -94,7 +114,7 @@ export async function updateMobileTrade(userId: string, tradeId: string, input: 
   market: Market; boughtOn: string; buyPrice: number; quantity: number; notes?: string;
 }): Promise<void> {
   const market: Market = input.market === "US" ? "US" : "IN";
-  const boughtOn = date(input.boughtOn, "purchase date");
+  const boughtOn = date(input.boughtOn, "purchase date", market);
   const buyPrice = positive(input.buyPrice, "Buy price");
   const quantity = positive(input.quantity, "Quantity");
   validateShareQuantity(market, quantity);
@@ -155,7 +175,7 @@ export async function recordMobileTradeSale(userId: string, tradeId: string, inp
       [tradeId, userId, market],
     )).rows[0];
     if (!trade) throw new Error("Open trade entry was not found");
-    const soldOn = date(input.soldOn, "sale date", trade.bought_on);
+    const soldOn = date(input.soldOn, "sale date", market, trade.bought_on);
     const alreadySold = Number((await client.query<{ quantity: string }>(
       "select coalesce(sum(quantity),0)::text quantity from public.swing_trade_exits where trade_id=$1",
       [tradeId],
@@ -184,7 +204,7 @@ export async function updateMobileTradeSale(userId: string, tradeId: string, sal
       [tradeId, userId, market],
     )).rows[0];
     if (!trade) throw new Error("Trade entry was not found");
-    const soldOn = date(input.soldOn, "sale date", trade.bought_on);
+    const soldOn = date(input.soldOn, "sale date", market, trade.bought_on);
     const sale = (await client.query(
       `select id from public.swing_trade_exits where id=$1 and trade_id=$2 and user_id=$3 for update`,
       [saleId, tradeId, userId],

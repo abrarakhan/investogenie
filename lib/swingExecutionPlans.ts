@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { query, queryOne } from "@/lib/db";
+import type { StrongSwingCandidate } from "@/lib/strongSwing";
 
 export type ProtectedSwingStrategy = "STRONG_SWING" | "MOMENTUM_IGNITION";
 export const EXECUTION_PLAN_MAX_AGE_MINUTES = 30;
@@ -131,3 +132,23 @@ export function protectedExecutionEditViolation(strategyKey: string | null, entr
   if (entry === null || buyPrice < entry * 0.999) return "A protected strategy purchase cannot be edited below its recorded entry";
   return null;
 }
+
+/**
+ * Execution plans for EXECUTION_READY Strong Swing candidates. Shared by the web page and the
+ * mobile API so both record the identical server-held plan a purchase is validated against.
+ */
+export function strongSwingExecutionPlanInputs(
+  candidates: readonly StrongSwingCandidate[], trailAtrMult: number,
+): ExecutionPlanInput[] {
+  return candidates.filter((candidate) => candidate.status === "EXECUTION_READY").map((candidate) => ({
+    assetId: candidate.assetId, strategyKey: "STRONG_SWING" as const, status: candidate.status,
+    entry: candidate.strongEntry, target: candidate.strongTarget, stop: candidate.strongStop,
+    trail: candidate.strongTrail, atr: (candidate.strongEntry - candidate.strongTrail) / trailAtrMult,
+    expectedDays: candidate.strongExpectedDays,
+    signalAsOf: candidate.latestDate, score: candidate.strengthScore / 100, snapshot: { gates: candidate.gates },
+  }));
+}
+
+/** Key under which captureExecutionPlans returns a plan id. */
+export const executionPlanKey = (strategyKey: ProtectedSwingStrategy, status: string, assetId: string) =>
+  `${strategyKey}:${status}:${assetId}`;

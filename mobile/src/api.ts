@@ -32,6 +32,8 @@ export interface StrongCandidate {
   fiveDayReturnPct: number | null;
   tenDayReturnPct: number | null;
   gates: Array<{ key: string; label: string; passed: boolean; detail: string }>;
+  /** Server-held execution plan for an EXECUTION_READY candidate; purchases reference it. */
+  planId?: string | null;
 }
 
 export interface NewsEvidence {
@@ -106,6 +108,15 @@ export interface LedgerSummary {
   xirrPct: number | null;
 }
 
+/** An HTTP error from the server, keeping the status so callers can tell 401 from an outage. */
+export class ApiError extends Error {
+  readonly status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+  }
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const configurationError = apiConfigurationError();
   if (configurationError) throw new Error(configurationError);
@@ -120,7 +131,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     },
   });
   const payload = response.status === 204 ? null : await response.json().catch(() => null);
-  if (!response.ok) throw new Error(payload?.error || `Request failed (${response.status})`);
+  if (!response.ok) throw new ApiError(response.status, payload?.error || `Request failed (${response.status})`);
   return payload as T;
 }
 
@@ -129,9 +140,14 @@ export async function restoreSession(): Promise<MobileUser | null> {
   try {
     const result = await request<{ user: MobileUser }>("/api/v1/mobile/me");
     return result.user;
-  } catch {
-    await SecureStore.deleteItemAsync(TOKEN_KEY);
-    return null;
+  } catch (cause) {
+    // Only a rejected token signs the user out. Offline or a server outage at launch must not
+    // discard a valid session; rethrow so the app can offer a retry.
+    if (cause instanceof ApiError && cause.status === 401) {
+      await SecureStore.deleteItemAsync(TOKEN_KEY);
+      return null;
+    }
+    throw cause;
   }
 }
 
@@ -187,10 +203,10 @@ export function getCandles(market: Market, ticker: string) {
   );
 }
 
+/** A Strong Swing purchase sends only the plan id; the server reads every level from the plan. */
 export function createTrade(input: {
   assetId: string; market: Market; boughtOn: string; buyPrice: number; quantity: number;
-  strategyKey: string; projectionEntry?: number; projectedTarget?: number; projectedStop?: number;
-  projectedTrailingStop?: number; expectedHoldingDays?: number;
+  strategyKey: "STRONG_SWING"; planId: string;
 }) {
   return request<{ id: string }>("/api/v1/mobile/trade-ledger", { method: "POST", body: JSON.stringify(input) });
 }

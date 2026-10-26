@@ -15,6 +15,9 @@ Notifications.setNotificationHandler({
 });
 
 export async function registerDeviceNotifications(): Promise<string> {
+  // iOS push is deliberately off: Expo's relay would need the APNs key uploaded to Expo, and
+  // direct APNs delivery is not built yet.
+  if (Platform.OS === "ios") return "Push alerts are not enabled on iOS yet.";
   if (!Device.isDevice) return "Push alerts require a physical device.";
   if (Platform.OS === "android") {
     await Notifications.setNotificationChannelAsync("trade-alerts", {
@@ -31,12 +34,15 @@ export async function registerDeviceNotifications(): Promise<string> {
     ?? process.env.EXPO_PUBLIC_EAS_PROJECT_ID;
   if (!projectId) return "Push alerts will activate after the EAS project is linked.";
   const token = (await Notifications.getExpoPushTokenAsync({ projectId })).data;
-  await registerPushToken(token, Platform.OS === "ios" ? "ios" : "android");
+  await registerPushToken(token, "android");
   return "Push alerts active for trade changes and ready swing candidates.";
 }
 
 export async function unlockWithBiometrics(): Promise<boolean> {
-  if (!await LocalAuthentication.hasHardwareAsync() || !await LocalAuthentication.isEnrolledAsync()) return true;
+  // Protect the session with whatever the device has: biometrics, or the device passcode when no
+  // biometrics are enrolled. Only a device with no lock at all opens without a prompt.
+  const level = await LocalAuthentication.getEnrolledLevelAsync();
+  if (level === LocalAuthentication.SecurityLevel.NONE) return true;
   const result = await LocalAuthentication.authenticateAsync({
     promptMessage: "Unlock InvestoGenie",
     cancelLabel: "Cancel",

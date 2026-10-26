@@ -9,8 +9,9 @@
     "ios": "expo start --ios",
     "typecheck": "tsc --noEmit",
     "validate:release": "node scripts/validate-release.mjs",
-    "build:android:preview": "npm run validate:release && npx eas-cli@latest build --platform android --profile preview",
-    "build:production": "npm run validate:release && npx eas-cli@latest build --platform all --profile production"
+    "prebuild": "expo prebuild --clean",
+    "build:android:release": "npm run validate:release && expo prebuild --platform android --clean && cd android && ./gradlew assembleRelease",
+    "build:ios:release": "npm run validate:release && expo prebuild --platform ios --clean && expo run:ios --configuration Release --no-bundler"
   },
   "dependencies": {
     "expo": "~57.0.24",

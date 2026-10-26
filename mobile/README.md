@@ -32,11 +32,37 @@ expire after 30 days. Sign-out revokes the device session and disables its push 
 - Server-calculated capital employed, P&L, ROI and XIRR.
 - Price profiles, native SVG candles and five-minute foreground refresh.
 - Biometric session re-entry when available.
-- Opt-in ledger state-change and ready-candidate notifications.
+- Opt-in ledger state-change and ready-candidate notifications (Android; iOS push is off for now).
 
 Adaptive Allocation and Armed Swing do not have dedicated mobile API/workspace routes in this
 revision. Web pending buy-stop recording is likewise a separate workflow. Mobile ledger entries
 record trades; they do not directly submit broker orders.
+
+## Local release builds
+
+`validate:release` checks `EXPO_PUBLIC_API_URL` (from the environment or `mobile/.env`) is HTTPS.
+Both build scripts run it first, then regenerate the native project with `expo prebuild --clean`;
+the generated `ios/` and `android/` folders are not committed.
+
+- Android: `npm run build:android:release` builds a release APK with Gradle
+  (`android/app/build/outputs/apk/release/`). Sign it with your release keystore.
+- iOS: `npm run build:ios:release` builds the Release configuration with Xcode. It needs full Xcode
+  (not only the Command Line Tools) selected with `xcode-select`, CocoaPods, and an Apple signing team
+  set in Xcode for a device build.
+
+## Trade logging and security
+
+A Strong Swing purchase sends only the candidate's server-held `planId`; the server validates it
+(same market session, captured within 30 minutes, price at or above the entry and below the
+target) and reads every level from the plan. Candidates without a plan cannot be logged.
+
+The app locks with biometrics, or the device passcode when no biometrics are enrolled, on launch
+and after 60 seconds in the background. Opening the app from a notification still requires the
+unlock. Offline at launch keeps the saved session and offers a retry; only a rejected token signs
+the device out.
+
+Push alerts are Android-only for now. iOS push is off until direct APNs delivery (or an APNs key
+for Expo's relay) is set up.
 
 Ledger alerts are generic. Ready-candidate messages include ticker, readiness and engine for
 Strong Swing, legacy Momentum Ignition and Momentum Ignition V2. Expo receives notification text

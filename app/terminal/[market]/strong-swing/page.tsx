@@ -12,7 +12,7 @@ import { getStrongSwingCandidates } from "@/lib/strongSwing";
 import MarketDataAutoRefresh from "@/components/app/MarketDataAutoRefresh";
 import { markLiveMarketTargets } from "@/lib/liveMarketTargets";
 import { zonedMarketClock } from "@/lib/market-calendar.mjs";
-import { captureExecutionPlans, type ExecutionPlanInput } from "@/lib/swingExecutionPlans";
+import { captureExecutionPlans, strongSwingExecutionPlanInputs, type ExecutionPlanInput } from "@/lib/swingExecutionPlans";
 import { isMomentumExecutionReady } from "@/lib/momentumExecution";
 
 export const dynamic = "force-dynamic";
@@ -35,12 +35,7 @@ export default async function StrongSwingPage({
     getMomentumIgnitionCandidates(market, settings),
   ]);
   const executionPlans: ExecutionPlanInput[] = [
-    ...candidates.filter((candidate) => candidate.status === "EXECUTION_READY").map((candidate) => ({
-      assetId: candidate.assetId, strategyKey: "STRONG_SWING" as const, status: candidate.status,
-      entry: candidate.strongEntry, target: candidate.strongTarget, stop: candidate.strongStop,
-      trail: candidate.strongTrail, atr: (candidate.strongEntry - candidate.strongTrail) / settings.trailAtrMult, expectedDays: candidate.strongExpectedDays,
-      signalAsOf: candidate.latestDate, score: candidate.strengthScore / 100, snapshot: { gates: candidate.gates },
-    })),
+    ...strongSwingExecutionPlanInputs(candidates, settings.trailAtrMult),
     ...legacyMomentumIgnition.candidates.filter((candidate) => isMomentumExecutionReady(candidate.status)).map((candidate) => ({
       assetId: candidate.assetId, strategyKey: "MOMENTUM_IGNITION" as const, status: candidate.status,
       entry: candidate.projectedEntry, target: candidate.projectedTarget, stop: candidate.projectedStop,

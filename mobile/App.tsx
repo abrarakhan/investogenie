@@ -15,7 +15,12 @@ import {
 import { registerDeviceNotifications, unlockWithBiometrics } from "./src/deviceSecurity";
 
 type Tab = "strong" | "news" | "ledger";
-const today = () => new Date().toISOString().slice(0, 10);
+/** The market's own calendar date. A UTC date is a day behind in India before 05:30 IST. */
+const today = (market: Market) => new Intl.DateTimeFormat("en-CA", {
+  timeZone: market === "IN" ? "Asia/Kolkata" : "America/New_York", year: "numeric", month: "2-digit", day: "2-digit",
+}).format(new Date());
+/** Accept "1,000.50" or "1 000" as typed amounts; anything else is NaN for the server to reject. */
+const amount = (text: string) => Number(text.replace(/[,\s]/g, ""));
 const money = (value: number, market: Market) => new Intl.NumberFormat(market === "IN" ? "en-IN" : "en-US", {
   style: "currency", currency: market === "IN" ? "INR" : "USD", maximumFractionDigits: 2,
 }).format(value);
@@ -24,23 +29,29 @@ const message = (cause: unknown, fallback: string) => cause instanceof Error ? c
 
 export default function App() {
   const [booting, setBooting] = useState(true);
+  const [bootError, setBootError] = useState("");
   const [user, setUser] = useState<MobileUser | null>(null);
   const [unlocked, setUnlocked] = useState(false);
   const [requestedTab, setRequestedTab] = useState<Tab | null>(null);
   const backgroundedAt = useRef<number | null>(null);
   const unlock = useCallback(async () => setUnlocked(await unlockWithBiometrics()), []);
-  useEffect(() => {
+  const boot = useCallback(() => {
+    setBooting(true); setBootError("");
     restoreSession().then(async (restored) => {
       setUser(restored);
       if (restored) setUnlocked(await unlockWithBiometrics());
       else setUnlocked(true);
+    }).catch((cause) => {
+      // Offline or a server outage: keep the saved session and offer a retry.
+      setBootError(message(cause, "InvestoGenie could not be reached."));
     }).finally(() => setBooting(false));
   }, []);
+  useEffect(() => { boot(); }, [boot]);
   useEffect(() => {
     const response = Notifications.addNotificationResponseReceivedListener((notificationResponse) => {
       const screen = notificationResponse.notification.request.content.data?.screen;
+      // Choose the tab only. Opening from a notification must still pass the biometric lock.
       setRequestedTab(screen === "strong-swing" ? "strong" : "ledger");
-      setUnlocked(true);
     });
     const appState = AppState.addEventListener("change", (state) => {
       if (state === "background") backgroundedAt.current = Date.now();
@@ -52,6 +63,7 @@ export default function App() {
     return () => { response.remove(); appState.remove(); };
   }, [unlock, user]);
   if (booting) return <Centered><ActivityIndicator color="#34d399" /></Centered>;
+  if (bootError) return <Centered><Text style={styles.title}>Offline</Text><Text style={[styles.muted, styles.centerText]}>{bootError}</Text><Action label="Retry" onPress={boot} /></Centered>;
   if (user && !unlocked) return <Centered><Text style={styles.title}>InvestoGenie locked</Text><Action label="Unlock" onPress={() => void unlock()} /></Centered>;
   return <SafeAreaProvider><SafeAreaView style={styles.safe} edges={["top", "right", "bottom", "left"]}><StatusBar style="light" />{
     user ? <Terminal user={user} requestedTab={requestedTab} onRequestedTabHandled={() => setRequestedTab(null)} onLogout={() => logout().then(() => setUser(null))} /> : <Login onLogin={(next) => { setUser(next); setUnlocked(true); }} />
@@ -101,7 +113,7 @@ function Terminal({ user, requestedTab, onRequestedTabHandled, onLogout }: { use
 function Strong({ market }: { market: Market }) {
   const [rows, setRows] = useState<StrongCandidate[]>([]);
   const [selected, setSelected] = useState<StrongCandidate | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
+  const [refreshing, setRefreshing] = useState(true);
   const [error, setError] = useState("");
   const load = useCallback(async () => {
     setRefreshing(true); setError("");
@@ -129,7 +141,9 @@ function CandidateDetail({ row, market, onBack }: { row: StrongCandidate; market
     <Text style={styles.detailTicker}>{row.ticker}</Text><Text style={styles.meta}>{row.exchange || market} · EOD {row.latestDate}</Text>
     <PriceChart market={market} ticker={row.ticker} />
     <View style={styles.metricGrid}><Metric label="CURRENT" value={money(row.lastQuote ?? row.latestClose, market)} /><Metric label="ENTRY" value={money(row.strongEntry, market)} /><Metric label="TARGET" value={money(row.strongTarget, market)} positive /><Metric label="STOP" value={money(row.strongStop, market)} negative /><Metric label="TRAIL" value={money(row.strongTrail, market)} /><Metric label="SCORE" value={row.strengthScore.toFixed(0)} /></View>
-    {row.status === "EXECUTION_READY" ? <Action label="Log purchased trade" onPress={() => setBuying(true)} /> : <Text style={styles.warning}>Buying remains disabled until the server returns EXECUTION READY.</Text>}
+    {row.status !== "EXECUTION_READY" ? <Text style={styles.warning}>Buying remains disabled until the server returns EXECUTION READY.</Text>
+      : row.planId ? <Action label="Log purchased trade" onPress={() => setBuying(true)} />
+        : <Text style={styles.warning}>The server has not recorded an execution plan for this setup. Pull to refresh the candidates, then try again.</Text>}
     {!!notice && <Text style={styles.success}>{notice}</Text>}
     <Text style={styles.sectionTitle}>Confirmation gates</Text>
     {row.gates.map((gate) => <View key={gate.key} style={styles.gate}><Text style={gate.passed ? styles.good : styles.bad}>{gate.passed ? "PASS" : "WAIT"}</Text><View style={styles.gateText}><Text style={styles.gateLabel}>{gate.label}</Text><Text style={styles.muted}>{gate.detail}</Text></View></View>)}
@@ -139,7 +153,7 @@ function CandidateDetail({ row, market, onBack }: { row: StrongCandidate; market
 
 function NewsSwing({ market }: { market: Market }) {
   const [rows, setRows] = useState<NewsSwingCandidate[]>([]);
-  const [refreshing, setRefreshing] = useState(false);
+  const [refreshing, setRefreshing] = useState(true);
   const [error, setError] = useState("");
   const [summary, setSummary] = useState({ articles: 0, impacts: 0, fetchedAt: null as string | null });
   const load = useCallback(async () => {
@@ -157,7 +171,8 @@ function NewsSwing({ market }: { market: Market }) {
       if (!active) return;
       setRows(result.candidates);
       setSummary({ articles: result.articleCount, impacts: result.impactCount, fetchedAt: result.lastFetchedAt });
-    }).catch((cause) => { if (active) setError(message(cause, "Could not load News & AI Swing")); });
+    }).catch((cause) => { if (active) setError(message(cause, "Could not load News & AI Swing")); })
+      .finally(() => { if (active) setRefreshing(false); });
     return () => { active = false; };
   }, [market]);
   useEffect(() => { const timer = setInterval(load, 300_000); return () => clearInterval(timer); }, [load]);
@@ -187,7 +202,7 @@ function PriceChart({ market, ticker }: { market: Market; ticker: string }) {
 
 function Ledger({ market }: { market: Market }) {
   const [trades, setTrades] = useState<LedgerTrade[]>([]); const [summary, setSummary] = useState<LedgerSummary | null>(null);
-  const [refreshing, setRefreshing] = useState(false); const [error, setError] = useState("");
+  const [refreshing, setRefreshing] = useState(true); const [error, setError] = useState("");
   const [editing, setEditing] = useState<LedgerTrade | null>(null); const [selling, setSelling] = useState<LedgerTrade | null>(null);
   const [editingSale, setEditingSale] = useState<{ trade: LedgerTrade; sale: LedgerTrade["exits"][number] } | null>(null);
   const load = useCallback(async () => { setRefreshing(true); setError(""); try { const result = await getLedger(market); setTrades(result.trades); setSummary(result.summary); } catch (cause) { setError(message(cause, "Could not load ledger")); } finally { setRefreshing(false); } }, [market]);
@@ -216,8 +231,9 @@ function Ledger({ market }: { market: Market }) {
 }
 
 function TradeEntrySheet({ visible, row, market, onClose, onSaved }: { visible: boolean; row: StrongCandidate; market: Market; onClose: () => void; onSaved: () => void }) {
-  const [date, setDate] = useState(today()); const [price, setPrice] = useState(String(row.lastQuote ?? row.strongEntry)); const [quantity, setQuantity] = useState(""); const [busy, setBusy] = useState(false); const [error, setError] = useState("");
-  const save = async () => { setBusy(true); setError(""); try { await createTrade({ assetId: row.assetId, market, boughtOn: date, buyPrice: Number(price), quantity: Number(quantity), strategyKey: "STRONG_SWING", projectionEntry: row.strongEntry, projectedTarget: row.strongTarget, projectedStop: row.strongStop, projectedTrailingStop: row.strongTrail, expectedHoldingDays: row.strongExpectedDays }); onSaved(); } catch (cause) { setError(message(cause, "Trade could not be recorded")); } finally { setBusy(false); } };
+  const [date, setDate] = useState(today(market)); const [price, setPrice] = useState(String(row.lastQuote ?? row.strongEntry)); const [quantity, setQuantity] = useState(""); const [busy, setBusy] = useState(false); const [error, setError] = useState("");
+  // Only the plan id goes to the server, which reads entry, target, stop, trail and horizon from it.
+  const save = async () => { if (!row.planId) return; setBusy(true); setError(""); try { await createTrade({ assetId: row.assetId, market, boughtOn: date, buyPrice: amount(price), quantity: amount(quantity), strategyKey: "STRONG_SWING", planId: row.planId }); onSaved(); } catch (cause) { setError(message(cause, "Trade could not be recorded")); } finally { setBusy(false); } };
   return <Sheet visible={visible} title={`Log ${row.ticker}`} onClose={onClose}><Field value={date} onChangeText={setDate} placeholder="Purchase date YYYY-MM-DD" /><Field value={price} onChangeText={setPrice} placeholder="Buy price" keyboard="decimal-pad" /><Field value={quantity} onChangeText={setQuantity} placeholder="Quantity" keyboard="decimal-pad" />{!!error && <Text style={styles.error}>{error}</Text>}<Action label="Freeze plan and log trade" busy={busy} onPress={save} /></Sheet>;
 }
 
@@ -227,7 +243,7 @@ function EditTradeSheet({ trade, market, onClose, onSaved }: { trade: LedgerTrad
 
 function EditTradeForm({ trade, market, onClose, onSaved }: { trade: LedgerTrade; market: Market; onClose: () => void; onSaved: () => void }) {
   const [date, setDate] = useState(trade.boughtOn); const [price, setPrice] = useState(String(trade.buyPrice)); const [quantity, setQuantity] = useState(String(trade.quantity)); const [busy, setBusy] = useState(false); const [error, setError] = useState("");
-  const save = async () => { if (!trade) return; setBusy(true); try { await updateTrade(trade.id, { market, boughtOn: date, buyPrice: Number(price), quantity: Number(quantity) }); onSaved(); } catch (cause) { setError(message(cause, "Trade could not be updated")); } finally { setBusy(false); } };
+  const save = async () => { if (!trade) return; setBusy(true); try { await updateTrade(trade.id, { market, boughtOn: date, buyPrice: amount(price), quantity: amount(quantity) }); onSaved(); } catch (cause) { setError(message(cause, "Trade could not be updated")); } finally { setBusy(false); } };
   return <Sheet visible title={`Edit ${trade.ticker}`} onClose={onClose}><Field value={date} onChangeText={setDate} placeholder="Purchase date YYYY-MM-DD" /><Field value={price} onChangeText={setPrice} placeholder="Buy price" keyboard="decimal-pad" /><Field value={quantity} onChangeText={setQuantity} placeholder="Quantity" keyboard="decimal-pad" />{!!error && <Text style={styles.error}>{error}</Text>}<Action label="Save trade" busy={busy} onPress={save} /></Sheet>;
 }
 
@@ -236,8 +252,8 @@ function SaleSheet({ trade, sale, market, onClose, onSaved }: { trade: LedgerTra
 }
 
 function SaleForm({ trade, sale, market, onClose, onSaved }: { trade: LedgerTrade; sale?: LedgerTrade["exits"][number]; market: Market; onClose: () => void; onSaved: () => void }) {
-  const [date, setDate] = useState(sale?.soldOn ?? today()); const [price, setPrice] = useState(String(sale?.exitPrice ?? trade.currentPrice ?? "")); const [quantity, setQuantity] = useState(String(sale?.quantity ?? trade.remainingQuantity)); const [reason, setReason] = useState(sale?.reason ?? "Manual exit"); const [busy, setBusy] = useState(false); const [error, setError] = useState("");
-  const save = async () => { if (!trade) return; setBusy(true); try { const input = { market, soldOn: date, exitPrice: Number(price), quantity: Number(quantity), reason }; if (sale) await updateSale(trade.id, sale.id, input); else await recordSale(trade.id, input); onSaved(); } catch (cause) { setError(message(cause, "Sale could not be recorded")); } finally { setBusy(false); } };
+  const [date, setDate] = useState(sale?.soldOn ?? today(market)); const [price, setPrice] = useState(String(sale?.exitPrice ?? trade.currentPrice ?? "")); const [quantity, setQuantity] = useState(String(sale?.quantity ?? trade.remainingQuantity)); const [reason, setReason] = useState(sale?.reason ?? "Manual exit"); const [busy, setBusy] = useState(false); const [error, setError] = useState("");
+  const save = async () => { if (!trade) return; setBusy(true); try { const input = { market, soldOn: date, exitPrice: amount(price), quantity: amount(quantity), reason }; if (sale) await updateSale(trade.id, sale.id, input); else await recordSale(trade.id, input); onSaved(); } catch (cause) { setError(message(cause, "Sale could not be recorded")); } finally { setBusy(false); } };
   return <Sheet visible title={`${sale ? "Edit sale" : "Record sale"} · ${trade.ticker}`} onClose={onClose}><Field value={date} onChangeText={setDate} placeholder="Sale date YYYY-MM-DD" /><Field value={price} onChangeText={setPrice} placeholder="Sale price" keyboard="decimal-pad" /><Field value={quantity} onChangeText={setQuantity} placeholder="Quantity" keyboard="decimal-pad" /><Field value={reason} onChangeText={setReason} placeholder="Reason" />{!!error && <Text style={styles.error}>{error}</Text>}<Action label={sale ? "Save sale" : "Record sale"} busy={busy} onPress={save} /></Sheet>;
 }
 
@@ -256,7 +272,7 @@ const Empty = ({ text }: { text: string }) => <View style={styles.empty}><Text s
 const Banner = ({ text }: { text: string }) => <Text style={styles.errorBanner}>{text}</Text>;
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: "#05070a" }, flex: { flex: 1 }, center: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: "#05070a" },
+  safe: { flex: 1, backgroundColor: "#05070a" }, flex: { flex: 1 }, centerText: { textAlign: "center", paddingHorizontal: 28 }, center: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: "#05070a" },
   login: { flexGrow: 1, justifyContent: "center", padding: 28, gap: 14, backgroundColor: "#05070a" }, brand: { color: "#f7f8fa", fontSize: 30, fontWeight: "900" }, brandSmall: { color: "#f7f8fa", fontSize: 20, fontWeight: "900" }, accent: { color: "#34d399" }, eyebrow: { color: "#34d399", fontSize: 11, fontWeight: "800", letterSpacing: 3 },
   title: { color: "#f7f8fa", fontSize: 27, fontWeight: "900" }, muted: { color: "#858c95", fontSize: 14, lineHeight: 21 }, input: { color: "#f7f8fa", backgroundColor: "#0c1015", borderColor: "#242a32", borderWidth: 1, borderRadius: 8, paddingHorizontal: 15, height: 52 },
   error: { color: "#fb7185" }, success: { color: "#6ee7b7", marginTop: 12 }, warning: { color: "#fbbf24", borderColor: "#6b4d0d", borderWidth: 1, padding: 12, borderRadius: 7 }, primary: { backgroundColor: "#34d399", borderRadius: 8, minHeight: 52, alignItems: "center", justifyContent: "center", marginVertical: 4 }, disabled: { opacity: 0.45 }, primaryText: { color: "#04110d", fontSize: 15, fontWeight: "900" },
