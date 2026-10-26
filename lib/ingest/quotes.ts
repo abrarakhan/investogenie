@@ -462,7 +462,10 @@ export async function refreshQuotes(databaseUrl: string, startISO = localToday()
        ), selected as (
          select t.asset_id,0 priority
            from public.live_market_targets t
-          where t.last_seen_at >= now() - interval '1 day'
+          -- Keep Friday/holiday-eve candidates in the market-hours refresh set.
+          -- Eligibility is still recalculated from fresh data on every page load;
+          -- this window only decides which bounded set receives live quotes.
+          where t.last_seen_at >= now() - interval '7 days'
          union
          select l.asset_id,0 priority
            from public.swing_trade_ledger l

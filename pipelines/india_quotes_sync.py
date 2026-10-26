@@ -87,7 +87,9 @@ def load_assets(conn, exchange: str, limit: int | None, priority_only: bool = Fa
                 select max(t.last_seen_at) last_seen_at
                   from public.live_market_targets t
                  where t.asset_id=a.id
-                   and t.last_seen_at >= now() - interval '1 day'
+                   -- Retain candidate quote targets across weekends and exchange
+                   -- holidays. Strategy eligibility is recalculated separately.
+                   and t.last_seen_at >= now() - interval '7 days'
               ) priority on true
              where a.exchange=%s
                and a.asset_class='STOCK'
@@ -108,7 +110,7 @@ def load_assets(conn, exchange: str, limit: int | None, priority_only: bool = Fa
                  )
                  or exists (
                    select 1 from public.live_market_targets t
-                    where t.asset_id=a.id and t.last_seen_at >= now() - interval '1 day'
+                    where t.asset_id=a.id and t.last_seen_at >= now() - interval '7 days'
                  )
                  or a.id in (
                    select s.asset_id from public.swing_signals s
