@@ -1,10 +1,19 @@
-import { assessMomentumIgnitionV2, type MomentumIgnitionV2Assessment } from "@/lib/analytics/momentumIgnitionV2";
+import {
+  assessMomentumIgnitionV2,
+  type MomentumIgnitionV2Assessment,
+  type MomentumIgnitionV2Status,
+} from "@/lib/analytics/momentumIgnitionV2";
 import type { SwingSettings } from "@/lib/settings";
 import type { OHLCV } from "@/lib/types";
 import { isMarketOpenNow, latestExpectedSessionDate, refreshMarketHolidays } from "@/lib/market-calendar.mjs";
 import { loadMomentumBars, loadMomentumPreliminaryBundle, type MomentumBarRow as BarRow } from "@/lib/momentumIgnitionData";
 
-export interface MomentumIgnitionCandidate extends MomentumIgnitionV2Assessment {
+export type MomentumIgnitionCandidateStatus = MomentumIgnitionV2Status | "EXECUTION_BLOCKED";
+
+export interface MomentumIgnitionCandidate extends Omit<MomentumIgnitionV2Assessment, "status"> {
+  status: MomentumIgnitionCandidateStatus;
+  modelStatus: MomentumIgnitionV2Status;
+  executionBlockReason: string | null;
   assetId: string;
   ticker: string;
   name: string | null;
@@ -22,6 +31,27 @@ export interface MomentumIgnitionCandidate extends MomentumIgnitionV2Assessment 
   projectedTarget: number;
   projectedTrail: number;
   projectedDays: number;
+}
+
+export function momentumExecutionBlockReason(input: {
+  entry: number;
+  target: number;
+  stop: number;
+  trail: number;
+}): string | null {
+  if (![input.entry, input.target, input.stop, input.trail].every(Number.isFinite) || input.entry <= 0) {
+    return "Execution levels are incomplete or invalid.";
+  }
+  if (input.stop >= input.entry) {
+    return `Model stop ${input.stop.toFixed(2)} is not below live entry ${input.entry.toFixed(2)}.`;
+  }
+  if (input.trail >= input.entry) {
+    return `Trailing reference ${input.trail.toFixed(2)} is not below live entry ${input.entry.toFixed(2)}.`;
+  }
+  if (input.target <= input.entry) {
+    return `Model target ${input.target.toFixed(2)} is not above live entry ${input.entry.toFixed(2)}.`;
+  }
+  return null;
 }
 
 export interface MomentumIgnitionResult {
@@ -142,8 +172,22 @@ export async function getMomentumIgnitionCandidates(
       : assessment.breakoutLevel - assessment.atr14 * 0.25;
     const projectedStop = Math.max(projectedEntry * 0.97, invalidation);
     const projectedTarget = projectedEntry * (1 + assessment.shortHorizonTargetPct / 100);
+    const executionBlockReason = assessment.status === "MOMENTUM_READY"
+      ? momentumExecutionBlockReason({
+        entry: projectedEntry,
+        target: projectedTarget,
+        stop: projectedStop,
+        trail: projectedStop,
+      })
+      : null;
+    const status: MomentumIgnitionCandidateStatus = executionBlockReason
+      ? "EXECUTION_BLOCKED"
+      : assessment.status;
     candidates.push({
       ...assessment,
+      status,
+      modelStatus: assessment.status,
+      executionBlockReason,
       assetId: row.asset_id,
       ticker: row.ticker,
       name: row.name,
@@ -166,12 +210,13 @@ export async function getMomentumIgnitionCandidates(
 
   const statusRank = {
     MOMENTUM_READY: 0,
-    FIRST_THRUST: 1,
-    RETEST_SETUP: 2,
-    PRE_IGNITION: 3,
-    LATE_PROFIT_BOOKING: 4,
-    FAILED_BREAKOUT: 5,
-    NOT_QUALIFIED: 6,
+    EXECUTION_BLOCKED: 1,
+    FIRST_THRUST: 2,
+    RETEST_SETUP: 3,
+    PRE_IGNITION: 4,
+    LATE_PROFIT_BOOKING: 5,
+    FAILED_BREAKOUT: 6,
+    NOT_QUALIFIED: 7,
   } as const;
   candidates.sort((left, right) =>
     statusRank[left.status] - statusRank[right.status]

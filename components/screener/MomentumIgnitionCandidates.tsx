@@ -1,10 +1,14 @@
 import Link from "next/link";
-import type { MomentumIgnitionCandidate, MomentumIgnitionResult } from "@/lib/momentumIgnition";
-import type { MomentumIgnitionV2Status } from "@/lib/analytics/momentumIgnitionV2";
+import type {
+  MomentumIgnitionCandidate,
+  MomentumIgnitionCandidateStatus,
+  MomentumIgnitionResult,
+} from "@/lib/momentumIgnition";
 import { isMomentumExecutionReady } from "@/lib/momentumExecution";
 
-const STATUS_STYLE: Record<MomentumIgnitionV2Status, string> = {
+const STATUS_STYLE: Record<MomentumIgnitionCandidateStatus, string> = {
   MOMENTUM_READY: "border-emerald-400/35 bg-emerald-400/10 text-emerald-200",
+  EXECUTION_BLOCKED: "border-rose-400/40 bg-rose-400/10 text-rose-200",
   FIRST_THRUST: "border-cyan-400/35 bg-cyan-400/10 text-cyan-200",
   RETEST_SETUP: "border-sky-400/35 bg-sky-400/10 text-sky-200",
   PRE_IGNITION: "border-amber-400/35 bg-amber-400/10 text-amber-200",
@@ -13,8 +17,9 @@ const STATUS_STYLE: Record<MomentumIgnitionV2Status, string> = {
   NOT_QUALIFIED: "border-white/15 bg-white/5 text-white/45",
 };
 
-const STATUS_LABEL: Record<MomentumIgnitionV2Status, string> = {
+const STATUS_LABEL: Record<MomentumIgnitionCandidateStatus, string> = {
   MOMENTUM_READY: "Momentum ready",
+  EXECUTION_BLOCKED: "Execution blocked",
   FIRST_THRUST: "First thrust",
   RETEST_SETUP: "Retest setup",
   PRE_IGNITION: "Pre-ignition",
@@ -112,12 +117,17 @@ function IgnitionCard({ candidate, rank, market, planId }: { candidate: Momentum
         {candidate.timingReasons.map((reason) => <p key={reason}>- {reason}</p>)}
       </div>
 
+      {candidate.executionBlockReason && <div className="mt-3 rounded-md border border-rose-400/30 bg-rose-400/[0.07] px-3 py-2 text-xs leading-relaxed text-rose-100/80">
+        <strong>Do not buy:</strong> {candidate.executionBlockReason} Wait for a fresh actionable plan.
+      </div>}
+
       <div className="mt-3 border-t border-white/8 pt-3">
         {canTrack && planId ? <Link
           href={`/terminal/${market.toLowerCase()}/trade-ledger?${ledgerParams.toString()}`}
           className="inline-flex min-h-11 items-center rounded-lg border border-emerald-400/35 bg-emerald-400/10 px-4 text-sm font-bold text-emerald-200 hover:bg-emerald-400/15"
         >Buy &amp; Track</Link> : <p className="text-[11px] leading-relaxed text-white/38">
-          {canTrack && !planId ? "Trade plan withheld because the current entry, target, or stop geometry is not safely executable."
+          {candidate.status === "EXECUTION_BLOCKED" ? "Buy & Track is disabled because this setup has no valid protective stop below entry."
+            : canTrack && !planId ? "Trade plan is temporarily unavailable. Reload once to request a fresh plan."
             : "Buy & Track unlocks only at Momentum ready after freshness, liquidity, early-timing, volatility and circuit checks pass."}
         </p>}
       </div>
@@ -173,6 +183,7 @@ export default function MomentumIgnitionCandidates({ result, planIds }: { result
   const marketLabel = result.market === "IN" ? "NSE" : "US";
   const ranked = result.candidates.map((candidate, index) => ({ candidate, rank: index + 1 }));
   const momentumReady = ranked.filter(({ candidate }) => isMomentumExecutionReady(candidate.status));
+  const executionBlocked = ranked.filter(({ candidate }) => candidate.status === "EXECUTION_BLOCKED");
   const firstThrust = ranked.filter(({ candidate }) => candidate.status === "FIRST_THRUST");
   const preIgnition = ranked.filter(({ candidate }) => candidate.status === "PRE_IGNITION");
   const retest = ranked.filter(({ candidate }) => candidate.status === "RETEST_SETUP");
@@ -194,9 +205,10 @@ export default function MomentumIgnitionCandidates({ result, planIds }: { result
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-7">
         {[
           ["Momentum ready", momentumReady.length, "text-emerald-300"],
+          ["Execution blocked", executionBlocked.length, "text-rose-200"],
           ["First thrust", firstThrust.length, "text-cyan-200"],
           ["Pre-ignition", preIgnition.length, "text-amber-200"],
           ["Retest setup", retest.length, "text-sky-200"],
@@ -216,6 +228,7 @@ export default function MomentumIgnitionCandidates({ result, planIds }: { result
         ? <div className="rounded-lg border border-white/10 px-4 py-8 text-center text-sm text-white/45">No {marketLabel} stock currently passes the Momentum Ignition discovery floor.</div>
         : <div className="space-y-3">
           <CandidateGroup title="Momentum ready" candidates={momentumReady} planIds={planIds} color="text-emerald-300" market={result.market} defaultOpen />
+          <CandidateGroup title="Execution blocked · do not buy" candidates={executionBlocked} planIds={planIds} color="text-rose-200" market={result.market} defaultOpen />
           <CandidateGroup title="First thrust" candidates={firstThrust} planIds={planIds} color="text-cyan-200" market={result.market} />
           <CandidateGroup title="Pre-ignition" candidates={preIgnition} planIds={planIds} color="text-amber-200" market={result.market} />
           <CandidateGroup title="Retest setup" candidates={retest} planIds={planIds} color="text-sky-200" market={result.market} />
