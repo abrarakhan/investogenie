@@ -1,6 +1,6 @@
 # Quick Start: Credentials and Email Digest
 
-_Source reviewed 25 October 2026 at main revision `42eea8f`._
+_Source reviewed 26 October 2026 through runtime revision `1c7aac3`._
 
 ## 1. Prepare the application
 

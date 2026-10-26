@@ -2,7 +2,7 @@
 
 # Project context
 
-Reviewed 25 October 2026 against main revision `42eea8f`.
+Reviewed 26 October 2026 against runtime revision `1c7aac3`.
 
 Use [README.md](README.md) for setup/routes and [ARCHITECTURE.md](ARCHITECTURE.md) for calculation and persistence boundaries. [STATUS.md](STATUS.md) distinguishes implemented code from unverified runtime state.
 

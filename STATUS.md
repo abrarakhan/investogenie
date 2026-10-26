@@ -1,8 +1,8 @@
 # InvestoGenie Status
 
-_Code review: 25 October 2026. Source revision: `42eea8f3045a0114345d3df00d3733d783ee34d8` on main._
+_Code and production baseline reviewed 26 October 2026 through runtime revision `1c7aac3` on main. This documentation commit does not alter runtime behavior._
 
-This is a repository status reference. No production host, live database, broker account or installed mobile binary was inspected for this update. Earlier deployment dates, account balances and coverage measurements do not establish current runtime state.
+This is a repository status reference. The production web/Breeze services, login endpoint, schema and one candidate scan were checked at revision `1c7aac3`; broker account contents and installed mobile binaries were not inspected. The checks below are a dated baseline, not a guarantee of continuing provider or market-data health.
 
 ## Implemented in the reviewed source
 
@@ -17,6 +17,8 @@ This is a repository status reference. No production host, live database, broker
 - CAS/AMFI fund mapping, AMC disclosures, fund overlap and optional Gmail auto-import.
 - Gmail revoked-grant detection and connection error/reconnect state.
 - Server-authoritative Expo mobile client with ledger mutations, News & AI, candles, biometrics and deduplicated alerts.
+- Completed-session Momentum bases with separately verified live-session quote/OHLCV input, session-aware freshness and explicit execution blocking when evidence is absent.
+- Account-wide candidate observation scans independent of push-token enrollment, persisted status transitions and two-minute Breeze live-target reconciliation.
 - Python ML snapshot/feature/label foundation with golden-vector tests; no complete model training/inference runtime.
 
 ## Latest schema additions
@@ -30,12 +32,23 @@ This is a repository status reference. No production host, live database, broker
 | 0055 | Protected Strong Swing/Momentum execution plans |
 | 0056 | Authoritative results-calendar coverage window |
 | 0057 | Gmail last-error timestamps and reconnect flag |
+| 0058 | Persisted daily screener technical features and forward outcomes |
+| 0059 | Candidate signal observation history |
 
-The shared Linux release script applies an explicit 0033–0057 list. Fresh databases still need the full ordered schema. `scripts/verify-production-schema.mjs` checks required relations plus authoritative-calendar and Gmail-health columns.
+The shared Linux release script applies an explicit 0033–0059 list. Fresh databases still need the full ordered schema. `scripts/verify-production-schema.mjs` checks required relations, including `candidate_signal_observations`, plus authoritative-calendar and Gmail-health columns. After pulling, the release script re-executes the checked-out version once so a migration added in the same release is applied.
+
+## Verified production baseline — 26 October 2026
+
+- Revision `1c7aac3` was checked out cleanly; web and Breeze services were active and `/login` returned HTTP 200.
+- Production dependency audit reported zero known vulnerabilities at the configured severity gate.
+- A candidate scan evaluated 40 candidates for the configured account even without an enabled push token, persisted 40 observations and refreshed live targets.
+- The Breeze worker reconciled its bounded subscriptions from those targets without a restart. These counts describe that verification run only.
 
 ## Current behavior that matters operationally
 
 Armed entries fail closed when live execution evidence or results coverage is missing. India requires `BREEZE_LIVE`; calendar verification can use a complete same-day authoritative NSE window or usable dates under the fallback coverage policy. A successful request with no usable date is insufficient on its own.
+
+Momentum discovery builds patterns from completed sessions and treats the current market session as a separate input. During an open India session, a fresh Breeze quote alone is insufficient: entry-ready classification also requires the matching valid Breeze OHLCV row and positive live volume. A missing or stale live input keeps the setup visible but execution-blocked. Freshness uses expected trading sessions, so weekends and exchange holidays do not create false gaps.
 
 Pending orders are application records, not broker submissions. They carry no holdings/P&L until a user records a confirmed fill. Each partial fill becomes a separate purchased ledger trade while the remainder stays pending.
 
@@ -68,7 +81,7 @@ The Linux release runs production dependency audit, build and schema verificatio
 
 ## Remaining work and runtime checks
 
-- Verify the deployed revision and schema through 0057 on the intended host.
+- Reconfirm the deployed revision, services and schema through 0059 after each release.
 - Inspect Data Health, quote/depth freshness, calendar coverage and provider failures.
 - Review unresolved CAS/fund mappings and Gmail documents needing manual review.
 - Confirm daily Breeze session validity and separately authorized buying limits.

@@ -1,6 +1,6 @@
 # InvestoGenie Mobile Privacy
 
-_Source behavior reviewed 25 October 2026 at main revision `42eea8f`._
+_Source behavior reviewed 26 October 2026 through runtime revision `1c7aac3`._
 
 InvestoGenie Mobile connects to the owner's configured InvestoGenie server.
 
@@ -12,6 +12,8 @@ InvestoGenie Mobile connects to the owner's configured InvestoGenie server.
 - Ready-candidate notifications include the stock ticker, readiness state and engine name.
   Expo push delivery receives that text and the device push token. Detailed prices, quantities,
   portfolio values and broker data are excluded from these payloads.
+- Server candidate evaluation and status-observation storage occur for an account even when it has
+  no enabled Expo token. Token enrollment controls push delivery, not server-side monitoring.
 - Biometric checks use platform authentication; the app does not receive or store biometric
   templates. Device fallback may be used where supported.
 - Mobile purchase/sale actions record ledger events. They do not directly submit broker orders.

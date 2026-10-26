@@ -1,6 +1,6 @@
 # InvestoGenie Architecture
 
-_Source reviewed 25 October 2026 at main revision `42eea8f`; runtime deployment state was not inspected._
+_Source and production baseline reviewed 26 October 2026 through runtime revision `1c7aac3`._
 
 ## System flow
 
@@ -34,7 +34,7 @@ The web stack is Next.js 16.4.2 App Router, React 19.2.4 and TypeScript. Postgre
 | `pipelines/`, `workers/` | Python ingestion and broker workers |
 | `pipelines/ml/` | Deterministic ML feature collection and labels |
 | `scripts/` | Scheduling, ingestion and operational checks |
-| `db/migrations/` | Ordered schema through 0057 |
+| `db/migrations/` | Ordered schema through 0059 |
 | `mobile/` | Isolated React Native client |
 | `deploy/` | macOS and Ubuntu service/deployment packages |
 
@@ -103,7 +103,7 @@ Training, calibration, inference, model promotion and drift-response automation 
 
 Ubuntu packages use systemd, Nginx, external environment configuration and private PostgreSQL. The historical `deploy/oracle/` path also supports AWS hosts. macOS uses launchd and optional Tailscale access.
 
-The release script fetches main, installs/audits/builds/prunes Node dependencies, installs Python requirements, applies an explicit 0033–0057 migration list, verifies required schema, installs service units, restarts and checks login. It assumes the earlier schema and does not execute lint/tests.
+The release script fetches main, then re-executes the checked-out script once so the current release logic is used. It installs/audits/builds/prunes Node dependencies, installs Python requirements, applies an explicit 0033–0059 migration list, verifies required schema including candidate observations, installs service units, restarts and checks login. It assumes the earlier schema and does not execute lint/tests.
 
 Use `npm test`, `npm run lint`, `npm run build` and deployment checks before promotion. Mobile has separate typecheck/release validation; Python suites need separate execution. Runtime coverage, installed builds and production revision require host/database inspection.
 

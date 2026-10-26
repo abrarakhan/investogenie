@@ -1,6 +1,6 @@
 # InvestoGenie Mobile
 
-_Source reviewed 25 October 2026 at main revision `42eea8f`._
+_Source reviewed 26 October 2026 through runtime revision `1c7aac3`._
 
 Android/iOS companion using server-ranked Strong Swing, News & AI Swing and Trade Ledger results.
 The client does not reproduce financial analytics.
@@ -41,6 +41,9 @@ record trades; they do not directly submit broker orders.
 Ledger alerts are generic. Ready-candidate messages include ticker, readiness and engine for
 Strong Swing, legacy Momentum Ignition and Momentum Ignition V2. Expo receives notification text
 and push tokens, but no detailed prices, quantities, portfolio values or broker data.
+Server scans still evaluate and persist candidate status observations when no Expo token is enabled;
+token registration affects delivery only. During an open India session, Momentum readiness is
+server-authoritative and requires verified fresh Breeze quote and live OHLCV evidence.
 See [privacy](PRIVACY.md).
 
 ## Local builds and configuration

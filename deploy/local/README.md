@@ -1,6 +1,6 @@
 # Local macOS deployment
 
-_Source reviewed 25 October 2026 at main revision `42eea8f`; this guide covers the local macOS package._
+_Source reviewed 26 October 2026 through runtime revision `1c7aac3`; this guide covers the local macOS package._
 
 Local mode is the development and data-workstation deployment. It uses the
 Mac's PostgreSQL instance and `.env.local`; it does not read Oracle production
@@ -37,7 +37,7 @@ npm run deploy:check:local
 ```
 
 Confirm every migration completed before starting. The schema extends through
-`0057_gmail_connection_health.sql`. Existing databases require applying only their missing
+`0059_candidate_signal_observations.sql`. Existing databases require applying only their missing
 migrations in order; inspect their schema and take a backup first. `npm run dev` does not
 automatically apply the complete migration chain.
 

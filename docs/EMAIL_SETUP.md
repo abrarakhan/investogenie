@@ -1,6 +1,6 @@
 # Email Digest Setup
 
-_Source reviewed 25 October 2026 at main revision `42eea8f`._
+_Source reviewed 26 October 2026 through runtime revision `1c7aac3`._
 
 The daily digest uses the same server sources as India Strong Swing and Probability. Each enabled section includes up to five rows. Email delivery does not place orders.
 

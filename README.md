@@ -2,7 +2,7 @@
 
 InvestoGenie is a self-hosted market research and trade-management application for Indian and US equities. Next.js serves the web terminal and mobile APIs; PostgreSQL stores market data, user portfolios, frozen trade plans and operational history.
 
-_Code reference reviewed 25 October 2026 against main revision `42eea8f3045a0114345d3df00d3733d783ee34d8`. This review describes repository behavior; it does not verify a running production deployment or database._
+_Code and production baseline reviewed 26 October 2026 through runtime revision `1c7aac3`. See [STATUS.md](STATUS.md) for the dated verification boundary._
 
 ## Workspaces
 
@@ -57,7 +57,7 @@ python3 -m venv .venv
 .venv/bin/pip install -r pipelines/requirements.txt -r workers/requirements.txt
 ```
 
-Create the database named in `DATABASE_URL`. Set distinct random `SESSION_SECRET`, `CRON_SECRET` and `CREDENTIAL_ENCRYPTION_KEY` values. Set one nonempty `NEXT_PUBLIC_APP_URL` (the example currently lists it twice). For a fresh database, apply the ordered SQL migrations before starting; see [local setup](deploy/local/README.md).
+Create the database named in `DATABASE_URL`. Set distinct random `SESSION_SECRET`, `CRON_SECRET` and `CREDENTIAL_ENCRYPTION_KEY` values. Set one nonempty `NEXT_PUBLIC_APP_URL` (the example currently contains two declarations, so remove or replace the blank one). For a fresh database, apply the ordered SQL migrations before starting; see [local setup](deploy/local/README.md).
 
 ```bash
 npm run deploy:check:local
@@ -82,6 +82,6 @@ npm run lint
 npm run build
 ```
 
-Database checks need a configured PostgreSQL instance. Linux releases use `deploy/oracle/deploy-release.sh`; it applies its explicit migration list from 0033 through 0057 and assumes the earlier schema already exists. It runs dependency audit/build/schema checks, but does not run the test suite.
+Database checks need a configured PostgreSQL instance. Linux releases use `deploy/oracle/deploy-release.sh`; it applies its explicit migration list from 0033 through 0059 and assumes the earlier schema already exists. After updating the checkout, it re-executes the checked-out release script once so same-release migration additions are honored. It runs dependency audit/build/schema checks, but does not run the test suite.
 
 See [architecture](ARCHITECTURE.md), [capabilities](CAPABILITIES.md), [status](STATUS.md), [deployment](DEPLOYMENT.md), [Stock Screener](README-screener.md), [email setup](docs/EMAIL_SETUP.md), and [mobile](mobile/README.md).

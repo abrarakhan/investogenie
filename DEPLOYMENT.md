@@ -1,6 +1,6 @@
 # InvestoGenie Deployment Targets
 
-_Source reviewed 25 October 2026 against main revision `42eea8f`; live hosts were not inspected._
+_Source and production release path reviewed 26 October 2026 through runtime revision `1c7aac3`._
 
 InvestoGenie supports local development/fallback and AWS production from the same Git revision.
 
@@ -41,9 +41,11 @@ credentials require the original credential-encryption key.
 6. Verify HTTPS, Data Health, scheduler logs, and a fresh PostgreSQL backup.
 
 The release script installs locked build dependencies, rejects high-severity production dependency
-findings, builds the app, applies replay-safe migrations from `0033_breeze_credentials.sql` through `0057_gmail_connection_health.sql`,
-verifies required broker, news, mobile, allocation, ML, corporate-calendar, Armed/pending/execution-plan relations and calendar/Gmail columns, prunes development
+findings, builds the app, applies replay-safe migrations from `0033_breeze_credentials.sql` through `0059_candidate_signal_observations.sql`,
+verifies required broker, news, mobile, allocation, ML, corporate-calendar, Armed/pending/execution-plan, screener and candidate-observation relations and calendar/Gmail columns, prunes development
 dependencies, and restarts both application services.
+
+The launcher first updates the checkout, then re-executes the checked-out release script once under `INVESTOGENIE_DEPLOY_REEXEC=1`. This ensures a release that changes the deploy script or migration list uses the new version for that same deployment.
 
 Application code is shared; environment files, databases, service management,
 and operational limits remain target-specific.
