@@ -30,6 +30,20 @@ export interface StoredExecutionPlan extends ExecutionPlanInput {
 const hashPlan = (market: "IN" | "US", sessionDate: string, plan: ExecutionPlanInput) =>
   createHash("sha256").update(JSON.stringify([market, sessionDate, plan])).digest("hex");
 
+/**
+ * Fail closed before a malformed candidate can abort the whole candidate page.
+ * The database repeats the critical constraints; this guard keeps one unsafe
+ * plan from preventing every otherwise-valid candidate from rendering.
+ */
+export function isExecutablePlanGeometry(plan: ExecutionPlanInput): boolean {
+  return Number.isFinite(plan.entry) && plan.entry > 0
+    && Number.isFinite(plan.target) && plan.target > plan.entry
+    && Number.isFinite(plan.stop) && plan.stop >= 0 && plan.stop < plan.entry
+    && (plan.trail === null || (Number.isFinite(plan.trail) && plan.trail >= 0 && plan.trail < plan.entry))
+    && Number.isFinite(plan.atr) && plan.atr >= 0
+    && Number.isInteger(plan.expectedDays) && plan.expectedDays >= 1 && plan.expectedDays <= 365;
+}
+
 export async function captureExecutionPlans(
   userId: string,
   market: "IN" | "US",
@@ -37,8 +51,9 @@ export async function captureExecutionPlans(
   plans: readonly ExecutionPlanInput[],
   trailAtrMult: number,
 ): Promise<Map<string, string>> {
-  if (!plans.length) return new Map();
-  const payload = plans.map((plan) => ({
+  const executablePlans = plans.filter(isExecutablePlanGeometry);
+  if (!executablePlans.length) return new Map();
+  const payload = executablePlans.map((plan) => ({
     ...plan,
     planHash: hashPlan(market, sessionDate, plan),
     trailingDistance: trailAtrMult * plan.atr,

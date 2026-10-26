@@ -160,10 +160,12 @@ function CandidateCard({ candidate, planId }: { candidate: StrongSwingCandidate;
               disabled
               className="inline-flex min-h-11 cursor-not-allowed items-center rounded-lg border border-white/10 bg-white/[0.025] px-4 text-sm font-bold text-white/30"
             >
-              {candidate.status === "EXECUTION_READY" ? "Plan unavailable — reload" : blockedBuyLabel[candidate.status]}
+              {candidate.status === "EXECUTION_READY" ? "Unsafe plan withheld" : blockedBuyLabel[candidate.status]}
             </button>
             <p className="mt-2 text-[11px] leading-relaxed text-white/38">
-              Buy &amp; Track unlocks only after every technical and execution-safety gate passes.
+              {candidate.status === "EXECUTION_READY" && !planId
+                ? "The current entry, target, or stop geometry is not safely executable."
+                : "Buy & Track unlocks only after every technical and execution-safety gate passes."}
             </p>
           </>
         )}

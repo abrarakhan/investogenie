@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { protectedExecutionEditViolation, validateExecutionPlanPurchase, type StoredExecutionPlan } from "@/lib/swingExecutionPlans";
+import {
+  isExecutablePlanGeometry,
+  protectedExecutionEditViolation,
+  validateExecutionPlanPurchase,
+  type ExecutionPlanInput,
+  type StoredExecutionPlan,
+} from "@/lib/swingExecutionPlans";
 
 const plan = (overrides: Partial<StoredExecutionPlan> = {}): StoredExecutionPlan => ({
   id: "00000000-0000-0000-0000-000000000001", assetId: "asset-1", market: "IN",
@@ -32,5 +38,18 @@ describe("protected swing execution plans", () => {
     expect(protectedExecutionEditViolation("STRONG_SWING", 100, 99)).toMatch(/recorded entry/);
     expect(protectedExecutionEditViolation("MOMENTUM_IGNITION", 100, 101)).toBeNull();
     expect(protectedExecutionEditViolation("DEFAULT_SWING", 100, 50)).toBeNull();
+  });
+
+  it("fails closed when a candidate produces unsafe execution geometry", () => {
+    const input: ExecutionPlanInput = {
+      assetId: "asset-1", strategyKey: "MOMENTUM_IGNITION", status: "MOMENTUM_READY",
+      entry: 1241.6, target: 1303.68, stop: 1200, trail: 1200, atr: 53.8,
+      expectedDays: 1, signalAsOf: "2026-10-26", score: 0.85, snapshot: {},
+    };
+
+    expect(isExecutablePlanGeometry(input)).toBe(true);
+    expect(isExecutablePlanGeometry({ ...input, stop: 1254.55 })).toBe(false);
+    expect(isExecutablePlanGeometry({ ...input, trail: 1254.55 })).toBe(false);
+    expect(isExecutablePlanGeometry({ ...input, target: input.entry })).toBe(false);
   });
 });
