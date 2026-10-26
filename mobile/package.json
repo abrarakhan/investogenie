@@ -5,13 +5,14 @@
   "main": "expo/AppEntry",
   "scripts": {
     "start": "expo start",
-    "android": "expo start --android",
-    "ios": "expo start --ios",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
     "typecheck": "tsc --noEmit",
     "validate:release": "node scripts/validate-release.mjs",
     "prebuild": "expo prebuild --clean",
     "build:android:release": "npm run validate:release && expo prebuild --platform android --clean && cd android && ./gradlew assembleRelease",
-    "build:ios:release": "npm run validate:release && expo prebuild --platform ios --clean && expo run:ios --configuration Release --no-bundler"
+    "build:ios:release": "npm run validate:release && expo prebuild --platform ios --clean && expo run:ios --configuration Release --no-bundler",
+    "test:plugins": "node --test plugins/withSceneLifecycle.test.js"
   },
   "dependencies": {
     "expo": "~57.0.24",

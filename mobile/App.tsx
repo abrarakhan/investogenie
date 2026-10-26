@@ -78,7 +78,7 @@ function Login({ onLogin }: { onLogin: (user: MobileUser) => void }) {
   const configurationError = apiConfigurationError();
   const submit = async () => {
     setBusy(true); setError("");
-    try { onLogin(await login(email, password)); }
+    try { onLogin(await login(email.trim(), password)); }
     catch (cause) { setError(message(cause, "Sign in failed")); }
     finally { setBusy(false); }
   };
@@ -87,8 +87,8 @@ function Login({ onLogin }: { onLogin: (user: MobileUser) => void }) {
     <Text style={styles.eyebrow}>MOBILE TERMINAL</Text><Text style={styles.title}>Sign in</Text>
     <Text style={styles.muted}>Use the same account as the InvestoGenie web terminal.</Text>
     {!!configurationError && <Text style={styles.error}>{configurationError}</Text>}
-    <Field value={email} onChangeText={setEmail} placeholder="Email" keyboard="email-address" />
-    <Field value={password} onChangeText={setPassword} placeholder="Password" secure />
+    <Field value={email} onChangeText={setEmail} placeholder="Email" keyboard="email-address" autofill="username" />
+    <Field value={password} onChangeText={setPassword} placeholder="Password" secure autofill="password" />
     {!!error && <Text style={styles.error}>{error}</Text>}
     <Action label="Open terminal" busy={busy} disabled={!!configurationError} onPress={submit} />
   </ScrollView>;
@@ -258,7 +258,7 @@ function SaleForm({ trade, sale, market, onClose, onSaved }: { trade: LedgerTrad
 }
 
 function Sheet({ visible, title, onClose, children }: { visible: boolean; title: string; onClose: () => void; children: React.ReactNode }) { return <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}><View style={styles.modalBackdrop}><View style={styles.sheet}><View style={styles.rowBetween}><Text style={styles.sectionTitle}>{title}</Text><Pressable onPress={onClose}><Text style={styles.link}>Close</Text></Pressable></View>{children}</View></View></Modal>; }
-function Field({ value, onChangeText, placeholder, keyboard, secure }: { value: string; onChangeText: (value: string) => void; placeholder: string; keyboard?: "email-address" | "decimal-pad"; secure?: boolean }) { return <TextInput style={styles.input} value={value} onChangeText={onChangeText} placeholder={placeholder} placeholderTextColor="#697078" autoCapitalize="none" keyboardType={keyboard} secureTextEntry={secure} />; }
+function Field({ value, onChangeText, placeholder, keyboard, secure, autofill }: { value: string; onChangeText: (value: string) => void; placeholder: string; keyboard?: "email-address" | "decimal-pad"; secure?: boolean; autofill?: "username" | "password" }) { return <TextInput style={styles.input} value={value} onChangeText={onChangeText} placeholder={placeholder} placeholderTextColor="#697078" autoCapitalize="none" autoCorrect={false} keyboardType={keyboard} secureTextEntry={secure} textContentType={autofill} autoComplete={autofill === "password" ? "current-password" : autofill} />; }
 function Action({ label, onPress, busy = false, disabled = false }: { label: string; onPress: () => void; busy?: boolean; disabled?: boolean }) { return <Pressable style={[styles.primary, disabled && styles.disabled]} onPress={onPress} disabled={busy || disabled}>{busy ? <ActivityIndicator color="#04110d" /> : <Text style={styles.primaryText}>{label}</Text>}</Pressable>; }
 const SmallAction = ({ label, onPress, destructive }: { label: string; onPress: () => void; destructive?: boolean }) => <Pressable style={styles.smallAction} onPress={onPress}><Text style={destructive ? styles.badValue : styles.link}>{label}</Text></Pressable>;
 const Centered = ({ children }: { children: React.ReactNode }) => <View style={styles.center}>{children}</View>;

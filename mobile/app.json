@@ -38,7 +38,8 @@
           "faceIDPermission": "Allow InvestoGenie to protect your signed-in session."
         }
       ],
-      "expo-notifications"
+      "expo-notifications",
+      "./plugins/withSceneLifecycle"
     ],
     "extra": {
       "eas": {
