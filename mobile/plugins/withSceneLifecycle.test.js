@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-require-imports -- Expo config plugins load as CommonJS. */
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { adoptSceneDelegate } = require("./withSceneLifecycle");

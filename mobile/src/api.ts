@@ -232,3 +232,47 @@ export function updateSale(tradeId: string, saleId: string, input: {
 }) {
   return request<{ ok: true }>(`/api/v1/mobile/trade-ledger/${tradeId}/sales/${saleId}`, { method: "PATCH", body: JSON.stringify(input) });
 }
+
+// ---- Server-driven screens -----------------------------------------------------------------
+// Mirrors lib/mobileScreens.ts. The server computes and formats every value; the app renders
+// these cards as-is, so new screens or fields ship without an Android or iOS release.
+
+export type ScreenTone = "positive" | "negative" | "warning" | "neutral";
+
+export interface ScreenCatalogEntry { key: string; title: string; tabLabel: string; kind: "native" | "cards" }
+
+export interface ScreenCard {
+  id: string;
+  title: string;
+  subtitle: string;
+  badge: { label: string; tone: ScreenTone } | null;
+  score: string | null;
+  metrics: Array<{ label: string; value: string; tone?: ScreenTone }>;
+  footer: string | null;
+  chartTicker: string | null;
+  guidance: string | null;
+  sections: Array<{ title: string; rows: Array<{ label: string; value?: string; detail?: string; passed?: boolean }> }>;
+}
+
+export interface ScreenOption { param: string; label: string; value: string; choices: Array<{ value: string; label: string }> }
+
+export interface MobileScreen {
+  key: string;
+  title: string;
+  subtitle: string;
+  generatedAt: string;
+  summary: string | null;
+  notice: string | null;
+  options: ScreenOption[];
+  searchable: boolean;
+  cards: ScreenCard[];
+}
+
+export function getScreenCatalog() {
+  return request<{ screens: ScreenCatalogEntry[] }>("/api/v1/mobile/screens");
+}
+
+export function getScreen(key: string, market: Market, params: Record<string, string> = {}) {
+  const query = new URLSearchParams({ ...params, market });
+  return request<MobileScreen>(`/api/v1/mobile/screens/${encodeURIComponent(key)}?${query.toString()}`);
+}

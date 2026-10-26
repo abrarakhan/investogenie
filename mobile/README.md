@@ -27,6 +27,8 @@ expire after 30 days. Sign-out revokes the device session and disables its push 
 ## Implemented surfaces
 
 - Login, India/US selection and Strong Swing gate detail.
+- Stock Screener (server sort and search), Swing Candidates (strategy filter), Armed Strong Swing
+  (buy-stop plan and gates, read-only) and Long-Term Candidates (investor filter).
 - Server-ranked News & AI candidates with evidence links.
 - Ledger purchase creation, edit/delete, partial/final sales and sale correction.
 - Server-calculated capital employed, P&L, ROI and XIRR.
@@ -34,8 +36,8 @@ expire after 30 days. Sign-out revokes the device session and disables its push 
 - Biometric session re-entry when available.
 - Opt-in ledger state-change and ready-candidate notifications (Android; iOS push is off for now).
 
-Adaptive Allocation and Armed Swing do not have dedicated mobile API/workspace routes in this
-revision. Web pending buy-stop recording is likewise a separate workflow. Mobile ledger entries
+Adaptive Allocation does not have a mobile route in this revision. Armed Swing pending buy-stop
+orders and fills are recorded on the web terminal. Mobile ledger entries
 record trades; they do not directly submit broker orders.
 
 ## Local release builds
@@ -101,6 +103,12 @@ push-relay dependence. No Expo Updates package is declared.
 ## Server API
 
 Versioned endpoints under `/api/v1/mobile/` provide auth login/logout, me, Strong Swing, News & AI,
-ledger and nested sale mutations, asset search, candles and push-token registration. The server
+ledger and nested sale mutations, asset search, candles and push-token registration.
+
+`GET /api/v1/mobile/screens` returns the tab list and `GET /api/v1/mobile/screens/{key}` returns a
+server-built screen: cards whose values are already computed and formatted, plus option chips and
+detail sections. Both apps render these with one generic view (`CardScreen` in `App.tsx`), so a new
+read-only screen is added in `lib/mobileScreens.ts` on the server without an Android or iOS change.
+Screens that mutate data (Strong Swing trade logging, the ledger) stay as dedicated views. The server
 enforces authentication and owns projections/ranking. Verify API compatibility and installed
 binary behavior on physical devices before distribution.

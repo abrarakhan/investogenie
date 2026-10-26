@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-require-imports -- Expo config plugins load as CommonJS. */
 // Adopt the UIKit scene-based life cycle, which the iOS 27 SDK requires at launch: an app built
 // with it and no scene manifest fails with "UIScene life cycle is required for apps built with
 // this SDK". Expo SDK 57 ships `ExpoAppSceneDelegate` (Objective-C name EXExpoAppSceneDelegate)
