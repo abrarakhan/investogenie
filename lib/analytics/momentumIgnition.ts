@@ -316,10 +316,10 @@ export function assessMomentumIgnition(input: MomentumIgnitionInput): MomentumIg
     benchmarkLatest && benchmarkSma50 !== null && benchmarkSma50Prior !== null
       && benchmarkLatest.close > benchmarkSma50 && benchmarkSma50 > benchmarkSma50Prior,
   );
-  const dateGap = benchmarkLatest
-    ? Math.abs(Date.parse(`${latest.date}T00:00:00Z`) - Date.parse(`${benchmarkLatest.date}T00:00:00Z`)) / 86_400_000
+  const sessionGap = benchmarkLatest
+    ? observedTradingSessionDistance(latest.date, benchmarkLatest.date, bars, input.benchmarkBars)
     : Number.POSITIVE_INFINITY;
-  const dataFresh = dateGap <= 1;
+  const dataFresh = sessionGap <= 1;
 
   const trendAligned = Boolean(
     input.currentPrice > sma20 && sma20 > sma50 && sma50 > sma200

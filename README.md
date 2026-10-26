@@ -70,6 +70,8 @@ Open `http://localhost:3000`. Both `npm run dev` and `npm start` run the schedul
 
 The wrapper coordinates market-hours quotes, EOD ingestion, history repair, fundamentals, macro, AMFI, scans, forward tests, news, email, mobile alerts, Gmail processing, results calendars and scheduled ML snapshots. Breeze supplies live India data; exchange Bhavcopy, Yahoo/Google and FRED support the other ingestion paths. News providers include Marketaux, GNews, NewsAPI and Alpha Vantage.
 
+Momentum scans run during market hours even when an account has no registered push device. India actionability uses a separately verified current-session Breeze OHLCV/volume bar; completed history remains immutable during the session. Candidate state changes are retained for audit, while push delivery still requires an enabled mobile token.
+
 The ML implementation is a Python feature/label foundation and lifecycle schema. The repository does not include a complete training, promotion or inference pipeline. See [ML methodology](docs/ml-methodology.md).
 
 ## Verification and deployment

@@ -14,6 +14,8 @@ export interface MomentumPreliminaryRow {
   base_verdict: string | null;
   strong_status: string | null;
   strong_captured_at: string | null;
+  quote_source: string | null;
+  quote_updated_at: string;
 }
 
 export interface MomentumBarRow {
@@ -25,6 +27,7 @@ export interface MomentumBarRow {
   close: string | number;
   volume: string | number;
   open_interest: string | number | null;
+  source?: string | null;
 }
 
 const preliminarySql = (market: "IN" | "US") => {
@@ -43,17 +46,19 @@ const preliminarySql = (market: "IN" | "US") => {
            row_number() over(partition by o.asset_id order by o.date desc) rn
       from public.daily_ohlcv o join universe u on u.id=o.asset_id
      where o.date >= current_date - interval '420 days'
+       and not ($6::boolean and o.date >= $7::date)
   ), stats as (
     select asset_id,count(*) filter(where rn<=200) history_count,
            max(date) filter(where rn=1) latest_date,max(close) filter(where rn=1) last_close,
            avg(close) filter(where rn<=20) sma20,avg(close) filter(where rn<=50) sma50,
            avg(close) filter(where rn<=200) sma200,
-           max(high) filter(where rn between 2 and 21) breakout_level,
-           avg(close*volume) filter(where rn between 2 and 21) traded_value20
+           max(high) filter(where rn<=20) breakout_level,
+           avg(close*volume) filter(where rn<=20) traded_value20
       from ranked where rn<=220 group by asset_id
   )
   select u.id asset_id,u.ticker,u.name,u.exchange,
          q.price current_price,q.change_pct quote_change_pct,q.as_of::text quote_as_of,
+         q.source quote_source,q.updated_at::text quote_updated_at,
          st.latest_date::text latest_date,s.score base_score,s.verdict base_verdict,
          strong.status strong_status,strong.captured_at::text strong_captured_at
     from universe u join stats st on st.asset_id=u.id
@@ -80,6 +85,7 @@ export const loadMomentumPreliminaryBundle = cache(async (
   market: "IN" | "US",
   expectedSessionDate: string,
   marketOpen: boolean,
+  sessionDate: string,
   priceFloor: number,
   preliminaryLiquidityFloor: number,
   benchmarkTickersKey: string,
@@ -96,6 +102,7 @@ export const loadMomentumPreliminaryBundle = cache(async (
     ),
     query<MomentumPreliminaryRow>(preliminarySql(market), [
       expectedSessionDate, marketOpen, priceFloor, preliminaryLiquidityFloor, market,
+      marketOpen, sessionDate,
     ]),
     query<MomentumBarRow>(
       `with chosen as (
@@ -105,22 +112,41 @@ export const loadMomentumPreliminaryBundle = cache(async (
        )
        select o.asset_id,o.date::text date,o.open,o.high,o.low,o.close,o.volume,o.open_interest
          from public.daily_ohlcv o join chosen c on c.id=o.asset_id
+        where not ($3::boolean and o.date >= $4::date)
         order by o.date desc limit 260`,
-      [market, benchmarkTickers],
+      [market, benchmarkTickers, marketOpen, sessionDate],
     ),
   ]);
   return { countRows, preliminary, benchmarkRows };
 });
 
 /** Request-scoped reuse for the identical 260-bar histories consumed by both models. */
-export const loadMomentumBars = cache(async (assetIdsKey: string) => {
+export const loadMomentumBars = cache(async (
+  assetIdsKey: string,
+  marketOpen = false,
+  sessionDate = "1970-01-01",
+) => {
   const ids = JSON.parse(assetIdsKey) as string[];
   return query<MomentumBarRow>(
     `select asset_id,date::text date,open,high,low,close,volume,open_interest
        from (
          select o.*,row_number() over(partition by asset_id order by date desc) rn
            from public.daily_ohlcv o where asset_id=any($1::uuid[])
+             and not ($2::boolean and o.date >= $3::date)
        ) ranked where rn<=260 order by asset_id,date`,
-    [ids],
+    [ids, marketOpen, sessionDate],
+  );
+});
+
+/** Current-session bars are kept separate from the completed history so a
+ * missing live bar can never make the previous close masquerade as live OHLCV. */
+export const loadMomentumLiveBars = cache(async (assetIdsKey: string, sessionDate: string) => {
+  const ids = JSON.parse(assetIdsKey) as string[];
+  if (!ids.length) return [] as MomentumBarRow[];
+  return query<MomentumBarRow>(
+    `select asset_id,date::text date,open,high,low,close,volume,open_interest,source
+       from public.daily_ohlcv
+      where asset_id=any($1::uuid[]) and date=$2::date`,
+    [ids, sessionDate],
   );
 });

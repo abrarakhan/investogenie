@@ -6,7 +6,12 @@ import {
 import type { SwingSettings } from "@/lib/settings";
 import type { OHLCV } from "@/lib/types";
 import { isMarketOpenNow, latestExpectedSessionDate, refreshMarketHolidays } from "@/lib/market-calendar.mjs";
-import { loadMomentumBars, loadMomentumPreliminaryBundle, type MomentumBarRow as BarRow } from "@/lib/momentumIgnitionData";
+import {
+  loadMomentumBars,
+  loadMomentumLiveBars,
+  loadMomentumPreliminaryBundle,
+  type MomentumBarRow as BarRow,
+} from "@/lib/momentumIgnitionData";
 
 export type MomentumIgnitionCandidateStatus = MomentumIgnitionV2Status | "EXECUTION_BLOCKED";
 
@@ -14,6 +19,7 @@ export interface MomentumIgnitionCandidate extends Omit<MomentumIgnitionV2Assess
   status: MomentumIgnitionCandidateStatus;
   modelStatus: MomentumIgnitionV2Status;
   executionBlockReason: string | null;
+  liveDataVerified: boolean;
   assetId: string;
   ticker: string;
   name: string | null;
@@ -21,6 +27,7 @@ export interface MomentumIgnitionCandidate extends Omit<MomentumIgnitionV2Assess
   currentPrice: number;
   quoteChangePct: number | null;
   quoteAsOf: string;
+  quoteUpdatedAt: string;
   latestDate: string;
   baseScore: number;
   baseVerdict: string;
@@ -127,9 +134,10 @@ export async function getMomentumIgnitionCandidates(
   await refreshMarketHolidays(market);
   const expectedSessionDate = latestExpectedSessionDate(market);
   const marketOpen = isMarketOpenNow(market);
+  const session = marketSession(market);
 
   const { countRows, preliminary, benchmarkRows } = await loadMomentumPreliminaryBundle(
-    market, expectedSessionDate, marketOpen, config.priceFloor,
+    market, expectedSessionDate, marketOpen, session.date, config.priceFloor,
     config.preliminaryLiquidityFloor, JSON.stringify(config.benchmarkTickers),
   );
   const universeScanned = Number(countRows[0]?.count ?? 0);
@@ -138,24 +146,43 @@ export async function getMomentumIgnitionCandidates(
   }
 
   const ids = preliminary.map((row) => row.asset_id);
-  const barRows = await loadMomentumBars(JSON.stringify(ids));
+  const idsKey = JSON.stringify(ids);
+  const [barRows, liveRows] = await Promise.all([
+    loadMomentumBars(idsKey, marketOpen, session.date),
+    marketOpen ? loadMomentumLiveBars(idsKey, session.date) : Promise.resolve([]),
+  ]);
   const barsByAsset = new Map<string, OHLCV[]>();
   for (const row of barRows) {
     const bars = barsByAsset.get(row.asset_id) ?? [];
     bars.push(toBar(row));
     barsByAsset.set(row.asset_id, bars);
   }
+  const liveByAsset = new Map(liveRows.map((row) => [row.asset_id, row]));
   const benchmarkBars = benchmarkRows.map(toBar).reverse();
-  const session = marketSession(market);
   const candidates: MomentumIgnitionCandidate[] = [];
   for (const row of preliminary) {
-    const bars = barsByAsset.get(row.asset_id) ?? [];
-    if (bars.length < 10) continue;
+    const completedBars = barsByAsset.get(row.asset_id) ?? [];
+    if (completedBars.length < 10) continue;
+    const quoteAgeMs = Date.now() - Date.parse(row.quote_updated_at);
+    const authoritativeQuote = market !== "IN" || row.quote_source === "BREEZE_LIVE";
+    const liveRow = liveByAsset.get(row.asset_id);
+    const liveDataVerified = !marketOpen || Boolean(
+      liveRow
+      && (market !== "IN" || liveRow.source === "BREEZE_LIVE")
+      && authoritativeQuote
+      && Number.isFinite(quoteAgeMs)
+      && quoteAgeMs >= 0
+      && quoteAgeMs <= 5 * 60_000
+      && Number(liveRow.volume) > 0,
+    );
+    const bars = liveDataVerified && marketOpen && liveRow
+      ? [...completedBars, toBar(liveRow)]
+      : completedBars;
     const assessment = assessMomentumIgnitionV2({
       currentPrice: Number(row.current_price),
       bars,
       benchmarkBars,
-      currentSessionVolume: session.open && bars.at(-1)?.date === session.date,
+      currentSessionVolume: marketOpen && liveDataVerified,
       sessionProgressFraction: session.progress,
       benchmarkLabel: config.benchmarkLabel,
       liquidityFloor: config.liquidityFloor,
@@ -172,14 +199,17 @@ export async function getMomentumIgnitionCandidates(
       : assessment.breakoutLevel - assessment.atr14 * 0.25;
     const projectedStop = Math.max(projectedEntry * 0.97, invalidation);
     const projectedTarget = projectedEntry * (1 + assessment.shortHorizonTargetPct / 100);
-    const executionBlockReason = assessment.status === "MOMENTUM_READY"
-      ? momentumExecutionBlockReason({
+    const executionBlockReason = marketOpen && !liveDataVerified
+      && Number(row.current_price) >= assessment.entryTrigger
+      ? "Fresh authoritative intraday OHLCV and cumulative volume are unavailable."
+      : assessment.status === "MOMENTUM_READY"
+        ? momentumExecutionBlockReason({
         entry: projectedEntry,
         target: projectedTarget,
         stop: projectedStop,
         trail: projectedStop,
-      })
-      : null;
+        })
+        : null;
     const status: MomentumIgnitionCandidateStatus = executionBlockReason
       ? "EXECUTION_BLOCKED"
       : assessment.status;
@@ -188,6 +218,7 @@ export async function getMomentumIgnitionCandidates(
       status,
       modelStatus: assessment.status,
       executionBlockReason,
+      liveDataVerified,
       assetId: row.asset_id,
       ticker: row.ticker,
       name: row.name,
@@ -195,6 +226,7 @@ export async function getMomentumIgnitionCandidates(
       currentPrice: Number(row.current_price),
       quoteChangePct: row.quote_change_pct === null ? null : Number(row.quote_change_pct),
       quoteAsOf: row.quote_as_of,
+      quoteUpdatedAt: row.quote_updated_at,
       latestDate: row.latest_date,
       baseScore: Number(row.base_score ?? 0),
       baseVerdict: row.base_verdict ?? "NO_SETUP",

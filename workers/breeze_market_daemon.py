@@ -561,6 +561,8 @@ def main() -> int:
 
     last_credential_check = time.monotonic()
     last_calendar_refresh = time.monotonic()
+    last_target_refresh = time.monotonic()
+    target_refresh_seconds = max(60.0, float(env("BREEZE_TARGET_REFRESH_SECONDS", "120") or "120"))
     try:
         while not stop_event.wait(5):
             handler = getattr(breeze, "sio_rate_refresh_handler", None)
@@ -575,6 +577,46 @@ def main() -> int:
             if time.monotonic() - last_calendar_refresh >= 6 * 60 * 60:
                 refresh_india_market_holidays()
                 last_calendar_refresh = time.monotonic()
+            if time.monotonic() - last_target_refresh >= target_refresh_seconds:
+                # Candidate scans continuously refresh live_market_targets. Reconcile the
+                # bounded WebSocket subscription set so a newly discovered near-breakout
+                # stock receives authoritative intraday OHLCV without a service restart.
+                try:
+                    with psycopg2.connect(database_url()) as conn:
+                        refreshed = load_cash_instruments(conn, breeze_module.zip, exchanges, args.limit)
+                    previous_tokens = set(by_stream_token)
+                    refreshed_by_token = {item.stream_token.upper(): item for item in refreshed}
+                    refreshed_tokens = set(refreshed_by_token)
+                    removed = sorted(previous_tokens - refreshed_tokens)
+                    added = sorted(refreshed_tokens - previous_tokens)
+                    for start in range(0, len(removed), subscription_batch_size):
+                        breeze.unsubscribe_feeds(stock_token=removed[start:start + subscription_batch_size])
+                        time.sleep(subscribe_sleep)
+                    accepted = 0
+                    failed_additions: set[str] = set()
+                    for start in range(0, len(added), subscription_batch_size):
+                        batch = added[start:start + subscription_batch_size]
+                        result = breeze.subscribe_feeds(stock_token=batch)
+                        if not (isinstance(result, str) and result.lower().startswith("exception")):
+                            accepted += len(batch)
+                        else:
+                            failed_additions.update(batch)
+                            print(f"[breeze-market] dynamic subscription failed: {result}", file=sys.stderr, flush=True)
+                        time.sleep(subscribe_sleep)
+                    # Excluding rejected additions makes the next refresh retry them.
+                    by_stream_token = {
+                        token: instrument for token, instrument in refreshed_by_token.items()
+                        if token not in failed_additions
+                    }
+                    if added or removed:
+                        print(
+                            f"[breeze-market] refreshed targets: +{accepted}/-{len(removed)}; "
+                            f"tracking {len(by_stream_token)} instruments",
+                            flush=True,
+                        )
+                except Exception as exc:
+                    print(f"[breeze-market] target refresh failed: {exc}", file=sys.stderr, flush=True)
+                last_target_refresh = time.monotonic()
     finally:
         try:
             breeze.ws_disconnect()

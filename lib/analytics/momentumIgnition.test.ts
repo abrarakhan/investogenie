@@ -34,6 +34,17 @@ function benchmark(count = 240): OHLCV[] {
   });
 }
 
+function businessDates(count: number, end: string): string[] {
+  const dates: string[] = [];
+  const cursor = new Date(`${end}T00:00:00Z`);
+  while (dates.length < count) {
+    const day = cursor.getUTCDay();
+    if (day !== 0 && day !== 6) dates.push(cursor.toISOString().slice(0, 10));
+    cursor.setUTCDate(cursor.getUTCDate() - 1);
+  }
+  return dates.reverse();
+}
+
 describe("Momentum Ignition", () => {
   it("treats Friday-to-Monday as one observed trading session", () => {
     const stock = [
@@ -52,6 +63,21 @@ describe("Momentum Ignition", () => {
     ];
     const index = [{ ...benchmark(1)[0], date: "2026-10-09" }];
     expect(observedTradingSessionDistance("2026-10-13", "2026-10-09", stock, index)).toBe(2);
+  });
+
+  it("keeps the established-stock freshness gate valid from Friday to Monday", () => {
+    const stock = momentumBars();
+    const index = benchmark();
+    const stockDates = businessDates(stock.length, "2026-10-26");
+    const benchmarkDates = businessDates(index.length, "2026-10-23");
+    stock.forEach((bar, i) => { bar.date = stockDates[i]; });
+    index.forEach((bar, i) => { bar.date = benchmarkDates[i]; });
+    const result = assessMomentumIgnition({
+      currentPrice: stock.at(-1)!.close,
+      bars: stock,
+      benchmarkBars: index,
+    });
+    expect(result.gates.find((item) => item.key === "freshness")?.passed).toBe(true);
   });
 
   it("finds a liquid trend leader approaching its breakout", () => {

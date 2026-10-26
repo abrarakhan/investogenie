@@ -46,6 +46,8 @@ The [README route table](README.md#workspaces) maps each workspace. In particula
 
 Momentum Ignition legacy and V2 have separate discovery modules. Armed Swing has a separate pure assessment in `lib/analytics/armedSwing.ts` and database loader in `lib/armedSwing.ts`. The loader scans market-relative strength and near-pivot candidates, then assesses at most 250 shortlisted stocks. It excludes the in-progress bar from base construction and uses live volume only for breakout pace.
 
+Momentum discovery likewise separates completed history from the current-session bar. During an open India session, entry-ready classification requires a fresh `BREEZE_LIVE` quote plus the matching Breeze intraday OHLCV/volume row; otherwise the setup remains visible but execution-blocked. Scheduled candidate scans run for every account independently of Expo push-token registration, persist status transitions in `candidate_signal_observations`, and refresh `live_market_targets`. The Breeze worker reconciles its bounded subscription set every two minutes so newly discovered candidates receive live bars without a service restart.
+
 Armed actionability depends on live execution quotes, bid/ask, circuit bands, liquidity, structure, regime and verified results-calendar coverage. India requires a fresh `BREEZE_LIVE` quote. Missing evidence produces unverified or blocked states. Results within three trading sessions block entries.
 
 `pipelines/corporate_results_sync.py` imports the official NSE event calendar and supplements dates through Yahoo. Authoritative negative coverage requires a complete same-day window covering the required sessions; an empty Yahoo result alone does not verify safety.

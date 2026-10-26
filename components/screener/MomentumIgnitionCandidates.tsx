@@ -98,6 +98,7 @@ function IgnitionCard({ candidate, rank, market, planId }: { candidate: Momentum
         <Fact label="Resistance headroom" value={candidate.resistanceHeadroomPct === null ? "Clear" : signed(candidate.resistanceHeadroomPct)} />
         <Fact label="Projected holding" value={`~${candidate.projectedDays} sessions`} />
         <Fact label="Trailing reference" value={number(candidate.projectedTrail)} />
+        <Fact label="Live OHLCV" value={candidate.liveDataVerified ? "Verified" : "Unavailable"} />
       </div>
 
       <details className="mt-3 border-t border-white/8 pt-3">
