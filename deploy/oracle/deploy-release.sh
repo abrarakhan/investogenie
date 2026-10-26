@@ -13,6 +13,13 @@ sudo -u "${APP_USER}" git -C "${APP_DIR}" fetch origin main
 sudo -u "${APP_USER}" git -C "${APP_DIR}" checkout main
 sudo -u "${APP_USER}" git -C "${APP_DIR}" pull --ff-only origin main
 
+# This script can update itself in the pull above. Re-exec the checked-out
+# version once so newly added migrations and verification steps are used by
+# the same deployment instead of being deferred until the next release.
+if [[ "${INVESTOGENIE_DEPLOY_REEXEC:-0}" != "1" ]]; then
+  exec env INVESTOGENIE_DEPLOY_REEXEC=1 bash "${APP_DIR}/deploy/oracle/deploy-release.sh"
+fi
+
 sudo -u "${APP_USER}" bash -lc \
   "set -a; source /etc/investogenie/investogenie.env; set +a; cd '${APP_DIR}' && npm ci --include=dev && npm audit --omit=dev --audit-level=high && npm run build && npm prune --omit=dev"
 sudo -u "${APP_USER}" "${APP_DIR}/.venv/bin/pip" install -r "${APP_DIR}/pipelines/requirements.txt"
