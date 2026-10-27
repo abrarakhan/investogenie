@@ -6,6 +6,7 @@ import type { MarketId } from "@/lib/types";
 import ApplyMarketTheme from "@/components/terminal/ApplyMarketTheme";
 import { getWorstDataHealthStatus } from "@/lib/dataHealth";
 import type { FreshnessStatus } from "@/lib/status";
+import BrowserNotifications from "@/components/app/BrowserNotifications";
 
 type NavSection = {
   title: string;
@@ -217,6 +218,7 @@ export default function AppShell({
                   <MarketSwitch market={market} activeArea={active} />
                 </div>
                 {actions}
+                {email && <BrowserNotifications />}
               </div>
             </div>
             <details className="group border-t border-white/10 lg:hidden">

@@ -43,6 +43,7 @@ const requiredRelations = [
   "public.swing_execution_plans",
   "public.screener_technical_daily",
   "public.trend_continuation_signals",
+  "public.browser_notification_events",
 ];
 const requiredColumns = [
   ["corporate_event_sync_state", "authoritative_source"],

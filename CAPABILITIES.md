@@ -59,6 +59,8 @@ Candidate scans evaluate every account whether or not it has an enabled Expo tok
 
 Expo SDK 57 / React Native 0.86.3 consumes versioned server APIs. Implemented features include secure login, India/US workspaces, server-ranked Strong Swing and News & AI, ledger mutations, candles, biometric re-entry and opt-in push.
 
+Authenticated web pages also provide opt-in browser notifications for candidate-ready transitions and material open-trade actions. They use deduplicated server events and the browser Notification API while an InvestoGenie tab remains open.
+
 Ledger push text is generic. Ready-candidate push text includes ticker, readiness state and engine; Expo receives that text and the push token. Prices, quantities and broker details are excluded. See [privacy](mobile/PRIVACY.md).
 
 Local Prebuild/Gradle/Xcode is the documented distribution path. Existing package scripts still invoke EAS Build, and release validation reads EAS profile configuration; local builds require an explicitly supplied API URL. The source cannot establish which binary is installed.

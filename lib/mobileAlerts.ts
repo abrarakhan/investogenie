@@ -120,12 +120,25 @@ async function dispatchCandidateAlerts(userId: string, tokens: PushTokenRow[], m
         where user_id=$1 and market=$2 and engine=$3 and asset_id=$4`,
       [userId, market, candidate.engine, candidate.assetId],
     );
+    const newlyReady = candidate.ready && previous[0]?.was_ready !== true;
     const transitioned = candidate.ready && tokens.length > 0
       && (previous[0]?.was_ready !== true || !previous[0]?.last_sent_at);
     const statusChanged = previous[0]?.last_status !== candidate.status
       || previous[0]?.was_ready !== candidate.ready;
     let sentCount = 0;
     let failedCount = 0;
+    if (newlyReady) {
+      const statusLabel = candidate.status === "EXECUTION_READY" ? "Execution Ready"
+        : candidate.status === "TREND_CONTINUATION_READY" ? "Continuation Ready (observation)" : "Momentum Ready";
+      await query(
+        `insert into public.browser_notification_events
+           (user_id,market,kind,asset_id,title,body,route,signature)
+         values($1,$2,'CANDIDATE_READY',$3,$4,$5,$6,$7)`,
+        [userId, market, candidate.assetId, `InvestoGenie: ${statusLabel}`,
+          `${candidate.ticker} entered ${statusLabel}. Open Strong Swing to review it.`,
+          `/terminal/${market.toLowerCase()}/strong-swing`, `${candidate.engine}|${candidate.assetId}|${candidate.status}`],
+      );
+    }
     if (transitioned) {
       const engineLabel = candidate.engine === "STRONG_SWING" ? "Strong Swing"
         : candidate.engine === "MOMENTUM_IGNITION" ? "Momentum Ignition"
@@ -192,7 +205,6 @@ export async function dispatchMobileTradeAlerts(markets: Array<"IN" | "US">) {
       candidateEvaluated += candidateSummary.evaluated;
       candidateAlerts += candidateSummary.alerts;
       candidateDelivered += candidateSummary.delivered;
-      if (!userTokens.length) continue;
       const trades = await getSwingTradeLedger(userId, market);
       for (const trade of trades) {
         const signature = tradeAlertSignature(trade);
@@ -203,11 +215,19 @@ export async function dispatchMobileTradeAlerts(markets: Array<"IN" | "US">) {
           [userId, trade.id],
         );
         if (!shouldSendTradeAlert(previous[0]?.last_signature ?? null, signature)) continue;
-        const receipts = await sendExpoMessages(userTokens, {
+        await query(
+          `insert into public.browser_notification_events
+             (user_id,market,kind,asset_id,trade_id,title,body,route,signature)
+           values($1,$2,'TRADE_ACTION',$3,$4,$5,$6,$7,$8)`,
+          [userId, market, trade.assetId, trade.id, "InvestoGenie trade alert",
+            `${trade.ticker}: ${trade.risk.recommendation.replaceAll("_", " ")}. Open Trade Ledger to review it.`,
+            `/terminal/${market.toLowerCase()}/trade-ledger`, signature],
+        );
+        const receipts = userTokens.length ? await sendExpoMessages(userTokens, {
           title: "InvestoGenie trade alert",
           body: "An open trade status changed. Open Trade Ledger to review the latest server assessment.",
           screen: "ledger", market,
-        });
+        }) : [];
         const { sentCount, failedCount } = await recordDisabledTokens(userTokens, receipts);
         await query(
           `insert into public.mobile_trade_alert_state(user_id,trade_id,market,last_signature,last_recommendation,last_sent_at)
