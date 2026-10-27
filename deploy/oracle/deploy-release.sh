@@ -9,6 +9,16 @@ fi
 APP_USER="${APP_USER:-investogenie}"
 APP_DIR="${APP_DIR:-/opt/investogenie/app}"
 
+# Older releases allowed npm prune to rewrite the tracked lockfile on the host.
+# Restore that generated deployment-only change before pulling, but refuse to
+# overwrite any other local production edits.
+sudo -u "${APP_USER}" git -C "${APP_DIR}" restore --worktree -- package-lock.json
+if [[ -n "$(sudo -u "${APP_USER}" git -C "${APP_DIR}" status --porcelain)" ]]; then
+  echo "Production checkout has uncommitted changes; refusing to deploy." >&2
+  sudo -u "${APP_USER}" git -C "${APP_DIR}" status --short >&2
+  exit 1
+fi
+
 sudo -u "${APP_USER}" git -C "${APP_DIR}" fetch origin main
 sudo -u "${APP_USER}" git -C "${APP_DIR}" checkout main
 sudo -u "${APP_USER}" git -C "${APP_DIR}" pull --ff-only origin main
@@ -21,7 +31,7 @@ if [[ "${INVESTOGENIE_DEPLOY_REEXEC:-0}" != "1" ]]; then
 fi
 
 sudo -u "${APP_USER}" bash -lc \
-  "set -a; source /etc/investogenie/investogenie.env; set +a; cd '${APP_DIR}' && npm ci --include=dev && npm audit --omit=dev --audit-level=high && npm run build && npm prune --omit=dev"
+  "set -a; source /etc/investogenie/investogenie.env; set +a; cd '${APP_DIR}' && npm ci --include=dev && npm audit --omit=dev --audit-level=high && npm run build && npm prune --omit=dev --no-package-lock"
 sudo -u "${APP_USER}" "${APP_DIR}/.venv/bin/pip" install -r "${APP_DIR}/pipelines/requirements.txt"
 sudo -u "${APP_USER}" "${APP_DIR}/.venv/bin/pip" install -r "${APP_DIR}/workers/requirements.txt"
 

@@ -151,6 +151,7 @@ let breezeRestartTimer = null;
 let breezeAccountChild = null;
 let breezeAccountTimer = null;
 let breezeAutoBuyChild = null;
+let mlSnapshotChild = null;
 let newsRefreshTimer = null;
 let newsRefreshPromise = null;
 let mobileAlertTimer = null;
@@ -1496,8 +1497,12 @@ function shutdown(signal) {
   if (amfiChild) amfiChild.kill(signal);
   if (marketRefreshChild) marketRefreshChild.kill(signal);
   if (indiaLiveQuoteChild) indiaLiveQuoteChild.kill(signal);
+  if (usLiveQuoteChild) usLiveQuoteChild.kill(signal);
   if (breezeChild) breezeChild.kill(signal);
   if (breezeAccountChild) breezeAccountChild.kill(signal);
+  if (breezeAutoBuyChild) breezeAutoBuyChild.kill(signal);
+  if (corporateResultsChild) corporateResultsChild.kill(signal);
+  if (mlSnapshotChild) mlSnapshotChild.kill(signal);
 
   // Print startup summary before killing Next.js
   if (syncStats.attempted > 0) {
@@ -1537,7 +1542,15 @@ nextChild.on("close", (code, signal) => {
   if (breezeAccountTimer) clearInterval(breezeAccountTimer);
   if (breezeChild) breezeChild.kill("SIGTERM");
   if (breezeAccountChild) breezeAccountChild.kill("SIGTERM");
-  process.exitCode = signal ? 1 : (code ?? 1);
+  if (breezeAutoBuyChild) breezeAutoBuyChild.kill("SIGTERM");
+  if (corporateResultsChild) corporateResultsChild.kill("SIGTERM");
+  if (mlSnapshotChild) mlSnapshotChild.kill("SIGTERM");
+
+  // Do not leave the wrapper alive solely because a scheduled promise or an
+  // untracked one-shot timer still has a handle. All known children have been
+  // signalled above; exiting lets systemd finish the stop without waiting for
+  // TimeoutStopSec and prevents an old scheduler from overlapping the restart.
+  process.exit(signal ? 1 : (code ?? 1));
 });
 
 const refreshedNseCalendar = await refreshMarketHolidays("IN");
@@ -1595,8 +1608,10 @@ const stopMlSnapshotScheduler = startMlSnapshotScheduler({
       "--import", resolve(root, "scripts/ts-alias-hook.mjs"),
       mlSnapshotScript, "IN", session,
     ], { cwd: root, env: process.env, stdio: "inherit", timeout: 15 * 60_000 });
+    mlSnapshotChild = child;
     child.once("error", rejectRun);
     child.once("close", (code, signal) => {
+      if (mlSnapshotChild === child) mlSnapshotChild = null;
       if (code === 0 && !signal) resolveRun();
       else rejectRun(new Error(`ML snapshot job exited ${signal ?? code}`));
     });
