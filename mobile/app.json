@@ -4,10 +4,12 @@
     "slug": "investogenie",
     "version": "0.1.1",
     "description": "Private InvestoGenie market terminal and trade ledger companion.",
+    "icon": "./assets/icon.png",
     "orientation": "portrait",
     "scheme": "investogenie",
     "userInterfaceStyle": "dark",
     "ios": {
+      "icon": "./assets/icon.png",
       "supportsTablet": true,
       "bundleIdentifier": "com.investogenie.mobile",
       "buildNumber": "2",
@@ -16,6 +18,10 @@
       }
     },
     "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#05070d"
+      },
       "package": "com.investogenie.mobile",
       "versionCode": 2,
       "predictiveBackGestureEnabled": true,
@@ -23,6 +29,9 @@
         "android.permission.USE_BIOMETRIC",
         "android.permission.USE_FINGERPRINT"
       ]
+    },
+    "web": {
+      "favicon": "./assets/icon.png"
     },
     "plugins": [
       [
