@@ -97,7 +97,7 @@ def assess_trend_continuation(bars: Iterable[Bar], benchmark_closes: list[float]
         ratios = [value / normal_volume if normal_volume else 0.0 for value in volumes[start:end]]
         impulse_windows.append((move, efficiency, ratios, end_offset))
     move3_atr, efficiency3, volume_ratios, impulse_age = max(impulse_windows, key=lambda item: item[0])
-    persistent_volume = sum(ratio >= 1.5 for ratio in volume_ratios) >= 2 or sum(volumes[-3:]) / (3 * prior_volume20) >= 1.5
+    persistent_volume = sum(ratio >= 1.5 for ratio in volume_ratios) >= 2 or sum(volume_ratios) / 3.0 >= 1.5
     rising_lows = series[-1].low >= series[-2].low and series[-2].low >= series[-3].low
     trend_structure = current.close > ema10 > ema20 and ema10 > ema10_previous
     impulse_midpoint = (max(bar.high for bar in series[-4:]) + min(bar.low for bar in series[-4:])) / 2.0

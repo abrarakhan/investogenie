@@ -39,6 +39,11 @@ class TrendContinuationTests(unittest.TestCase):
         self.assertFalse(execution_data_verified("BREEZE_LIVE", now - timedelta(minutes=6), now))
         self.assertFalse(execution_data_verified("YAHOO_FINANCE_LIVE", now, now))
 
+    def test_low_volume_path_is_evaluated_without_an_exception(self):
+        history = [100 + index * 0.1 for index in range(25)]
+        result = assess_trend_continuation(bars(history, [100_000] * 25))
+        self.assertEqual(result["status"], "NOT_QUALIFIED")
+
 
 if __name__ == "__main__":
     unittest.main()
