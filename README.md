@@ -12,7 +12,7 @@ _Code and production baseline reviewed 26 October 2026 through runtime revision 
 | `/terminal/[market]` | India (`in`) or US (`us`) terminal |
 | `/terminal/[market]/stocks` | Fundamental and price-action Stock Screener, saved screens, natural-language queries and exports |
 | `/terminal/[market]/screener` | Buy-side Swing Candidates; India is NSE-only and capped to the top 20 |
-| `/terminal/[market]/strong-swing` | Strong Swing plus legacy and V2 Momentum Ignition discovery |
+| `/terminal/[market]/strong-swing` | Strong Swing, legacy/V2 Momentum Ignition and Python Trend Continuation observation |
 | `/terminal/[market]/armed-swing` | Earlier pre-breakout Armed Strong Swing plans |
 | `/terminal/[market]/news-swing` | Strong Swing with source-linked news and AI assessment |
 | `/terminal/[market]/trade-ledger` | Purchases, pending buy-stops, partial fills/exits, reconciliation and returns |

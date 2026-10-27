@@ -11,6 +11,7 @@ _Code and production baseline reviewed 26 October 2026 through runtime revision 
 | Swing Candidates | Buy-side setups with strategy tags and frozen levels; India NSE top 20 | `lib/screener.ts`, market screener page |
 | Strong Swing | Confirmation, liquidity, market and execution gates with deterministic ranking | `lib/strongSwing.ts`, `lib/analytics/strongSwing.ts` |
 | Momentum Ignition | Legacy and V2 discovery with completed-session bases, separately verified live-session input and explicit execution blocking; V2 includes Momentum Ready, First Thrust, Pre-Ignition, Retest, Late Risk and Failed states | `lib/momentumIgnition*.ts` |
+| Trend Continuation | Python-owned multi-session impulse, continuation-watch, ready and extended-risk observation states; never creates an execution or auto-buy plan | `pipelines/trend_continuation.py`, `lib/trendContinuation.ts` |
 | Armed Strong Swing | Earlier stage-2 breakout plans, live volume pace, structural stops and results blackout | `lib/armedSwing.ts`, `lib/analytics/armedSwing.ts` |
 | News & AI Swing | Source-linked event overlay on existing technical candidates | `lib/news/`, `lib/newsSwing.ts` |
 | Long-Term Candidates | Multi-year statement evidence and investor-inspired rankings | `lib/analytics/longTermStrategies.ts` |

@@ -35,7 +35,9 @@ This is a repository status reference. The production web/Breeze services, login
 | 0058 | Persisted daily screener technical features and forward outcomes |
 | 0059 | Candidate signal observation history |
 
-The shared Linux release script applies an explicit 0033–0059 list. Fresh databases still need the full ordered schema. `scripts/verify-production-schema.mjs` checks required relations, including `candidate_signal_observations`, plus authoritative-calendar and Gmail-health columns. After pulling, the release script re-executes the checked-out version once so a migration added in the same release is applied.
+The shared Linux release script applies an explicit 0033–0060 list. Fresh databases still need the full ordered schema. `scripts/verify-production-schema.mjs` checks required relations, including `candidate_signal_observations` and `trend_continuation_signals`, plus authoritative-calendar and Gmail-health columns. After pulling, the release script re-executes the checked-out version once so a migration added in the same release is applied.
+
+Trend Continuation v1 is an India-only, Python-calculated observation engine for persistent 3–5 session moves. It stores versioned impulse/watch/ready/extended states, appears on web and mobile Strong Swing surfaces, and participates in ready-transition notifications. It cannot create an execution plan, unlock Buy & Track, or feed auto-buy.
 
 ## Verified production baseline — 26 October 2026
 

@@ -36,6 +36,13 @@ export interface StrongCandidate {
   planId?: string | null;
 }
 
+export interface TrendContinuationCandidate {
+  assetId: string; ticker: string; name: string | null;
+  status: "IMPULSE_DETECTED" | "CONTINUATION_WATCH" | "TREND_CONTINUATION_READY" | "EXTENDED_RISK";
+  score: number; observationOnly: true; entry: number | null; stop: number | null; target: number | null;
+  reasons: string[];
+}
+
 export interface NewsEvidence {
   articleId: string;
   title: string;
@@ -176,7 +183,7 @@ export function registerPushToken(token: string, platform: "android" | "ios") {
 }
 
 export function getStrongSwing(market: Market) {
-  return request<{ generatedAt: string; candidates: StrongCandidate[] }>(
+  return request<{ generatedAt: string; candidates: StrongCandidate[]; trendContinuation: { observationOnly: true; candidates: TrendContinuationCandidate[] } }>(
     `/api/v1/mobile/strong-swing?market=${market}&limit=30`,
   );
 }

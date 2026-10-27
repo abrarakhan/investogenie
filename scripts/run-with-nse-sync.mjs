@@ -30,6 +30,7 @@ const macroPipeline = resolve(root, "pipelines/macro_sync.py");
 const amfiSchemeMasterScript = resolve(root, "scripts/sync-amfi-scheme-master.mjs");
 const mlSnapshotScript = resolve(root, "scripts/capture-ml-snapshots.mjs");
 const screenerFeaturePipeline = resolve(root, "pipelines/screener_technical_features.py");
+const trendContinuationPipeline = resolve(root, "pipelines/trend_continuation.py");
 const screenerRefreshScript = resolve(root, "scripts/refresh-screener.mjs");
 const pythonCandidates = [
   process.env.PYTHON_BIN,
@@ -91,6 +92,8 @@ const newsRefreshIntervalMinutes = Number(process.env.NEWS_REFRESH_INTERVAL_MINU
 const newsRefreshDisabled = process.env.NEWS_REFRESH_DISABLED === "1";
 const mobileAlertIntervalMinutes = Number(process.env.MOBILE_ALERT_INTERVAL_MINUTES ?? 2);
 const mobileAlertsDisabled = process.env.MOBILE_ALERTS_DISABLED === "1";
+const trendContinuationIntervalMinutes = Number(process.env.TREND_CONTINUATION_INTERVAL_MINUTES ?? 2);
+const trendContinuationDisabled = process.env.TREND_CONTINUATION_DISABLED === "1";
 const breezeAccountSyncIntervalMinutes = Number(process.env.BREEZE_ACCOUNT_SYNC_INTERVAL_MINUTES ?? 5);
 const breezeAccountSyncDisabled = process.env.BREEZE_ACCOUNT_SYNC_DISABLED === "1";
 const gmailDisclosureSyncIntervalHours = Number(process.env.GMAIL_DISCLOSURE_SYNC_INTERVAL_HOURS ?? 24);
@@ -156,6 +159,9 @@ let newsRefreshTimer = null;
 let newsRefreshPromise = null;
 let mobileAlertTimer = null;
 let mobileAlertPromise = null;
+let trendContinuationChild = null;
+let trendContinuationPromise = null;
+let trendContinuationTimer = null;
 let gmailDisclosureTimer = null;
 let gmailDisclosurePromise = null;
 let backfillTimer = null;
@@ -755,6 +761,34 @@ async function runMobileAlerts(trigger) {
   })().catch((error) => console.error(`[mobile-alerts] ${trigger} failed: ${error.message}`))
     .finally(() => { mobileAlertPromise = null; });
   return mobileAlertPromise;
+}
+
+async function runTrendContinuation(trigger) {
+  if (trendContinuationDisabled || !isIndiaMarketOpen()) return;
+  if (trendContinuationPromise) return trendContinuationPromise;
+  trendContinuationPromise = new Promise((resolveRun, rejectRun) => {
+    const child = spawn(python, [trendContinuationPipeline, "--market", "IN"], {
+      cwd: root, env: process.env, stdio: "inherit", timeout: 110_000,
+    });
+    trendContinuationChild = child;
+    child.once("error", rejectRun);
+    child.once("close", (code, signal) => {
+      if (trendContinuationChild === child) trendContinuationChild = null;
+      if (code === 0 && !signal) resolveRun();
+      else rejectRun(new Error(`trend continuation ${trigger} exited ${signal ?? code}`));
+    });
+  }).finally(() => { trendContinuationPromise = null; });
+  return trendContinuationPromise;
+}
+
+function scheduleTrendContinuation() {
+  if (trendContinuationDisabled || !Number.isFinite(trendContinuationIntervalMinutes) || trendContinuationIntervalMinutes <= 0) {
+    console.log("[trend-continuation] recurring scan disabled");
+    return;
+  }
+  console.log(`[trend-continuation] Python observation scan every ${trendContinuationIntervalMinutes} minutes during India market hours`);
+  trendContinuationTimer = setInterval(() => runTrendContinuation("recurring").catch((error) => console.error(`[trend-continuation] recurring failed: ${error.message}`)), trendContinuationIntervalMinutes * 60 * 1000);
+  if (!startupSyncDisabled) setTimeout(() => runTrendContinuation("startup").catch((error) => console.error(`[trend-continuation] startup failed: ${error.message}`)), 8_000);
 }
 
 function scheduleMobileAlerts() {
@@ -1484,6 +1518,8 @@ function shutdown(signal) {
   if (marketHoursQuoteRefreshTimer) clearInterval(marketHoursQuoteRefreshTimer);
   if (newsRefreshTimer) clearInterval(newsRefreshTimer);
   if (mobileAlertTimer) clearInterval(mobileAlertTimer);
+  if (trendContinuationChild) trendContinuationChild.kill(signal);
+  if (trendContinuationTimer) clearInterval(trendContinuationTimer);
   if (gmailDisclosureTimer) clearInterval(gmailDisclosureTimer);
   if (backfillTimer) clearInterval(backfillTimer);
   if (emailDigestTimer) clearInterval(emailDigestTimer);
@@ -1527,6 +1563,8 @@ nextChild.on("close", (code, signal) => {
   if (marketRefreshTimer) clearInterval(marketRefreshTimer);
   if (marketHoursQuoteRefreshTimer) clearInterval(marketHoursQuoteRefreshTimer);
   if (mobileAlertTimer) clearInterval(mobileAlertTimer);
+  if (trendContinuationChild) trendContinuationChild.kill("SIGTERM");
+  if (trendContinuationTimer) clearInterval(trendContinuationTimer);
   if (backfillTimer) clearInterval(backfillTimer);
   if (emailDigestTimer) clearInterval(emailDigestTimer);
   if (syncChild) syncChild.kill("SIGTERM");
@@ -1624,6 +1662,7 @@ scheduleNseCatchup();
 scheduleRecurringMarketRefresh();
 scheduleMarketHoursQuoteRefresh();
 scheduleNewsRefresh();
+scheduleTrendContinuation();
 scheduleMobileAlerts();
 scheduleGmailDisclosureSync();
 scheduleBackfillCron();

@@ -2,6 +2,7 @@ import { notFound, redirect } from "next/navigation";
 import AppShell from "@/components/app/AppShell";
 import MomentumIgnitionCandidates from "@/components/screener/MomentumIgnitionCandidates";
 import MomentumIgnitionLegacyCandidates from "@/components/screener/MomentumIgnitionLegacyCandidates";
+import TrendContinuationCandidates from "@/components/screener/TrendContinuationCandidates";
 import StrongSwingCandidates from "@/components/screener/StrongSwingCandidates";
 import { getSessionUser } from "@/lib/auth";
 import { normalizeMarket } from "@/lib/markets";
@@ -14,6 +15,7 @@ import { markLiveMarketTargets } from "@/lib/liveMarketTargets";
 import { zonedMarketClock } from "@/lib/market-calendar.mjs";
 import { captureExecutionPlans, strongSwingExecutionPlanInputs, type ExecutionPlanInput } from "@/lib/swingExecutionPlans";
 import { isMomentumExecutionReady } from "@/lib/momentumExecution";
+import { getTrendContinuationCandidates } from "@/lib/trendContinuation";
 
 export const dynamic = "force-dynamic";
 
@@ -29,10 +31,11 @@ export default async function StrongSwingPage({
   if (!user) redirect("/login");
 
   const settings = await getUserSwingSettings();
-  const [candidates, legacyMomentumIgnition, momentumIgnition] = await Promise.all([
+  const [candidates, legacyMomentumIgnition, momentumIgnition, trendContinuation] = await Promise.all([
     getStrongSwingCandidates(market, settings),
     getLegacyMomentumIgnitionCandidates(market, settings),
     getMomentumIgnitionCandidates(market, settings),
+    getTrendContinuationCandidates(market),
   ]);
   const executionPlans: ExecutionPlanInput[] = [
     ...strongSwingExecutionPlanInputs(candidates, settings.trailAtrMult),
@@ -91,6 +94,9 @@ export default async function StrongSwingPage({
       <section className="mt-12 border-t border-white/10 pt-8">
         <MomentumIgnitionCandidates result={momentumIgnition} planIds={Object.fromEntries(planIds)} />
       </section>
+      {market === "IN" && <section className="mt-12 border-t border-white/10 pt-8">
+        <TrendContinuationCandidates candidates={trendContinuation} />
+      </section>}
     </AppShell>
   );
 }

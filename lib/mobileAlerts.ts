@@ -5,6 +5,7 @@ import { getUserSwingSettings } from "@/lib/settings";
 import { getStrongSwingCandidates } from "@/lib/strongSwing";
 import { getSwingTradeLedger, type SwingLedgerTrade } from "@/lib/swingTradeLedger";
 import { markLiveMarketTargets } from "@/lib/liveMarketTargets";
+import { getTrendContinuationCandidates } from "@/lib/trendContinuation";
 
 export function tradeAlertSignature(trade: SwingLedgerTrade): string | null {
   if (trade.status !== "OPEN" || trade.risk.recommendation === "STAY") return null;
@@ -17,8 +18,8 @@ export function shouldSendTradeAlert(previousSignature: string | null, nextSigna
 
 interface PushTokenRow { id: string; user_id: string; expo_push_token: string }
 interface AlertStateRow { last_signature: string }
-interface CandidateAlertStateRow { was_ready: boolean; last_status: string }
-type CandidateEngine = "STRONG_SWING" | "MOMENTUM_IGNITION" | "MOMENTUM_IGNITION_V2";
+interface CandidateAlertStateRow { was_ready: boolean; last_status: string; last_sent_at: string | null }
+type CandidateEngine = "STRONG_SWING" | "MOMENTUM_IGNITION" | "MOMENTUM_IGNITION_V2" | "TREND_CONTINUATION";
 interface CandidateSignal {
   assetId: string;
   ticker: string;
@@ -70,10 +71,11 @@ async function recordDisabledTokens(tokens: PushTokenRow[], receipts: Array<{ st
 
 async function candidateSignals(market: "IN" | "US", userId: string): Promise<CandidateSignal[]> {
   const settings = await getUserSwingSettings(userId);
-  const [strong, legacy, v2] = await Promise.all([
+  const [strong, legacy, v2, continuation] = await Promise.all([
     getStrongSwingCandidates(market, settings),
     getLegacyMomentumIgnitionCandidates(market, settings),
     getMomentumIgnitionCandidates(market, settings),
+    getTrendContinuationCandidates(market),
   ]);
   const signals: CandidateSignal[] = [
     ...strong.map((candidate) => ({
@@ -88,6 +90,11 @@ async function candidateSignals(market: "IN" | "US", userId: string): Promise<Ca
       assetId: candidate.assetId, ticker: candidate.ticker, engine: "MOMENTUM_IGNITION_V2" as const,
       status: candidate.status, ready: candidate.status === "MOMENTUM_READY", quoteAsOf: candidate.quoteUpdatedAt,
     })),
+    ...continuation.map((candidate) => ({
+      assetId: candidate.assetId, ticker: candidate.ticker, engine: "TREND_CONTINUATION" as const,
+      status: candidate.status, ready: candidate.status === "TREND_CONTINUATION_READY",
+      quoteAsOf: candidate.computedAt,
+    })),
   ];
   await markLiveMarketTargets(signals.map((candidate) => candidate.assetId), "strong_swing");
   return signals;
@@ -96,7 +103,7 @@ async function candidateSignals(market: "IN" | "US", userId: string): Promise<Ca
 async function dispatchCandidateAlerts(userId: string, tokens: PushTokenRow[], market: "IN" | "US") {
   const candidates = await candidateSignals(market, userId);
   const readyByEngine = new Map<CandidateEngine, string[]>();
-  for (const engine of ["STRONG_SWING", "MOMENTUM_IGNITION", "MOMENTUM_IGNITION_V2"] as const) {
+  for (const engine of ["STRONG_SWING", "MOMENTUM_IGNITION", "MOMENTUM_IGNITION_V2", "TREND_CONTINUATION"] as const) {
     readyByEngine.set(engine, candidates.filter((candidate) => candidate.engine === engine && candidate.ready).map((candidate) => candidate.assetId));
     await query(
       `update public.mobile_candidate_alert_state set was_ready=false,last_seen_at=now()
@@ -109,19 +116,22 @@ async function dispatchCandidateAlerts(userId: string, tokens: PushTokenRow[], m
   let delivered = 0;
   for (const candidate of candidates) {
     const previous = await query<CandidateAlertStateRow>(
-      `select was_ready,last_status from public.mobile_candidate_alert_state
+      `select was_ready,last_status,last_sent_at from public.mobile_candidate_alert_state
         where user_id=$1 and market=$2 and engine=$3 and asset_id=$4`,
       [userId, market, candidate.engine, candidate.assetId],
     );
-    const transitioned = candidate.ready && previous[0]?.was_ready !== true;
+    const transitioned = candidate.ready && tokens.length > 0
+      && (previous[0]?.was_ready !== true || !previous[0]?.last_sent_at);
     const statusChanged = previous[0]?.last_status !== candidate.status
       || previous[0]?.was_ready !== candidate.ready;
     let sentCount = 0;
     let failedCount = 0;
     if (transitioned) {
       const engineLabel = candidate.engine === "STRONG_SWING" ? "Strong Swing"
-        : candidate.engine === "MOMENTUM_IGNITION" ? "Momentum Ignition" : "Momentum Ignition V2";
-      const statusLabel = candidate.status === "EXECUTION_READY" ? "Execution Ready" : "Momentum Ready";
+        : candidate.engine === "MOMENTUM_IGNITION" ? "Momentum Ignition"
+        : candidate.engine === "MOMENTUM_IGNITION_V2" ? "Momentum Ignition V2" : "Trend Continuation";
+      const statusLabel = candidate.status === "EXECUTION_READY" ? "Execution Ready"
+        : candidate.status === "TREND_CONTINUATION_READY" ? "Continuation Ready (observation)" : "Momentum Ready";
       const receipts = await sendExpoMessages(tokens, {
         title: `InvestoGenie: ${statusLabel}`,
         body: `${candidate.ticker} entered ${statusLabel} in ${engineLabel}. Open Strong Swing to review it.`,
@@ -154,7 +164,7 @@ async function dispatchCandidateAlerts(userId: string, tokens: PushTokenRow[], m
        on conflict(user_id,market,engine,asset_id) do update set
          last_status=excluded.last_status,was_ready=excluded.was_ready,last_seen_at=now(),
          last_sent_at=case when $7 then now() else mobile_candidate_alert_state.last_sent_at end`,
-      [userId, market, candidate.engine, candidate.assetId, candidate.status, candidate.ready, transitioned],
+      [userId, market, candidate.engine, candidate.assetId, candidate.status, candidate.ready, sentCount > 0],
     );
   }
   return { evaluated: candidates.length, alerts, delivered };

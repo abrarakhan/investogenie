@@ -42,6 +42,7 @@ const requiredRelations = [
   "public.swing_pending_order_fills",
   "public.swing_execution_plans",
   "public.screener_technical_daily",
+  "public.trend_continuation_signals",
 ];
 const requiredColumns = [
   ["corporate_event_sync_state", "authoritative_source"],

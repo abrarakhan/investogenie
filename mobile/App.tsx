@@ -11,7 +11,7 @@ import {
   apiConfigurationError, createTrade, deleteTrade, getCandles, getLedger, getNewsSwing, getScreen, getScreenCatalog, getStrongSwing,
   login, logout, recordSale, restoreSession, updateSale, updateTrade, type CandlePoint, type LedgerSummary, type LedgerTrade,
   type Market, type MobileScreen, type MobileUser, type NewsSwingCandidate, type ScreenCard, type ScreenCatalogEntry,
-  type ScreenTone, type StrongCandidate,
+  type ScreenTone, type StrongCandidate, type TrendContinuationCandidate,
 } from "./src/api";
 import { registerDeviceNotifications, unlockWithBiometrics } from "./src/deviceSecurity";
 
@@ -136,20 +136,21 @@ function Terminal({ user, requestedTab, onRequestedTabHandled, onLogout }: { use
 
 function Strong({ market }: { market: Market }) {
   const [rows, setRows] = useState<StrongCandidate[]>([]);
+  const [continuations, setContinuations] = useState<TrendContinuationCandidate[]>([]);
   const [selected, setSelected] = useState<StrongCandidate | null>(null);
   const [refreshing, setRefreshing] = useState(true);
   const [error, setError] = useState("");
   const load = useCallback(async () => {
     setRefreshing(true); setError("");
-    try { setRows((await getStrongSwing(market)).candidates); }
+    try { const result = await getStrongSwing(market); setRows(result.candidates); setContinuations(result.trendContinuation.candidates); }
     catch (cause) { setError(message(cause, "Could not load candidates")); }
     finally { setRefreshing(false); }
   }, [market]);
-  useEffect(() => { let active = true; getStrongSwing(market).then((result) => { if (active) setRows(result.candidates); }).catch((cause) => { if (active) setError(message(cause, "Could not load candidates")); }).finally(() => { if (active) setRefreshing(false); }); return () => { active = false; }; }, [market]);
+  useEffect(() => { let active = true; getStrongSwing(market).then((result) => { if (active) { setRows(result.candidates); setContinuations(result.trendContinuation.candidates); } }).catch((cause) => { if (active) setError(message(cause, "Could not load candidates")); }).finally(() => { if (active) setRefreshing(false); }); return () => { active = false; }; }, [market]);
   useEffect(() => { const timer = setInterval(load, 300_000); return () => clearInterval(timer); }, [load]);
   if (selected) return <CandidateDetail row={selected} market={market} onBack={() => setSelected(null)} />;
   return <View style={styles.flex}><ScreenHead title="Strong Swing" subtitle="Server-ranked confirmation. Pull down for the latest quotes and gates." />{!!error && <Banner text={error} />}
-    <FlatList data={rows} keyExtractor={(item) => item.assetId} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={load} tintColor="#34d399" />} contentContainerStyle={styles.list} ListEmptyComponent={!refreshing ? <Empty text="No candidates available." /> : null} renderItem={({ item }) => <Pressable onPress={() => setSelected(item)} style={styles.card}>
+    <FlatList data={rows} keyExtractor={(item) => item.assetId} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={load} tintColor="#34d399" />} contentContainerStyle={styles.list} ListHeaderComponent={continuations.length ? <View><Text style={styles.sectionTitle}>Trend Continuation · observation only</Text>{continuations.slice(0, 5).map((item) => <View key={item.assetId} style={styles.card}><View style={styles.rowBetween}><Text style={styles.ticker}>{item.ticker}</Text><Text style={item.status === "EXTENDED_RISK" ? styles.badValue : item.status === "TREND_CONTINUATION_READY" ? styles.goodValue : styles.warningValue}>{item.status.replaceAll("_", " ")}</Text></View><Text style={styles.cardFoot}>{item.score}/100 · {item.reasons[0]}</Text><Text style={styles.muted}>No mobile buying action is enabled.</Text></View>)}</View> : null} ListEmptyComponent={!refreshing ? <Empty text="No candidates available." /> : null} renderItem={({ item }) => <Pressable onPress={() => setSelected(item)} style={styles.card}>
       <View style={styles.rowBetween}><View><Text style={styles.ticker}>#{item.strongSwingRank} {item.ticker}</Text><Text style={styles.meta}>{item.exchange || market} · {item.status.replaceAll("_", " ")}</Text></View><Score value={item.strengthScore} /></View>
       <View style={styles.metricRow}><Metric label="ENTRY" value={money(item.strongEntry, market)} /><Metric label="TARGET" value={money(item.strongTarget, market)} positive /><Metric label="STOP" value={money(item.strongStop, market)} negative /></View>
       <Text style={styles.cardFoot}>Current {money(item.lastQuote ?? item.latestClose, market)} · {item.strongExpectedDays} sessions</Text>
