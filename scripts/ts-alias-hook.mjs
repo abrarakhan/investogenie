@@ -32,6 +32,19 @@ registerHooks({
       const resolved = withExtension(join(dirname(fileURLToPath(context.parentURL)), specifier));
       return nextResolve(pathToFileURL(resolved).href, context);
     }
-    return nextResolve(specifier, context);
+    try {
+      return nextResolve(specifier, context);
+    } catch (error) {
+      // Packages without an "exports" map, such as next, publish subpaths as plain files:
+      // the bundler resolves "next/headers" but Node's ESM resolver needs "next/headers.js".
+      if (error?.code !== "ERR_MODULE_NOT_FOUND" || !isBarePackageSubpath(specifier)) throw error;
+      return nextResolve(`${specifier}.js`, context);
+    }
   },
 });
+
+function isBarePackageSubpath(specifier) {
+  if (specifier.startsWith(".") || specifier.startsWith("/") || specifier.includes(":") || extname(specifier)) return false;
+  const parts = specifier.split("/");
+  return specifier.startsWith("@") ? parts.length > 2 : parts.length > 1;
+}
