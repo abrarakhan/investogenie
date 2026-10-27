@@ -17,6 +17,20 @@ export default function BrowserNotifications() {
     if (!("Notification" in window)) return;
     const next = await Notification.requestPermission();
     setPermission(next);
+    if (next === "granted") {
+      if ("serviceWorker" in navigator) {
+        const registration = await navigator.serviceWorker.register("/browser-notifications-sw.js");
+        await registration.showNotification("InvestoGenie browser alerts enabled", {
+          body: "You will be notified about ready candidates and material trade actions while InvestoGenie is open.",
+          tag: "investogenie:enabled", data: { route: window.location.pathname },
+        });
+      } else {
+        new Notification("InvestoGenie browser alerts enabled", {
+          body: "You will be notified about ready candidates and material trade actions while InvestoGenie is open.",
+          tag: "investogenie:enabled",
+        });
+      }
+    }
   }, []);
 
   useEffect(() => {
