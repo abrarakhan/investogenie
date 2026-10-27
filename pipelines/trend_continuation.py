@@ -205,7 +205,7 @@ def main() -> None:
             quote_rows = cur.fetchall()
             cur.execute("""select o.asset_id::text,o.date,o.open,o.high,o.low,o.close,o.volume
                 from public.daily_ohlcv o where o.asset_id in (
-                  select id from public.assets where country='IN' and asset_class='INDEX' and ticker in ('NIFTY','NIFTY 50')
+                  select id from public.assets where country='IN' and ticker in ('NIFTY','NIFTY 50')
                 ) order by o.date desc limit 80""")
             benchmark_rows = list(reversed(cur.fetchall()))
         benchmark = [float(row[5]) for row in benchmark_rows]
