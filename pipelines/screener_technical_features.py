@@ -16,6 +16,22 @@ import psycopg2
 from psycopg2.extras import execute_values
 
 FEATURE_VERSION = "technical_v1"
+INCREMENTAL_WRITE_DAYS = 120
+# 320 calendar days comfortably contains the 200 completed trading sessions
+# needed by the longest indicator, including weekends and exchange holidays.
+INCREMENTAL_LOOKBACK_DAYS = 320
+
+
+def history_start_date(today: date, years: int, incremental: bool) -> date:
+    """Bound input history without changing any feature formula.
+
+    Incremental runs rewrite only the recent window, so loading five years for
+    every active stock needlessly consumes several gigabytes. The retained
+    lookback still supplies every row required by the 200-session indicators.
+    """
+    if incremental:
+        return today - timedelta(days=INCREMENTAL_WRITE_DAYS + INCREMENTAL_LOOKBACK_DAYS)
+    return today - timedelta(days=max(4, years) * 366 + INCREMENTAL_LOOKBACK_DAYS)
 
 
 def compute_features(frame: pd.DataFrame) -> pd.DataFrame:
@@ -80,7 +96,6 @@ def main() -> None:
     database_url = os.environ.get("DATABASE_URL")
     if not database_url:
         raise SystemExit("DATABASE_URL is required")
-    since = date.today() - timedelta(days=max(4, args.years) * 366 + 320)
     conn = psycopg2.connect(database_url)
     try:
         incremental = args.incremental
@@ -90,7 +105,9 @@ def main() -> None:
                     join public.assets a on a.id=d.asset_id where (%s is null or a.country=%s))""",
                             (args.market, args.market))
                 incremental = bool(cur.fetchone()[0])
-        write_since = date.today() - timedelta(days=120) if incremental else None
+        today = date.today()
+        write_since = today - timedelta(days=INCREMENTAL_WRITE_DAYS) if incremental else None
+        since = history_start_date(today, args.years, incremental)
         with conn.cursor() as cur:
             cur.execute(
                 """select o.asset_id::text,o.date,o.open,o.high,o.low,o.close,o.volume

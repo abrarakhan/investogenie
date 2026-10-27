@@ -1,10 +1,16 @@
 import unittest
+from datetime import date
 import pandas as pd
 
-from screener_technical_features import compute_features
+from screener_technical_features import compute_features, history_start_date
 
 
 class ScreenerTechnicalFeatureTests(unittest.TestCase):
+    def test_incremental_history_is_bounded_but_keeps_indicator_lookback(self):
+        today = date(2026, 10, 27)
+        self.assertEqual((today - history_start_date(today, 5, True)).days, 440)
+        self.assertEqual((today - history_start_date(today, 5, False)).days, 2150)
+
     def test_point_in_time_indicators_and_forward_returns(self):
         n = 260
         df = pd.DataFrame({
