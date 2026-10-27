@@ -5,9 +5,10 @@ import { describe, expect, it } from "vitest";
 const root = fileURLToPath(new URL("..", import.meta.url));
 
 describe("production deployment lifecycle", () => {
-  it("prunes production dependencies without rewriting the tracked lockfile", () => {
+  it("installs deterministically without a lockfile-mutating prune step", () => {
     const release = readFileSync(`${root}/deploy/oracle/deploy-release.sh`, "utf8");
-    expect(release).toContain("npm prune --omit=dev --no-package-lock");
+    expect(release).toContain("npm ci --include=dev");
+    expect(release).not.toMatch(/&& npm prune/);
     expect(release).toContain("git -C \"${APP_DIR}\" restore --worktree -- package-lock.json");
     expect(release).toContain("refusing to deploy");
   });
