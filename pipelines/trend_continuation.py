@@ -190,7 +190,7 @@ def main() -> None:
     try:
         with conn.cursor() as cur:
             cur.execute("""select a.id::text,a.ticker,a.name from public.assets a
-                where a.country='IN' and a.asset_class='STOCK' and a.is_active
+                where a.country='IN' and a.exchange='NSE' and a.asset_class='STOCK' and a.is_active
                   and exists(select 1 from public.daily_ohlcv o where o.asset_id=a.id)
                 order by a.ticker limit %s""", (args.limit,))
             assets = cur.fetchall()
@@ -215,8 +215,12 @@ def main() -> None:
         quotes = {row[0]: (row[1], row[2]) for row in quote_rows}
         now = datetime.now(timezone.utc)
         payload = []
+        assessed_dates = set()
         for asset_id, ticker, name in assets:
-            result = assess_trend_continuation(_rows_to_bars(history_by_asset.get(asset_id, [])), benchmark)
+            asset_history = history_by_asset.get(asset_id, [])
+            if asset_history:
+                assessed_dates.add(asset_history[-1][1])
+            result = assess_trend_continuation(_rows_to_bars(asset_history), benchmark)
             source, quote_time = quotes.get(asset_id, (None, None))
             execution_verified = execution_data_verified(source, quote_time, now)
             result.setdefault("metrics", {})["execution_data_verified"] = execution_verified
@@ -231,6 +235,10 @@ def main() -> None:
                             result["score"], result.get("entry"), result.get("stop"), result.get("target"),
                             json.dumps(result["metrics"]), json.dumps(result["reasons"]), FEATURE_VERSION))
         with conn.cursor() as cur:
+            cur.execute("""delete from public.trend_continuation_signals s using public.assets a
+                where s.asset_id=a.id and (a.exchange <> 'NSE' or
+                  (s.feature_version=%s and s.asof_market_date=any(%s::date[])))""",
+                (FEATURE_VERSION, sorted(assessed_dates)))
             if payload:
                 execute_values(cur, """insert into public.trend_continuation_signals
                     (asset_id,ticker,name,asof_market_date,status,ready,score,entry,stop,target,metrics,reasons,feature_version)
