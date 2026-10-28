@@ -18,7 +18,7 @@ from typing import Iterable
 import psycopg2
 from psycopg2.extras import execute_values
 
-FEATURE_VERSION = "trend_continuation_v1"
+FEATURE_VERSION = "trend_continuation_v2"
 
 
 @dataclass(frozen=True)
@@ -97,6 +97,17 @@ def assess_trend_continuation(bars: Iterable[Bar], benchmark_closes: list[float]
         ratios = [value / normal_volume if normal_volume else 0.0 for value in volumes[start:end]]
         impulse_windows.append((move, efficiency, ratios, end_offset))
     move3_atr, efficiency3, volume_ratios, impulse_age = max(impulse_windows, key=lambda item: item[0])
+    # A continuation must extend an already-established trend, not merely stage
+    # a violent rebound from below its own medium-term structure. Evaluate the
+    # trend as it existed immediately before the selected impulse window.
+    impulse_base_index = len(series) - impulse_age - 4
+    pre_impulse_closes = closes[:impulse_base_index + 1]
+    pre_impulse_ema20 = _ema(pre_impulse_closes[-50:], 20)
+    pre_impulse_ema20_previous = _ema(pre_impulse_closes[:-5][-50:], 20)
+    established_pre_impulse_trend = (
+        closes[impulse_base_index] >= pre_impulse_ema20
+        and pre_impulse_ema20 > pre_impulse_ema20_previous
+    )
     persistent_volume = sum(ratio >= 1.5 for ratio in volume_ratios) >= 2 or sum(volume_ratios) / 3.0 >= 1.5
     rising_lows = series[-1].low >= series[-2].low and series[-2].low >= series[-3].low
     trend_structure = current.close > ema10 > ema20 and ema10 > ema10_previous
@@ -116,7 +127,7 @@ def assess_trend_continuation(bars: Iterable[Bar], benchmark_closes: list[float]
     distance_ema10_atr = (current.close - ema10) / atr14
     extended = distance_ema10_atr > 1.0 or return5 > 12.0
     impulse = move3_atr >= 1.5 and efficiency3 >= 0.65 and persistent_volume
-    continuation = impulse and trend_structure and holds_midpoint and rs_pass
+    continuation = impulse and established_pre_impulse_trend and trend_structure and holds_midpoint and rs_pass
     breakout = current.close > max(bar.high for bar in series[-4:-1]) and volume_ratios[-1] >= 1.25
     pullback = current.low <= ema10 + 0.75 * atr14 and current.close >= ema10 and impulse_age > 0
     ready = continuation and (breakout or pullback) and not extended
@@ -146,11 +157,17 @@ def assess_trend_continuation(bars: Iterable[Bar], benchmark_closes: list[float]
         + (20 if trend_structure else 0)
         + (10 if holds_midpoint else 0)
         + (5 if rs_pass else 0)
+        - (25 if not established_pre_impulse_trend else 0)
         - (20 if extended else 0)
     )))
     reasons = []
     reasons.append(f"Three-session move is {move3_atr:.2f} ATR with {efficiency3:.0%} directional efficiency.")
     reasons.append(f"Last-three-session volume ratios are {', '.join(f'{value:.2f}x' for value in volume_ratios)}.")
+    reasons.append(
+        "The impulse began above a rising pre-impulse EMA20 trend."
+        if established_pre_impulse_trend else
+        "Continuation is withheld because the impulse began below or against the pre-impulse EMA20 trend."
+    )
     reasons.append("Price holds above rising EMA10 and EMA20." if trend_structure else "Rising EMA10/EMA20 structure is not confirmed.")
     if extended:
         reasons.append("Entry is blocked because price is extended from EMA10 or the five-session move exceeds 12%.")
@@ -169,6 +186,8 @@ def assess_trend_continuation(bars: Iterable[Bar], benchmark_closes: list[float]
             "distance_ema10_atr": distance_ema10_atr, "return5_pct": return5,
             "relative_strength5_pct": rs5, "relative_strength_acceleration_pct": rs_acceleration,
             "rising_lows": rising_lows, "breakout": breakout, "pullback": pullback, "impulse_age_sessions": impulse_age,
+            "pre_impulse_ema20": pre_impulse_ema20,
+            "established_pre_impulse_trend": established_pre_impulse_trend,
         },
         "reasons": reasons,
     }

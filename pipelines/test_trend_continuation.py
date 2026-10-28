@@ -33,6 +33,15 @@ class TrendContinuationTests(unittest.TestCase):
         self.assertEqual(result["status"], "EXTENDED_RISK")
         self.assertFalse(result["ready"])
 
+    def test_countertrend_rebound_cannot_be_continuation_ready(self):
+        history = [150 - index * 1.5 for index in range(21)] + [112, 125, 141, 136]
+        volumes = [100_000] * 21 + [180_000, 220_000, 2_500_000, 180_000]
+        result = assess_trend_continuation(bars(history, volumes))
+        self.assertIn(result["status"], ("IMPULSE_DETECTED", "EXTENDED_RISK"))
+        self.assertFalse(result["ready"])
+        self.assertFalse(result["metrics"]["established_pre_impulse_trend"])
+        self.assertTrue(any("pre-impulse EMA20" in reason for reason in result["reasons"]))
+
     def test_ready_requires_a_fresh_breeze_quote(self):
         now = datetime.now(timezone.utc)
         self.assertTrue(execution_data_verified("BREEZE_LIVE", now - timedelta(minutes=2), now))
