@@ -9,7 +9,10 @@ import { getTrendContinuationCandidates } from "@/lib/trendContinuation";
 
 export function tradeAlertSignature(trade: SwingLedgerTrade): string | null {
   if (trade.status !== "OPEN" || trade.risk.recommendation === "STAY") return null;
-  return [trade.risk.recommendation, trade.risk.state, trade.progress.state, ...trade.risk.reasons].join("|");
+  // Reasons contain live percentages and explanatory copy. They can change on
+  // every quote without changing the action the user should take, so they must
+  // never be part of notification identity.
+  return [trade.id, trade.risk.recommendation, trade.risk.state, trade.progress.state].join("|");
 }
 
 export function shouldSendTradeAlert(previousSignature: string | null, nextSignature: string): boolean {
