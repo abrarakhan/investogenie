@@ -11,3 +11,17 @@ delete from public.browser_notification_events duplicate
    and duplicate.title=survivor.title
    and duplicate.body=survivor.body
    and duplicate.id<survivor.id;
+
+-- Move the per-trade cursor from the legacy
+-- recommendation|risk|progress|changing-reason form to the stable
+-- trade-id|recommendation|risk|progress form without emitting a transition.
+update public.mobile_trade_alert_state
+   set last_signature=trade_id::text || '|'
+     || split_part(last_signature,'|',1) || '|'
+     || split_part(last_signature,'|',2) || '|'
+     || split_part(last_signature,'|',3)
+ where last_signature is not null
+   and last_signature not like trade_id::text || '|%'
+   and split_part(last_signature,'|',1)<>''
+   and split_part(last_signature,'|',2)<>''
+   and split_part(last_signature,'|',3)<>'';
