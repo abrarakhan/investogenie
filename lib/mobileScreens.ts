@@ -251,8 +251,10 @@ async function swingCandidates(market: MobileMarket, params: URLSearchParams, us
   const strategy = strategyParam === "ALL" ? null : strategyParam;
   const settings = await getUserSwingSettings(userId);
   const isUS = market === "US";
-  // Same query as the web Swing Candidates page: buy-side only, NSE top 20 for India.
-  const rows = await runScreener(market, { ...settings, includeShort: false }, isUS ? {} : { exchange: "NSE", limit: 20 });
+  // Same queries as the web Swing Candidates page: buy-side only; the default view is the
+  // NSE top 20 for India, while a strategy view takes every buy match of that strategy.
+  const scope = isUS ? {} : strategy ? { exchange: "NSE" } : { exchange: "NSE", limit: 20 };
+  const rows = await runScreener(market, { ...settings, includeShort: false }, { ...scope, strategyMatches: Boolean(strategy) });
   await markLiveMarketTargets(rows.map((row) => row.assetId), "swing");
   const matches = rows.filter((row) => strategy
     ? row.strategyTags.includes(strategy) && row.strategyLevels[strategy]?.direction === "LONG"
@@ -261,7 +263,7 @@ async function swingCandidates(market: MobileMarket, params: URLSearchParams, us
   const shown = ranked.slice(0, MOBILE_CARD_LIMIT);
   return {
     key: "swing",
-    title: isUS ? "Swing Candidates" : "Swing Candidates · Top 20",
+    title: isUS || strategy ? "Swing Candidates" : "Swing Candidates · Top 20",
     subtitle: "Buy-side swing candidates in the same server-ranked order as the web terminal.",
     generatedAt: new Date().toISOString(),
     summary: shown.length < ranked.length ? `Top ${shown.length} of ${ranked.length} setups` : `${ranked.length} setups`,

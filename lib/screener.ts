@@ -65,7 +65,14 @@ const SELECT =
 export async function runScreener(
   country?: string,
   settings: SwingSettings = DEFAULT_SETTINGS,
-  opts: { exchange?: string; limit?: number } = {},
+  opts: {
+    exchange?: string;
+    limit?: number;
+    /** Select every row tagged by a legendary strategy instead of the default
+     * classifier's setups. The strategy's own direction decides buy/short, so
+     * neither the default verdict nor its bias filters these rows. */
+    strategyMatches?: boolean;
+  } = {},
 ): Promise<ScreenRow[]> {
   if (country === "IN") await refreshMarketHolidays("IN");
   const market = country === "IN" || country === "US" ? country : null;
@@ -91,8 +98,14 @@ export async function runScreener(
   }
   if (country) { params.push(country); conds.push(`country = $${params.length}`); }
   if (opts.exchange) { params.push(opts.exchange); conds.push(`exchange = $${params.length}`); }
-  if (opts.limit) conds.push(`verdict <> 'NO_SETUP'`);
-  if (!settings.includeShort) conds.push(`bias <> 'SHORT'`);
+  if (opts.strategyMatches) {
+    conds.push(settings.includeShort
+      ? `cardinality(strategy_tags) > 0`
+      : `exists (select 1 from jsonb_each(strategy_scores) s where s.value->>'dir' = 'LONG')`);
+  } else {
+    if (opts.limit) conds.push(`verdict <> 'NO_SETUP'`);
+    if (!settings.includeShort) conds.push(`bias <> 'SHORT'`);
+  }
   const where = conds.length ? `where ${conds.join(" and ")}` : "";
   let sql = `select ${SELECT} from public.swing_signals ${where} order by score desc, ticker asc`;
   if (opts.limit) { params.push(opts.limit); sql += ` limit $${params.length}`; }
@@ -128,7 +141,7 @@ export async function runScreener(
   };
 
   const out: ScreenRow[] = raw
-    .filter((r) => settings.includeShort || (r.bias as string) !== "SHORT")
+    .filter((r) => opts.strategyMatches || settings.includeShort || (r.bias as string) !== "SHORT")
     .map((r) => {
       const direction: TradeDirection = (r.bias as string) === "SHORT" ? "SHORT" : "LONG";
       const setup: SwingSetup = {

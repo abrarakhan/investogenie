@@ -35,6 +35,17 @@ describe("runScreener selection", () => {
     expect(params).toEqual(["2026-09-15", "IN", "NSE", 20]);
   });
 
+  it("selects strategy buy matches without the default verdict, bias or limit", async () => {
+    await runScreener("IN", { ...DEFAULT_SETTINGS, includeShort: false }, { exchange: "NSE", strategyMatches: true });
+
+    const [sql, params] = mocks.query.mock.calls[0];
+    expect(sql).toContain("s.value->>'dir' = 'LONG'");
+    expect(sql).not.toContain("bias <> 'SHORT'");
+    expect(sql).not.toContain("verdict <> 'NO_SETUP'");
+    expect(sql).not.toMatch(/ limit /);
+    expect(params).toEqual(["2026-09-15", "IN", "NSE"]);
+  });
+
   it("does not exclude shorts when they are enabled", async () => {
     await runScreener("IN", { ...DEFAULT_SETTINGS, includeShort: true }, { exchange: "NSE", limit: 20 });
 

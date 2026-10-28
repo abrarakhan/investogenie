@@ -26,21 +26,25 @@ export default async function TerminalScreener({
   const settings = await getUserSwingSettings();
   const buyOnlySettings = { ...settings, includeShort: false };
   // India: NSE only, capped to the 20 highest-conviction buy candidates.
-  const rows = await runScreener(
-    country,
-    buyOnlySettings,
-    isUS ? {} : { exchange: "NSE", limit: 20 },
-  );
-  await markLiveMarketTargets(rows.map((row) => row.assetId), "swing");
+  // Strategy views are selected from each strategy's own buy matches, uncapped,
+  // so a match the default classifier ranks low (or flags no setup) still shows.
+  const [rows, strategyRows] = await Promise.all([
+    runScreener(country, buyOnlySettings, isUS ? {} : { exchange: "NSE", limit: 20 }),
+    runScreener(country, buyOnlySettings, isUS ? { strategyMatches: true } : { exchange: "NSE", strategyMatches: true }),
+  ]);
+  // Every listed match joins the bounded live WebSocket feed, which keeps its quote fresh
+  // enough to pass the screener's intraday freshness gate.
+  await markLiveMarketTargets([...rows, ...strategyRows].map((row) => row.assetId), "swing");
 
   return (
     <AppShell
       email={user.email ?? ""}
       market={marketId}
       active="swing"
-      title={`Swing Candidates${!isUS ? " - Top 20" : ""}`}
+      title="Swing Candidates"
       subtitle="Buy-side swing candidates ranked inside the selected market workspace."
     >
+      {/* The browser's Breeze REST refresh stays on the default top rows to bound API calls. */}
       <MarketDataAutoRefresh market={marketId} assetIds={rows.map((row) => row.assetId)} />
       <div className="mb-8">
         <p className="max-w-2xl text-white/50">
@@ -54,8 +58,8 @@ export default async function TerminalScreener({
               <>
                 The 20 highest-conviction buy candidates from the NSE universe,
                 ranked by the derivative-aided classifier on 10 years of EOD data.
-                Use the strategy ribbon to filter by a legendary system —
-                Qullamaggie, Minervini, Darvas, PTJ, or Simons.
+                The strategy ribbon lists every NSE buy match of a legendary
+                system — Qullamaggie, Minervini, Darvas, PTJ, or Simons.
               </>
             )}
         </p>
@@ -67,7 +71,7 @@ export default async function TerminalScreener({
         )}
       </div>
 
-      <ScreenerTable rows={rows} scoped />
+      <ScreenerTable rows={rows} strategyRows={strategyRows} scoped />
     </AppShell>
   );
 }

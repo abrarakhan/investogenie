@@ -15,8 +15,10 @@ export function rankSwingCandidates<T extends SwingRankable>(
   strategyKey: string | null = null,
 ): T[] {
   return [...candidates].sort((a, b) => {
-    const aNoSetup = a.verdict === "NO_SETUP" ? 1 : 0;
-    const bNoSetup = b.verdict === "NO_SETUP" ? 1 : 0;
+    // A strategy view ranks on that strategy's own score; the default
+    // classifier's "no setup" verdict says nothing about the strategy.
+    const aNoSetup = !strategyKey && a.verdict === "NO_SETUP" ? 1 : 0;
+    const bNoSetup = !strategyKey && b.verdict === "NO_SETUP" ? 1 : 0;
     return aNoSetup - bNoSetup
       || swingDisplayScore(b, strategyKey) - swingDisplayScore(a, strategyKey)
       || b.score - a.score

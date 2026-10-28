@@ -12,6 +12,16 @@ describe("candidate display ranking", () => {
     expect(rankSwingCandidates(rows, "SIMONS").map((row) => row.ticker)).toEqual(["SIMONS_TOP", "DEFAULT_TOP"]);
   });
 
+  it("ranks a strategy view on the strategy score even without a default setup", () => {
+    const rows = [
+      { ticker: "SETUP", verdict: "LONG_BREAKOUT", score: 90, strategyLevels: { DARVAS: { score: 0.5 } } },
+      { ticker: "NO_SETUP", verdict: "NO_SETUP", score: 10, strategyLevels: { DARVAS: { score: 1 } } },
+    ];
+
+    expect(rankSwingCandidates(rows).map((row) => row.ticker)).toEqual(["SETUP", "NO_SETUP"]);
+    expect(rankSwingCandidates(rows, "DARVAS").map((row) => row.ticker)).toEqual(["NO_SETUP", "SETUP"]);
+  });
+
   it("orders strong swing states by actionability then strength", () => {
     const rows = [
       { ticker: "WATCH_HIGH", status: "WATCHLIST" as const, strengthScore: 95, score: 90 },

@@ -12,7 +12,7 @@
 // therefore overlapped for throughput rather than trimmed.
 import { Pool } from "pg";
 import { classifySwingSetup, deriveLevels } from "@/lib/analytics/swingClassifier";
-import { evaluateLegendary } from "@/lib/analytics/legendaryStrategies";
+import { evaluateLegendary, relativeStrengthRatings, type RsCloses } from "@/lib/analytics/legendaryStrategies";
 import type { OHLCV } from "@/lib/types";
 
 export interface ScanSummary {
@@ -111,6 +111,37 @@ export async function computeSignals(databaseUrl: string): Promise<ScanSummary> 
         order by a.id`,
     );
 
+    // Minervini's relative-strength rating ranks each asset against its own market and
+    // asset class,
+    // so it needs every asset's performance before any batch is evaluated. Only the
+    // five closes it uses are read (the last ~13 months bound the window scan).
+    const { rows: rsRows } = await client.query<{ asset_id: string; peer_group: string } & Record<"c0" | "c63" | "c126" | "c189" | "c252", string | null>>(
+      `select x.asset_id, a.country || ':' || a.asset_class peer_group,
+              max(x.close) filter (where x.rn = 1) c0, max(x.close) filter (where x.rn = 64) c63,
+              max(x.close) filter (where x.rn = 127) c126, max(x.close) filter (where x.rn = 190) c189,
+              max(x.close) filter (where x.rn = 253) c252
+         from (
+           select o.asset_id, o.close, row_number() over (partition by o.asset_id order by o.date desc) rn
+             from public.daily_ohlcv o
+            where o.asset_id = any($1) and o.close > 0 and o.date >= current_date - 400
+         ) x
+         join public.assets a on a.id = x.asset_id
+        where x.rn in (1, 64, 127, 190, 253)
+        group by x.asset_id, a.country, a.asset_class`,
+      [assets.map((a) => a.id)],
+    );
+    const rsByPeerGroup = new Map<string, Map<string, RsCloses>>();
+    const toNum = (v: string | null) => (v === null ? null : Number(v));
+    for (const r of rsRows) {
+      let byAsset = rsByPeerGroup.get(r.peer_group);
+      if (!byAsset) { byAsset = new Map(); rsByPeerGroup.set(r.peer_group, byAsset); }
+      byAsset.set(r.asset_id, { c0: Number(r.c0), c63: toNum(r.c63), c126: toNum(r.c126), c189: toNum(r.c189), c252: toNum(r.c252) });
+    }
+    const rsRating = new Map<string, number>();
+    for (const byAsset of rsByPeerGroup.values()) {
+      for (const [id, rating] of relativeStrengthRatings(byAsset)) rsRating.set(id, rating);
+    }
+
     let scanned = 0;
     let setups = 0;
 
@@ -166,7 +197,7 @@ export async function computeSignals(databaseUrl: string): Promise<ScanSummary> 
             if (s.verdict !== "NO_SETUP") setups++;
             const dir = s.bias === "SHORT" ? "SHORT" : "LONG";
             const lv = deriveLevels(s.setup, dir);
-            const legendary = evaluateLegendary(series);
+            const legendary = evaluateLegendary(series, { rsRating: rsRating.get(assetId) ?? null });
             out.push([
               meta.id, meta.ticker, meta.country, meta.exchange, meta.asset_class,
               s.verdict, s.score, s.close, s.bollinger.bandwidth * 100,

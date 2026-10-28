@@ -5,7 +5,7 @@
 // trading rules of five well-known operators, evaluated against the most recent
 // bar of a chronologically-ascending OHLCV series:
 //
-//   QULLAMAGGIE — Kristjan Qullamaggie's High Tight Flag (momentum continuation)
+//   QULLAMAGGIE — Kristjan Qullamaggie's breakout setup (momentum continuation)
 //   MINERVINI   — Mark Minervini's Trend Template + VCP contraction analysis
 //   DARVAS      — Nicolas Darvas's box breakout
 //   PTJ         — Paul Tudor Jones's 200-day moving-average trend rule
@@ -45,7 +45,7 @@ export const STRATEGY_META: StrategyMeta[] = [
     key: "QULLAMAGGIE",
     label: "Qullamaggie Momentum",
     trader: "Kristjan Qullamaggie",
-    blurb: "High Tight Flag — volume thrust then a tight 3–15 day compression above the 10/20/50 EMAs.",
+    blurb: "Breakout setup — a 30%+ move inside three months, then a 3–40 day orderly consolidation on drying volume, surfing the 10/20 EMAs.",
   },
   {
     key: "MINERVINI",
@@ -57,7 +57,7 @@ export const STRATEGY_META: StrategyMeta[] = [
     key: "DARVAS",
     label: "Darvas Box",
     trader: "Nicolas Darvas",
-    blurb: "Box breakout — entry one tick above a confirmed box top.",
+    blurb: "Box breakout — a confirmed box topped by a new 52-week high; entry one tick above the box top.",
   },
   {
     key: "PTJ",
@@ -131,11 +131,6 @@ function emaSeries(values: number[], period: number): number[] {
   return out;
 }
 
-const emaLast = (values: number[], period: number): number => {
-  const s = emaSeries(values, period);
-  return s.length ? s[s.length - 1] : NaN;
-};
-
 /** Simple moving average ending at (and including) index `endIdx`. */
 function smaAt(values: number[], period: number, endIdx: number): number {
   const start = endIdx - period + 1;
@@ -148,28 +143,6 @@ function smaAt(values: number[], period: number, endIdx: number): number {
 const smaLast = (values: number[], period: number): number =>
   smaAt(values, period, values.length - 1);
 
-/** True-range value for bar i (requires i >= 1). */
-function trueRange(bars: OHLCV[], i: number): number {
-  const h = bars[i].high;
-  const l = bars[i].low;
-  const pc = bars[i - 1].close;
-  return Math.max(h - l, Math.abs(h - pc), Math.abs(l - pc));
-}
-
-/** Rolling ATR series (index aligned to bars; entries before `period` are NaN). */
-function atrSeries(bars: OHLCV[], period: number): number[] {
-  const out: number[] = new Array(bars.length).fill(NaN);
-  if (bars.length < period + 1) return out;
-  const trs: number[] = [0];
-  for (let i = 1; i < bars.length; i++) trs.push(trueRange(bars, i));
-  for (let i = period; i < bars.length; i++) {
-    let sum = 0;
-    for (let j = i - period + 1; j <= i; j++) sum += trs[j];
-    out[i] = sum / period;
-  }
-  return out;
-}
-
 const allFinite = (...xs: number[]): boolean => xs.every(Number.isFinite);
 
 function noResult(key: StrategyKey, note: string): StrategyResult {
@@ -177,69 +150,65 @@ function noResult(key: StrategyKey, note: string): StrategyResult {
 }
 
 // =============================================================================
-// 1. Qullamaggie — High Tight Flag
+// 1. Qullamaggie — breakout setup (big prior move, then an orderly consolidation)
 // =============================================================================
+//
+// Kristjan Qullamaggie's breakout rules: the stock has already made a large move
+// (roughly 30%+ within the past one to three months), then consolidates for a few
+// days to a couple of months in an orderly, shallow range while "surfing" its
+// rising 10- and 20-day moving averages and volume dries up. The entry is the
+// break of the consolidation high.
 
-const QULLA_MIN_BARS = 55;
+const QULLA_MIN_BARS = 70;
+const QULLA_POLE_BARS = 63; // the prior move must happen within ~3 months
+const QULLA_MIN_MOVE = 0.3; // ≥30% from the pole low to the consolidation high
+const QULLA_MIN_FLAG = 3; // consolidation length, sessions
+const QULLA_MAX_FLAG = 40;
+const QULLA_MAX_DEPTH = 0.2; // orderly: pullback ≤20% off the consolidation high
 
 export function detectQullamaggie(bars: OHLCV[]): StrategyResult {
   const KEY: StrategyKey = "QULLAMAGGIE";
-  if (bars.length < QULLA_MIN_BARS) return noResult(KEY, "Insufficient history (need ~55 bars).");
+  if (bars.length < QULLA_MIN_BARS) return noResult(KEY, "Insufficient history (need ~70 bars).");
 
   const closes = bars.map((b) => b.close);
   const highs = bars.map((b) => b.high);
   const lows = bars.map((b) => b.low);
   const vols = bars.map((b) => b.volume);
   const lastIdx = bars.length - 1;
-  const last = bars[lastIdx];
+  const close = closes[lastIdx];
 
-  const ema10 = emaLast(closes, 10);
-  const ema20 = emaLast(closes, 20);
-  const ema50 = emaLast(closes, 50);
-  if (!allFinite(ema10, ema20, ema50)) return noResult(KEY, "EMA stack unavailable.");
+  // Consolidation high: the highest high of the last QULLA_MAX_FLAG sessions. The
+  // sessions after it form the consolidation.
+  let highIdx = lastIdx - QULLA_MAX_FLAG;
+  for (let i = highIdx; i <= lastIdx; i++) if (highs[i] > highs[highIdx]) highIdx = i;
+  const flagHigh = highs[highIdx];
+  const flagLen = lastIdx - highIdx;
+  const consolidating = flagLen >= QULLA_MIN_FLAG;
 
-  const aboveStack = last.close > ema10 && last.close > ema20 && last.close > ema50;
+  // Prior move: from the lowest low of the ~3 months before the high up to the high.
+  const poleLow = Math.min(...lows.slice(Math.max(0, highIdx - QULLA_POLE_BARS), highIdx + 1));
+  const move = poleLow > 0 ? flagHigh / poleLow - 1 : 0;
+  const bigMove = move >= QULLA_MIN_MOVE;
 
-  // Volume thrust ("flagpole"): a bar 3..15 sessions back trading ≥3× its
-  // trailing-50 average volume.
-  let surgeIdx = -1;
-  let surgeMult = 0;
-  for (let i = lastIdx - 3; i >= lastIdx - 15 && i >= 50; i--) {
-    const avg = mean(vols.slice(i - 50, i));
-    if (avg > 0 && vols[i] / avg >= 3) {
-      surgeIdx = i;
-      surgeMult = vols[i] / avg;
-      break;
-    }
-  }
-  const hasThrust = surgeIdx > 0;
+  // Orderly, shallow consolidation.
+  const flagLow = consolidating ? Math.min(...lows.slice(highIdx + 1)) : NaN;
+  const depth = consolidating && flagHigh > 0 ? (flagHigh - flagLow) / flagHigh : 1;
+  const orderly = depth <= QULLA_MAX_DEPTH;
 
-  // Flag = the consolidation since the thrust; length must be 3..15 sessions.
-  const flagLen = hasThrust ? lastIdx - surgeIdx : 0;
-  const flagInRange = flagLen >= 3 && flagLen <= 15;
+  // Surfing the rising 10/20-day EMAs.
+  const ema10 = emaSeries(closes, 10);
+  const ema20 = emaSeries(closes, 20);
+  const surfing = close > ema10[lastIdx] && close > ema20[lastIdx]
+    && ema10[lastIdx] > ema20[lastIdx] && ema20[lastIdx] > ema20[lastIdx - 5];
 
-  // Tight channel: flag high/low spread is shallow relative to price.
-  let tight = false;
-  let flagHigh = NaN;
-  if (flagInRange) {
-    const fh = highs.slice(surgeIdx + 1);
-    const fl = lows.slice(surgeIdx + 1);
-    flagHigh = Math.max(...fh);
-    const flagLow = Math.min(...fl);
-    const depth = flagHigh > 0 ? (flagHigh - flagLow) / flagHigh : 1;
-    tight = depth <= 0.12; // ≤12% range while it bases
-  }
+  // Volume dries up in the consolidation versus the move into the high.
+  const moveVol = mean(vols.slice(Math.max(0, highIdx - 19), highIdx + 1));
+  const flagVol = consolidating ? mean(vols.slice(highIdx + 1)) : NaN;
+  const volumeDryUp = Number.isFinite(flagVol) && moveVol > 0 && flagVol < moveVol;
 
-  // ATR compression: current ATR sits at (or within 5% of) its 30-bar low.
-  const atrS = atrSeries(bars, 14);
-  const recentAtr = atrS.slice(-30).filter(Number.isFinite);
-  const atrNow = atrS[lastIdx];
-  const atr30Low = recentAtr.length ? Math.min(...recentAtr) : NaN;
-  const compressed = Number.isFinite(atrNow) && Number.isFinite(atr30Low) && atrNow <= atr30Low * 1.05;
-
-  const conditions = [aboveStack, hasThrust, flagInRange, tight, compressed];
+  const conditions = [bigMove, consolidating, orderly, surfing, volumeDryUp];
   const score = conditions.filter(Boolean).length / conditions.length;
-  const matched = aboveStack && hasThrust && flagInRange && tight && compressed;
+  const matched = conditions.every(Boolean);
 
   return {
     key: KEY,
@@ -248,8 +217,8 @@ export function detectQullamaggie(bars: OHLCV[]): StrategyResult {
     direction: "LONG",
     entryTrigger: matched ? round2(flagHigh) : null,
     note: matched
-      ? `HTF: ${surgeMult.toFixed(1)}× volume thrust, ${flagLen}-day tight flag above EMA10/20/50, ATR at 30-day low. Entry on break of ${round2(flagHigh)}.`
-      : "No high-tight-flag signature on the latest bar.",
+      ? `${Math.round(move * 100)}% prior move, ${flagLen}-day orderly consolidation (${Math.round(depth * 100)}% deep) on lighter volume, above the rising 10/20 EMAs. Entry on break of ${round2(flagHigh)}.`
+      : "No Qullamaggie breakout setup on the latest bar.",
   };
 }
 
@@ -257,7 +226,8 @@ export function detectQullamaggie(bars: OHLCV[]): StrategyResult {
 // 2. Minervini — Trend Template (8 criteria) + VCP contractions
 // =============================================================================
 
-const MINERVINI_MIN_BARS = 200; // needs 200-SMA + a month of slope
+const MINERVINI_MIN_BARS = 222; // 200-SMA plus the same average one month (22 sessions) earlier
+const MINERVINI_MIN_RS = 70;
 
 /** Detect successive peak→trough contraction depths over the recent window. */
 function contractionDepths(bars: OHLCV[], window: number): number[] {
@@ -282,10 +252,16 @@ function contractionDepths(bars: OHLCV[], window: number): number[] {
   return depths;
 }
 
-export function detectMinervini(bars: OHLCV[]): StrategyResult {
+/**
+ * Minervini's eighth Trend Template criterion is a relative-strength ranking of at
+ * least 70: the stock outperforms 70% of its market. `rsRating` is that 1–99
+ * percentile (see `relativeStrengthRatings`); without one, a 10%+ six-month
+ * return stands in.
+ */
+export function detectMinervini(bars: OHLCV[], rsRating: number | null = null): StrategyResult {
   const KEY: StrategyKey = "MINERVINI";
   if (bars.length < MINERVINI_MIN_BARS)
-    return noResult(KEY, "Insufficient history (Trend Template needs ~200 bars).");
+    return noResult(KEY, "Insufficient history (Trend Template needs ~222 bars).");
 
   const closes = bars.map((b) => b.close);
   const highs = bars.map((b) => b.high);
@@ -312,10 +288,10 @@ export function detectMinervini(bars: OHLCV[]): StrategyResult {
   const c5 = close > sma50;
   const c6 = lo52 > 0 && close >= lo52 * 1.3; // ≥30% above 52-wk low
   const c7 = hi52 > 0 && close >= hi52 * 0.75; // within 25% of 52-wk high
-  // c8 is normally an RS-rank > 70 across the universe; absent a cross-sectional
-  // RS feed we approximate with a strong 6-month absolute return as a proxy.
   const sixMoAgo = closes[Math.max(0, lastIdx - 126)];
-  const c8 = sixMoAgo > 0 && close / sixMoAgo - 1 >= 0.1;
+  const c8 = rsRating !== null
+    ? rsRating >= MINERVINI_MIN_RS
+    : sixMoAgo > 0 && close / sixMoAgo - 1 >= 0.1;
 
   const template = [c1, c2, c3, c4, c5, c6, c7, c8];
   const passed = template.filter(Boolean).length;
@@ -366,38 +342,37 @@ export function detectDarvas(bars: OHLCV[]): StrategyResult {
   const highs = bars.map((b) => b.high);
   const lows = bars.map((b) => b.low);
   const lastIdx = bars.length - 1;
-  const close = bars[lastIdx].close;
 
   const window = Math.min(60, bars.length);
   const wStart = bars.length - window;
 
   // Box top: the highest high in the window, confirmed by ≥3 later sessions that
-  // fail to exceed it.
+  // fail to exceed it (every later high is lower because it is the window high).
   let topIdx = wStart;
   for (let i = wStart; i <= lastIdx; i++) if (highs[i] > highs[topIdx]) topIdx = i;
   const boxTop = highs[topIdx];
-  const barsAfterTop = lastIdx - topIdx;
-  const topConfirmed =
-    barsAfterTop >= 3 && highs.slice(topIdx + 1).every((h) => h < boxTop);
+  const topConfirmed = lastIdx - topIdx >= 3;
 
-  // Box bottom: lowest low after the top, confirmed by ≥3 sessions holding it.
+  // Darvas only built boxes on stocks making new highs: the box top must be the
+  // 52-week high (or the high of all available history when shorter).
+  const yearHigh = Math.max(...highs.slice(-Math.min(252, bars.length)));
+  const newHigh = boxTop >= yearHigh;
+
+  // Box bottom: the lowest low after the top, confirmed by ≥3 later sessions that
+  // hold above it (they do, because it is the lowest low since the top).
   let boxBottom = NaN;
   let bottomConfirmed = false;
   if (topConfirmed) {
     const after = lows.slice(topIdx + 1);
     boxBottom = Math.min(...after);
-    const bottomIdx = topIdx + 1 + after.indexOf(boxBottom);
-    bottomConfirmed =
-      lastIdx - bottomIdx >= 3 && lows.slice(bottomIdx + 1).every((l) => l >= boxBottom);
+    bottomConfirmed = lastIdx - (topIdx + 1 + after.indexOf(boxBottom)) >= 3;
   }
 
-  const boxFormed = topConfirmed && bottomConfirmed && boxTop > boxBottom;
-  // Actionable when price is consolidating inside the box, coiled below the top.
-  const insideBox = boxFormed && close <= boxTop && close >= boxBottom;
-
-  const conditions = [topConfirmed, bottomConfirmed, insideBox];
+  // While both edges hold, price is inside the box by construction: no later high
+  // exceeds the top and no later low undercuts the bottom.
+  const conditions = [newHigh, topConfirmed, bottomConfirmed];
   const score = conditions.filter(Boolean).length / conditions.length;
-  const matched = boxFormed && insideBox;
+  const matched = conditions.every(Boolean) && boxTop > boxBottom;
   const entry = round2(boxTop + TICK);
 
   return {
@@ -407,8 +382,10 @@ export function detectDarvas(bars: OHLCV[]): StrategyResult {
     direction: "LONG",
     entryTrigger: matched ? entry : null,
     note: matched
-      ? `Darvas box ${round2(boxBottom)}–${round2(boxTop)} confirmed. Buy-stop ${entry} (one tick above the box top).`
-      : "No confirmed Darvas box on the latest bar.",
+      ? `Darvas box ${round2(boxBottom)}–${round2(boxTop)} confirmed under a new 52-week high. Buy-stop ${entry} (one tick above the box top).`
+      : newHigh
+        ? "No confirmed Darvas box on the latest bar."
+        : "Box top is below the 52-week high — Darvas only trades boxes at new highs.",
   };
 }
 
@@ -417,6 +394,13 @@ export function detectDarvas(bars: OHLCV[]): StrategyResult {
 // =============================================================================
 
 const PTJ_MIN_BARS = 205;
+
+/** Conviction once price and the 200-day trend agree: half for the alignment itself,
+ * a quarter for sitting close to the average (PTJ buys the dip, not the stretch,
+ * 0 at the 15% limit), a quarter for the slope's strength (full at 2% a month). */
+function ptjScore(proximity: number, slopePct: number): number {
+  return 0.5 + 0.25 * Math.max(0, 1 - proximity / 0.15) + 0.25 * Math.min(1, slopePct * 50);
+}
 
 export function detectPTJ(bars: OHLCV[]): StrategyResult {
   const KEY: StrategyKey = "PTJ";
@@ -451,14 +435,14 @@ export function detectPTJ(bars: OHLCV[]): StrategyResult {
     const nearMean = proximity <= 0.15; // not over-extended
     matched = nearMean;
     entry = Math.max(...highs.slice(-10)); // breakout of the recent swing high
-    score = (1 + (rising ? 1 : 0) + (nearMean ? 1 : 0) + Math.min(1, slopePct * 50)) / 4;
+    score = ptjScore(proximity, slopePct);
   } else if (below && !rising) {
     direction = "SHORT";
     const proximity = (sma200 - close) / sma200;
     const nearMean = proximity <= 0.15;
     matched = nearMean;
     entry = Math.min(...lows.slice(-10)); // breakdown of the recent swing low
-    score = (1 + 1 + (nearMean ? 1 : 0) + Math.min(1, slopePct * 50)) / 4;
+    score = ptjScore(proximity, slopePct);
   } else {
     return noResult(KEY, `Mixed regime — price ${above ? "above" : "below"} a ${rising ? "rising" : "falling"} 200-day. PTJ stands aside.`);
   }
@@ -522,6 +506,48 @@ export function detectSimons(bars: OHLCV[]): StrategyResult {
 }
 
 // =============================================================================
+// Relative strength rating (cross-sectional)
+// =============================================================================
+
+/** Closes 0, 63, 126, 189 and 252 sessions back (today, ~3, 6, 9, 12 months). */
+export interface RsCloses {
+  c0: number;
+  c63: number | null;
+  c126: number | null;
+  c189: number | null;
+  c252: number | null;
+}
+
+/**
+ * IBD-style relative strength: a weighted 12-month performance (the latest quarter
+ * counts double) percentile-ranked across the given universe into a 1–99 rating.
+ * Assets with under three months of history get no rating; shorter histories use
+ * the quarters they have, reweighted.
+ */
+export function relativeStrengthRatings(closes: ReadonlyMap<string, RsCloses>): Map<string, number> {
+  const performance: Array<[string, number]> = [];
+  for (const [id, c] of closes) {
+    if (!(c.c0 > 0)) continue;
+    const parts: Array<[number, number | null]> = [[0.4, c.c63], [0.2, c.c126], [0.2, c.c189], [0.2, c.c252]];
+    let weighted = 0;
+    let weight = 0;
+    for (const [w, past] of parts) {
+      if (past === null || !(past > 0)) break; // each quarter needs the shorter ones
+      weighted += w * (c.c0 / past);
+      weight += w;
+    }
+    if (weight > 0) performance.push([id, weighted / weight]);
+  }
+  performance.sort((a, b) => a[1] - b[1]);
+  const ratings = new Map<string, number>();
+  const n = performance.length;
+  performance.forEach(([id], i) => {
+    ratings.set(id, n === 1 ? 99 : Math.max(1, Math.round(1 + (98 * i) / (n - 1))));
+  });
+  return ratings;
+}
+
+// =============================================================================
 // Aggregate
 // =============================================================================
 
@@ -530,10 +556,13 @@ export function detectSimons(bars: OHLCV[]): StrategyResult {
  * collect the matches. Never throws — short or gappy series simply produce
  * fewer (or no) tags, letting the caller fall back to default indicators.
  */
-export function evaluateLegendary(bars: OHLCV[]): LegendaryEvaluation {
+export function evaluateLegendary(
+  bars: OHLCV[],
+  context: { rsRating?: number | null } = {},
+): LegendaryEvaluation {
   const results: StrategyResult[] = [
     detectQullamaggie(bars),
-    detectMinervini(bars),
+    detectMinervini(bars, context.rsRating ?? null),
     detectDarvas(bars),
     detectPTJ(bars),
     detectSimons(bars),

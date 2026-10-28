@@ -121,9 +121,12 @@ function ActionBadge({
 
 export default function ScreenerTable({
   rows,
+  strategyRows = rows,
   scoped = false,
 }: {
   rows: ScreenRow[];
+  /** Rows a strategy filter selects from: every buy match of each strategy. */
+  strategyRows?: ScreenRow[];
   scoped?: boolean;
 }) {
   const router = useRouter();
@@ -156,7 +159,7 @@ export default function ScreenerTable({
     const needle = q.trim().toUpperCase();
     const roceMin = minRoce.trim() === "" ? null : Number(minRoce);
     const peMax = maxPe.trim() === "" ? null : Number(maxPe);
-    const matches = rows.filter((r) => {
+    const matches = (strategy === "ALL" ? rows : strategyRows).filter((r) => {
       if (market !== "ALL" && r.country !== market) return false;
       if (strategy !== "ALL" && !isBuyStrategyMatch(r, strategy)) return false;
       // A strategy filter implies "setups" — skip the NO_SETUP gate so a tagged
@@ -169,7 +172,7 @@ export default function ScreenerTable({
       return true;
     });
     return rankSwingCandidates(matches, activeStrategy);
-  }, [rows, q, market, setup, strategy, minRoce, maxPe, activeStrategy]);
+  }, [rows, strategyRows, q, market, setup, strategy, minRoce, maxPe, activeStrategy]);
 
   const hasFundamentals = useMemo(() => rows.some((r) => r.roce !== null || r.peRatio !== null), [rows]);
 
@@ -177,13 +180,13 @@ export default function ScreenerTable({
   // mapped through the user's risk params) instead of the default swing levels.
   const strategyCounts = useMemo(() => {
     const c = new Map<StrategyKey, number>();
-    for (const r of rows) {
+    for (const r of strategyRows) {
       for (const t of r.strategyTags) {
         if (isBuyStrategyMatch(r, t)) c.set(t, (c.get(t) ?? 0) + 1);
       }
     }
     return c;
-  }, [rows]);
+  }, [strategyRows]);
 
   const counts = useMemo(() => {
     const c = { total: rows.length, setups: 0, long: 0 };
@@ -193,6 +196,12 @@ export default function ScreenerTable({
     }
     return c;
   }, [rows]);
+
+  // A strategy view lists that system's own buy matches; note how many the default
+  // classifier also flags as a setup.
+  const strategyOverlap = useMemo(() => activeStrategy
+    ? strategyRows.filter((r) => isBuyStrategyMatch(r, activeStrategy) && r.verdict !== "NO_SETUP").length
+    : 0, [strategyRows, activeStrategy]);
 
   return (
     <div>
@@ -315,9 +324,18 @@ export default function ScreenerTable({
       </div>
 
       <div className="mb-4 flex gap-6 text-xs text-white/50">
-        <span>{counts.total} scanned</span>
-        <span>{counts.setups} buy candidates</span>
-        <span className="text-emerald-400">{counts.long} confirmed buy breakouts</span>
+        {activeStrategy ? (
+          <>
+            <span>{strategyCounts.get(activeStrategy) ?? 0} {STRATEGY_LABEL[activeStrategy]} buy matches</span>
+            <span>{strategyOverlap} also a default swing setup</span>
+          </>
+        ) : (
+          <>
+            <span>{counts.total} scanned</span>
+            <span>{counts.setups} buy candidates</span>
+            <span className="text-emerald-400">{counts.long} confirmed buy breakouts</span>
+          </>
+        )}
         <span className="ml-auto">{filtered.length} shown</span>
       </div>
 
