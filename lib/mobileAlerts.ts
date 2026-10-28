@@ -32,6 +32,13 @@ interface CandidateSignal {
   quoteAsOf: string | null;
 }
 
+function candidateAlertDestination(market: "IN" | "US", engine: CandidateEngine) {
+  const section = engine === "STRONG_SWING" ? "strong-swing"
+    : engine === "MOMENTUM_IGNITION" ? "momentum-ignition"
+    : engine === "MOMENTUM_IGNITION_V2" ? "momentum-ignition-v2" : "trend-continuation";
+  return `/terminal/${market.toLowerCase()}/strong-swing#${section}`;
+}
+
 async function sendExpoMessages(tokens: PushTokenRow[], message: {
   title: string; body: string; screen: "ledger" | "strong-swing"; market?: "IN" | "US";
 }) {
@@ -131,6 +138,9 @@ async function dispatchCandidateAlerts(userId: string, tokens: PushTokenRow[], m
     let sentCount = 0;
     let failedCount = 0;
     if (newlyReady) {
+      const engineLabel = candidate.engine === "STRONG_SWING" ? "Strong Swing"
+        : candidate.engine === "MOMENTUM_IGNITION" ? "Momentum Ignition"
+        : candidate.engine === "MOMENTUM_IGNITION_V2" ? "Momentum Ignition V2" : "Trend Continuation";
       const statusLabel = candidate.status === "EXECUTION_READY" ? "Execution Ready"
         : candidate.status === "TREND_CONTINUATION_READY" ? "Continuation Ready (observation)" : "Momentum Ready";
       await query(
@@ -139,9 +149,9 @@ async function dispatchCandidateAlerts(userId: string, tokens: PushTokenRow[], m
          values($1,$2,'CANDIDATE_READY',$3,$4,$5,$6,$7,
            (now() at time zone case when $2='IN' then 'Asia/Kolkata' else 'America/New_York' end)::date)
          on conflict(user_id,signature,market_date) do nothing`,
-        [userId, market, candidate.assetId, `InvestoGenie: ${statusLabel}`,
-          `${candidate.ticker} entered ${statusLabel}. Open Strong Swing to review it.`,
-          `/terminal/${market.toLowerCase()}/strong-swing`, `${candidate.engine}|${candidate.assetId}|${candidate.status}`],
+        [userId, market, candidate.assetId, `InvestoGenie: ${engineLabel} · ${statusLabel}`,
+          `${candidate.ticker} entered ${statusLabel} in ${engineLabel}. Open that section to review it.`,
+          candidateAlertDestination(market, candidate.engine), `${candidate.engine}|${candidate.assetId}|${candidate.status}`],
       );
     }
     if (transitioned) {

@@ -7,6 +7,7 @@ export const dynamic = "force-dynamic";
 
 interface EventRow {
   id: string; title: string; body: string; route: string; signature: string; created_at: string;
+  deliverable: boolean;
 }
 
 export async function GET(request: NextRequest) {
@@ -22,11 +23,23 @@ export async function GET(request: NextRequest) {
   }
   if (!/^\d+$/.test(rawAfter)) return NextResponse.json({ error: "Invalid cursor" }, { status: 400 });
   const rows = await query<EventRow>(
-    `select id::text,title,body,route,signature,created_at::text
-       from public.browser_notification_events
-      where user_id=$1 and id>$2::bigint order by id asc limit 50`,
+    `select e.id::text,e.title,e.body,e.route,e.signature,e.created_at::text,
+            case when e.kind<>'CANDIDATE_READY' then true else exists (
+              select 1 from public.mobile_candidate_alert_state s
+               where s.user_id=e.user_id and s.market=e.market and s.asset_id=e.asset_id
+                 and s.was_ready=true
+                 and concat(s.engine,'|',s.asset_id::text,'|',s.last_status)=e.signature
+            ) end deliverable
+       from public.browser_notification_events e
+      where e.user_id=$1 and e.id>$2::bigint order by e.id asc limit 50`,
     [user.id, rawAfter],
   );
-  return NextResponse.json({ cursor: rows.at(-1)?.id ?? rawAfter, events: rows });
+  return NextResponse.json({
+    cursor: rows.at(-1)?.id ?? rawAfter,
+    events: rows.filter((row) => row.deliverable).map((row) => ({
+      id: row.id, title: row.title, body: row.body, route: row.route,
+      signature: row.signature, created_at: row.created_at,
+    })),
+  });
 }
 
