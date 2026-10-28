@@ -132,8 +132,10 @@ async function dispatchCandidateAlerts(userId: string, tokens: PushTokenRow[], m
         : candidate.status === "TREND_CONTINUATION_READY" ? "Continuation Ready (observation)" : "Momentum Ready";
       await query(
         `insert into public.browser_notification_events
-           (user_id,market,kind,asset_id,title,body,route,signature)
-         values($1,$2,'CANDIDATE_READY',$3,$4,$5,$6,$7)`,
+           (user_id,market,kind,asset_id,title,body,route,signature,market_date)
+         values($1,$2,'CANDIDATE_READY',$3,$4,$5,$6,$7,
+           (now() at time zone case when $2='IN' then 'Asia/Kolkata' else 'America/New_York' end)::date)
+         on conflict(user_id,signature,market_date) do nothing`,
         [userId, market, candidate.assetId, `InvestoGenie: ${statusLabel}`,
           `${candidate.ticker} entered ${statusLabel}. Open Strong Swing to review it.`,
           `/terminal/${market.toLowerCase()}/strong-swing`, `${candidate.engine}|${candidate.assetId}|${candidate.status}`],
@@ -217,8 +219,10 @@ export async function dispatchMobileTradeAlerts(markets: Array<"IN" | "US">) {
         if (!shouldSendTradeAlert(previous[0]?.last_signature ?? null, signature)) continue;
         await query(
           `insert into public.browser_notification_events
-             (user_id,market,kind,asset_id,trade_id,title,body,route,signature)
-           values($1,$2,'TRADE_ACTION',$3,$4,$5,$6,$7,$8)`,
+             (user_id,market,kind,asset_id,trade_id,title,body,route,signature,market_date)
+           values($1,$2,'TRADE_ACTION',$3,$4,$5,$6,$7,$8,
+             (now() at time zone case when $2='IN' then 'Asia/Kolkata' else 'America/New_York' end)::date)
+           on conflict(user_id,signature,market_date) do nothing`,
           [userId, market, trade.assetId, trade.id, "InvestoGenie trade alert",
             `${trade.ticker}: ${trade.risk.recommendation.replaceAll("_", " ")}. Open Trade Ledger to review it.`,
             `/terminal/${market.toLowerCase()}/trade-ledger`, signature],

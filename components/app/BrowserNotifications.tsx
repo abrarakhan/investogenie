@@ -39,7 +39,7 @@ export default function BrowserNotifications() {
     const worker = "serviceWorker" in navigator
       ? navigator.serviceWorker.register("/browser-notifications-sw.js")
       : Promise.resolve(null);
-    const poll = async () => {
+    const pollUnlocked = async () => {
       try {
         const existing = localStorage.getItem(CURSOR_KEY);
         const response = await fetch(`/api/browser-notifications${existing ? `?after=${encodeURIComponent(existing)}` : ""}`, { cache: "no-store" });
@@ -51,14 +51,23 @@ export default function BrowserNotifications() {
           const registration = await worker;
           if (registration) {
             await registration.showNotification(event.title, {
-              body: event.body, tag: `investogenie:${event.id}`, data: { route: event.route },
+              body: event.body, tag: `investogenie:${event.signature}`, data: { route: event.route },
             });
           } else {
-            const notification = new Notification(event.title, { body: event.body, tag: `investogenie:${event.id}` });
+            const notification = new Notification(event.title, { body: event.body, tag: `investogenie:${event.signature}` });
             notification.onclick = () => { window.focus(); window.location.assign(event.route); notification.close(); };
           }
         }
       } catch { /* A transient browser/network failure is retried on the next poll. */ }
+    };
+    const poll = async () => {
+      if ("locks" in navigator) {
+        await navigator.locks.request("investogenie-browser-notifications", { ifAvailable: true }, async (lock) => {
+          if (lock) await pollUnlocked();
+        });
+      } else {
+        await pollUnlocked();
+      }
     };
     void poll();
     const timer = window.setInterval(poll, 30_000);

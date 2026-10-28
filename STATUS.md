@@ -35,7 +35,7 @@ This is a repository status reference. The production web/Breeze services, login
 | 0058 | Persisted daily screener technical features and forward outcomes |
 | 0059 | Candidate signal observation history |
 
-The shared Linux release script applies an explicit 0033–0061 list. Fresh databases still need the full ordered schema. `scripts/verify-production-schema.mjs` checks required relations, including candidate observations, trend-continuation signals and browser-notification events, plus authoritative-calendar and Gmail-health columns. After pulling, the release script re-executes the checked-out version once so a migration added in the same release is applied.
+The shared Linux release script applies an explicit 0033–0062 list. Fresh databases still need the full ordered schema. `scripts/verify-production-schema.mjs` checks required relations, including candidate observations, trend-continuation signals and browser-notification events, plus authoritative-calendar and Gmail-health columns. Browser notification signatures are unique per user and market day, and polling is serialized across open tabs. After pulling, the release script re-executes the checked-out version once so a migration added in the same release is applied.
 
 Authenticated web pages expose an opt-in browser-alert control. While the site is open in a foreground or background tab, it polls deduplicated server events and uses the browser Notification API for candidate-ready transitions and material ledger actions. Permission is requested only from an explicit user click; denied permission is never bypassed.
 
