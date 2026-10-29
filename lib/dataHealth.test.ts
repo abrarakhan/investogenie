@@ -155,6 +155,26 @@ describe("classifyCoverageGaps", () => {
     expect(stale).toContainEqual(expect.objectContaining({ issueType: "Stale fundamentals", severity: "low" }));
     expect(outOfScope).not.toContainEqual(expect.objectContaining({ issueType: "Stale fundamentals" }));
   });
+
+  it("uses annual-report cadence instead of flagging a freshly synced annual report after six months", () => {
+    const currentAnnual = classifyCoverageGaps({
+      symbol: "HDFCBANK", market: "IN", inUniverse: true, hasFundamentals: true,
+      latestFundamentalsDate: "2026-03-31", latestFundamentalsType: "ANNUAL",
+      now: "2026-10-29T14:30:00Z",
+    });
+    expect(currentAnnual).not.toContainEqual(expect.objectContaining({ issueType: "Stale fundamentals" }));
+  });
+
+  it("distinguishes a current exchange quote with no recent trades from a failed history refresh", () => {
+    const gaps = classifyCoverageGaps({
+      symbol: "BMAL", market: "IN", hasQuote: true,
+      quoteUpdatedAt: "2026-10-29T14:27:00Z", quoteAsOf: "2026-10-29",
+      hasHistory: true, latestHistoryDate: "2026-08-24", inUniverse: false,
+      now: "2026-10-29T14:30:00Z",
+    });
+    expect(gaps).toContainEqual(expect.objectContaining({ issueType: "No recent trades", action: "No repair needed" }));
+    expect(gaps).not.toContainEqual(expect.objectContaining({ issueType: "History stale" }));
+  });
 });
 
 describe("classifySourceFreshness — NSE/BSE OHLCV History source cards", () => {

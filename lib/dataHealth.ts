@@ -27,6 +27,7 @@ export interface CoverageGapInput {
   inUniverse?: boolean;
   hasFundamentals?: boolean;
   latestFundamentalsDate?: string | null;
+  latestFundamentalsType?: string | null;
   activeSwingSignal?: boolean;
   openForwardTest?: boolean;
   now?: string;
@@ -135,6 +136,10 @@ export function classifyCoverageGaps(input: CoverageGapInput): CoverageGap[] {
   const historyLagSessions = expectedHistoryAsOf && historyAsOf
     ? tradingSessionLag(input.market, historyAsOf, expectedHistoryAsOf)
     : null;
+  const currentQuoteWithoutBar = !!input.hasHistory
+    && quoteLagSessions === 0
+    && historyLagSessions !== null
+    && historyLagSessions > toleratedInactiveSessions;
   const staleHistory = input.hasHistory
     && (historyLagSessions === null || historyLagSessions > toleratedInactiveSessions);
 
@@ -150,7 +155,18 @@ export function classifyCoverageGaps(input: CoverageGapInput): CoverageGap[] {
     });
   }
 
-  if (staleHistory) {
+  if (currentQuoteWithoutBar) {
+    const sessionLagLabel = `${historyLagSessions} trading ${historyLagSessions === 1 ? "session" : "sessions"}`;
+    gaps.push({
+      symbol: input.symbol,
+      market: input.market,
+      issueType: "No recent trades",
+      detail: `The exchange quote is current, but the last traded OHLCV bar is ${sessionLagLabel} old. There is no missing bar to backfill; the asset remains excluded from strategies until it trades again.`,
+      severity: "low",
+      gapDays: historyLagSessions,
+      action: "No repair needed",
+    });
+  } else if (staleHistory) {
     const sessionLagLabel = historyLagSessions === null
       ? "an unknown number of trading sessions"
       : `${historyLagSessions} trading ${historyLagSessions === 1 ? "session" : "sessions"}`;
@@ -178,7 +194,8 @@ export function classifyCoverageGaps(input: CoverageGapInput): CoverageGap[] {
   }
 
   const fundamentalsGap = daysBetween(now, input.latestFundamentalsDate);
-  if (input.inUniverse && input.hasFundamentals && fundamentalsGap !== null && fundamentalsGap > 183) {
+  const fundamentalsCadenceDays = input.latestFundamentalsType?.toUpperCase() === "ANNUAL" ? 370 : 183;
+  if (input.inUniverse && input.hasFundamentals && fundamentalsGap !== null && fundamentalsGap > fundamentalsCadenceDays) {
     gaps.push({
       symbol: input.symbol,
       market: input.market,
@@ -454,6 +471,7 @@ interface AssetGapRow {
   quote_as_of: string | null;
   latest_history_date: string | null;
   latest_fundamentals_date: Date | string | null;
+  latest_fundamentals_type: string | null;
   in_universe: boolean;
   active_swing_signal: boolean;
   open_forward_test: boolean;
@@ -501,6 +519,7 @@ export async function getCoverageGaps(userId: string, now = new Date()): Promise
                    q.as_of::text quote_as_of,
                    hist.latest_history_date,
                    fin.latest_fundamentals_date,
+                   fin.latest_fundamentals_type,
                    (uni.asset_id is not null) in_universe,
                    (swing.asset_id is not null) active_swing_signal,
                    (fwd.asset_id is not null) open_forward_test
@@ -514,10 +533,12 @@ export async function getCoverageGaps(userId: string, now = new Date()): Promise
                  limit 1
               ) hist on true
               left join lateral (
-                select f.period_end_date latest_fundamentals_date
+                select f.period_end_date latest_fundamentals_date,
+                       f.report_type latest_fundamentals_type
                   from public.asset_financial_reports f
                  where f.asset_id=a.id
-                 order by f.period_end_date desc
+                 order by f.period_end_date desc,
+                          case when upper(f.report_type) = 'ANNUAL' then 0 else 1 end
                  limit 1
               ) fin on true
               left join uni on uni.asset_id = a.id
@@ -539,6 +560,7 @@ export async function getCoverageGaps(userId: string, now = new Date()): Promise
             max(quote_as_of) quote_as_of,
             max(latest_history_date) latest_history_date,
             max(latest_fundamentals_date) latest_fundamentals_date,
+            max(latest_fundamentals_type) latest_fundamentals_type,
             bool_or(in_universe) in_universe,
             bool_or(active_swing_signal) active_swing_signal,
             bool_or(open_forward_test) open_forward_test
@@ -566,6 +588,7 @@ export async function getCoverageGaps(userId: string, now = new Date()): Promise
     inUniverse: row.in_universe,
     hasFundamentals: row.latest_fundamentals_date !== null,
     latestFundamentalsDate: iso(row.latest_fundamentals_date),
+    latestFundamentalsType: row.latest_fundamentals_type,
     activeSwingSignal: row.active_swing_signal,
     openForwardTest: row.open_forward_test,
     now: nowIso,
