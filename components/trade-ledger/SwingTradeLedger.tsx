@@ -47,12 +47,12 @@ export default function SwingTradeLedger({ market, trades, defaults }: {
       </section>
       <details className="rounded-lg border border-white/10 bg-white/[0.02]">
         <summary className="cursor-pointer list-none px-4 py-3 text-sm font-semibold text-white/55 [&::-webkit-details-marker]:hidden">Performance details · {summary.closedCount} closed trades</summary>
-        <div className="grid grid-cols-2 gap-3 border-t border-white/10 p-4 md:grid-cols-5">
+        <div className="grid grid-cols-2 gap-3 border-t border-white/10 p-3 sm:p-4 md:grid-cols-5">
           <Summary label="Capital added" value={money(summary.capitalEmployedValue, currency)} />
           <Summary label="Trade turnover" value={money(summary.totalInvestedValue, currency)} />
           <Summary label="Unrealized P&L" value={money(summary.unrealizedPnlValue, currency)} tone={summary.unrealizedPnlValue >= 0 ? "good" : "bad"} />
           <Summary label="Realized P&L" value={money(summary.realizedPnlValue, currency)} tone={summary.realizedPnlValue >= 0 ? "good" : "bad"} />
-          <Summary label="XIRR · annualized" value={pct(summary.xirrPct)} tone={(summary.xirrPct ?? 0) >= 0 ? "good" : "bad"} />
+          <Summary label="XIRR · annualized" value={pct(summary.xirrPct)} tone={(summary.xirrPct ?? 0) >= 0 ? "good" : "bad"} className="col-span-2 md:col-span-1" />
         </div>
         <p className="px-4 pb-4 text-[11px] leading-relaxed text-white/35">Capital added is the cash required to fund purchases before later sale proceeds are recycled. ROI is total P&amp;L divided by that cash. Turnover is cumulative purchases. XIRR is annualized and can be extreme for short periods.</p>
       </details>
@@ -134,8 +134,9 @@ export default function SwingTradeLedger({ market, trades, defaults }: {
   );
 }
 
-function Summary({ label, value, tone }: { label: string; value: string; tone?: "good" | "bad" }) {
-  return <div className="rounded-lg border border-white/10 bg-white/[0.025] p-4"><div className="text-xs uppercase tracking-[0.16em] text-white/35">{label}</div><div className={`mt-2 text-2xl font-bold ${tone === "good" ? "text-emerald-300" : tone === "bad" ? "text-rose-300" : ""}`}>{value}</div></div>;
+function Summary({ label, value, tone, className = "" }: { label: string; value: string; tone?: "good" | "bad"; className?: string }) {
+  // Large lakh-formatted amounts must fit a half-width phone card, and a negative sign must never wrap off its number.
+  return <div className={`min-w-0 rounded-lg border border-white/10 bg-white/[0.025] p-3 sm:p-4 ${className}`}><div className="truncate text-[11px] uppercase tracking-[0.1em] text-white/35 sm:text-xs sm:tracking-[0.16em]">{label}</div><div className={`mt-2 whitespace-nowrap text-lg font-bold tabular-nums tracking-tight sm:text-2xl ${tone === "good" ? "text-emerald-300" : tone === "bad" ? "text-rose-300" : ""}`}>{value}</div></div>;
 }
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
