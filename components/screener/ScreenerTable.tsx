@@ -277,8 +277,9 @@ export default function ScreenerTable({
 
       {activeStrategy && (
         <p className="mb-4 text-xs text-white/50">
-          {STRATEGY_META.find((m) => m.key === activeStrategy)?.blurb} Entry/target/stop
-          below are derived from this system&apos;s entry line through your risk settings.
+          {STRATEGY_META.find((m) => m.key === activeStrategy)?.blurb} Entry, stop and trail
+          below follow this system&apos;s own rules; where it has no fixed target, the target is
+          your R:R multiple of its risk — a first profit level, with the trail managing the rest.
         </p>
       )}
 

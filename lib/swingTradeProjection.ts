@@ -1,6 +1,6 @@
 import { queryOne } from "@/lib/db";
 import { deriveLevels, type SwingSetup } from "@/lib/analytics/swingClassifier";
-import { STRATEGY_META, type StrategyScore } from "@/lib/analytics/legendaryStrategies";
+import { STRATEGY_META, strategyTradeLevels, type StrategyScore } from "@/lib/analytics/legendaryStrategies";
 import { getUserSwingSettings } from "@/lib/settings";
 
 type SignalRow = {
@@ -48,7 +48,10 @@ export async function resolveSignalProjection(
   };
   const strategyScore = isStrongSwing || isMomentumIgnition || isArmedSwing ? undefined : row.strategy_scores?.[strategyKey];
   const settings = await getUserSwingSettings(userId);
-  const levels = deriveLevels(setup, "LONG", settings);
+  // A legendary strategy keeps its own stop and trailing line under the actual buy price.
+  const levels = strategyScore?.dir === "LONG"
+    ? strategyTradeLevels(setup, { ...strategyScore, entry: buyPrice }, settings)
+    : deriveLevels(setup, "LONG", settings);
   const label = isStrongSwing
     ? "Strong Swing"
     : isArmedSwing

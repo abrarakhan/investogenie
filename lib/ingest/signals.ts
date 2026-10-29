@@ -12,7 +12,9 @@
 // therefore overlapped for throughput rather than trimmed.
 import { Pool } from "pg";
 import { classifySwingSetup, deriveLevels } from "@/lib/analytics/swingClassifier";
-import { evaluateLegendary, relativeStrengthRatings, type RsCloses } from "@/lib/analytics/legendaryStrategies";
+import {
+  evaluateLegendary, momentumLeaderPercentiles, relativeStrengthRatings, type MomentumCloses, type RsCloses,
+} from "@/lib/analytics/legendaryStrategies";
 import type { OHLCV } from "@/lib/types";
 
 export interface ScanSummary {
@@ -111,13 +113,14 @@ export async function computeSignals(databaseUrl: string): Promise<ScanSummary> 
         order by a.id`,
     );
 
-    // Minervini's relative-strength rating ranks each asset against its own market and
-    // asset class,
-    // so it needs every asset's performance before any batch is evaluated. Only the
-    // five closes it uses are read (the last ~13 months bound the window scan).
-    const { rows: rsRows } = await client.query<{ asset_id: string; peer_group: string } & Record<"c0" | "c63" | "c126" | "c189" | "c252", string | null>>(
+    // Minervini's relative-strength rating and Qullamaggie's momentum-leader rank both
+    // rank each asset against its own market and asset class, so they need every
+    // asset's performance before any batch is evaluated. Only the six closes they use
+    // are read (the last ~13 months bound the window scan).
+    const { rows: rsRows } = await client.query<{ asset_id: string; peer_group: string } & Record<"c0" | "c21" | "c63" | "c126" | "c189" | "c252", string | null>>(
       `select x.asset_id, a.country || ':' || a.asset_class peer_group,
-              max(x.close) filter (where x.rn = 1) c0, max(x.close) filter (where x.rn = 64) c63,
+              max(x.close) filter (where x.rn = 1) c0, max(x.close) filter (where x.rn = 22) c21,
+              max(x.close) filter (where x.rn = 64) c63,
               max(x.close) filter (where x.rn = 127) c126, max(x.close) filter (where x.rn = 190) c189,
               max(x.close) filter (where x.rn = 253) c252
          from (
@@ -126,20 +129,28 @@ export async function computeSignals(databaseUrl: string): Promise<ScanSummary> 
             where o.asset_id = any($1) and o.close > 0 and o.date >= current_date - 400
          ) x
          join public.assets a on a.id = x.asset_id
-        where x.rn in (1, 64, 127, 190, 253)
+        where x.rn in (1, 22, 64, 127, 190, 253)
         group by x.asset_id, a.country, a.asset_class`,
       [assets.map((a) => a.id)],
     );
     const rsByPeerGroup = new Map<string, Map<string, RsCloses>>();
+    const momentumByPeerGroup = new Map<string, Map<string, MomentumCloses>>();
     const toNum = (v: string | null) => (v === null ? null : Number(v));
     for (const r of rsRows) {
       let byAsset = rsByPeerGroup.get(r.peer_group);
       if (!byAsset) { byAsset = new Map(); rsByPeerGroup.set(r.peer_group, byAsset); }
       byAsset.set(r.asset_id, { c0: Number(r.c0), c63: toNum(r.c63), c126: toNum(r.c126), c189: toNum(r.c189), c252: toNum(r.c252) });
+      let momentum = momentumByPeerGroup.get(r.peer_group);
+      if (!momentum) { momentum = new Map(); momentumByPeerGroup.set(r.peer_group, momentum); }
+      momentum.set(r.asset_id, { c0: Number(r.c0), c21: toNum(r.c21), c63: toNum(r.c63), c126: toNum(r.c126) });
     }
     const rsRating = new Map<string, number>();
     for (const byAsset of rsByPeerGroup.values()) {
       for (const [id, rating] of relativeStrengthRatings(byAsset)) rsRating.set(id, rating);
+    }
+    const momentumPercentile = new Map<string, number>();
+    for (const byAsset of momentumByPeerGroup.values()) {
+      for (const [id, pct] of momentumLeaderPercentiles(byAsset)) momentumPercentile.set(id, pct);
     }
 
     let scanned = 0;
@@ -197,7 +208,10 @@ export async function computeSignals(databaseUrl: string): Promise<ScanSummary> 
             if (s.verdict !== "NO_SETUP") setups++;
             const dir = s.bias === "SHORT" ? "SHORT" : "LONG";
             const lv = deriveLevels(s.setup, dir);
-            const legendary = evaluateLegendary(series, { rsRating: rsRating.get(assetId) ?? null });
+            const legendary = evaluateLegendary(series, {
+              rsRating: rsRating.get(assetId) ?? null,
+              momentumPercentile: momentumPercentile.get(assetId) ?? null,
+            });
             out.push([
               meta.id, meta.ticker, meta.country, meta.exchange, meta.asset_class,
               s.verdict, s.score, s.close, s.bollinger.bandwidth * 100,

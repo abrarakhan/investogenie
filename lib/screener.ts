@@ -7,12 +7,12 @@ import { query } from "@/lib/db";
 import { getQuotesByAssetIds } from "@/lib/quotes";
 import { getFundamentalsByAssetIds } from "@/lib/fundamentals";
 import { deriveLevels, type SwingSetup, type TradeDirection } from "@/lib/analytics/swingClassifier";
-import type { StrategyKey, StrategyScore } from "@/lib/analytics/legendaryStrategies";
+import { strategyTradeLevels, type StrategyKey, type StrategyScore } from "@/lib/analytics/legendaryStrategies";
 import { DEFAULT_SETTINGS, type SwingSettings } from "@/lib/settings";
 import { isMarketOpenNow, latestExpectedSessionDate, refreshMarketHolidays } from "@/lib/market-calendar.mjs";
 
-/** Trade levels for one legendary strategy, derived from its custom entry line
- *  through the user's read-time risk parameters. */
+/** Trade levels for one legendary strategy: its own entry, stop and trailing line,
+ *  with the user's R:R setting the first target where the strategy has none. */
 export interface StrategyLevel {
   direction: TradeDirection;
   entry: number;
@@ -121,13 +121,9 @@ export async function runScreener(
   ): Record<string, StrategyLevel> => {
     const levels: Record<string, StrategyLevel> = {};
     for (const [key, sc] of Object.entries(rawScores)) {
-      const dir: TradeDirection = sc.dir === "SHORT" ? "SHORT" : "LONG";
-      const trigger = sc.entry ?? (dir === "SHORT" ? setup.shortTrigger : setup.longTrigger);
-      const stratSetup: SwingSetup =
-        dir === "SHORT" ? { ...setup, shortTrigger: trigger } : { ...setup, longTrigger: trigger };
-      const slv = deriveLevels(stratSetup, dir, settings);
+      const slv = strategyTradeLevels(setup, sc, settings);
       levels[key] = {
-        direction: dir,
+        direction: slv.direction,
         entry: slv.entry,
         target: slv.target,
         stopLoss: slv.stopLoss,

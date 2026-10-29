@@ -63,7 +63,8 @@ export async function enrollCohort(market: MarketId): Promise<EnrollSummary> {
   const rows = await runScreener(country);
   const byStrategy = new Map<string, typeof rows>();
   for (const row of rows) {
-    if (row.verdict === "NO_SETUP") continue;
+    // A strategy match is its own setup: the default classifier's verdict does not gate it.
+    if (!row.strategyTags.length) continue;
     if (!isTradableCommon(row)) { skipped++; continue; }
     for (const tag of row.strategyTags) {
       const bucket = byStrategy.get(tag) ?? [];
