@@ -44,6 +44,7 @@ const requiredRelations = [
   "public.screener_technical_daily",
   "public.trend_continuation_signals",
   "public.browser_notification_events",
+  "public.asset_symbol_changes",
 ];
 const requiredColumns = [
   ["corporate_event_sync_state", "authoritative_source"],
