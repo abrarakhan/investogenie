@@ -184,6 +184,12 @@ describe("classifySourceFreshness — NSE/BSE OHLCV History source cards", () =>
     expect(classifySourceFreshness(fridayRow, new Date("2026-07-27T13:30:00Z"), "")).toBe("stale"); // Mon 19:00 IST
   });
 
+  it("does not report a false failure while the 18:30 EOD import is running", () => {
+    const priorSession = { ...fridayRow, quote_as_of: "2026-07-24" };
+    expect(classifySourceFreshness(priorSession, new Date("2026-07-27T13:03:00Z"), "")).toBe("fresh"); // Mon 18:33 IST
+    expect(classifySourceFreshness(priorSession, new Date("2026-07-27T13:31:00Z"), "")).toBe("stale"); // Mon 19:01 IST
+  });
+
   it("only fails after a genuinely stuck multi-day gap", () => {
     const staleRow: SourceRow = { ...fridayRow, quote_as_of: "2026-07-10" };
     expect(classifySourceFreshness(staleRow, new Date("2026-07-27T13:30:00Z"), "")).toBe("failed");

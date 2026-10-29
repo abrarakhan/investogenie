@@ -263,7 +263,11 @@ export function classifyCoverageFreshness(currentCount: number, totalCount: numb
 }
 
 function expectedIndianBhavcopyDate(now: Date): string {
-  return latestExpectedSessionDate("IN", now, 18 * 60);
+  // The official full-market EOD jobs start at 18:30 IST and normally finish
+  // a few minutes later. Do not demand the new session from 18:00 onward: that
+  // creates a false FAILED window while the scheduled import is still running.
+  // After 19:00 a missing close is a genuine delayed/stuck feed.
+  return latestExpectedSessionDate("IN", now, 19 * 60);
 }
 
 function isIndianQuoteSource(source: string): boolean {

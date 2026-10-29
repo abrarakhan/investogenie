@@ -1,6 +1,8 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { backfillNseHistory } from "@/lib/ingest/nseHistory";
 import { checkCronAuth, logCronRun } from "@/lib/ingest/cronLog";
+import { promoteLatestOhlcvToQuotes } from "@/lib/ingest/quotes";
+import { Client } from "pg";
 
 // Incremental NSE daily-EOD top-up. After a one-off historical CSV import, this
 // job keeps all NSE stock OHLCV current by fetching only missing bhavcopy dates
@@ -36,6 +38,17 @@ export async function GET(request: NextRequest) {
       startISO,
       endISO,
     });
+    const client = new Client({
+      connectionString: databaseUrl,
+      ssl: /127\.0\.0\.1|localhost/.test(databaseUrl) ? false : { rejectUnauthorized: false },
+    });
+    await client.connect();
+    let quotesPromoted = 0;
+    try {
+      quotesPromoted = await promoteLatestOhlcvToQuotes(client);
+    } finally {
+      await client.end();
+    }
     await logCronRun(databaseUrl, {
       job: "backfill-nse",
       status: "ok",
@@ -45,12 +58,13 @@ export async function GET(request: NextRequest) {
         datesAttempted: summary.datesAttempted,
         sessionsFetched: summary.sessionsFetched,
         barsUpserted: summary.barsUpserted,
+        quotesPromoted,
         nseAssets: summary.nseAssets,
         skipped: summary.skipped,
       },
       durationMs: summary.durationMs,
     });
-    return NextResponse.json({ ok: true, ...summary });
+    return NextResponse.json({ ok: true, ...summary, quotesPromoted });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     await logCronRun(databaseUrl, {

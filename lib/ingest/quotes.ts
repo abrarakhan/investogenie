@@ -26,7 +26,7 @@ interface IndiaLiveAsset {
   exchange: "NSE" | "BSE";
 }
 
-async function promoteLatestOhlcvToQuotes(client: Client): Promise<number> {
+export async function promoteLatestOhlcvToQuotes(client: Client): Promise<number> {
   const promoted = await client.query<{ asset_id: string }>(
     `with latest as (
        select a.id asset_id,current_bar.date,current_bar.close,previous_bar.close previous_close,a.currency

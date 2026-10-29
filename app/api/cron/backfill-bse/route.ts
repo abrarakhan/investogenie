@@ -1,6 +1,8 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { backfillBseHistory } from "@/lib/ingest/nseHistory";
 import { checkCronAuth, logCronRun } from "@/lib/ingest/cronLog";
+import { promoteLatestOhlcvToQuotes } from "@/lib/ingest/quotes";
+import { Client } from "pg";
 
 // Incremental BSE daily-EOD top-up from the official BSE UDiFF bhavcopy.
 // This is the primary BSE history path; Yahoo/Google repair remains available
@@ -35,6 +37,17 @@ export async function GET(request: NextRequest) {
       startISO,
       endISO,
     });
+    const client = new Client({
+      connectionString: databaseUrl,
+      ssl: /127\.0\.0\.1|localhost/.test(databaseUrl) ? false : { rejectUnauthorized: false },
+    });
+    await client.connect();
+    let quotesPromoted = 0;
+    try {
+      quotesPromoted = await promoteLatestOhlcvToQuotes(client);
+    } finally {
+      await client.end();
+    }
     await logCronRun(databaseUrl, {
       job: "backfill-bse",
       status: "ok",
@@ -44,12 +57,13 @@ export async function GET(request: NextRequest) {
         datesAttempted: summary.datesAttempted,
         sessionsFetched: summary.sessionsFetched,
         barsUpserted: summary.barsUpserted,
+        quotesPromoted,
         bseAssets: summary.bseAssets ?? summary.assets,
         skipped: summary.skipped,
       },
       durationMs: summary.durationMs,
     });
-    return NextResponse.json({ ok: true, ...summary });
+    return NextResponse.json({ ok: true, ...summary, quotesPromoted });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     await logCronRun(databaseUrl, {
