@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth";
+import { shouldRefreshLiveQuotes } from "@/lib/liveQuoteRefresh";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,6 +18,12 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid asset list" }, { status: 400 });
   }
   if (!ids.length) return NextResponse.json({ updated: 0 });
+  // Enforce this on the server as well as in the browser. Breeze can return
+  // partial/error responses after the cash session, which are expected and
+  // must not be surfaced as data-health failures.
+  if (!shouldRefreshLiveQuotes("IN")) {
+    return NextResponse.json({ skipped: true, reason: "off_hours", updated: 0, changed: 0 });
+  }
   // Rate-limit each batch independently. Pages can contain more than 50 assets,
   // so a per-user key silently discarded every batch after the first one.
   const requestKey = `${user.id}:${[...ids].sort().join(",")}`;

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { shouldRefreshLiveQuotes } from "@/lib/liveQuoteRefresh";
 
 export default function MarketDataAutoRefresh({ market, assetIds = [] }: { market: "IN" | "US"; assetIds?: string[] }) {
   const router = useRouter();
@@ -14,6 +15,13 @@ export default function MarketDataAutoRefresh({ market, assetIds = [] }: { marke
     const allIds = JSON.parse(ids) as string[];
     const refreshQuotes = async () => {
       if (document.visibilityState !== "visible") return;
+      // Breeze live quotes are an intraday facility. Outside the exchange
+      // session, retain the final known quote without reporting an expected
+      // off-hours skip as a refresh failure.
+      if (!shouldRefreshLiveQuotes("IN")) {
+        setWarning(null);
+        return;
+      }
       const batches = Array.from({ length: Math.ceil(allIds.length / 50) }, (_, index) => allIds.slice(index * 50, (index + 1) * 50));
       try {
         const results = await Promise.all(batches.map(async (batch) => {
@@ -24,7 +32,8 @@ export default function MarketDataAutoRefresh({ market, assetIds = [] }: { marke
           return { response, result: await response.json() };
         }));
         if (cancelled) return;
-        const incomplete = results.some(({ response, result }) => !response.ok || result.errors?.length || result.unmapped);
+        const incomplete = results.some(({ response, result }) => !response.ok
+          || (result.reason !== "off_hours" && (result.errors?.length || result.unmapped)));
         setWarning(incomplete ? "Some Breeze quotes could not be refreshed. Last known prices remain visible." : null);
         // A REST refresh can touch freshness without changing anything shown.
         // Recompute the analytics pages only for a material quote/depth change.
