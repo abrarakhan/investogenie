@@ -105,12 +105,12 @@ export default function TrendContinuationCandidates({ candidates }: { candidates
         <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-violet-300">Python signal engine · observation mode</div>
         <h2 className="mt-1 text-2xl font-black">Trend Continuation</h2>
         <p className="mt-1 max-w-3xl text-sm leading-relaxed text-white/45">
-          Tracks orderly 3–5 session continuation after an impulse has moved beyond Momentum Ignition&apos;s earliest-entry window.
+          Catches a heavy-volume range breakout on day one and confirms it after the first hour of day two (10:15 IST); orderly pullbacks after an older impulse remain a second entry path.
         </p>
       </div>
       <div className="text-right text-xs text-white/40">
         <div><span className="font-mono font-bold text-white/75">{candidates.length}</span> ranked continuation signals</div>
-        <div>Latest completed-session assessment</div>
+        <div>Rescanned every 2 minutes in market hours</div>
       </div>
     </div>
 
@@ -127,7 +127,7 @@ export default function TrendContinuationCandidates({ candidates }: { candidates
     </div>
 
     <div className="rounded-lg border border-violet-400/15 bg-violet-400/[0.035] px-4 py-3 text-xs leading-relaxed text-violet-100/65">
-      Continuation ready means the trend, impulse persistence, relative strength and entry geometry pass this engine&apos;s checks. It remains observation-only: it does not create a frozen trade plan, unlock buying, or feed auto-buy.
+      Continuation ready means day two is holding a confirmed breakout (stop under the day-one low), or an orderly pullback passes the trend, persistence and entry-geometry checks. It remains observation-only: it does not create a frozen trade plan, unlock buying, or feed auto-buy.
     </div>
 
     {!candidates.length

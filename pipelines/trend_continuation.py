@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Persist observation-only multi-session trend-continuation signals.
+"""Persist observation-only trend-continuation signals.
+
+Two entry paths are assessed. The primary one catches a range breakout on the
+first session after it ignites: day one must close above its 20-session high on
+heavy volume, and day two confirms once an hour of trading shows the gain is
+being held. The older multi-session pullback path remains for impulses that
+were not caught on day two.
 
 Python is the sole owner of every indicator, status and reference level.  The
 web/mobile layers only read the stored result.  This engine deliberately does
@@ -11,14 +17,22 @@ import argparse
 import json
 import math
 import os
-from dataclasses import dataclass
-from datetime import datetime, timezone
+from dataclasses import dataclass, replace
+from datetime import datetime, timedelta, timezone
 from typing import Iterable
 
 import psycopg2
 from psycopg2.extras import execute_values
 
-FEATURE_VERSION = "trend_continuation_v2"
+FEATURE_VERSION = "trend_continuation_v3"
+IST = timezone(timedelta(hours=5, minutes=30))
+SESSION_MINUTES = 375  # 09:15-15:30 IST
+CONFIRMATION_MINUTES = 60  # day-two confirmation opens at 10:15 IST
+# Cumulative share of an NSE cash session's volume traded N minutes after the
+# open. Intraday volume is U-shaped, so a partial bar is compared with the
+# volume a normal session has done by the same time, not with a full day.
+VOLUME_CURVE = ((0, 0.0), (15, 0.09), (30, 0.15), (60, 0.25), (120, 0.40), (180, 0.52),
+                (240, 0.64), (300, 0.77), (345, 0.88), (375, 1.0))
 
 
 @dataclass(frozen=True)
@@ -53,6 +67,31 @@ def _atr(bars: list[Bar], period: int = 14) -> float:
     return value
 
 
+def session_volume_share(minutes: float) -> float:
+    minutes = min(max(minutes, 0.0), float(SESSION_MINUTES))
+    for (left_minutes, left_share), (right_minutes, right_share) in zip(VOLUME_CURVE, VOLUME_CURVE[1:]):
+        if minutes <= right_minutes:
+            return left_share + (right_share - left_share) * (minutes - left_minutes) / (right_minutes - left_minutes)
+    return 1.0
+
+
+def india_session_minutes(last_bar_date: str, now: datetime) -> float | None:
+    """Minutes traded in the live session, or None when the last bar is complete."""
+    local = now.astimezone(IST)
+    if last_bar_date != local.date().isoformat():
+        return None
+    minutes = (local.hour * 60 + local.minute + local.second / 60.0) - (9 * 60 + 15)
+    return minutes if minutes < SESSION_MINUTES else None
+
+
+def _project_live_volume(series: list[Bar], session_minutes: float | None) -> list[Bar]:
+    if session_minutes is None:
+        return series
+    # The opening auction distorts the first quarter hour, so projection starts there.
+    share = session_volume_share(max(session_minutes, 15.0))
+    return series[:-1] + [replace(series[-1], volume=series[-1].volume / share)]
+
+
 def _pct(current: float, previous: float) -> float:
     return (current / previous - 1.0) * 100.0 if previous else math.nan
 
@@ -65,8 +104,141 @@ def execution_data_verified(source: str | None, quote_time: datetime | None, now
     return 0 <= age <= 5 * 60
 
 
-def assess_trend_continuation(bars: Iterable[Bar], benchmark_closes: list[float] | None = None) -> dict:
-    series = list(bars)
+def _ignition(series: list[Bar], index: int) -> dict | None:
+    """Day one of a range breakout: a heavy-volume close above the 20-session high.
+
+    The launch may take one session or two (a firm first push, then the
+    breakout close); either way it must cover at least 1.5 ATR from the base.
+    """
+    bar = series[index]
+    for sessions in (1, 2):
+        prior = series[:index - sessions + 1]
+        if len(prior) < 25:
+            return None
+        atr14 = _atr(prior)
+        if not math.isfinite(atr14) or atr14 <= 0:
+            return None
+        launch = series[index - sessions + 1:index + 1]
+        breakout_level = max(item.high for item in prior[-20:])
+        normal_volume = sum(item.volume for item in prior[-20:]) / 20.0
+        day_range = bar.high - bar.low
+        gain_atr = (bar.close - prior[-1].close) / atr14
+        volume_ratio = bar.volume / normal_volume if normal_volume else 0.0
+        close_location = (bar.close - bar.low) / day_range if day_range > 0 else 1.0
+        ema50 = _ema([item.close for item in series[:index + 1]][-80:], 50)
+        launch_return = _pct(bar.close, prior[-1].close)
+        rising = all(item.close > previous.close for previous, item in zip([prior[-1], *launch], launch))
+        passed = (
+            rising and bar.close > breakout_level and gain_atr >= 1.5 and volume_ratio >= 2.0
+            and close_location >= 0.6 and bar.close > ema50 and launch_return <= 10.0 * sessions ** 0.5
+        )
+        result = {
+            "passed": passed, "bar": bar, "atr14": atr14, "breakout_level": breakout_level,
+            "normal_volume": normal_volume, "gain_atr": gain_atr, "volume_ratio": volume_ratio,
+            "close_location": close_location, "day_return": launch_return, "launch_sessions": sessions,
+        }
+        if passed:
+            return result
+    return result
+
+
+def _assess_day_two_breakout(series: list[Bar], session_minutes: float | None) -> dict | None:
+    """Catch an ignition on day one, confirm it during the first hour of day two."""
+    live = session_minutes is not None
+    today = _ignition(series, len(series) - 1)
+    yesterday = _ignition(series, len(series) - 2)
+
+    if yesterday and yesterday["passed"]:
+        ignition, confirm = yesterday, series[-1]
+        atr14, day_one = ignition["atr14"], ignition["bar"]
+        confirm_volume_ratio = confirm.volume / ignition["normal_volume"] if ignition["normal_volume"] else 0.0
+        metrics = {
+            "early_breakout": True, "ignition_gain_atr": ignition["gain_atr"],
+            "ignition_volume_ratio": ignition["volume_ratio"], "breakout_level": ignition["breakout_level"],
+            "launch_sessions": ignition["launch_sessions"], "day_two_volume_ratio": confirm_volume_ratio, "session_minutes": session_minutes,
+        }
+        if live and session_minutes < CONFIRMATION_MINUTES:
+            return {"status": "IMPULSE_DETECTED", "ready": False, "metrics": metrics, "reasons": [
+                f"Range breakout ignited on {day_one.date}: {ignition['gain_atr']:.2f} ATR on {ignition['volume_ratio']:.2f}x volume.",
+                "Day-two confirmation opens after the first hour of trading (10:15 IST).",
+            ], "score_parts": ignition}
+        holds_gain = confirm.close >= day_one.close - 0.5 * atr14
+        holds_range = confirm.low >= ignition["breakout_level"] - 0.25 * atr14
+        chasing = confirm.close > day_one.close + 1.0 * atr14
+        volume_on_pace = confirm_volume_ratio >= 1.0
+        metrics.update({"day_two_holds_gain": holds_gain, "day_two_holds_range": holds_range})
+        if not (holds_gain and holds_range):
+            return None  # failed follow-through; the pullback path decides
+        # A breakout that sinks half an ATR back into its old range has failed, so
+        # the stop is the tighter of that level and the day-one low.
+        stop = max(day_one.low, ignition["breakout_level"] - 0.5 * atr14) - 0.10 * atr14
+        risk = confirm.close - stop
+        target = confirm.close + 2.0 * risk
+        geometry_valid = risk > 0 and risk / confirm.close <= 0.06
+        reasons = [
+            f"Range breakout ignited on {day_one.date}: {ignition['gain_atr']:.2f} ATR in {ignition['launch_sessions']} session(s) on {ignition['volume_ratio']:.2f}x volume, closing above the 20-session high {ignition['breakout_level']:.2f}.",
+            f"Day two holds the gain and the breakout level on {confirm_volume_ratio:.2f}x {'paced ' if live else ''}volume.",
+        ]
+        if chasing:
+            status, ready = "EXTENDED_RISK", False
+            reasons.append("Entry is blocked because day two has run more than 1 ATR beyond the day-one close.")
+        elif not volume_on_pace:
+            status, ready = "CONTINUATION_WATCH", False
+            reasons.append("Waiting for day-two volume to reach a normal session's pace.")
+        elif not geometry_valid:
+            status, ready = "CONTINUATION_WATCH", False
+            reasons.append("The protective stop is more than 6% away; entry geometry is not valid.")
+        else:
+            status, ready = "TREND_CONTINUATION_READY", True
+            reasons.append("Day-two breakout entry is valid with the stop below the breakout; this signal remains observation-only.")
+        return {"status": status, "ready": ready, "entry": confirm.close if ready else None,
+                "stop": stop if geometry_valid else None, "target": target if geometry_valid else None,
+                "metrics": metrics, "reasons": reasons, "score_parts": ignition,
+                "hold_quality": min(1.0, max(0.0, (confirm.close - (day_one.close - 0.5 * atr14)) / atr14))}
+
+    if today and today["passed"] and (not live or session_minutes >= CONFIRMATION_MINUTES):
+        return {"status": "IMPULSE_DETECTED", "ready": False, "metrics": {
+            "early_breakout": True, "ignition_gain_atr": today["gain_atr"],
+            "ignition_volume_ratio": today["volume_ratio"], "breakout_level": today["breakout_level"],
+            "launch_sessions": today["launch_sessions"], "session_minutes": session_minutes,
+        }, "reasons": [
+            f"Range breakout {'in progress' if live else 'ignited'}: {today['gain_atr']:.2f} ATR above the prior close on {today['volume_ratio']:.2f}x {'paced ' if live else ''}volume, above the 20-session high {today['breakout_level']:.2f}.",
+            "Entry is assessed on day two, after its first hour of trading.",
+        ], "score_parts": today}
+    return None
+
+
+def assess_trend_continuation(
+    bars: Iterable[Bar], benchmark_closes: list[float] | None = None, session_minutes: float | None = None,
+) -> dict:
+    """Assess both entry paths. session_minutes is set while the last bar is a live session."""
+    series = _project_live_volume(list(bars), session_minutes)
+    result = _assess_pullback_continuation(series, benchmark_closes)
+    if result["status"] == "INVALID_DATA" or len(series) < 30:
+        return result
+    early = _assess_day_two_breakout(series, session_minutes)
+    result.setdefault("metrics", {})["early_breakout"] = False
+    if early is None or (result.get("ready") and not early["ready"]):
+        return result
+    parts = early.pop("score_parts")
+    hold_quality = early.pop("hold_quality", 0.5)
+    score = round(min(100.0, max(0.0,
+        25 * min(parts["gain_atr"] / 1.5, 1.2)
+        + 25 * min(parts["volume_ratio"] / 2.0, 1.2)
+        + 15 * parts["close_location"]
+        + 15 * hold_quality
+        + (20 if early["ready"] else 10)
+        - (20 if early["status"] == "EXTENDED_RISK" else 0)
+    )))
+    metrics = {**result["metrics"], **early["metrics"]}
+    return {
+        "status": early["status"], "ready": early["ready"], "score": score,
+        "entry": early.get("entry"), "stop": early.get("stop"), "target": early.get("target"),
+        "asof_market_date": series[-1].date, "metrics": metrics, "reasons": early["reasons"],
+    }
+
+
+def _assess_pullback_continuation(series: list[Bar], benchmark_closes: list[float] | None = None) -> dict:
     if len(series) < 25:
         return {"status": "NOT_QUALIFIED", "score": 0, "reasons": ["At least 25 completed sessions are required."]}
     closes = [bar.close for bar in series]
@@ -239,7 +411,9 @@ def main() -> None:
             asset_history = history_by_asset.get(asset_id, [])
             if asset_history:
                 assessed_dates.add(asset_history[-1][1])
-            result = assess_trend_continuation(_rows_to_bars(asset_history), benchmark)
+            asset_bars = _rows_to_bars(asset_history)
+            session_minutes = india_session_minutes(asset_bars[-1].date, now) if asset_bars else None
+            result = assess_trend_continuation(asset_bars, benchmark, session_minutes)
             source, quote_time = quotes.get(asset_id, (None, None))
             execution_verified = execution_data_verified(source, quote_time, now)
             result.setdefault("metrics", {})["execution_data_verified"] = execution_verified
@@ -255,9 +429,8 @@ def main() -> None:
                             json.dumps(result["metrics"]), json.dumps(result["reasons"]), FEATURE_VERSION))
         with conn.cursor() as cur:
             cur.execute("""delete from public.trend_continuation_signals s using public.assets a
-                where s.asset_id=a.id and (a.exchange <> 'NSE' or
-                  (s.feature_version=%s and s.asof_market_date=any(%s::date[])))""",
-                (FEATURE_VERSION, sorted(assessed_dates)))
+                where s.asset_id=a.id and (a.exchange <> 'NSE' or s.asof_market_date=any(%s::date[]))""",
+                (sorted(assessed_dates),))
             if payload:
                 execute_values(cur, """insert into public.trend_continuation_signals
                     (asset_id,ticker,name,asof_market_date,status,ready,score,entry,stop,target,metrics,reasons,feature_version)
