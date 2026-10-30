@@ -12,7 +12,7 @@
     "prebuild": "expo prebuild --clean",
     "build:android:release": "npm run validate:release && expo prebuild --platform android --clean && cd android && ./gradlew assembleRelease",
     "build:ios:release": "npm run validate:release && LANG=en_US.UTF-8 expo prebuild --platform ios --clean && expo run:ios --configuration Release --no-bundler",
-    "test:plugins": "node --test plugins/withSceneLifecycle.test.js"
+    "test:plugins": "node --test plugins/withSceneLifecycle.test.js plugins/withReleaseSigning.test.js"
   },
   "dependencies": {
     "expo": "~57.0.24",

@@ -48,7 +48,8 @@
         }
       ],
       "expo-notifications",
-      "./plugins/withSceneLifecycle"
+      "./plugins/withSceneLifecycle",
+      "./plugins/withReleaseSigning"
     ],
     "extra": {
       "eas": {
