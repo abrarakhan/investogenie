@@ -13,8 +13,7 @@ import { getStrongSwingCandidates } from "@/lib/strongSwing";
 import MarketDataAutoRefresh from "@/components/app/MarketDataAutoRefresh";
 import { markLiveMarketTargets } from "@/lib/liveMarketTargets";
 import { zonedMarketClock } from "@/lib/market-calendar.mjs";
-import { captureExecutionPlans, strongSwingExecutionPlanInputs, type ExecutionPlanInput } from "@/lib/swingExecutionPlans";
-import { isMomentumExecutionReady } from "@/lib/momentumExecution";
+import { captureExecutionPlans, momentumExecutionPlanInputs, strongSwingExecutionPlanInputs, type ExecutionPlanInput } from "@/lib/swingExecutionPlans";
 import { getTrendContinuationCandidates } from "@/lib/trendContinuation";
 
 export const dynamic = "force-dynamic";
@@ -39,18 +38,8 @@ export default async function StrongSwingPage({
   ]);
   const executionPlans: ExecutionPlanInput[] = [
     ...strongSwingExecutionPlanInputs(candidates, settings.trailAtrMult),
-    ...legacyMomentumIgnition.candidates.filter((candidate) => isMomentumExecutionReady(candidate.status)).map((candidate) => ({
-      assetId: candidate.assetId, strategyKey: "MOMENTUM_IGNITION" as const, status: candidate.status,
-      entry: candidate.projectedEntry, target: candidate.projectedTarget, stop: candidate.projectedStop,
-      trail: candidate.projectedTrail, atr: candidate.atr14, expectedDays: candidate.projectedDays,
-      signalAsOf: candidate.latestDate, score: candidate.score / 100, snapshot: { model: "LEGACY", gates: candidate.gates },
-    })),
-    ...momentumIgnition.candidates.filter((candidate) => isMomentumExecutionReady(candidate.status)).map((candidate) => ({
-      assetId: candidate.assetId, strategyKey: "MOMENTUM_IGNITION" as const, status: candidate.status,
-      entry: candidate.projectedEntry, target: candidate.projectedTarget, stop: candidate.projectedStop,
-      trail: candidate.projectedTrail, atr: candidate.atr14, expectedDays: candidate.projectedDays,
-      signalAsOf: candidate.latestDate, score: candidate.score / 100, snapshot: { model: "V2", gates: candidate.gates },
-    })),
+    ...momentumExecutionPlanInputs(legacyMomentumIgnition.candidates, "LEGACY"),
+    ...momentumExecutionPlanInputs(momentumIgnition.candidates, "V2"),
   ];
   const planIds = await captureExecutionPlans(
     user.id, market, zonedMarketClock(market).date, executionPlans, settings.trailAtrMult,

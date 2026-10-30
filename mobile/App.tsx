@@ -8,10 +8,10 @@ import { StatusBar } from "expo-status-bar";
 import * as Notifications from "expo-notifications";
 import Svg, { Line, Rect } from "react-native-svg";
 import {
-  apiConfigurationError, createTrade, deleteTrade, getCandles, getLedger, getNewsSwing, getScreen, getScreenCatalog, getStrongSwing,
+  apiConfigurationError, createTrade, deleteTrade, getCandles, getLedger, getNewsSwing, getScreen, getScreenCatalog,
   login, logout, recordSale, restoreSession, updateSale, updateTrade, type CandlePoint, type LedgerSummary, type LedgerTrade,
   type Market, type MobileScreen, type MobileUser, type NewsSwingCandidate, type ScreenCard, type ScreenCatalogEntry,
-  type ScreenTone, type StrongCandidate, type TrendContinuationCandidate,
+  type ScreenTone, type TradeAction,
 } from "./src/api";
 import { registerDeviceNotifications, unlockWithBiometrics } from "./src/deviceSecurity";
 
@@ -19,7 +19,6 @@ import { registerDeviceNotifications, unlockWithBiometrics } from "./src/deviceS
 type Tab = string;
 /** Screens with dedicated views here; every other catalog entry renders as server-built cards. */
 const NATIVE_SCREENS: Record<string, (props: { market: Market }) => React.JSX.Element> = {
-  "strong-swing": ({ market }) => <Strong market={market} />,
   "news-swing": ({ market }) => <NewsSwing market={market} />,
   "trade-ledger": ({ market }) => <Ledger market={market} />,
 };
@@ -27,7 +26,7 @@ const NATIVE_SCREENS: Record<string, (props: { market: Market }) => React.JSX.El
 const DEFAULT_SCREENS: ScreenCatalogEntry[] = [
   { key: "stock-screener", title: "Stock Screener", tabLabel: "Screener", kind: "cards" },
   { key: "swing", title: "Swing Candidates", tabLabel: "Swing", kind: "cards" },
-  { key: "strong-swing", title: "Strong Swing", tabLabel: "Strong", kind: "native" },
+  { key: "strong-swing", title: "Strong Swing", tabLabel: "Strong", kind: "cards" },
   { key: "armed-swing", title: "Armed Strong Swing", tabLabel: "Armed", kind: "cards" },
   { key: "news-swing", title: "News & AI Swing", tabLabel: "News & AI", kind: "native" },
   { key: "long-term", title: "Long-Term Candidates", tabLabel: "Long-Term", kind: "cards" },
@@ -134,48 +133,6 @@ function Terminal({ user, requestedTab, onRequestedTabHandled, onLogout }: { use
   </View>;
 }
 
-function Strong({ market }: { market: Market }) {
-  const [rows, setRows] = useState<StrongCandidate[]>([]);
-  const [continuations, setContinuations] = useState<TrendContinuationCandidate[]>([]);
-  const [selected, setSelected] = useState<StrongCandidate | null>(null);
-  const [refreshing, setRefreshing] = useState(true);
-  const [error, setError] = useState("");
-  const load = useCallback(async () => {
-    setRefreshing(true); setError("");
-    try { const result = await getStrongSwing(market); setRows(result.candidates); setContinuations(result.trendContinuation.candidates); }
-    catch (cause) { setError(message(cause, "Could not load candidates")); }
-    finally { setRefreshing(false); }
-  }, [market]);
-  useEffect(() => { let active = true; getStrongSwing(market).then((result) => { if (active) { setRows(result.candidates); setContinuations(result.trendContinuation.candidates); } }).catch((cause) => { if (active) setError(message(cause, "Could not load candidates")); }).finally(() => { if (active) setRefreshing(false); }); return () => { active = false; }; }, [market]);
-  useEffect(() => { const timer = setInterval(load, 300_000); return () => clearInterval(timer); }, [load]);
-  if (selected) return <CandidateDetail row={selected} market={market} onBack={() => setSelected(null)} />;
-  return <View style={styles.flex}><ScreenHead title="Strong Swing" subtitle="Server-ranked confirmation. Pull down for the latest quotes and gates." />{!!error && <Banner text={error} />}
-    <FlatList data={rows} keyExtractor={(item) => item.assetId} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={load} tintColor="#34d399" />} contentContainerStyle={styles.list} ListHeaderComponent={continuations.length ? <View><Text style={styles.sectionTitle}>Trend Continuation · observation only</Text>{continuations.slice(0, 5).map((item) => <View key={item.assetId} style={styles.card}><View style={styles.rowBetween}><Text style={styles.ticker}>{item.ticker}</Text><Text style={item.status === "EXTENDED_RISK" ? styles.badValue : item.status === "TREND_CONTINUATION_READY" ? styles.goodValue : styles.warningValue}>{item.status.replaceAll("_", " ")}</Text></View><Text style={styles.cardFoot}>{item.score}/100 · {item.reasons[0]}</Text><Text style={styles.muted}>No mobile buying action is enabled.</Text></View>)}</View> : null} ListEmptyComponent={!refreshing ? <Empty text="No candidates available." /> : null} renderItem={({ item }) => <Pressable onPress={() => setSelected(item)} style={styles.card}>
-      <View style={styles.rowBetween}><View><Text style={styles.ticker}>#{item.strongSwingRank} {item.ticker}</Text><Text style={styles.meta}>{item.exchange || market} · {item.status.replaceAll("_", " ")}</Text></View><Score value={item.strengthScore} /></View>
-      <View style={styles.metricRow}><Metric label="ENTRY" value={money(item.strongEntry, market)} /><Metric label="TARGET" value={money(item.strongTarget, market)} positive /><Metric label="STOP" value={money(item.strongStop, market)} negative /></View>
-      <Text style={styles.cardFoot}>Current {money(item.lastQuote ?? item.latestClose, market)} · {item.strongExpectedDays} sessions</Text>
-    </Pressable>} />
-  </View>;
-}
-
-function CandidateDetail({ row, market, onBack }: { row: StrongCandidate; market: Market; onBack: () => void }) {
-  const [buying, setBuying] = useState(false);
-  const [notice, setNotice] = useState("");
-  return <ScrollView contentContainerStyle={styles.detail}>
-    <Pressable onPress={onBack}><Text style={styles.link}>Back to candidates</Text></Pressable>
-    <Text style={styles.detailTicker}>{row.ticker}</Text><Text style={styles.meta}>{row.exchange || market} · EOD {row.latestDate}</Text>
-    <PriceChart market={market} ticker={row.ticker} />
-    <View style={styles.metricGrid}><Metric label="CURRENT" value={money(row.lastQuote ?? row.latestClose, market)} /><Metric label="ENTRY" value={money(row.strongEntry, market)} /><Metric label="TARGET" value={money(row.strongTarget, market)} positive /><Metric label="STOP" value={money(row.strongStop, market)} negative /><Metric label="TRAIL" value={money(row.strongTrail, market)} /><Metric label="SCORE" value={row.strengthScore.toFixed(0)} /></View>
-    {row.status !== "EXECUTION_READY" ? <Text style={styles.warning}>Buying remains disabled until the server returns EXECUTION READY.</Text>
-      : row.planId ? <Action label="Log purchased trade" onPress={() => setBuying(true)} />
-        : <Text style={styles.warning}>The server has not recorded an execution plan for this setup. Pull to refresh the candidates, then try again.</Text>}
-    {!!notice && <Text style={styles.success}>{notice}</Text>}
-    <Text style={styles.sectionTitle}>Confirmation gates</Text>
-    {row.gates.map((gate) => <View key={gate.key} style={styles.gate}><Text style={gate.passed ? styles.good : styles.bad}>{gate.passed ? "PASS" : "WAIT"}</Text><View style={styles.gateText}><Text style={styles.gateLabel}>{gate.label}</Text><Text style={styles.muted}>{gate.detail}</Text></View></View>)}
-    <TradeEntrySheet visible={buying} row={row} market={market} onClose={() => setBuying(false)} onSaved={() => { setBuying(false); setNotice("Trade recorded in your ledger with this frozen Strong Swing plan."); }} />
-  </ScrollView>;
-}
-
 function NewsSwing({ market }: { market: Market }) {
   const [rows, setRows] = useState<NewsSwingCandidate[]>([]);
   const [refreshing, setRefreshing] = useState(true);
@@ -252,6 +209,8 @@ function CardScreen({ screenKey, title, market }: { screenKey: string; title: st
 }
 
 function CardDetail({ card, market, onBack }: { card: ScreenCard; market: Market; onBack: () => void }) {
+  const [buying, setBuying] = useState(false);
+  const [notice, setNotice] = useState("");
   return <ScrollView contentContainerStyle={styles.detail}>
     <Pressable onPress={onBack}><Text style={styles.link}>Back</Text></Pressable>
     <Text style={styles.detailTicker}>{card.title}</Text><Text style={styles.meta}>{card.subtitle}</Text>
@@ -259,12 +218,15 @@ function CardDetail({ card, market, onBack }: { card: ScreenCard; market: Market
     {!!card.chartTicker && <PriceChart market={market} ticker={card.chartTicker} />}
     <View style={styles.metricGrid}>{card.metrics.map((metric) => <Metric key={metric.label} label={metric.label} value={metric.value} positive={metric.tone === "positive"} negative={metric.tone === "negative"} />)}{card.score !== null && <Metric label="SCORE" value={card.score} />}</View>
     {!!card.guidance && <Text style={styles.guidance}>{card.guidance}</Text>}
+    {card.trade && <Action label="Log purchased trade" onPress={() => setBuying(true)} />}
+    {!!notice && <Text style={styles.success}>{notice}</Text>}
     {card.sections.map((section) => <View key={section.title}><Text style={styles.sectionTitle}>{section.title}</Text>
       {section.rows.map((row, index) => <View key={`${row.label}:${index}`} style={styles.gate}>
         {row.passed !== undefined && <Text style={row.passed ? styles.good : styles.bad}>{row.passed ? "PASS" : "WAIT"}</Text>}
         <View style={styles.gateText}><View style={styles.rowBetween}><Text style={[styles.gateLabel, styles.flex]}>{row.label}</Text>{!!row.value && <Text style={styles.rowValue}>{row.value}</Text>}</View>{!!row.detail && <Text style={styles.muted}>{row.detail}</Text>}</View>
       </View>)}
     </View>)}
+    {card.trade && <TradeEntrySheet visible={buying} trade={card.trade} market={market} onClose={() => setBuying(false)} onSaved={() => { setBuying(false); setNotice("Trade recorded in your ledger with this frozen plan."); }} />}
   </ScrollView>;
 }
 
@@ -310,11 +272,11 @@ function Ledger({ market }: { market: Market }) {
   </View>;
 }
 
-function TradeEntrySheet({ visible, row, market, onClose, onSaved }: { visible: boolean; row: StrongCandidate; market: Market; onClose: () => void; onSaved: () => void }) {
-  const [date, setDate] = useState(today(market)); const [price, setPrice] = useState(String(row.lastQuote ?? row.strongEntry)); const [quantity, setQuantity] = useState(""); const [busy, setBusy] = useState(false); const [error, setError] = useState("");
+function TradeEntrySheet({ visible, trade, market, onClose, onSaved }: { visible: boolean; trade: TradeAction; market: Market; onClose: () => void; onSaved: () => void }) {
+  const [date, setDate] = useState(today(market)); const [price, setPrice] = useState(String(trade.suggestedPrice)); const [quantity, setQuantity] = useState(""); const [busy, setBusy] = useState(false); const [error, setError] = useState("");
   // Only the plan id goes to the server, which reads entry, target, stop, trail and horizon from it.
-  const save = async () => { if (!row.planId) return; setBusy(true); setError(""); try { await createTrade({ assetId: row.assetId, market, boughtOn: date, buyPrice: amount(price), quantity: amount(quantity), strategyKey: "STRONG_SWING", planId: row.planId }); onSaved(); } catch (cause) { setError(message(cause, "Trade could not be recorded")); } finally { setBusy(false); } };
-  return <Sheet visible={visible} title={`Log ${row.ticker}`} onClose={onClose}><Field value={date} onChangeText={setDate} placeholder="Purchase date YYYY-MM-DD" /><Field value={price} onChangeText={setPrice} placeholder="Buy price" keyboard="decimal-pad" /><Field value={quantity} onChangeText={setQuantity} placeholder="Quantity" keyboard="decimal-pad" />{!!error && <Text style={styles.error}>{error}</Text>}<Action label="Freeze plan and log trade" busy={busy} onPress={save} /></Sheet>;
+  const save = async () => { setBusy(true); setError(""); try { await createTrade({ assetId: trade.assetId, market, boughtOn: date, buyPrice: amount(price), quantity: amount(quantity), strategyKey: trade.strategyKey, planId: trade.planId }); onSaved(); } catch (cause) { setError(message(cause, "Trade could not be recorded")); } finally { setBusy(false); } };
+  return <Sheet visible={visible} title={`Log ${trade.ticker}`} onClose={onClose}><Field value={date} onChangeText={setDate} placeholder="Purchase date YYYY-MM-DD" /><Field value={price} onChangeText={setPrice} placeholder="Buy price" keyboard="decimal-pad" /><Field value={quantity} onChangeText={setQuantity} placeholder="Quantity" keyboard="decimal-pad" />{!!error && <Text style={styles.error}>{error}</Text>}<Action label="Freeze plan and log trade" busy={busy} onPress={save} /></Sheet>;
 }
 
 function EditTradeSheet({ trade, market, onClose, onSaved }: { trade: LedgerTrade | null; market: Market; onClose: () => void; onSaved: () => void }) {
@@ -345,7 +307,6 @@ const Centered = ({ children }: { children: React.ReactNode }) => <View style={s
 const ScreenHead = ({ title, subtitle }: { title: string; subtitle: string }) => <View style={styles.screenHead}><Text style={styles.title}>{title}</Text><Text style={styles.muted}>{subtitle}</Text></View>;
 const TabButton = ({ active, label, onPress }: { active: boolean; label: string; onPress: () => void }) => <Pressable style={[styles.tab, active && styles.tabActive]} onPress={onPress}><Text style={active ? styles.tabTextActive : styles.tabText}>{label}</Text></Pressable>;
 const TonePill = ({ label, tone }: { label: string; tone: ScreenTone }) => <View style={[styles.statePill, tone === "positive" ? styles.stateFavored : tone === "negative" ? styles.stateRisk : tone === "warning" ? styles.stateCaution : null]}><Text style={styles.stateText}>{label.toUpperCase()}</Text></View>;
-const Score = ({ value }: { value: number }) => <View style={styles.score}><Text style={styles.scoreText}>{Math.round(value)}</Text></View>;
 const StatePill = ({ state }: { state: NewsSwingCandidate["state"] }) => <View style={[styles.statePill, state === "FAVORED" ? styles.stateFavored : state === "RISK_OFF" ? styles.stateRisk : state === "CAUTION" ? styles.stateCaution : null]}><Text style={styles.stateText}>{state.replaceAll("_", " ")}</Text></View>;
 const Metric = ({ label, value, positive, negative }: { label: string; value: string; positive?: boolean; negative?: boolean }) => <View style={styles.metric}><Text style={styles.metricLabel}>{label}</Text><Text numberOfLines={1} style={[styles.metricValue, positive && styles.goodValue, negative && styles.badValue]}>{value}</Text></View>;
 const Summary = ({ label, value }: { label: string; value: string }) => <View style={styles.summaryCard}><Text style={styles.metricLabel}>{label}</Text><Text style={styles.summaryValue}>{value}</Text></View>;

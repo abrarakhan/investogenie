@@ -1,11 +1,5 @@
 import type { TrendContinuationCandidate, TrendContinuationStatus } from "@/lib/trendContinuation";
-
-const label: Record<TrendContinuationStatus, string> = {
-  IMPULSE_DETECTED: "Impulse detected",
-  CONTINUATION_WATCH: "Continuation watch",
-  TREND_CONTINUATION_READY: "Continuation ready",
-  EXTENDED_RISK: "Extended — do not chase",
-};
+import { TREND_CONTINUATION_STATUS_LABEL } from "@/lib/candidateStatusCopy";
 
 const style: Record<TrendContinuationStatus, string> = {
   IMPULSE_DETECTED: "border-cyan-400/30 text-cyan-200",
@@ -36,7 +30,7 @@ function CandidateCard({ candidate, rank }: { candidate: TrendContinuationCandid
       <div className="flex items-center gap-2">
         <span className="font-mono text-lg font-bold text-white/75">{candidate.score}/100</span>
         <span className={`rounded-full border px-3 py-1 text-[10px] font-bold uppercase ${style[candidate.status]}`}>
-          {label[candidate.status]}
+          {TREND_CONTINUATION_STATUS_LABEL[candidate.status]}
         </span>
       </div>
     </div>

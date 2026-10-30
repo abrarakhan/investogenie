@@ -36,13 +36,6 @@ export interface StrongCandidate {
   planId?: string | null;
 }
 
-export interface TrendContinuationCandidate {
-  assetId: string; ticker: string; name: string | null;
-  status: "IMPULSE_DETECTED" | "CONTINUATION_WATCH" | "TREND_CONTINUATION_READY" | "EXTENDED_RISK";
-  score: number; observationOnly: true; entry: number | null; stop: number | null; target: number | null;
-  reasons: string[];
-}
-
 export interface NewsEvidence {
   articleId: string;
   title: string;
@@ -182,12 +175,6 @@ export function registerPushToken(token: string, platform: "android" | "ios") {
   });
 }
 
-export function getStrongSwing(market: Market) {
-  return request<{ generatedAt: string; candidates: StrongCandidate[]; trendContinuation: { observationOnly: true; candidates: TrendContinuationCandidate[] } }>(
-    `/api/v1/mobile/strong-swing?market=${market}&limit=30`,
-  );
-}
-
 export function getNewsSwing(market: Market) {
   return request<{
     generatedAt: string;
@@ -213,7 +200,7 @@ export function getCandles(market: Market, ticker: string) {
 /** A Strong Swing purchase sends only the plan id; the server reads every level from the plan. */
 export function createTrade(input: {
   assetId: string; market: Market; boughtOn: string; buyPrice: number; quantity: number;
-  strategyKey: "STRONG_SWING"; planId: string;
+  strategyKey: TradeAction["strategyKey"]; planId: string;
 }) {
   return request<{ id: string }>("/api/v1/mobile/trade-ledger", { method: "POST", body: JSON.stringify(input) });
 }
@@ -259,7 +246,12 @@ export interface ScreenCard {
   chartTicker: string | null;
   guidance: string | null;
   sections: Array<{ title: string; rows: Array<{ label: string; value?: string; detail?: string; passed?: boolean }> }>;
+  /** Present only for an execution-ready candidate with a server-held plan. */
+  trade?: TradeAction | null;
 }
+
+/** A plan-backed purchase: only the plan id is sent, and the server reads every level from it. */
+export interface TradeAction { assetId: string; ticker: string; strategyKey: "STRONG_SWING" | "MOMENTUM_IGNITION"; planId: string; suggestedPrice: number }
 
 export interface ScreenOption { param: string; label: string; value: string; choices: Array<{ value: string; label: string }> }
 

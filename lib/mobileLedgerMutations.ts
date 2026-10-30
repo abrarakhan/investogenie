@@ -61,17 +61,17 @@ export async function createMobileTrade(userId: string, input: CreateMobileTrade
   if (!asset) throw new Error("Stock was not found in this market");
 
   const preferredStrategy = String(input.strategyKey ?? "").toUpperCase();
-  // Armed Swing and Momentum Ignition purchases come only from their protected web workflows. A
-  // Strong Swing purchase must reference the server-held plan the mobile API returned; every
-  // level is read from that plan and client-supplied levels are ignored.
-  if (["ARMED_SWING", "MOMENTUM_IGNITION"].includes(preferredStrategy)) {
+  // Armed Swing purchases come only from its protected web workflow. A Strong Swing or Momentum
+  // Ignition purchase must reference the server-held plan the mobile API returned, validated
+  // exactly as on the web; every level is read from that plan and client-supplied levels are ignored.
+  if (preferredStrategy === "ARMED_SWING") {
     throw new Error("Strategy trades must be recorded from the protected web candidate workflow");
   }
   let plan: StoredExecutionPlan | null = null;
-  if (preferredStrategy === "STRONG_SWING") {
+  if (preferredStrategy === "STRONG_SWING" || preferredStrategy === "MOMENTUM_IGNITION") {
     plan = await loadExecutionPlan(userId, String(input.planId ?? "").trim());
     const planError = validateExecutionPlanPurchase(plan, {
-      assetId: asset.id, market, strategyKey: "STRONG_SWING", boughtOn, buyPrice,
+      assetId: asset.id, market, strategyKey: preferredStrategy, boughtOn, buyPrice,
       today: zonedMarketClock(market).date, nowMs: Date.now(),
     });
     if (planError) throw new Error(planError);

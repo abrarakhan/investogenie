@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { query, queryOne } from "@/lib/db";
+import { isMomentumExecutionReady } from "@/lib/momentumExecution";
 import type { StrongSwingCandidate } from "@/lib/strongSwing";
 
 export type ProtectedSwingStrategy = "STRONG_SWING" | "MOMENTUM_IGNITION";
@@ -146,6 +147,22 @@ export function strongSwingExecutionPlanInputs(
     trail: candidate.strongTrail, atr: (candidate.strongEntry - candidate.strongTrail) / trailAtrMult,
     expectedDays: candidate.strongExpectedDays,
     signalAsOf: candidate.latestDate, score: candidate.strengthScore / 100, snapshot: { gates: candidate.gates },
+  }));
+}
+
+/** Momentum Ignition candidates (legacy or V2) whose status allows a purchase. */
+export function momentumExecutionPlanInputs(
+  candidates: ReadonlyArray<{
+    assetId: string; status: string; projectedEntry: number; projectedTarget: number; projectedStop: number;
+    projectedTrail: number; atr14: number; projectedDays: number; latestDate: string; score: number; gates: unknown;
+  }>,
+  model: "LEGACY" | "V2",
+): ExecutionPlanInput[] {
+  return candidates.filter((candidate) => isMomentumExecutionReady(candidate.status)).map((candidate) => ({
+    assetId: candidate.assetId, strategyKey: "MOMENTUM_IGNITION" as const, status: candidate.status,
+    entry: candidate.projectedEntry, target: candidate.projectedTarget, stop: candidate.projectedStop,
+    trail: candidate.projectedTrail, atr: candidate.atr14, expectedDays: candidate.projectedDays,
+    signalAsOf: candidate.latestDate, score: candidate.score / 100, snapshot: { model, gates: candidate.gates },
   }));
 }
 

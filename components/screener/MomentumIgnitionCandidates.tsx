@@ -5,6 +5,7 @@ import type {
   MomentumIgnitionResult,
 } from "@/lib/momentumIgnition";
 import { isMomentumExecutionReady } from "@/lib/momentumExecution";
+import { MOMENTUM_IGNITION_STATUS_LABEL } from "@/lib/candidateStatusCopy";
 
 const STATUS_STYLE: Record<MomentumIgnitionCandidateStatus, string> = {
   MOMENTUM_READY: "border-emerald-400/35 bg-emerald-400/10 text-emerald-200",
@@ -15,17 +16,6 @@ const STATUS_STYLE: Record<MomentumIgnitionCandidateStatus, string> = {
   LATE_PROFIT_BOOKING: "border-orange-400/35 bg-orange-400/10 text-orange-200",
   FAILED_BREAKOUT: "border-rose-400/35 bg-rose-400/10 text-rose-200",
   NOT_QUALIFIED: "border-white/15 bg-white/5 text-white/45",
-};
-
-const STATUS_LABEL: Record<MomentumIgnitionCandidateStatus, string> = {
-  MOMENTUM_READY: "Momentum ready",
-  EXECUTION_BLOCKED: "Execution blocked",
-  FIRST_THRUST: "First thrust",
-  RETEST_SETUP: "Retest setup",
-  PRE_IGNITION: "Pre-ignition",
-  LATE_PROFIT_BOOKING: "Late / profit-booking risk",
-  FAILED_BREAKOUT: "Failed breakout",
-  NOT_QUALIFIED: "Not qualified",
 };
 
 const number = (value: number, digits = 2) => Number.isFinite(value) ? value.toFixed(digits) : "-";
@@ -71,7 +61,7 @@ function IgnitionCard({ candidate, rank, market, planId }: { candidate: Momentum
         <div className="flex items-center gap-2">
           <span className="font-mono text-sm font-bold text-white/75">{candidate.score}/100</span>
           <span className={`rounded-full border px-3 py-1 text-[10px] font-bold uppercase tracking-wide ${STATUS_STYLE[candidate.status]}`}>
-            {STATUS_LABEL[candidate.status]}
+            {MOMENTUM_IGNITION_STATUS_LABEL[candidate.status]}
           </span>
         </div>
       </div>

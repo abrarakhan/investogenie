@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { StrongSwingCandidate } from "@/lib/strongSwing";
 import type { StrongSwingStatus } from "@/lib/analytics/strongSwing";
 import { rankStrongSwingCandidates } from "@/lib/analytics/candidateRanking";
+import { STRONG_SWING_BLOCKED_BUY_LABEL, STRONG_SWING_STATUS_LABEL } from "@/lib/candidateStatusCopy";
 
 const STATUS_STYLE: Record<StrongSwingStatus, string> = {
   EXECUTION_READY: "border-emerald-400/35 bg-emerald-400/10 text-emerald-300",
@@ -9,21 +10,6 @@ const STATUS_STYLE: Record<StrongSwingStatus, string> = {
   WATCHLIST: "border-amber-400/35 bg-amber-400/10 text-amber-200",
   RISK_OFF: "border-orange-400/35 bg-orange-400/10 text-orange-200",
   INVALIDATED: "border-rose-400/35 bg-rose-400/10 text-rose-300",
-};
-
-const statusLabel: Record<StrongSwingStatus, string> = {
-  EXECUTION_READY: "Execution ready",
-  WAIT_FOR_ENTRY: "Wait for entry",
-  WATCHLIST: "Awaiting confirmation",
-  RISK_OFF: "Risk off",
-  INVALIDATED: "Invalidated",
-};
-
-const blockedBuyLabel: Record<Exclude<StrongSwingStatus, "EXECUTION_READY">, string> = {
-  WAIT_FOR_ENTRY: "Buy after confirmation",
-  WATCHLIST: "Buy unavailable",
-  RISK_OFF: "Buy blocked: risk off",
-  INVALIDATED: "Buy blocked: invalidated",
 };
 
 const fmt = (value: number | null, digits = 2) =>
@@ -74,7 +60,7 @@ function CandidateCard({ candidate, planId }: { candidate: StrongSwingCandidate;
         <div className="flex items-center gap-2">
           <span className="font-mono text-sm text-white/60">{candidate.strengthScore}/100</span>
           <span className={`rounded-full border px-3 py-1 text-[10px] font-bold uppercase tracking-wide ${STATUS_STYLE[candidate.status]}`}>
-            {statusLabel[candidate.status]}
+            {STRONG_SWING_STATUS_LABEL[candidate.status]}
           </span>
         </div>
       </div>
@@ -160,7 +146,7 @@ function CandidateCard({ candidate, planId }: { candidate: StrongSwingCandidate;
               disabled
               className="inline-flex min-h-11 cursor-not-allowed items-center rounded-lg border border-white/10 bg-white/[0.025] px-4 text-sm font-bold text-white/30"
             >
-              {candidate.status === "EXECUTION_READY" ? "Unsafe plan withheld" : blockedBuyLabel[candidate.status]}
+              {candidate.status === "EXECUTION_READY" ? "Unsafe plan withheld" : STRONG_SWING_BLOCKED_BUY_LABEL[candidate.status]}
             </button>
             <p className="mt-2 text-[11px] leading-relaxed text-white/38">
               {candidate.status === "EXECUTION_READY" && !planId
