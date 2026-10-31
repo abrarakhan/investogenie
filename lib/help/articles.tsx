@@ -3,7 +3,7 @@ import {
   H2, H3, P, UL, LI, Steps, Formula, Callout, SpecTable, References,
 } from "@/components/help/HelpLayout";
 
-export type HelpCategory = "swing" | "probability" | "engine" | "long-term" | "data";
+export type HelpCategory = "swing" | "probability" | "engine" | "execution" | "long-term" | "data";
 
 export interface HelpArticle {
   slug: string;
@@ -1106,8 +1106,326 @@ GMAIL_DISCLOSURE_SYNC_DISABLED=0`}</Formula>
 };
 
 // ---------------------------------------------------------------------------
+// Execution engines — the screens that decide whether a setup is buyable now
+// ---------------------------------------------------------------------------
+
+const tradableStocks: HelpArticle = {
+  slug: "where-to-find-tradable-stocks",
+  category: "execution",
+  title: "Where to find tradable stocks",
+  subtitle: "Which screens list buyable setups, which list setups to watch, and which are research only.",
+  readMins: 5,
+  summary:
+    "Only four statuses mean a stock passes every gate right now and carries a frozen plan: Strong Swing Execution ready, Momentum Ignition (and V2) Momentum ready, and Armed Swing Buy zone. Everything else is a watchlist or research.",
+  Body: () => (
+    <>
+      <P>
+        InvestoGenie has many screens, but they do different jobs. Some only <em>shortlist</em>{" "}
+        stocks; a few go further and check, gate by gate, whether a setup is safe to buy{" "}
+        <strong>right now</strong>. Only those execution engines record a frozen plan you can log as
+        a trade. This page tells you where to look first.
+      </P>
+
+      <H2>Tier 1 — buyable now (frozen plan, Buy &amp; Track)</H2>
+      <SpecTable
+        rows={[
+          { k: "Strong Swing · Execution ready", v: "A base Swing breakout that also passed the two-close confirmation and every execution-safety gate. Enter near the confirmation entry." },
+          { k: "Momentum Ignition · Momentum ready", v: "Compression and volume dry-up, then a breakout on expanding time-adjusted volume with a strong close, not extended from the trigger." },
+          { k: "Momentum Ignition V2 · Momentum ready", v: "A fresh first thrust or a held first retest, with volume, a strong close, headroom to resistance and no late-move warnings." },
+          { k: "Armed Swing · Buy zone", v: "A tight stage-2 base crossed its trigger on confirming volume pace and is still inside the limit price." },
+        ]}
+      />
+      <P>
+        These are the only statuses that unlock <strong>Log purchased trade</strong> (Armed Swing is
+        recorded from the web). Every one requires fresh data and, in India during market hours, a
+        current Breeze quote — so they appear during the live session, not after the close.
+      </P>
+
+      <H2>Tier 2 — next in line (watch, prepare orders)</H2>
+      <UL>
+        <LI><strong>Armed Swing · Armed</strong> — place a buy-stop limit order in advance; it only fills if the breakout happens.</LI>
+        <LI><strong>Strong Swing · Wait for entry</strong> — confirmed, but price has run more than 0.5 ATR past the entry. Wait for it to come back.</LI>
+        <LI><strong>Momentum Ignition V2 · Pre-ignition / First thrust / Retest setup</strong> — within 3% of the trigger, or broken out but still missing volume or a strong close.</LI>
+        <LI><strong>Trend Continuation · Impulse detected</strong> — a heavy-volume range breakout on day one. It is re-checked after 10:15 IST on day two and may turn <strong>Continuation ready</strong>. This engine is observation-only: it never unlocks buying.</LI>
+      </UL>
+
+      <H2>Tier 3 — research and shortlisting</H2>
+      <UL>
+        <LI><strong>Swing Candidates</strong> — the base classifier&apos;s top 20 plus every buy match of the five legendary systems. Levels are plans, not execution checks.</LI>
+        <LI><strong>News &amp; AI Swing</strong> — re-ranks existing technical setups by recent news; it can never create a setup.</LI>
+        <LI><strong>Stock Screener, Long-Term, Probability</strong> — filters, fundamentals and forecasts for building watchlists.</LI>
+      </UL>
+
+      <H2>A daily routine</H2>
+      <Steps
+        items={[
+          { title: "Before the open", body: "Check Armed Swing (Armed) for buy-stop orders, and Trend Continuation for day-one ignitions that will be re-checked on day two." },
+          { title: "From 09:15 IST", body: "Strong Swing and both Momentum Ignition models re-evaluate on live quotes. Act only on Execution ready / Momentum ready / Buy zone." },
+          { title: "From 10:15 IST", body: "Trend Continuation confirms day-two breakouts with an hour of volume behind them." },
+          { title: "After you buy", body: "Log it from the ready card so the plan is frozen, then follow the Trade Ledger's exit alerts." },
+        ]}
+      />
+      <Callout tone="warn">
+        Ready means the setup passed this app&apos;s rules at that moment — not that it will work.
+        Breeze supplies data but never places orders: confirm price bands and restrictions in ICICI
+        Direct before you buy.
+      </Callout>
+    </>
+  ),
+};
+
+const strongSwingArticle: HelpArticle = {
+  slug: "strong-swing",
+  category: "execution",
+  title: "Strong Swing confirmation",
+  subtitle: "Base Swing breakouts re-ranked after two-close confirmation and execution-safety gates.",
+  readMins: 6,
+  summary:
+    "Takes the base Swing breakouts and requires a decisive, high-volume breakout that holds for two closes, inside a healthy trend and market, with volatility, stop-width, extension and circuit limits.",
+  Body: () => (
+    <>
+      <P>
+        Strong Swing does not find new stocks. It re-checks the base Swing shortlist and only calls a
+        breakout <strong>Execution ready</strong> when the technical confirmation and every
+        execution-safety gate agree. The strength score is the share of gates passed.
+      </P>
+      <H2>Technical confirmation</H2>
+      <SpecTable
+        rows={[
+          { k: "Structural setup", v: "The base engine flagged a breakout." },
+          { k: "Primary trend", v: "Price above the 50- and 200-day averages; 20 > 50 and the 50-day rising." },
+          { k: "Relative strength", v: "Outperforming the benchmark over 20 sessions." },
+          { k: "Decisive breakout", v: "At least 0.25 ATR above the 20-session high." },
+          { k: "Strong close", v: "Close in the top 30% of the day's range." },
+          { k: "Volume", v: "At least 1.5x the 20-session average." },
+          { k: "Two-close follow-through", v: "Both latest closes hold above the confirmation entry." },
+          { k: "Market regime / shock", v: "Benchmark trend supportive and no market-wide shock." },
+        ]}
+      />
+      <H2>Execution safety</H2>
+      <SpecTable
+        rows={[
+          { k: "Entry discipline", v: "No more than 0.5 ATR above the entry — otherwise Wait for entry." },
+          { k: "Extension", v: "5-session return ≤ 30%, 10-session ≤ 50%, ≤ 15% above the 20-day average." },
+          { k: "Volatility / stop risk", v: "ATR ≤ 5% of price; stop no more than 7% away." },
+          { k: "Liquidity, price, circuits", v: "Traded-value and price floors; fewer than two circuit-like sessions in 20." },
+          { k: "Live checks (India)", v: "A current Breeze quote, bid-ask spread ≤ 0.75% and at least 3% room above the lower circuit." },
+        ]}
+      />
+      <H2>Statuses</H2>
+      <UL>
+        <LI><strong>Execution ready</strong> — every blocking gate passes; a plan is frozen when you log the trade.</LI>
+        <LI><strong>Wait for entry</strong> — technically confirmed but extended past the entry.</LI>
+        <LI><strong>Awaiting confirmation</strong> — some technical gates still fail.</LI>
+        <LI><strong>Risk off</strong> — an extension, volatility, stop-width, liquidity, circuit or live-data check failed.</LI>
+        <LI><strong>Invalidated</strong> — closed below the trailing stop, or a full ATR back below the breakout level.</LI>
+      </UL>
+    </>
+  ),
+};
+
+const armedSwingArticle: HelpArticle = {
+  slug: "armed-swing",
+  category: "execution",
+  title: "Armed Strong Swing (pre-breakout)",
+  subtitle: "Tight stage-2 bases just under their pivot, with a buy-stop limit plan placed in advance.",
+  readMins: 5,
+  summary:
+    "Finds leaders with a tight, contracting base near the pivot and dry volume, then sets a trigger just above the pivot and a limit no more than 3% above it, so the order fills only if the breakout happens.",
+  Body: () => (
+    <>
+      <P>
+        Armed Swing gets you in <em>at</em> the breakout instead of after it. It looks for a
+        Minervini-style stage-2 base that is coiled just below its pivot and prepares a buy-stop
+        limit order.
+      </P>
+      <SpecTable
+        rows={[
+          { k: "Stage-2 trend + leadership", v: "Trend aligned and a relative-strength rank of at least 80, with the RS line near its high." },
+          { k: "Tight base", v: "Base depth ≤ 18% with contracting volatility and volume dry-up ≤ 0.85x." },
+          { k: "Near the pivot", v: "Within 1.5 ATR and 6% of the trigger." },
+          { k: "Plan", v: "Trigger just above the pivot; limit capped 3% above the pivot; structure stop risk ≤ 8%." },
+          { k: "Execution", v: "ATR ≤ 5%, liquidity, circuit behaviour, results blackout, and live quote (≤ 5 min old), spread ≤ 0.75% and circuit room." },
+        ]}
+      />
+      <H2>Statuses</H2>
+      <UL>
+        <LI><strong>Buy zone</strong> — crossed the trigger on at least 1.5x volume pace and still inside the limit. Enter at or below the limit.</LI>
+        <LI><strong>Armed</strong> — place the buy-stop limit order now; record it as pending until it fills.</LI>
+        <LI><strong>Triggered · volume unconfirmed</strong> — through the trigger, but volume pace is not yet 1.5x.</LI>
+        <LI><strong>Unverified</strong> — qualifies, but live quote, depth, circuit bands or the results calendar are missing.</LI>
+        <LI><strong>Base forming / Extended / Risk off / Invalidated</strong> — not actionable.</LI>
+      </UL>
+      <Callout>Armed Swing orders and fills are recorded from the web terminal.</Callout>
+    </>
+  ),
+};
+
+const momentumIgnitionArticle: HelpArticle = {
+  slug: "momentum-ignition",
+  category: "execution",
+  title: "Momentum Ignition (legacy and V2)",
+  subtitle: "Compression, dry-up and accumulation before a breakout on expanding live volume.",
+  readMins: 6,
+  summary:
+    "The legacy model scores trend, relative strength, compression, dry-up, accumulation and live volume. V2 adds timing: it separates a fresh first thrust and a held retest from late, repeated or failing breakouts.",
+  Body: () => (
+    <>
+      <P>
+        Both models look for stocks that go quiet — tighter ranges, drying volume, steady
+        accumulation — just under a breakout level, then fire on expanding volume. Live volume is
+        time-adjusted, so a morning session is compared with the volume normally traded by that time.
+      </P>
+      <H2>Legacy model</H2>
+      <Formula>{`score = trend 20 + RS 15 + RS acceleration 10 + near breakout 10
+      + compression 10 + volume dry-up 10 + accumulation 10
+      + expansion volume 10 + market regime 5
+qualifies = fresh, liquid, price floor, circuit-safe,
+            trend + RS + near breakout, and score >= 55`}</Formula>
+      <UL>
+        <LI><strong>Momentum ready</strong> — qualified, through the trigger, volume expanding and close in the top 40%.</LI>
+        <LI><strong>Breakout triggered</strong> — through the trigger without the volume or close yet.</LI>
+        <LI><strong>Wait for pullback</strong> — more than 0.5 ATR past the trigger, or too volatile.</LI>
+        <LI><strong>Early watch</strong> — qualified and approaching the trigger.</LI>
+      </UL>
+      <H2>V2 timing model</H2>
+      <SpecTable
+        rows={[
+          { k: "Momentum ready", v: "Fresh thrust (≤ 0.3 ATR past the trigger) or held first retest, with ≥ 1.5x volume, close in the top 20% and within 1.25% of the high." },
+          { k: "First thrust / Retest setup", v: "The structure is right but volume or the close is not confirmed yet." },
+          { k: "Pre-ignition", v: "Within 3% below the trigger with trend, RS and safety passed." },
+          { k: "Late / profit-booking risk", v: "Five-session run above 12%, under 5% headroom to resistance, RS decelerating, weak close or repeated tests." },
+          { k: "Failed breakout", v: "Fell back more than 0.25 ATR below the retest level." },
+          { k: "Execution blocked", v: "The model is ready but the plan's geometry fails a safety limit." },
+        ]}
+      />
+    </>
+  ),
+};
+
+const trendContinuationArticle: HelpArticle = {
+  slug: "trend-continuation",
+  category: "execution",
+  title: "Trend Continuation",
+  subtitle: "Day-one range breakouts confirmed after the first hour of day two, plus orderly pullbacks.",
+  readMins: 5,
+  summary:
+    "Flags a heavy-volume close above the 20-session high on day one, then confirms it from 10:15 IST on day two if the gain and the breakout level hold on normal volume pace. Observation only.",
+  Body: () => (
+    <>
+      <P>
+        Trend Continuation is built to catch a move like a range breakout by early on its second
+        day, rather than days later. It rescans every NSE stock every two minutes during market
+        hours.
+      </P>
+      <H2>Day one — ignition</H2>
+      <SpecTable
+        rows={[
+          { k: "Range breakout", v: "Close above the highest high of the prior 20 sessions." },
+          { k: "Launch", v: "At least 1.5 ATR above the prior base, over one session or two rising sessions." },
+          { k: "Volume", v: "Breakout day at least 2x the 20-session average." },
+          { k: "Quality", v: "Close in the top 40% of the day's range, above the 50-day average, launch not over-stretched." },
+        ]}
+      />
+      <H2>Day two — confirmation (from 10:15 IST)</H2>
+      <UL>
+        <LI>Price holds within 0.5 ATR of the day-one close and above the old range (less 0.25 ATR).</LI>
+        <LI>Volume is on at least a normal session&apos;s pace for the time of day.</LI>
+        <LI>Not chasing: no more than 1 ATR above the day-one close (otherwise <strong>Extended — do not chase</strong>).</LI>
+        <LI>Stop at the tighter of the day-one low and half an ATR inside the old range; risk ≤ 6%; target 2R.</LI>
+      </UL>
+      <P>
+        An older impulse can still qualify through the original path: an orderly pullback to the
+        10-day average after a three-session impulse in an established trend.
+      </P>
+      <Callout tone="warn">
+        This engine is observation-only. Continuation ready never creates a frozen plan or unlocks
+        buying, and it is held back whenever the Breeze quote is not fresh.
+      </Callout>
+    </>
+  ),
+};
+
+const newsSwingArticle: HelpArticle = {
+  slug: "news-ai-swing",
+  category: "execution",
+  title: "News & AI Swing",
+  subtitle: "A bounded news overlay on existing technical setups.",
+  readMins: 3,
+  summary:
+    "Adds at most ±20 points to an existing setup's technical score from recent, classified news. It can re-rank a setup but never create one; a severe negative event is a risk-off veto.",
+  Body: () => (
+    <>
+      <P>
+        Each article is classified for direction, sentiment, confidence and severity. Its weight
+        halves every 24 hours and drops to zero after a week. Stock-specific news counts fully,
+        sector news 0.75x and market news 0.6x.
+      </P>
+      <Formula>{`adjustment = clamp(sum(direction × |sentiment| × confidence
+                       × severity × decay × scope × 20), -20, +20)
+combined   = clamp(technical score + adjustment, 0, 100)`}</Formula>
+      <UL>
+        <LI><strong>Favored</strong> — adjustment of +4 or more.</LI>
+        <LI><strong>Caution</strong> — adjustment of −4 or less.</LI>
+        <LI><strong>Risk off</strong> — a recent, high-confidence, severe negative event, whatever the total.</LI>
+      </UL>
+    </>
+  ),
+};
+
+const tradeLedgerArticle: HelpArticle = {
+  slug: "trade-ledger-and-mobile",
+  category: "execution",
+  title: "Trade Ledger and the mobile app",
+  subtitle: "Freezing the plan you bought against, exit alerts, returns, and what the app shows.",
+  readMins: 4,
+  summary:
+    "Logging a purchase from a ready card freezes its entry, target, stop, trail and horizon. The ledger then tracks each trade against that plan and computes P&L, ROI on capital added and XIRR.",
+  Body: () => (
+    <>
+      <H2>Frozen plans</H2>
+      <P>
+        When you log a purchase from a ready Strong Swing or Momentum Ignition card, only the
+        server-held plan id is sent. The server checks it belongs to you, is from the current
+        session and is under 30 minutes old, and that your price is at or above the entry and below
+        the target, then copies every level from the plan.
+      </P>
+      <H2>Trade states</H2>
+      <UL>
+        <LI><strong>On track</strong>, <strong>Target reached</strong>, <strong>Stop breached</strong>, <strong>Trail breached</strong>, <strong>Window expired</strong>, <strong>Quote unavailable</strong>.</LI>
+        <LI>A market-risk flag (normal, caution, exit risk) can revise the plan to exit early.</LI>
+      </UL>
+      <H2>Returns</H2>
+      <SpecTable
+        rows={[
+          { k: "Overall P&L", v: "Realized P&L on sales plus unrealized P&L on open trades." },
+          { k: "Capital added", v: "The most new cash you had to put in, since sale proceeds fund later buys." },
+          { k: "ROI", v: "Overall P&L ÷ capital added." },
+          { k: "Turnover", v: "Total of all purchases." },
+          { k: "XIRR", v: "Annualized return of the dated cash flows; can be extreme over short periods." },
+        ]}
+      />
+      <H2>Mobile app</H2>
+      <P>
+        The Android and iOS apps show the same server-computed results: the Stock Screener with saved
+        screens, presets, universe and sector; Swing Candidates with per-strategy counts; Strong (all
+        four models with counts); Armed, News &amp; AI, Long-Term and the Ledger. The apps never
+        recompute levels or rankings.
+      </P>
+    </>
+  ),
+};
+
+// ---------------------------------------------------------------------------
 
 export const HELP_ARTICLES: HelpArticle[] = [
+  tradableStocks,
+  strongSwingArticle,
+  armedSwingArticle,
+  momentumIgnitionArticle,
+  trendContinuationArticle,
+  newsSwingArticle,
+  tradeLedgerArticle,
   swingEngine,
   qullamaggie,
   minervini,
@@ -1131,6 +1449,7 @@ export const HELP_BY_SLUG: Record<string, HelpArticle> = Object.fromEntries(
 
 export const SWING_ARTICLES = HELP_ARTICLES.filter((a) => a.category === "swing");
 export const ENGINE_ARTICLES = HELP_ARTICLES.filter((a) => a.category === "engine");
+export const EXECUTION_ARTICLES = HELP_ARTICLES.filter((a) => a.category === "execution");
 export const LONG_TERM_ARTICLES = HELP_ARTICLES.filter((a) => a.category === "long-term");
 export const PROBABILITY_ARTICLES = HELP_ARTICLES.filter((a) => a.category === "probability");
 export const DATA_ARTICLES = HELP_ARTICLES.filter((a) => a.category === "data");

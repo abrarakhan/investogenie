@@ -1,7 +1,7 @@
 import Link from "next/link";
 import type { Metadata } from "next";
 import {
-  HELP_ARTICLES, SWING_ARTICLES, ENGINE_ARTICLES, PROBABILITY_ARTICLES, LONG_TERM_ARTICLES,
+  HELP_ARTICLES, SWING_ARTICLES, ENGINE_ARTICLES, EXECUTION_ARTICLES, PROBABILITY_ARTICLES, LONG_TERM_ARTICLES,
   DATA_ARTICLES,
   type HelpArticle,
 } from "@/lib/help/articles";
@@ -41,27 +41,79 @@ const JOURNEY: { step: string; title: string; href: string; body: string }[] = [
   },
   {
     step: "5",
+    title: "Find buyable setups — Strong Swing and Armed Swing",
+    href: "/terminal/in/strong-swing",
+    body: "The execution engines: Strong Swing, Momentum Ignition (legacy and V2) and Trend Continuation on one page, and Armed Swing for pre-breakout buy-stops. Only Execution ready, Momentum ready and Buy zone unlock Buy & Track.",
+  },
+  {
+    step: "6",
+    title: "Track what you bought — Trade Ledger",
+    href: "/terminal/in/trade-ledger",
+    body: "Log purchases against a frozen plan, follow exit alerts, and see P&L, ROI on capital added and XIRR.",
+  },
+  {
+    step: "7",
     title: "Think longer horizon — Long-Term Candidates",
     href: "/terminal/in/long-term",
     body: "Six well-known investors' published fundamentals criteria (Lynch, Buffett, Graham, Fisher, Templeton, Greenblatt), scored against every stock and ranked — adapted honestly where the data doesn't fully match their original tests.",
   },
   {
-    step: "6",
+    step: "8",
     title: "Weigh the odds — Probability",
     href: "/terminal/in/probability",
     body: "A 21-trading-day forecast per stock: expected return, probability of an up move, drawdown risk and a projected price range. Research context, not a buy/sell call.",
   },
   {
-    step: "7",
+    step: "9",
     title: "Bring in your holdings — Import",
     href: "/terminal/in/cas",
     body: "For India, upload CAS statements and AMC disclosures, or connect Gmail read-only in Fund Mapping. Gmail can automatically import NSDL e-CAS PDFs and validated AMC monthly disclosures; encrypted CAS files require the saved PDF password.",
   },
   {
-    step: "8",
+    step: "10",
     title: "Trust the data — Data Health",
     href: "/data/health",
     body: "Inspect quote and OHLCV coverage, fundamentals freshness, provider state and sync-job history so you know how current the numbers are.",
+  },
+];
+
+/** The tradable-stocks routine in one place: which screen and status to act on, in order. */
+const TRADABLE_STEPS: { when: string; title: string; href: string; body: string }[] = [
+  {
+    when: "Before 09:15",
+    title: "Prepare orders — Armed Swing and Trend Continuation",
+    href: "/terminal/in/strong-swing",
+    body: "Armed Swing · Armed: place the buy-stop limit order before the open. Trend Continuation · Impulse detected: note the names to re-check on day two.",
+  },
+  {
+    when: "From 09:15",
+    title: "Buy only what is ready — the Tier 1 statuses",
+    href: "/terminal/in/strong-swing",
+    body: "Strong Swing · Execution ready, Momentum Ignition · Momentum ready, Momentum Ignition V2 · Momentum ready, Armed Swing · Buy zone. These alone pass every gate, freeze a plan and unlock Buy & Track. They need market hours and a fresh live quote.",
+  },
+  {
+    when: "Watch",
+    title: "Next in line — Tier 2",
+    href: "/terminal/in/strong-swing",
+    body: "Strong Swing · Wait for entry (confirmed but extended), Momentum Ignition V2 · Pre-ignition, First thrust or Retest setup, Armed Swing · Armed. Wait for them to turn ready; don't buy early.",
+  },
+  {
+    when: "From 10:15",
+    title: "Day-two confirmations — Trend Continuation",
+    href: "/terminal/in/strong-swing",
+    body: "Impulse-detected names re-scanned an hour after the open may turn Continuation ready. It is observation only and never unlocks Buy & Track.",
+  },
+  {
+    when: "After buying",
+    title: "Log it and follow the exits — Trade Ledger",
+    href: "/terminal/in/trade-ledger",
+    body: "Log the purchase from the ready card (web or app) so the frozen plan is attached, then act on the ledger's stop, target and trailing-stop alerts.",
+  },
+  {
+    when: "Research",
+    title: "Context, not buy signals — Tier 3",
+    href: "/terminal/in/screener",
+    body: "Swing Candidates and its five strategies, News & AI (re-ranks existing setups, never creates one), Stock Screener, Long-Term and Probability.",
   },
 ];
 
@@ -115,6 +167,34 @@ export default function HelpPage() {
             </li>
           ))}
         </ol>
+
+        <H2>Which screens give tradable stocks</H2>
+        <P>
+          Only the execution engines decide whether a setup is buyable right now and freeze a plan
+          you can log. Follow this routine each trading day, then read the engine you trade.
+        </P>
+        <ol className="mt-6 space-y-3">
+          {TRADABLE_STEPS.map((t) => (
+            <li key={t.title}>
+              <a
+                href={t.href}
+                className="group flex min-h-11 touch-manipulation flex-col gap-2 rounded-xl border border-white/10 bg-white/[0.03] p-4 transition hover:border-cyan-300/40 hover:bg-white/[0.06] sm:flex-row sm:gap-4"
+              >
+                <span className="w-28 shrink-0 text-xs font-bold uppercase tracking-wide text-cyan-300">{t.when}</span>
+                <div>
+                  <div className="font-semibold text-white group-hover:text-cyan-100">{t.title}</div>
+                  <div className="mt-1 text-sm leading-relaxed text-white/55">{t.body}</div>
+                </div>
+              </a>
+            </li>
+          ))}
+        </ol>
+        <P>
+          Ready means the setup passed the app&apos;s rules at that moment, not that it will work.
+        </P>
+        <div className="mt-6 grid gap-4 sm:grid-cols-2">
+          {EXECUTION_ARTICLES.map((a) => <ArticleCard key={a.slug} a={a} />)}
+        </div>
 
         <H2>How Swing Candidates work</H2>
         <P>

@@ -9,6 +9,7 @@ const CATEGORY_LABEL: Record<string, string> = {
   swing: "Swing Strategy",
   probability: "Probability",
   engine: "How it works",
+  execution: "Execution engine",
   "long-term": "Long-Term Strategy",
   data: "Data & Integrations",
 };
