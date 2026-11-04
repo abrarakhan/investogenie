@@ -99,7 +99,7 @@ export default function TrendContinuationCandidates({ candidates }: { candidates
         <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-violet-300">Python signal engine · observation mode</div>
         <h2 className="mt-1 text-2xl font-black">Trend Continuation</h2>
         <p className="mt-1 max-w-3xl text-sm leading-relaxed text-white/45">
-          Catches a heavy-volume range breakout on day one and confirms it after the first hour of day two (10:15 IST); orderly pullbacks after an older impulse remain a second entry path.
+          Catches a heavy-volume range breakout on day one (a single thrust or a three-session staircase) and confirms it after the first hour of day two (10:15 IST); orderly pullbacks after an older impulse remain a second entry path.
         </p>
       </div>
       <div className="text-right text-xs text-white/40">

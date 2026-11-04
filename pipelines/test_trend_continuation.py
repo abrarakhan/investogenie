@@ -28,6 +28,15 @@ class TrendContinuationTests(unittest.TestCase):
         self.assertEqual(result["status"], "TREND_CONTINUATION_READY")
         self.assertTrue(result["ready"])
 
+    def test_pullback_sold_into_the_close_is_not_an_entry(self):
+        # Same pullback as above, but the session reverses and closes near its low.
+        history = [100 + index * 0.3 for index in range(21)] + [108, 110, 113]
+        volumes = [100_000] * 21 + [180_000, 190_000, 175_000]
+        reversal = Bar("2026-10-25", 113.0, 113.5, 111.3, 111.5, 160_000)
+        result = assess_trend_continuation(bars(history, volumes) + [reversal])
+        self.assertFalse(result["ready"])
+        self.assertFalse(result["metrics"]["pullback"])
+
     def test_chase_is_blocked(self):
         history = [100 + index * 0.1 for index in range(22)] + [108, 116, 126]
         volumes = [100_000] * 22 + [250_000, 300_000, 350_000]
@@ -85,6 +94,36 @@ class DayTwoBreakoutTests(unittest.TestCase):
         confirm = Bar("2026-10-30", 102.9, 103.6, 102.4, 103.3, 120_000)
         ready = assess_trend_continuation(range_base() + [push, breakout, confirm])
         self.assertEqual(ready["status"], "TREND_CONTINUATION_READY")
+
+    def test_three_session_staircase_is_an_ignition(self):
+        # MBAPL-style: three rising sessions out of the base, the last trading through
+        # the 20-session high on its heaviest volume and closing just under it.
+        dip = Bar("2026-10-26", 98.0, 98.6, 97.6, 98.0, 100_000)
+        staircase = [
+            Bar("2026-10-27", 98.0, 99.3, 97.9, 99.0, 110_000),
+            Bar("2026-10-28", 99.0, 100.2, 98.8, 99.9, 120_000),
+            Bar("2026-10-29", 99.9, 101.3, 99.9, 100.8, 180_000),
+        ]
+        series = range_base() + [dip] + staircase
+        result = assess_trend_continuation(series)
+        self.assertEqual(result["status"], "IMPULSE_DETECTED")
+        self.assertEqual(result["metrics"]["launch_sessions"], 3)
+        confirm = Bar("2026-10-30", 101.0, 101.6, 100.8, 101.4, 30_000)
+        ready = assess_trend_continuation(series + [confirm], session_minutes=60)
+        self.assertEqual(ready["status"], "TREND_CONTINUATION_READY")
+        below = Bar("2026-10-30", 100.8, 100.9, 100.65, 100.7, 30_000)
+        waiting = assess_trend_continuation(series + [below], session_minutes=60)
+        self.assertEqual(waiting["status"], "CONTINUATION_WATCH")
+        self.assertFalse(waiting["ready"])
+
+    def test_a_later_push_in_the_same_leg_does_not_restart_day_two(self):
+        confirm = Bar("2026-10-30", 104.0, 104.8, 103.0, 104.2, 120_000)
+        push = Bar("2026-10-31", 104.2, 107.5, 104.1, 107.3, 400_000)
+        pushed = assess_trend_continuation(range_base() + [IGNITION, confirm, push])
+        self.assertFalse(pushed["metrics"]["early_breakout"])
+        follow = Bar("2026-11-01", 107.3, 107.9, 106.8, 107.5, 150_000)
+        after = assess_trend_continuation(range_base() + [IGNITION, confirm, push, follow])
+        self.assertFalse(after["metrics"]["early_breakout"])
 
     def test_day_two_hold_is_ready_with_stop_below_the_breakout(self):
         confirm = Bar("2026-10-30", 104.0, 104.8, 103.0, 104.2, 120_000)

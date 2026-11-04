@@ -1321,9 +1321,9 @@ const trendContinuationArticle: HelpArticle = {
       <H2>Day one — ignition</H2>
       <SpecTable
         rows={[
-          { k: "Range breakout", v: "Close above the highest high of the prior 20 sessions." },
-          { k: "Launch", v: "At least 1.5 ATR above the prior base, over one session or two rising sessions." },
-          { k: "Volume", v: "Breakout day at least 2x the 20-session average." },
+          { k: "Range breakout", v: "Close above the highest high of the prior 20 sessions, or trade through it and close within 0.25 ATR of it (day two must then trade above it)." },
+          { k: "Launch", v: "At least 1.5 ATR above the prior base, over one, two or three rising sessions. Only the first launch of a leg counts; a later push in the same move does not restart the day-two clock." },
+          { k: "Volume", v: "Breakout day at least 2x the 20-session average; a three-session staircase needs 1.5x with its heaviest volume on the breakout day." },
           { k: "Quality", v: "Close in the top 40% of the day's range, above the 50-day average, launch not over-stretched." },
         ]}
       />
@@ -1331,12 +1331,14 @@ const trendContinuationArticle: HelpArticle = {
       <UL>
         <LI>Price holds within 0.5 ATR of the day-one close and above the old range (less 0.25 ATR).</LI>
         <LI>Volume is on at least a normal session&apos;s pace for the time of day.</LI>
+        <LI>Price is above the breakout level.</LI>
         <LI>Not chasing: no more than 1 ATR above the day-one close (otherwise <strong>Extended — do not chase</strong>).</LI>
         <LI>Stop at the tighter of the day-one low and half an ATR inside the old range; risk ≤ 6%; target 2R.</LI>
       </UL>
       <P>
         An older impulse can still qualify through the original path: an orderly pullback to the
-        10-day average after a three-session impulse in an established trend.
+        10-day average after a three-session impulse in an established trend. The pullback day must
+        close in the upper half of its range; a reversal sold into the close is not an entry.
       </P>
       <Callout tone="warn">
         This engine is observation-only. Continuation ready never creates a frozen plan or unlocks

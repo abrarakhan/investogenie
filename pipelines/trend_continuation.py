@@ -104,20 +104,25 @@ def execution_data_verified(source: str | None, quote_time: datetime | None, now
     return 0 <= age <= 5 * 60
 
 
-def _ignition(series: list[Bar], index: int) -> dict | None:
-    """Day one of a range breakout: a heavy-volume close above the 20-session high.
+def _launch(series: list[Bar], index: int) -> dict | None:
+    """Raw day-one test: does the bar at index finish a range breakout launch?
 
-    The launch may take one session or two (a firm first push, then the
-    breakout close); either way it must cover at least 1.5 ATR from the base.
+    The launch may take one, two or three rising sessions (a single thrust, or a
+    staircase out of the base); either way it must cover at least 1.5 ATR from
+    the base. The breakout day must close above the 20-session high, or trade
+    through it and close within a quarter ATR of it (day two must then clear it).
+    One- and two-session launches need 2x volume; a three-session staircase
+    needs 1.5x with its heaviest volume on the breakout day.
     """
     bar = series[index]
-    for sessions in (1, 2):
+    result = None
+    for sessions in (1, 2, 3):
         prior = series[:index - sessions + 1]
         if len(prior) < 25:
-            return None
+            return result
         atr14 = _atr(prior)
         if not math.isfinite(atr14) or atr14 <= 0:
-            return None
+            return result
         launch = series[index - sessions + 1:index + 1]
         breakout_level = max(item.high for item in prior[-20:])
         normal_volume = sum(item.volume for item in prior[-20:]) / 20.0
@@ -128,17 +133,35 @@ def _ignition(series: list[Bar], index: int) -> dict | None:
         ema50 = _ema([item.close for item in series[:index + 1]][-80:], 50)
         launch_return = _pct(bar.close, prior[-1].close)
         rising = all(item.close > previous.close for previous, item in zip([prior[-1], *launch], launch))
+        closed_above = bar.close > breakout_level
+        breaks_level = closed_above or (bar.high > breakout_level and bar.close >= breakout_level - 0.25 * atr14)
+        volume_confirms = (
+            volume_ratio >= 2.0 if sessions < 3
+            else volume_ratio >= 1.5 and bar.volume >= max(item.volume for item in launch)
+        )
         passed = (
-            rising and bar.close > breakout_level and gain_atr >= 1.5 and volume_ratio >= 2.0
+            rising and breaks_level and gain_atr >= 1.5 and volume_confirms
             and close_location >= 0.6 and bar.close > ema50 and launch_return <= 10.0 * sessions ** 0.5
         )
         result = {
             "passed": passed, "bar": bar, "atr14": atr14, "breakout_level": breakout_level,
             "normal_volume": normal_volume, "gain_atr": gain_atr, "volume_ratio": volume_ratio,
             "close_location": close_location, "day_return": launch_return, "launch_sessions": sessions,
+            "closed_above_breakout": closed_above,
         }
         if passed:
             return result
+    return result
+
+
+def _ignition(series: list[Bar], index: int) -> dict | None:
+    """The first launch of a leg. A later launch in the same leg is days into the
+    move, so it cannot restart the day-two clock."""
+    result = _launch(series, index)
+    if result and result["passed"] and any(
+        (earlier := _launch(series, index - offset)) and earlier["passed"] for offset in (1, 2, 3)
+    ):
+        result = {**result, "passed": False, "repeat_launch": True}
     return result
 
 
@@ -166,6 +189,7 @@ def _assess_day_two_breakout(series: list[Bar], session_minutes: float | None) -
         holds_range = confirm.low >= ignition["breakout_level"] - 0.25 * atr14
         chasing = confirm.close > day_one.close + 1.0 * atr14
         volume_on_pace = confirm_volume_ratio >= 1.0
+        clears_level = confirm.close > ignition["breakout_level"]
         metrics.update({"day_two_holds_gain": holds_gain, "day_two_holds_range": holds_range})
         if not (holds_gain and holds_range):
             return None  # failed follow-through; the pullback path decides
@@ -176,12 +200,15 @@ def _assess_day_two_breakout(series: list[Bar], session_minutes: float | None) -
         target = confirm.close + 2.0 * risk
         geometry_valid = risk > 0 and risk / confirm.close <= 0.06
         reasons = [
-            f"Range breakout ignited on {day_one.date}: {ignition['gain_atr']:.2f} ATR in {ignition['launch_sessions']} session(s) on {ignition['volume_ratio']:.2f}x volume, closing above the 20-session high {ignition['breakout_level']:.2f}.",
+            f"Range breakout ignited on {day_one.date}: {ignition['gain_atr']:.2f} ATR in {ignition['launch_sessions']} session(s) on {ignition['volume_ratio']:.2f}x volume, {'closing above' if ignition['closed_above_breakout'] else 'trading through'} the 20-session high {ignition['breakout_level']:.2f}.",
             f"Day two holds the gain and the breakout level on {confirm_volume_ratio:.2f}x {'paced ' if live else ''}volume.",
         ]
         if chasing:
             status, ready = "EXTENDED_RISK", False
             reasons.append("Entry is blocked because day two has run more than 1 ATR beyond the day-one close.")
+        elif not clears_level:
+            status, ready = "CONTINUATION_WATCH", False
+            reasons.append(f"Waiting for day two to trade above the breakout level {ignition['breakout_level']:.2f}.")
         elif not volume_on_pace:
             status, ready = "CONTINUATION_WATCH", False
             reasons.append("Waiting for day-two volume to reach a normal session's pace.")
@@ -301,7 +328,14 @@ def _assess_pullback_continuation(series: list[Bar], benchmark_closes: list[floa
     impulse = move3_atr >= 1.5 and efficiency3 >= 0.65 and persistent_volume
     continuation = impulse and established_pre_impulse_trend and trend_structure and holds_midpoint and rs_pass
     breakout = current.close > max(bar.high for bar in series[-4:-1]) and volume_ratios[-1] >= 1.25
-    pullback = current.low <= ema10 + 0.75 * atr14 and current.close >= ema10 and impulse_age > 0
+    day_range = current.high - current.low
+    close_location = (current.close - current.low) / day_range if day_range > 0 else 1.0
+    # An orderly pullback finds support into the close; a bar sold into its lower
+    # half (a reversal after a run) is distribution, not an entry.
+    pullback = (
+        current.low <= ema10 + 0.75 * atr14 and current.close >= ema10 and impulse_age > 0
+        and close_location >= 0.5
+    )
     ready = continuation and (breakout or pullback) and not extended
 
     stop = min(ema10, min(bar.low for bar in series[-3:])) - 0.10 * atr14
@@ -344,7 +378,10 @@ def _assess_pullback_continuation(series: list[Bar], benchmark_closes: list[floa
     if extended:
         reasons.append("Entry is blocked because price is extended from EMA10 or the five-session move exceeds 12%.")
     elif status == "CONTINUATION_WATCH":
-        reasons.append("Wait for a controlled EMA10 pullback or a renewed-volume breakout.")
+        if current.low <= ema10 + 0.75 * atr14 and current.close >= ema10 and impulse_age > 0 and close_location < 0.5:
+            reasons.append("The pullback closed in the lower half of its range; wait for a session that holds support.")
+        else:
+            reasons.append("Wait for a controlled EMA10 pullback or a renewed-volume breakout.")
     elif ready:
         reasons.append("Continuation entry geometry is valid, but this v1 signal remains observation-only.")
 
@@ -357,7 +394,7 @@ def _assess_pullback_continuation(series: list[Bar], benchmark_closes: list[floa
             "volume_ratios": volume_ratios, "ema10": ema10, "ema20": ema20,
             "distance_ema10_atr": distance_ema10_atr, "return5_pct": return5,
             "relative_strength5_pct": rs5, "relative_strength_acceleration_pct": rs_acceleration,
-            "rising_lows": rising_lows, "breakout": breakout, "pullback": pullback, "impulse_age_sessions": impulse_age,
+            "rising_lows": rising_lows, "breakout": breakout, "pullback": pullback, "close_location": close_location, "impulse_age_sessions": impulse_age,
             "pre_impulse_ema20": pre_impulse_ema20,
             "established_pre_impulse_trend": established_pre_impulse_trend,
         },
