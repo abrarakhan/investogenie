@@ -70,7 +70,10 @@ export interface LedgerTrade {
   projectedTarget: number;
   projectedStop: number;
   effectiveTrailingStop: number | null;
+  realizedPnlValue: number;
   progress: {
+    investedValue: number;
+    currentValue: number | null;
     pnlValue: number | null;
     pnlPct: number | null;
     daysHeld: number;

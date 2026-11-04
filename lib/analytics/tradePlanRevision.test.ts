@@ -42,6 +42,24 @@ describe("revised swing trade plan", () => {
     expect(result.originalPlanBreached).toBe(true);
   });
 
+  it("manages a position held through its stop and back above entry on a revised plan", () => {
+    const result = reviseSwingTradePlan({
+      ...base, currentPrice: 108, lowestLowSinceEntry: 92, holdingWindowExpired: true,
+    });
+    expect(result.action).toBe("PROTECT_RECOVERY");
+    expect(result.label).toBe("Held beyond the original plan");
+    expect(result.protectiveStop).toBe(103);
+    expect(result.revisedTarget).toBe(112);
+    expect(result.reasons[0]).toContain("traded below the original stop of 94");
+  });
+
+  it("moves a profitable position past its holding window to the revised plan", () => {
+    const result = reviseSwingTradePlan({ ...base, holdingWindowExpired: true });
+    expect(result.action).toBe("PROTECT_RECOVERY");
+    expect(result.originalPlanBreached).toBe(false);
+    expect(result.reasons[0]).toContain("holding window has ended");
+  });
+
   it("activates exit when the current quote breaches the effective trail", () => {
     const result = reviseSwingTradePlan({ ...base, currentPrice: 102 });
     expect(result.action).toBe("EXIT");

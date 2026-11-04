@@ -40,6 +40,10 @@ export function assessTradeRisk(input: TradeRiskInput): TradeRiskAssessment {
   } else if (input.tradeState === "TARGET_REACHED") {
     state = "RISK_OFF";
     reasons.push("The recorded strategy target has been reached; protect or realize the planned gain.");
+  } else if (input.tradeState === "WINDOW_EXPIRED" && input.pnlPct !== null && input.pnlPct > 0) {
+    // Time alone is not an exit for a position held above entry; it moves to the revised plan.
+    state = "CAUTION";
+    reasons.push("The planned holding window has ended with the position above entry; it is now managed on the revised plan.");
   } else if (input.tradeState === "WINDOW_EXPIRED") {
     state = "RISK_OFF";
     reasons.push("The recorded strategy holding window has expired without reaching its target.");

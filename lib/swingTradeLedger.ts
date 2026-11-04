@@ -622,6 +622,7 @@ export async function getSwingTradeLedger(userId: string, market: "IN" | "US"): 
       stockMove2dPct,
       soldQuantity,
       remainingQuantity,
+      holdingWindowExpired: progress.state === "WINDOW_EXPIRED",
       externalExitRisk: assessment.recommendation === "EXIT"
         && assessment.reasons.some((reason) => !reason.startsWith("The recorded strategy target has been reached")),
       externalExitReasons: assessment.recommendation === "EXIT"

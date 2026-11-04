@@ -20,6 +20,13 @@ describe("trade risk assessment", () => {
     expect(assessTradeRisk({ ...base, tradeState: "STOP_BREACHED" }).state).toBe("RISK_OFF");
   });
 
+  it("exits an expired holding window only while the trade is not above entry", () => {
+    expect(assessTradeRisk({ ...base, tradeState: "WINDOW_EXPIRED", pnlPct: -1 }).recommendation).toBe("EXIT");
+    const held = assessTradeRisk({ ...base, tradeState: "WINDOW_EXPIRED", pnlPct: 2.5 });
+    expect(held.state).toBe("CAUTION");
+    expect(held.recommendation).toBe("STAY_CAUTION");
+  });
+
   it("raises caution before the stop during a broad two-session selloff", () => {
     const result = assessTradeRisk({ ...base, marketMove2dPct: -2.6 });
     expect(result.state).toBe("CAUTION");

@@ -21,6 +21,7 @@ export interface TradePlanRevisionInput {
   soldQuantity: number;
   remainingQuantity: number;
   externalExitRisk: boolean;
+  holdingWindowExpired?: boolean;
   externalExitReasons: string[];
   recoveryTarget: number | null;
   historicalTarget: number | null;
@@ -90,20 +91,28 @@ export function reviseSwingTradePlan(input: TradePlanRevisionInput): TradePlanRe
     };
   }
 
-  if (originalPlanBreached) {
-    const reasons = [
-      "A session low after purchase traded through the frozen stop; a later rebound does not restore the original setup.",
-      "The recovery objectives are advisory exit references for a position that remains open; they do not restore the breached setup.",
-    ];
+  const aboveEntry = current! > input.buyPrice;
+  const heldPastWindow = Boolean(input.holdingWindowExpired) && current! < input.originalTarget;
+  if (originalPlanBreached || heldPastWindow) {
+    const reasons: string[] = [];
+    if (originalPlanBreached) {
+      reasons.push(`Position note: the session low of ${roundPrice(input.lowestLowSinceEntry!)} traded below the original stop of ${roundPrice(input.originalStop)} and the position was retained rather than exited.`);
+    }
+    if (heldPastWindow) reasons.push("Position note: the planned holding window has ended without the frozen target being reached.");
+    reasons.push(aboveEntry
+      ? "Price is now above entry, so the position is managed on a revised plan: the protective level follows the effective trail and the objectives are re-derived from current volatility and comparable past movement."
+      : "The recovery objectives are advisory exit references for a position that remains open; they do not restore the original setup.");
     if (input.soldQuantity > 0) reasons.push("The guidance applies only to the shares still remaining after partial sales.");
     return {
-      action: "PROTECT_RECOVERY", label: "Recovery objectives", revisedTarget: input.recoveryTarget,
+      action: "PROTECT_RECOVERY",
+      label: aboveEntry ? "Held beyond the original plan" : "Recovery objectives",
+      revisedTarget: input.recoveryTarget,
       historicalTarget: input.historicalTarget,
       historicalSampleSize: input.historicalSampleSize,
       historicalHorizon: input.historicalHorizon,
       protectiveStop,
       remainingUpsidePct: input.recoveryTarget === null ? null : ((input.recoveryTarget / current!) - 1) * 100,
-      originalPlanBreached: true,
+      originalPlanBreached,
       atUpperCircuit, reasons,
     };
   }

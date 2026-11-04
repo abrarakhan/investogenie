@@ -148,6 +148,10 @@ function TradeCard({ trade, today }: { trade: SwingLedgerTrade; today: string })
   const exitNow = trade.status === "OPEN" && trade.revisedPlan.action === "EXIT";
   const progressWidth = Math.max(0, Math.min(100, trade.progress.targetProgressPct ?? 0));
   const tradeReturns = summarizeSwingTradeLedger([trade]);
+  // Open trades value the shares still held; closed trades show what the sales returned.
+  const closed = trade.status === "CLOSED";
+  const investedValue = trade.progress.investedValue;
+  const currentValue = closed ? investedValue + trade.realizedPnlValue : trade.progress.currentValue;
   return (
     <article className="rounded-lg border border-white/10 bg-white/[0.025] p-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -160,9 +164,11 @@ function TradeCard({ trade, today }: { trade: SwingLedgerTrade; today: string })
       {trade.status === "OPEN" && <RevisedPlanPanel trade={trade} />}
       {trade.status === "OPEN" && <TradeRiskPanel trade={trade} />}
       {trade.status === "OPEN" && <GttProtectionPanel trade={trade} />}
-      <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-3">
         <Metric label="Buy" value={price(trade.buyPrice)} />
         <Metric label={trade.status === "CLOSED" ? "Exit" : "Current"} value={price(trade.status === "CLOSED" ? trade.exitPrice : trade.currentPrice)} tone={(trade.progress.pnlPct ?? 0) >= 0 ? "good" : "bad"} />
+        <Metric label="Invested" value={money(investedValue, trade.currency)} />
+        <Metric label={closed ? "Exit value" : "Current value"} value={money(currentValue, trade.currency)} tone={(currentValue ?? investedValue) >= investedValue ? "good" : "bad"} />
         <Metric label="P&L" value={pct(trade.progress.pnlPct)} tone={(trade.progress.pnlPct ?? 0) >= 0 ? "good" : "bad"} />
         <Metric label="Held / projected" value={`${trade.progress.daysHeld} / ${trade.expectedHoldingDays} days`} />
       </div>
@@ -251,7 +257,9 @@ function RevisedPlanPanel({ trade }: { trade: SwingLedgerTrade }) {
   const exitNow = plan.action === "EXIT";
   const actionCopy = exitNow
     ? `Exit the remaining ${trade.remainingQuantity.toLocaleString("en-IN")} shares at the next executable market price. Do not wait for the frozen target.`
-    : plan.action === "PROTECT_RECOVERY"
+    : plan.action === "PROTECT_RECOVERY" && (trade.currentPrice ?? 0) > trade.buyPrice
+      ? `Manage the remaining ${trade.remainingQuantity.toLocaleString("en-IN")} shares on the revised plan: protect at ${price(plan.protectiveStop)} and use the volatility and past-movement targets as exit references.`
+      : plan.action === "PROTECT_RECOVERY"
       ? `The original stop was missed. If you continue holding, use ${price(plan.protectiveStop)} as protection and treat the recovery objectives as exit references, not a restored trade setup.`
       : plan.action === "PROTECT_PROFIT"
         ? `Protect the gain on the remaining ${trade.remainingQuantity.toLocaleString("en-IN")} shares at ${price(plan.protectiveStop)}; there is no approved higher target yet.`
@@ -272,7 +280,7 @@ function RevisedPlanPanel({ trade }: { trade: SwingLedgerTrade }) {
           <div className="text-[10px] font-bold uppercase tracking-[0.16em] opacity-60">Live revised plan</div>
           <h4 className="mt-1 text-sm font-bold">{plan.label}</h4>
         </div>
-        {plan.originalPlanBreached && <span className="rounded-full border border-rose-400/30 bg-rose-500/10 px-3 py-1 text-[10px] font-bold uppercase tracking-wide text-rose-200">Original stop traded through</span>}
+        {plan.originalPlanBreached && <span className="rounded-full border border-amber-300/30 bg-amber-300/10 px-3 py-1 text-[10px] font-bold uppercase tracking-wide text-amber-100">Held through original stop</span>}
       </div>
       <div className={`mt-3 rounded-lg border px-3 py-3 ${exitNow ? "border-rose-400/35 bg-rose-500/10" : "border-current/15 bg-black/20"}`}>
         <div className="text-[10px] font-bold uppercase tracking-[0.16em] opacity-60">Action now</div>
@@ -281,7 +289,7 @@ function RevisedPlanPanel({ trade }: { trade: SwingLedgerTrade }) {
       </div>
       <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
         <Metric label={exitNow ? "Old target · reference only" : "Frozen target"} value={price(trade.projectedTarget)} tone="muted" />
-        <Metric label={plan.action === "PROTECT_RECOVERY" ? "Volatility recovery target" : "Revised objective"} value={price(plan.revisedTarget)} tone={plan.revisedTarget ? "good" : "muted"} />
+        <Metric label={plan.action === "PROTECT_RECOVERY" ? "Volatility target" : "Revised objective"} value={price(plan.revisedTarget)} tone={plan.revisedTarget ? "good" : "muted"} />
         <Metric label={exitNow ? "Old stop · no longer actionable" : "Protect at"} value={exitNow ? "—" : price(plan.protectiveStop)} tone={exitNow ? "muted" : "warn"} />
         <Metric label="Upside left" value={pct(plan.remainingUpsidePct)} tone={(plan.remainingUpsidePct ?? 0) > 0 ? "good" : "muted"} />
       </div>
