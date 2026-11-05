@@ -12,6 +12,7 @@ export function marketHolidayDates(market: CalendarMarket): string[];
 export function previousTradingDay(market: CalendarMarket, dateIso: string): string;
 export function tradingDayOffset(market: CalendarMarket, dateIso: string, sessions: number): string | null;
 export function latestExpectedSessionDate(market: CalendarMarket, at?: Date, publicationMinutes?: number): string;
+export function latestSignalSessionDate(market: CalendarMarket, at?: Date): string;
 export function tradingSessionLag(market: CalendarMarket, observedDate: string | null | undefined, expectedDate: string): number;
 export function isMarketOpenNow(market: CalendarMarket, at?: Date): boolean;
 export function isMarketHoliday(market: CalendarMarket, at?: Date): boolean;

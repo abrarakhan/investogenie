@@ -8,7 +8,7 @@ import {
 } from "@/lib/analytics/armedSwing";
 import {
   isMarketOpenNow,
-  latestExpectedSessionDate,
+  latestSignalSessionDate,
   refreshMarketHolidays,
   tradingSessionLag,
   tradingDayOffset,
@@ -103,7 +103,7 @@ export async function getArmedSwingCandidates(
   const marketOpen = isMarketOpenNow(market);
   const clock = zonedMarketClock(market);
   const sessionDate = clock.date;
-  const expectedSession = latestExpectedSessionDate(market);
+  const expectedSession = latestSignalSessionDate(market);
   const progress = Math.max(0, Math.min(1,
     (clock.minutes - config.openMinutes) / (config.closeMinutes - config.openMinutes)));
 

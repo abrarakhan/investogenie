@@ -9,7 +9,7 @@ import { getFundamentalsByAssetIds } from "@/lib/fundamentals";
 import { deriveLevels, type SwingSetup, type TradeDirection } from "@/lib/analytics/swingClassifier";
 import { strategyTradeLevels, type StrategyKey, type StrategyScore } from "@/lib/analytics/legendaryStrategies";
 import { DEFAULT_SETTINGS, type SwingSettings } from "@/lib/settings";
-import { isMarketOpenNow, latestExpectedSessionDate, refreshMarketHolidays } from "@/lib/market-calendar.mjs";
+import { isMarketOpenNow, latestSignalSessionDate, refreshMarketHolidays } from "@/lib/market-calendar.mjs";
 
 /** Trade levels for one legendary strategy: its own entry, stop and trailing line,
  *  with the user's R:R setting the first target where the strategy has none. */
@@ -93,7 +93,7 @@ export async function runScreener(
     `not exists (select 1 from public.asset_tracking_exclusions x where x.asset_id = swing_signals.asset_id)`,
   ];
   if (market) {
-    params.push(latestExpectedSessionDate(market));
+    params.push(latestSignalSessionDate(market));
     const expectedSessionParam = `$${params.length}::date`;
     // The signal itself must be current, not just the asset's bars and quote:
     // a stale row's ATR, trigger and verdict would otherwise be priced live.

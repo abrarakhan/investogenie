@@ -6,6 +6,7 @@
 import { Client } from "pg";
 import { isMarketOpen } from "@/lib/backfill/classifier";
 import { fetchTextLenient } from "@/lib/ingest/fetchText";
+import { latestSignalSessionDate } from "@/lib/market-calendar.mjs";
 
 const UA =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36";
@@ -459,6 +460,7 @@ export async function refreshQuotes(databaseUrl: string, startISO = localToday()
                 row_number() over(partition by s.exchange order by s.score desc,s.ticker) exchange_rank
            from public.swing_signals s
           where s.country='IN' and s.exchange in ('NSE','BSE') and s.verdict <> 'NO_SETUP'
+            and s.as_of >= $1::date
        ), selected as (
          select t.asset_id,0 priority
            from public.live_market_targets t
@@ -488,7 +490,8 @@ export async function refreshQuotes(databaseUrl: string, startISO = localToday()
               and exists (select 1 from public.daily_ohlcv o where o.asset_id=a.id and o.date >= current_date - interval '4 days')
             order by a.id,s.priority
          ) picked
-        order by priority,ticker`,
+       order by priority,ticker`,
+      [latestSignalSessionDate("IN")],
     )).rows : [];
     const indiaLive = await fetchIndiaLiveCandidates(liveAssets);
 

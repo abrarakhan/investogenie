@@ -11,7 +11,7 @@ vi.mock("@/lib/quotes", () => ({ getQuotesByAssetIds: mocks.getQuotesByAssetIds 
 vi.mock("@/lib/fundamentals", () => ({ getFundamentalsByAssetIds: mocks.getFundamentalsByAssetIds }));
 vi.mock("@/lib/market-calendar.mjs", () => ({
   isMarketOpenNow: () => true,
-  latestExpectedSessionDate: () => "2026-09-15",
+  latestSignalSessionDate: () => "2026-09-15",
   refreshMarketHolidays: async () => true,
 }));
 

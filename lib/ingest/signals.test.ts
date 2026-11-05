@@ -16,6 +16,11 @@ vi.mock("pg", () => ({
   },
 }));
 
+vi.mock("@/lib/market-calendar.mjs", () => ({
+  refreshMarketHolidays: async () => true,
+  latestSignalSessionDate: (market: string) => market === "IN" ? "2026-11-04" : "2026-11-03",
+}));
+
 import { computeSignals } from "@/lib/ingest/signals";
 
 const bars = Array.from({ length: 60 }, (_, index) => {
@@ -43,17 +48,21 @@ describe("computeSignals retirement", () => {
     expect(summary.scanned).toBe(1);
     expect(summary.retired).toBe(3);
     expect(retire?.sql).toContain("verdict='NO_SETUP'");
-    expect(retire?.sql).toContain("where computed_at < $1");
-    expect(retire?.params).toEqual([new Date("2026-11-05T09:00:00Z")]);
+    expect(retire?.sql).toContain("computed_at < $1");
+    expect(retire?.sql).toContain("country='IN' and as_of < $2::date");
+    expect(retire?.sql).toContain("country='US' and as_of < $3::date");
+    expect(retire?.params).toEqual([new Date("2026-11-05T09:00:00Z"), "2026-11-04", "2026-11-03"]);
+    const assetSelection = db.calls.find((call) => call.sql.includes("from public.assets a\n        where a.is_active"));
+    expect(assetSelection?.params).toEqual(["2026-11-04", "2026-11-03"]);
     // Retirement runs after the upsert, never before it.
     const upsertIndex = db.calls.findIndex((call) => call.sql.startsWith("insert into public.swing_signals"));
     expect(upsertIndex).toBeGreaterThan(-1);
     expect(db.calls.indexOf(retire!)).toBeGreaterThan(upsertIndex);
   });
 
-  it("retires nothing when the scan computed no rows", async () => {
+  it("fails closed and retires stale active rows when no asset can be recomputed", async () => {
     const summary = await computeSignals("postgres://localhost/test");
-    expect(summary.retired).toBe(0);
-    expect(db.calls.some((call) => call.sql.startsWith("update public.swing_signals"))).toBe(false);
+    expect(summary.retired).toBe(3);
+    expect(db.calls.some((call) => call.sql.startsWith("update public.swing_signals"))).toBe(true);
   });
 });

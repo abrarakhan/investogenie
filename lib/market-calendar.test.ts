@@ -3,6 +3,7 @@ import {
   isMarketHoliday,
   isMarketOpenNow,
   latestExpectedSessionDate,
+  latestSignalSessionDate,
   marketHolidayDates,
   refreshMarketHolidays,
   tradingDayOffset,
@@ -25,6 +26,13 @@ describe("market calendar", () => {
   it("keeps Friday as the expected session through the closed weekend", () => {
     expect(latestExpectedSessionDate("IN", new Date("2026-09-12T07:00:00Z"))).toBe("2026-09-11");
     expect(latestExpectedSessionDate("IN", new Date("2026-09-13T07:00:00Z"))).toBe("2026-09-11");
+  });
+
+  it("waits for each market's EOD publication window before requiring the new signal session", () => {
+    expect(latestSignalSessionDate("IN", new Date("2026-11-05T12:00:00Z"))).toBe("2026-11-04");
+    expect(latestSignalSessionDate("IN", new Date("2026-11-05T13:01:00Z"))).toBe("2026-11-05");
+    expect(latestSignalSessionDate("US", new Date("2026-11-05T21:30:00Z"))).toBe("2026-11-04");
+    expect(latestSignalSessionDate("US", new Date("2026-11-05T22:01:00Z"))).toBe("2026-11-05");
   });
 
   it("counts missing exchange sessions rather than calendar days", () => {

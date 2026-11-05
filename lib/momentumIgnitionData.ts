@@ -64,7 +64,7 @@ const preliminarySql = (market: "IN" | "US") => {
          strong.status strong_status,strong.captured_at::text strong_captured_at
     from universe u join stats st on st.asset_id=u.id
     join public.latest_quotes q on q.asset_id=u.id
-    left join public.swing_signals s on s.asset_id=u.id
+    left join public.swing_signals s on s.asset_id=u.id and s.as_of >= $1::date
     left join lateral (
       select ss.status,ss.captured_at from public.strong_swing_snapshots ss
        where ss.asset_id=u.id and ss.market=$5 and ss.latest_bar_date >= $1::date

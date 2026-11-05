@@ -5,7 +5,7 @@ import {
 } from "@/lib/analytics/momentumIgnitionV2";
 import type { SwingSettings } from "@/lib/settings";
 import type { OHLCV } from "@/lib/types";
-import { isMarketOpenNow, latestExpectedSessionDate, refreshMarketHolidays } from "@/lib/market-calendar.mjs";
+import { isMarketOpenNow, latestSignalSessionDate, refreshMarketHolidays } from "@/lib/market-calendar.mjs";
 import {
   loadMomentumBars,
   loadMomentumLiveBars,
@@ -132,7 +132,7 @@ export async function getMomentumIgnitionCandidates(
   void settings; // V2 uses its own fixed one-to-two-session risk plan.
   const config = marketConfig(market);
   await refreshMarketHolidays(market);
-  const expectedSessionDate = latestExpectedSessionDate(market);
+  const expectedSessionDate = latestSignalSessionDate(market);
   const marketOpen = isMarketOpenNow(market);
   const session = marketSession(market);
 

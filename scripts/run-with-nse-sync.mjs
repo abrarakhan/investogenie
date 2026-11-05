@@ -508,10 +508,7 @@ function runMarketRefresh(trigger) {
       // standalone and 90-112s inside the Next.js server — a penalty that repeatedly pushed it
       // past its timeout and left swing_signals stale. This also drops the dependency on the
       // app being up and on CRON_SECRET; the route stays available for manual triggers.
-      await runNodeScript("swing signal scan", "scripts/run-scan.mjs", [
-        "--import", resolve(root, "scripts/ts-alias-hook.mjs"),
-        "--disable-warning=MODULE_TYPELESS_PACKAGE_JSON",
-      ]);
+      await runSignalScan();
       console.log(`[market-refresh] ${trigger} completed`);
 
       const durationMs = Date.now() - t0;
@@ -527,6 +524,13 @@ function runMarketRefresh(trigger) {
       marketRefreshPromise = null;
     });
   return marketRefreshPromise;
+}
+
+function runSignalScan() {
+  return runNodeScript("swing signal scan", "scripts/run-scan.mjs", [
+    "--import", resolve(root, "scripts/ts-alias-hook.mjs"),
+    "--disable-warning=MODULE_TYPELESS_PACKAGE_JSON",
+  ]);
 }
 
 function scheduleRecurringMarketRefresh() {
@@ -1617,6 +1621,7 @@ const stopEodScheduler = startEodScheduler({
     if (syncDisabled) throw new Error("NSE_SYNC_DISABLED disables India EOD updates");
     if (!await runBhavcopyNseSync("exchange-close")) throw new Error("India EOD update failed");
     await refreshTechnicalScreener("IN");
+    await runSignalScan();
   },
   runUS: async () => {
     if (usQuoteDisabled || usHistoryDisabled) throw new Error("US quote/history updates disabled");
@@ -1636,6 +1641,7 @@ const stopEodScheduler = startEodScheduler({
       "--google-fallback-limit", usGoogleFallbackLimit, "--sleep", usSyncSleep]);
     await run([usHistoryPipeline, "--all-active", "--limit", "100000", "--stale-days", "0",
       "--min-bars", usHistoryMinBars, "--sleep", usHistorySleep]);
+    await runSignalScan();
   },
 });
 const stopMlSnapshotScheduler = startMlSnapshotScheduler({

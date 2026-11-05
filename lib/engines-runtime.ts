@@ -18,6 +18,7 @@ import type { MarketId, FundStockWeight, UserFundHolding } from "@/lib/types";
 import { deriveLevels, type SwingSetup, type TradeDirection } from "@/lib/analytics/swingClassifier";
 import { DEFAULT_SETTINGS, type SwingSettings } from "@/lib/settings";
 import { fundDisplayIdentity } from "@/lib/funds/displayName";
+import { latestSignalSessionDate, refreshMarketHolidays } from "@/lib/market-calendar.mjs";
 
 export interface TopSetup {
   ticker: string;
@@ -54,6 +55,9 @@ export async function getTopSwingSetups(
   settings: SwingSettings = DEFAULT_SETTINGS,
   limit = 6,
 ): Promise<TopSetup[]> {
+  const market = country === "IN" || country === "US" ? country : null;
+  if (market) await refreshMarketHolidays(market);
+  const signalSession = market ? latestSignalSessionDate(market) : "1970-01-01";
   const rows = await query<Record<string, unknown>>(
     `select s.ticker, s.verdict, s.score, s.reason, s.bias,
             q.price as current_price, s.atr,
@@ -61,23 +65,14 @@ export async function getTopSwingSetups(
        from public.swing_signals s
        join public.latest_quotes q on q.asset_id = s.asset_id
       where s.country = $1 and s.verdict <> 'NO_SETUP'
+        and s.as_of >= $3::date
         and exists (select 1 from public.assets a where a.id=s.asset_id and a.is_active)
         and not exists (select 1 from public.asset_tracking_exclusions x where x.asset_id=s.asset_id)
-        and exists (select 1 from public.daily_ohlcv o where o.asset_id=s.asset_id and o.date >= current_date - interval '4 days')
-        and q.as_of::date >= case
-          when s.country='IN'
-           and extract(isodow from now() at time zone 'Asia/Kolkata') between 1 and 5
-           and (now() at time zone 'Asia/Kolkata')::time between time '09:15' and time '15:30'
-            then (now() at time zone 'Asia/Kolkata')::date
-          when s.country='US'
-           and extract(isodow from now() at time zone 'America/New_York') between 1 and 5
-           and (now() at time zone 'America/New_York')::time between time '09:30' and time '16:00'
-            then (now() at time zone 'America/New_York')::date
-          else current_date - 4
-        end
+        and exists (select 1 from public.daily_ohlcv o where o.asset_id=s.asset_id and o.date >= $3::date)
+        and q.as_of::date >= $3::date
       order by s.score desc
       limit $2`,
-    [country, limit * 2],
+    [country, limit * 2, signalSession],
   );
   return rows
     .filter((r) => settings.includeShort || (r.bias as string) !== "SHORT")

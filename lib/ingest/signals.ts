@@ -16,6 +16,7 @@ import {
   evaluateLegendary, momentumLeaderPercentiles, relativeStrengthRatings, type MomentumCloses, type RsCloses,
 } from "@/lib/analytics/legendaryStrategies";
 import { swingTieBreakScore } from "@/lib/analytics/candidateRanking";
+import { latestSignalSessionDate, refreshMarketHolidays } from "@/lib/market-calendar.mjs";
 import type { OHLCV } from "@/lib/types";
 
 export interface ScanSummary {
@@ -72,19 +73,20 @@ const UPSERT_SQL = `insert into public.swing_signals
 
 const COLS = 35;
 
-// Rows the scan did not recompute (no current bars, too little history, delisted)
-// otherwise keep their last verdict, and readers that join on swing_signals would
-// show an August breakout at today's price. Retire them to NO_SETUP. ATR and level
-// fields stay untouched because open ledger trades read them; as_of and computed_at
-// stay too, as the record of when the row was last genuinely calculated.
+// Rows the scan did not recompute, or whose newest bar predates the market's
+// published signal session, otherwise keep an active verdict. ATR and level fields
+// stay untouched because open ledger trades read them; as_of and computed_at stay
+// too, as the record of when the row was last genuinely calculated.
 const RETIRE_SQL = `update public.swing_signals set
     verdict='NO_SETUP', bias='NONE', score=0,
     is_breakout=false, is_squeeze=false, is_long_buildup=false,
     strategy_tags='{}', strategy_scores='{}'::jsonb,
     buildup_source=null, participation_ratio=null, volume_expansion=null,
     breakout_clearance_atr=null, rs_rating=null, rank_score=null,
-    reason='Retired: not recomputed by the latest scan (no current daily bars or too little history).'
-  where computed_at < $1
+    reason='Retired: signal is older than the latest published market session or was not recomputed.'
+  where (computed_at < $1
+      or (country='IN' and as_of < $2::date)
+      or (country='US' and as_of < $3::date))
     and (verdict <> 'NO_SETUP' or cardinality(strategy_tags) > 0 or rank_score is not null)`;
 const ASSET_BATCH = 60; // assets per round → bounded memory + small upserts
 // Fetching each batch's bars is ~70% of the job's wall clock and is I/O-bound, so a few
@@ -94,6 +96,9 @@ const BATCH_CONCURRENCY = 4;
 
 export async function computeSignals(databaseUrl: string): Promise<ScanSummary> {
   const t0 = Date.now();
+  await Promise.all([refreshMarketHolidays("IN"), refreshMarketHolidays("US")]);
+  const indiaSignalSession = latestSignalSessionDate("IN");
+  const usSignalSession = latestSignalSessionDate("US");
   const pool = new Pool({
     connectionString: databaseUrl,
     ssl: /127\.0\.0\.1|localhost/.test(databaseUrl) ? false : { rejectUnauthorized: false },
@@ -104,23 +109,10 @@ export async function computeSignals(databaseUrl: string): Promise<ScanSummary> 
     // Database clock, so retirement compares against the same clock as computed_at.
     const { rows: [{ started_at: scanStartedAt }] } = await client.query<{ started_at: Date }>("select now() started_at");
     // Data Health keeps reporting stale assets so they can be repaired, but the
-    // signal scan fails closed: only active, tracked assets with a recent daily
-    // bar are allowed into calculations. Four days spans a normal weekend.
+    // signal scan fails closed: only assets current for their market's latest
+    // published EOD session are allowed into calculations.
     const { rows: assets } = await client.query<AssetMeta>(
-      `with clock as (
-         select (now() at time zone 'Asia/Kolkata')::date today,
-                extract(isodow from now() at time zone 'Asia/Kolkata')::int dow,
-                (now() at time zone 'Asia/Kolkata')::time local_time
-       ), expected as (
-         select case
-           when dow=1 and local_time < time '18:00' then today-3
-           when dow between 2 and 5 and local_time < time '18:00' then today-1
-           when dow=6 then today-1
-           when dow=7 then today-2
-           else today end as market_date
-         from clock
-       )
-       select a.id, a.ticker, a.country, a.exchange, a.asset_class
+      `select a.id, a.ticker, a.country, a.exchange, a.asset_class
          from public.assets a
         where a.is_active
           and not exists (
@@ -130,11 +122,13 @@ export async function computeSignals(databaseUrl: string): Promise<ScanSummary> 
             select 1 from public.daily_ohlcv o
              where o.asset_id = a.id
                and o.open > 0 and o.high > 0 and o.low > 0 and o.close > 0
-               and o.date >= case when a.country='IN'
-                 then (select market_date - 2 from expected)
-                 else current_date - 4 end
+               and o.date >= case
+                 when a.country='IN' then $1::date
+                 when a.country='US' then $2::date
+                 else current_date - interval '4 days' end
           )
         order by a.id`,
+      [indiaSignalSession, usSignalSession],
     );
 
     // Minervini's relative-strength rating and Qullamaggie's momentum-leader rank both
@@ -276,7 +270,10 @@ export async function computeSignals(databaseUrl: string): Promise<ScanSummary> 
     await Promise.all(Array.from({ length: BATCH_CONCURRENCY }, runWorker));
 
     // Only after every batch succeeded: a failed scan throws above and retires nothing.
-    const retired = scanned > 0 ? (await client.query(RETIRE_SQL, [scanStartedAt])).rowCount ?? 0 : 0;
+    const retired = (await client.query(
+      RETIRE_SQL,
+      [scanStartedAt, indiaSignalSession, usSignalSession],
+    )).rowCount ?? 0;
 
     return { scanned, setups, retired, durationMs: Date.now() - t0 };
   } finally {

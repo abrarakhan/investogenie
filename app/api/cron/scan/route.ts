@@ -68,6 +68,7 @@ export async function GET(request: NextRequest) {
       ok: true,
       scanned: summary?.scanned,
       setups: summary?.setups,
+      retired: summary?.retired,
       attempts: result.attempts,
       durationMs: result.durationMs,
     });

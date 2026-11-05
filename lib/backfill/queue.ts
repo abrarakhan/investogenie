@@ -64,8 +64,8 @@ export async function getBackfillCandidates(): Promise<BackfillCandidate[]> {
               (now() at time zone 'Asia/Kolkata')::time local_time
      ), expected as (
        select case
-         when dow=1 and local_time < time '18:00' then today-3
-         when dow between 2 and 5 and local_time < time '18:00' then today-1
+         when dow=1 and local_time < time '18:30' then today-3
+         when dow between 2 and 5 and local_time < time '18:30' then today-1
          when dow=6 then today-1
          when dow=7 then today-2
          else today end as market_date
@@ -85,7 +85,11 @@ export async function getBackfillCandidates(): Promise<BackfillCandidate[]> {
             exists(select 1 from public.universe_members u where u.asset_id=a.id and u.universe='NASDAQ_100') in_nasdaq100,
             exists(select 1 from public.holdings h where h.asset_id=a.id) in_portfolio,
             exists(select 1 from public.watchlist_items w where w.asset_id=a.id) in_watchlist,
-            exists(select 1 from public.swing_signals s where s.asset_id=a.id and s.verdict <> 'NO_SETUP') has_active_signal,
+            exists(select 1 from public.swing_signals s
+                    where s.asset_id=a.id and s.verdict <> 'NO_SETUP'
+                      and s.as_of >= case when a.country='IN'
+                        then (select market_date from expected)
+                        else current_date - interval '4 days' end) has_active_signal,
             exists(select 1 from public.forward_test_positions f where f.asset_id=a.id and f.status='OPEN') has_open_forward_test
        from public.assets a
        join public.latest_quotes q on q.asset_id=a.id
