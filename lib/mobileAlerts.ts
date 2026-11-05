@@ -29,6 +29,7 @@ interface CandidateSignal {
   engine: CandidateEngine;
   status: string;
   ready: boolean;
+  earlyWatch?: boolean;
   quoteAsOf: string | null;
 }
 
@@ -103,6 +104,7 @@ async function candidateSignals(market: "IN" | "US", userId: string): Promise<Ca
     ...continuation.map((candidate) => ({
       assetId: candidate.assetId, ticker: candidate.ticker, engine: "TREND_CONTINUATION" as const,
       status: candidate.status, ready: candidate.status === "TREND_CONTINUATION_READY",
+      earlyWatch: candidate.metrics.developing_staircase === true,
       quoteAsOf: candidate.computedAt,
     })),
   ];
@@ -152,6 +154,19 @@ async function dispatchCandidateAlerts(userId: string, tokens: PushTokenRow[], m
         [userId, market, candidate.assetId, `InvestoGenie: ${engineLabel} · ${statusLabel}`,
           `${candidate.ticker} entered ${statusLabel} in ${engineLabel}. Open that section to review it.`,
           candidateAlertDestination(market, candidate.engine), `${candidate.engine}|${candidate.assetId}|${candidate.status}`],
+      );
+    }
+    if (candidate.earlyWatch === true) {
+      await query(
+        `insert into public.browser_notification_events
+           (user_id,market,kind,asset_id,title,body,route,signature,market_date)
+         values($1,$2,'CANDIDATE_WATCH',$3,$4,$5,$6,$7,
+           (now() at time zone case when $2='IN' then 'Asia/Kolkata' else 'America/New_York' end)::date)
+         on conflict(user_id,signature,market_date) do nothing`,
+        [userId, market, candidate.assetId, "InvestoGenie: Trend Continuation · Staircase developing",
+          `${candidate.ticker} is building a two-session continuation staircase. Observation only; wait for confirmation.`,
+          candidateAlertDestination(market, candidate.engine),
+          `${candidate.engine}|${candidate.assetId}|DEVELOPING_STAIRCASE`],
       );
     }
     if (transitioned) {

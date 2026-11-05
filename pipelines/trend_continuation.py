@@ -24,7 +24,7 @@ from typing import Iterable
 import psycopg2
 from psycopg2.extras import execute_values
 
-FEATURE_VERSION = "trend_continuation_v4"
+FEATURE_VERSION = "trend_continuation_v5"
 IST = timezone(timedelta(hours=5, minutes=30))
 SESSION_MINUTES = 375  # 09:15-15:30 IST
 CONFIRMATION_MINUTES = 60  # day-two confirmation opens at 10:15 IST
@@ -165,6 +165,72 @@ def _ignition(series: list[Bar], index: int) -> dict | None:
     return result
 
 
+def _developing_staircase(
+    series: list[Bar], benchmark_closes: list[float] | None, session_minutes: float | None,
+) -> dict | None:
+    """Surface the second rising session before the stricter ignition test passes.
+
+    This is deliberately observation-only. It closes the blind spot between a
+    quiet first push and a later three-session ignition without weakening the
+    confirmed entry rules.
+    """
+    if len(series) < 27 or (session_minutes is not None and session_minutes < 30):
+        return None
+    prior = series[:-2]
+    first, current = series[-2:]
+    atr14 = _atr(prior)
+    if not math.isfinite(atr14) or atr14 <= 0:
+        return None
+    breakout_level = max(bar.high for bar in prior[-20:])
+    normal_volume = sum(bar.volume for bar in prior[-20:]) / 20.0
+    volume_ratio = current.volume / normal_volume if normal_volume else 0.0
+    first_volume_ratio = first.volume / normal_volume if normal_volume else 0.0
+    gain_atr = (current.close - prior[-1].close) / atr14
+    day_range = current.high - current.low
+    close_location = (current.close - current.low) / day_range if day_range > 0 else 1.0
+    closes = [bar.close for bar in series]
+    ema20 = _ema(closes[-50:], 20)
+    ema20_previous = _ema(closes[-55:-5], 20)
+    return5 = _pct(current.close, series[-6].close)
+    rs5 = None
+    if benchmark_closes and len(benchmark_closes) >= 6:
+        rs5 = return5 - _pct(benchmark_closes[-1], benchmark_closes[-6])
+    passed = (
+        first.close > prior[-1].close
+        and current.close > first.close
+        and current.close > first.high
+        and gain_atr >= 0.75
+        and close_location >= 0.65
+        and current.close >= breakout_level - 0.50 * atr14
+        and volume_ratio >= 1.0
+        and (first_volume_ratio + volume_ratio) / 2.0 >= 0.9
+        and current.close > ema20 > ema20_previous
+        and (rs5 is None or rs5 > 0)
+    )
+    if not passed:
+        return None
+    return {
+        "status": "IMPULSE_DETECTED", "ready": False,
+        "metrics": {
+            "developing_staircase": True, "early_breakout": False,
+            "staircase_gain_atr": gain_atr, "staircase_volume_ratio": volume_ratio,
+            "staircase_first_volume_ratio": first_volume_ratio,
+            "breakout_level": breakout_level, "close_location": close_location,
+            "return5_pct": return5, "relative_strength5_pct": rs5,
+            "session_minutes": session_minutes,
+        },
+        "reasons": [
+            f"Two rising sessions have advanced {gain_atr:.2f} ATR and the latest close is above the first session's high.",
+            f"The move is within 0.5 ATR of the 20-session high {breakout_level:.2f}, closes firmly, and volume is tracking at {volume_ratio:.2f}x normal.",
+            "Developing staircase only: watch now, but wait for full ignition and confirmation before treating it as an entry.",
+        ],
+        "score_parts": {
+            "gain_atr": gain_atr, "volume_ratio": volume_ratio,
+            "close_location": close_location,
+        },
+    }
+
+
 def _assess_day_two_breakout(
     series: list[Bar], benchmark_closes: list[float] | None, session_minutes: float | None,
 ) -> dict | None:
@@ -277,6 +343,8 @@ def assess_trend_continuation(
     if result["status"] == "INVALID_DATA" or len(series) < 30:
         return result
     early = _assess_day_two_breakout(series, benchmark_closes, session_minutes)
+    if early is None:
+        early = _developing_staircase(series, benchmark_closes, session_minutes)
     result.setdefault("metrics", {})["early_breakout"] = False
     if early is None or (result.get("ready") and not early["ready"]):
         return result

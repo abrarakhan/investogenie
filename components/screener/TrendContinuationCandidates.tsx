@@ -12,6 +12,7 @@ const value = (number: unknown, suffix = "") => typeof number === "number" && Nu
   ? `${number.toFixed(2)}${suffix}` : "—";
 
 function CandidateCard({ candidate, rank }: { candidate: TrendContinuationCandidate; rank: number }) {
+  const developingStaircase = candidate.metrics.developing_staircase === true;
   const volumeRatios = Array.isArray(candidate.metrics.volume_ratios)
     ? candidate.metrics.volume_ratios.filter((item): item is number => typeof item === "number") : [];
   const averageVolume = volumeRatios.length
@@ -30,7 +31,7 @@ function CandidateCard({ candidate, rank }: { candidate: TrendContinuationCandid
       <div className="flex items-center gap-2">
         <span className="font-mono text-lg font-bold text-white/75">{candidate.score}/100</span>
         <span className={`rounded-full border px-3 py-1 text-[10px] font-bold uppercase ${style[candidate.status]}`}>
-          {TREND_CONTINUATION_STATUS_LABEL[candidate.status]}
+          {developingStaircase ? "Staircase developing" : TREND_CONTINUATION_STATUS_LABEL[candidate.status]}
         </span>
       </div>
     </div>
@@ -99,7 +100,7 @@ export default function TrendContinuationCandidates({ candidates }: { candidates
         <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-violet-300">Python signal engine · observation mode</div>
         <h2 className="mt-1 text-2xl font-black">Trend Continuation</h2>
         <p className="mt-1 max-w-3xl text-sm leading-relaxed text-white/45">
-          Catches a heavy-volume range breakout on day one (a single thrust or a three-session staircase) and confirms it after the first hour of day two (10:15 IST); orderly pullbacks after an older impulse remain a second entry path.
+          Surfaces a firm two-session staircase early, then requires a heavy-volume completed launch and confirmation after the first hour of the following session (10:15 IST); orderly pullbacks after an older impulse remain a second entry path.
         </p>
       </div>
       <div className="text-right text-xs text-white/40">
@@ -129,7 +130,7 @@ export default function TrendContinuationCandidates({ candidates }: { candidates
       : <div className="space-y-3">
         <CandidateGroup title="Continuation ready · observation only" candidates={ready} ranked={ranked} color="text-emerald-300" defaultOpen />
         <CandidateGroup title="Continuation watch" candidates={watch} ranked={ranked} color="text-amber-200" />
-        <CandidateGroup title="Impulse detected" candidates={impulse} ranked={ranked} color="text-cyan-200" />
+        <CandidateGroup title="Developing staircase / impulse detected" candidates={impulse} ranked={ranked} color="text-cyan-200" />
         <CandidateGroup title="Extended · do not chase" candidates={extended} ranked={ranked} color="text-rose-200" />
       </div>}
   </div>;

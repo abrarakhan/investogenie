@@ -545,7 +545,7 @@ async function strongSwing(market: MobileMarket, params: URLSearchParams, userId
     STRONG_SWING: "Base Swing signals re-ranked after the two-close confirmation and execution-safety gates.",
     MOMENTUM_IGNITION: "Legacy momentum model: compression, dry-up and breakout with live volume.",
     MOMENTUM_IGNITION_V2: "Ignition timing model: first thrust and retest entries, with late-move protection.",
-    TREND_CONTINUATION: "Day-one range breakout confirmed after the first hour of day two, plus orderly pullbacks.",
+    TREND_CONTINUATION: "Developing two-session staircases, confirmed day-two breakouts, and orderly pullbacks.",
   };
   const cards = model === "STRONG_SWING"
     ? ranked.map((item) => strongSwingCard(item, market, plan("STRONG_SWING", item.status, item.assetId)))

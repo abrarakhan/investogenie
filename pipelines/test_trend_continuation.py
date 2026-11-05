@@ -78,6 +78,21 @@ IGNITION = Bar("2026-10-29", 100.2, 104.2, 100.0, 104.0, 300_000)
 
 
 class DayTwoBreakoutTests(unittest.TestCase):
+    def test_two_session_staircase_is_surfaced_before_full_ignition(self):
+        first = Bar("2026-10-28", 100.0, 101.2, 99.8, 101.0, 90_000)
+        second = Bar("2026-10-29", 101.0, 102.6, 100.9, 102.4, 120_000)
+        result = assess_trend_continuation(range_base() + [first, second])
+        self.assertEqual(result["status"], "IMPULSE_DETECTED")
+        self.assertFalse(result["ready"])
+        self.assertTrue(result["metrics"]["developing_staircase"])
+        self.assertTrue(any("Developing staircase" in reason for reason in result["reasons"]))
+
+    def test_developing_staircase_rejects_a_weak_close(self):
+        first = Bar("2026-10-28", 100.0, 101.2, 99.8, 101.0, 90_000)
+        weak = Bar("2026-10-29", 101.0, 103.0, 100.9, 101.3, 120_000)
+        result = assess_trend_continuation(range_base() + [first, weak])
+        self.assertFalse(result["metrics"].get("developing_staircase", False))
+
     def test_day_one_ignition_is_flagged_for_day_two(self):
         result = assess_trend_continuation(range_base() + [IGNITION])
         self.assertEqual(result["status"], "IMPULSE_DETECTED")

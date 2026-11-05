@@ -21,11 +21,12 @@ export async function getTrendContinuationCandidates(market: "IN" | "US", limit 
     from public.trend_continuation_signals where market=$1
       and asof_market_date=(select max(asof_market_date) from public.trend_continuation_signals where market=$1)
     order by asset_id,asof_market_date desc,computed_at desc`, [market]);
-  return rows.sort((a, b) => b.score - a.score).slice(0, limit).map((row) => ({
+  return rows.map((row) => ({
     assetId: row.asset_id, ticker: row.ticker, name: row.name, status: row.status,
     ready: row.ready, observationOnly: row.observation_only, score: row.score,
     entry: row.entry === null ? null : Number(row.entry), stop: row.stop === null ? null : Number(row.stop),
     target: row.target === null ? null : Number(row.target), asOfMarketDate: row.asof_market_date,
     computedAt: row.computed_at, metrics: row.metrics, reasons: row.reasons,
-  }));
+  })).sort((a, b) => Number(b.metrics.developing_staircase === true) - Number(a.metrics.developing_staircase === true)
+    || b.score - a.score).slice(0, limit);
 }
