@@ -104,7 +104,8 @@ async function candidateSignals(market: "IN" | "US", userId: string): Promise<Ca
     ...continuation.map((candidate) => ({
       assetId: candidate.assetId, ticker: candidate.ticker, engine: "TREND_CONTINUATION" as const,
       status: candidate.status, ready: candidate.status === "TREND_CONTINUATION_READY",
-      earlyWatch: candidate.metrics.developing_staircase === true,
+      earlyWatch: candidate.metrics.developing_staircase === true
+        && candidate.metrics.execution_data_verified === true,
       quoteAsOf: candidate.computedAt,
     })),
   ];

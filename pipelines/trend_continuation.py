@@ -24,7 +24,7 @@ from typing import Iterable
 import psycopg2
 from psycopg2.extras import execute_values
 
-FEATURE_VERSION = "trend_continuation_v5"
+FEATURE_VERSION = "trend_continuation_v6"
 IST = timezone(timedelta(hours=5, minutes=30))
 SESSION_MINUTES = 375  # 09:15-15:30 IST
 CONFIRMATION_MINUTES = 60  # day-two confirmation opens at 10:15 IST
@@ -189,8 +189,16 @@ def _developing_staircase(
     day_range = current.high - current.low
     close_location = (current.close - current.low) / day_range if day_range > 0 else 1.0
     closes = [bar.close for bar in series]
+    prior_closes = [bar.close for bar in prior]
+    ema10 = _ema(closes[-40:], 10)
     ema20 = _ema(closes[-50:], 20)
-    ema20_previous = _ema(closes[-55:-5], 20)
+    pre_impulse_ema20 = _ema(prior_closes[-50:], 20)
+    pre_impulse_ema20_previous = _ema(prior_closes[:-5][-50:], 20)
+    established_pre_impulse_trend = (
+        prior[-1].close >= pre_impulse_ema20
+        and pre_impulse_ema20 > pre_impulse_ema20_previous
+    )
+    distance_ema10_atr = (current.close - ema10) / atr14
     return5 = _pct(current.close, series[-6].close)
     rs5 = None
     if benchmark_closes and len(benchmark_closes) >= 6:
@@ -204,7 +212,10 @@ def _developing_staircase(
         and current.close >= breakout_level - 0.50 * atr14
         and volume_ratio >= 1.0
         and (first_volume_ratio + volume_ratio) / 2.0 >= 0.9
-        and current.close > ema20 > ema20_previous
+        and current.close > ema20
+        and established_pre_impulse_trend
+        and distance_ema10_atr <= 2.0
+        and return5 <= 12.0
         and (rs5 is None or rs5 > 0)
     )
     if not passed:
@@ -217,11 +228,14 @@ def _developing_staircase(
             "staircase_first_volume_ratio": first_volume_ratio,
             "breakout_level": breakout_level, "close_location": close_location,
             "return5_pct": return5, "relative_strength5_pct": rs5,
+            "distance_ema10_atr": distance_ema10_atr,
+            "established_pre_impulse_trend": established_pre_impulse_trend,
             "session_minutes": session_minutes,
         },
         "reasons": [
             f"Two rising sessions have advanced {gain_atr:.2f} ATR and the latest close is above the first session's high.",
             f"The move is within 0.5 ATR of the 20-session high {breakout_level:.2f}, closes firmly, and volume is tracking at {volume_ratio:.2f}x normal.",
+            "The staircase began above a rising pre-impulse EMA20 and is not yet structurally extended.",
             "Developing staircase only: watch now, but wait for full ignition and confirmation before treating it as an entry.",
         ],
         "score_parts": {
