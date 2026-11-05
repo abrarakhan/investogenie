@@ -210,12 +210,12 @@ export default function StrongSwingCandidates({ candidates, planIds }: { candida
   return (
     <div className="space-y-8">
       <div className="rounded-lg border border-cyan-400/15 bg-cyan-400/[0.035] px-4 py-3 text-xs leading-relaxed text-cyan-50/65">
-        Strong Swing starts with the same base Swing classifier. Base rank is its position in the 100-candidate input pool; Strong rank is recalculated after confirmation, liquidity, volatility, circuit-behaviour and entry-safety gates.
+        Strong Swing starts with the same base Swing classifier. Every base Swing setup is assessed; base rank is its position in that list. Pullback candidates are confirmed breakouts that are above the buy zone (confirmed entry + 0.50 ATR) or more than 15% above the 20-day average — they are not chased and become buyable only after price returns inside the zone. Strong rank is recalculated after confirmation, liquidity, volatility, circuit-behaviour and entry-safety gates.
       </div>
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-5 sm:gap-3">
         {[
           ["Execution ready", executionReady.length, "text-emerald-300"],
-          ["Wait for entry", waitingForEntry.length, "text-cyan-200"],
+          ["Pullback candidates", waitingForEntry.length, "text-cyan-200"],
           ["Watchlist", watchlist.length, "text-amber-200"],
           ["Risk off", riskOff.length, "text-orange-200"],
           ["Invalidated", invalidated.length, "text-rose-300"],
@@ -234,7 +234,7 @@ export default function StrongSwingCandidates({ candidates, planIds }: { candida
       )}
 
       <CandidateGroup title="Execution ready" candidates={executionReady} planIds={planIds} color="text-emerald-300" defaultOpen />
-      <CandidateGroup title="Wait for entry" candidates={waitingForEntry} planIds={planIds} color="text-cyan-200" />
+      <CandidateGroup title="Pullback candidates" candidates={waitingForEntry} planIds={planIds} color="text-cyan-200" />
       <CandidateGroup
         title="Awaiting confirmation"
         candidates={visibleWatchlist}

@@ -280,7 +280,7 @@ export function swingCard(row: ScreenRow, market: MobileMarket, strategy: Strate
   const riskReward = levels?.riskReward ?? row.riskReward;
   const expectedDays = levels?.expectedDays ?? row.expectedDays;
   const current = row.lastQuote ?? row.close;
-  const flags = [row.isBreakout && "Breakout", row.isSqueeze && "Squeeze", row.isLongBuildup && "OI long build-up"].filter(Boolean);
+  const flags = [row.isBreakout && "Breakout", row.isSqueeze && "Squeeze", row.isLongBuildup && (row.buildupSource === "VOLUME" ? "Volume build-up" : "OI long build-up")].filter(Boolean);
   const strategyNames = row.strategyTags.map((key) => STRATEGY_META.find((meta) => meta.key === key)?.label ?? key);
   return {
     id: row.assetId,
@@ -328,11 +328,11 @@ async function swingCandidates(market: MobileMarket, params: URLSearchParams, us
   const strategy = strategyParam === "ALL" ? null : strategyParam;
   const settings = await getUserSwingSettings(userId);
   const isUS = market === "US";
-  // Same queries as the web Swing Candidates page: buy-side only; the default view is the
-  // NSE top 20 for India, while a strategy view takes every buy match of that strategy.
+  // Same queries as the web Swing Candidates page: buy-side only; the default view is every
+  // NSE setup for India, while a strategy view takes every buy match of that strategy.
   const buyOnly = { ...settings, includeShort: false };
   const [rows, strategyRows] = await Promise.all([
-    runScreener(market, buyOnly, isUS ? {} : { exchange: "NSE", limit: 20 }),
+    runScreener(market, buyOnly, isUS ? {} : { exchange: "NSE", setupsOnly: true }),
     runScreener(market, buyOnly, isUS ? { strategyMatches: true } : { exchange: "NSE", strategyMatches: true }),
   ]);
   const isBuyMatch = (row: ScreenRow, key: StrategyKey) => row.strategyTags.includes(key) && row.strategyLevels[key]?.direction === "LONG";
@@ -344,12 +344,12 @@ async function swingCandidates(market: MobileMarket, params: URLSearchParams, us
   const shown = ranked.slice(0, MOBILE_CARD_LIMIT);
   return {
     key: "swing",
-    title: isUS || strategy ? "Swing Candidates" : "Swing Candidates · Top 20",
+    title: "Swing Candidates",
     subtitle: "Buy-side swing candidates in the same server-ranked order as the web terminal.",
     generatedAt: new Date().toISOString(),
     summary: strategy
       ? `${ranked.length} ${STRATEGY_META.find((meta) => meta.key === strategy)?.label ?? strategy} buy matches · ${matches.filter((row) => row.verdict !== "NO_SETUP").length} also flagged by the base classifier${shown.length < ranked.length ? ` · top ${shown.length} shown` : ""}`
-      : `${rows.length} scanned · ${setups.length} buy candidates · ${rows.filter((row) => row.verdict === "LONG_BREAKOUT").length} confirmed buy breakouts`,
+      : `${rows.length} scanned · ${setups.length} buy candidates · ${rows.filter((row) => row.verdict === "LONG_BREAKOUT").length} confirmed buy breakouts${shown.length < ranked.length ? ` · top ${shown.length} shown` : ""}`,
     notice: isUS ? "US bars are an anchored demo feed." : null,
     options: [{
       param: "strategy", label: "Strategy", value: strategyParam,

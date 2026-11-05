@@ -5,8 +5,10 @@
 // (Donchian breakout OR Bollinger-bandwidth volatility compression) is strictly
 // validated by a *concurrent* Long Build-up in Open Interest — i.e. price rising
 // while OI rises — over a configurable short window (e.g. 2-5 days) measured
-// against a slower base window (e.g. 2-6 weeks). Volume expansion is used as a
-// secondary corroborating filter.
+// against a slower base window (e.g. 2-6 weeks). Instruments without OI (cash
+// equities) use a participation build-up instead: the short window's average
+// volume expanding against the preceding base window while price rises.
+// Single-session volume expansion is a secondary corroborating filter.
 //
 // Pure, dependency-free, and deterministic so it is identically runnable in the
 // browser, in a Next.js route handler, or in a worker.
@@ -32,6 +34,10 @@ export interface SwingConfig {
   minOiBuildupPct: number;
   /** Minimum volume expansion vs base-window average (e.g. 1.5 = +50%). */
   minVolumeExpansion: number;
+  /** Cash equities carry no OI. Their build-up substitute requires the short
+   *  window's average volume to be at least this multiple of the preceding
+   *  base window, with price rising (long) or falling (short) over it. */
+  minParticipationRatio: number;
 }
 
 export const DEFAULT_SWING_CONFIG: SwingConfig = {
@@ -43,6 +49,7 @@ export const DEFAULT_SWING_CONFIG: SwingConfig = {
   squeezePercentile: 0.25,
   minOiBuildupPct: 0.05, // +5% OI over the short window
   minVolumeExpansion: 1.5,
+  minParticipationRatio: 1.2,
 };
 
 export type SwingVerdict =
@@ -97,6 +104,10 @@ export interface SwingSignal {
   oiChangePct: number; // over short window
   isLongBuildup: boolean;
   isShortBuildup: boolean;
+  /** What confirmed the build-up: rising OI (derivatives) or expanding volume (cash). */
+  buildupSource: "OI" | "VOLUME";
+  /** Short-window average volume vs the preceding base window (cash build-up input). */
+  participationRatio: number;
   volumeExpansion: number; // current vs base-window average
   reasons: string[];
   setup: SwingSetup;
@@ -275,11 +286,27 @@ export function classifySwingSetup(
   const oiChangePct = hasOi
     ? pctChange(shortAgo.openInterest as number, last.openInterest as number)
     : 0;
+  // Participation for instruments without OI: the short window's average volume
+  // against the base window that precedes it (the windows do not overlap, so a
+  // single heavy session cannot count on both sides of the ratio).
+  const recentVolumes = volumes.slice(-config.shortWindow);
+  const precedingVolumes = volumes.slice(-config.shortWindow - config.baseWindow, -config.shortWindow);
+  const precedingVolume = mean(precedingVolumes);
+  const participationRatio = precedingVolumes.length && precedingVolume > 0
+    ? mean(recentVolumes) / precedingVolume
+    : 0;
+  const participationBuilding = participationRatio >= config.minParticipationRatio;
   // Long build-up = price up + OI up; short build-up = price down + OI up.
-  const isLongBuildup =
-    hasOi && priceChangePct > 0 && oiChangePct >= config.minOiBuildupPct;
-  const isShortBuildup =
-    hasOi && priceChangePct < 0 && oiChangePct >= config.minOiBuildupPct;
+  // NSE cash equities never carry OI, which made every confirmed verdict and the
+  // build-up score unreachable for them. Without OI, expanding participation
+  // while price moves is the build-up; OI stays authoritative where it exists.
+  const buildupSource: "OI" | "VOLUME" = hasOi ? "OI" : "VOLUME";
+  const isLongBuildup = hasOi
+    ? priceChangePct > 0 && oiChangePct >= config.minOiBuildupPct
+    : priceChangePct > 0 && participationBuilding;
+  const isShortBuildup = hasOi
+    ? priceChangePct < 0 && oiChangePct >= config.minOiBuildupPct
+    : priceChangePct < 0 && participationBuilding;
 
   // --- Volume expansion vs base window ---
   const baseVol = mean(volumes.slice(-config.baseWindow - 1, -1));
@@ -294,7 +321,13 @@ export function classifySwingSetup(
   const longReasons: string[] = [];
   if (isBreakout) { longScore += 0.35; longReasons.push(`Price ${last.close.toFixed(2)} cleared Donchian high ${donchianHigh.toFixed(2)} / upper band ${upper.toFixed(2)}`); }
   if (isSqueeze) { longScore += 0.25; longReasons.push(squeezeReason); }
-  if (isLongBuildup) { longScore += 0.3; longReasons.push(`Long build-up: price +${(priceChangePct * 100).toFixed(1)}% with OI +${(oiChangePct * 100).toFixed(1)}% over ${config.shortWindow} bars`); }
+  const participationText = `${participationRatio.toFixed(2)}× ${config.shortWindow}-session volume vs the prior ${config.baseWindow} sessions`;
+  if (isLongBuildup) {
+    longScore += 0.3;
+    longReasons.push(hasOi
+      ? `Long build-up: price +${(priceChangePct * 100).toFixed(1)}% with OI +${(oiChangePct * 100).toFixed(1)}% over ${config.shortWindow} bars`
+      : `Volume build-up: price +${(priceChangePct * 100).toFixed(1)}% with ${participationText}`);
+  }
   if (volumeConfirms && (isBreakout || isSqueeze)) { longScore += 0.1; longReasons.push(volReason); }
   let longVerdict: SwingVerdict = "NO_SETUP";
   if (isBreakout && isLongBuildup) longVerdict = "LONG_BREAKOUT";
@@ -306,7 +339,12 @@ export function classifySwingSetup(
   const shortReasons: string[] = [];
   if (isBreakdown) { shortScore += 0.35; shortReasons.push(`Price ${last.close.toFixed(2)} broke Donchian low ${donchianLow.toFixed(2)} / lower band ${lower.toFixed(2)}`); }
   if (isSqueeze) { shortScore += 0.25; shortReasons.push(squeezeReason); }
-  if (isShortBuildup) { shortScore += 0.3; shortReasons.push(`Short build-up: price ${(priceChangePct * 100).toFixed(1)}% with OI +${(oiChangePct * 100).toFixed(1)}% over ${config.shortWindow} bars`); }
+  if (isShortBuildup) {
+    shortScore += 0.3;
+    shortReasons.push(hasOi
+      ? `Short build-up: price ${(priceChangePct * 100).toFixed(1)}% with OI +${(oiChangePct * 100).toFixed(1)}% over ${config.shortWindow} bars`
+      : `Distribution build-up: price ${(priceChangePct * 100).toFixed(1)}% with ${participationText}`);
+  }
   if (volumeConfirms && (isBreakdown || isSqueeze)) { shortScore += 0.1; shortReasons.push(volReason); }
   let shortVerdict: SwingVerdict = "NO_SETUP";
   if (isBreakdown && isShortBuildup) shortVerdict = "SHORT_BREAKDOWN";
@@ -358,6 +396,8 @@ export function classifySwingSetup(
     oiChangePct,
     isLongBuildup,
     isShortBuildup,
+    buildupSource,
+    participationRatio,
     volumeExpansion,
     reasons,
     setup,

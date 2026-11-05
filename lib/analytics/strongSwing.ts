@@ -317,16 +317,28 @@ export function assessStrongSwing(input: StrongSwingInput): StrongSwingAssessmen
     "extension_5d", "extension_10d", "sma20_extension", "atr_risk",
     "stop_width", "circuit_behaviour", "freshness", "price", "liquidity", "live_quote", "live_spread", "live_circuit", "market_shock",
   ]);
-  const hardRiskFailed = gates.some((item) => hardRiskKeys.has(item.key) && !item.passed);
+  // Stretch above the 20-day average only says price has run ahead of its mean.
+  // It still blocks buying, but a confirmed breakout failing only this is a
+  // pullback candidate, not a broken setup. Five/ten-session blow-offs
+  // (BODALCHEM-style) stay RISK_OFF: a return to the zone after those is a
+  // collapse, not a pullback.
+  const extensionKeys = new Set(["sma20_extension"]);
+  const hardRiskFailed = gates.some((item) => hardRiskKeys.has(item.key) && !extensionKeys.has(item.key) && !item.passed);
+  const extensionFailed = gates.some((item) => extensionKeys.has(item.key) && !item.passed);
   const entryZoneFailed = gates.some((item) => item.key === "entry_zone" && !item.passed);
   const technicalPassed = gates
     .filter((item) => item.category === "technical" && item.blocking)
     .every((item) => item.passed);
+  // WAIT_FOR_ENTRY is the pullback state: every technical confirmation passed but
+  // price is above the buy zone (confirmed entry + 0.50 ATR) or more than 15% above SMA20.
+  // The entry limit is not widened — it becomes buyable only after price returns
+  // inside the zone and every gate, extension included, passes on that bar.
   const status: StrongSwingStatus = trailingBreached || breakoutFailed
     ? "INVALIDATED"
     : hardRiskFailed ? "RISK_OFF"
-      : technicalPassed && entryZoneFailed ? "WAIT_FOR_ENTRY"
-        : gates.filter((item) => item.blocking).every((item) => item.passed) ? "EXECUTION_READY" : "WATCHLIST";
+      : technicalPassed && (entryZoneFailed || extensionFailed) ? "WAIT_FOR_ENTRY"
+        : extensionFailed ? "RISK_OFF"
+          : gates.filter((item) => item.blocking).every((item) => item.passed) ? "EXECUTION_READY" : "WATCHLIST";
 
   return {
     status,

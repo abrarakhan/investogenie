@@ -6,6 +6,7 @@ import { rankStrongSwingCandidates } from "@/lib/analytics/candidateRanking";
 import type { SwingSettings } from "@/lib/settings";
 import type { MarketId, OHLCV } from "@/lib/types";
 import { isMarketOpenNow, refreshMarketHolidays, zonedMarketClock } from "@/lib/market-calendar.mjs";
+import { chosenBenchmarkSql } from "@/lib/benchmarkSql";
 
 interface BarRow {
   asset_id: string;
@@ -177,7 +178,9 @@ export async function getStrongSwingCandidates(
   const base = await runScreener(
     country,
     { ...settings, includeShort: false },
-    market === "IN" ? { exchange: "NSE", limit: 100 } : { limit: 100 },
+    // Every classifier setup is assessed. A fixed top-N pool let score ties —
+    // decided by ticker name — choose which breakouts Strong Swing ever saw.
+    market === "IN" ? { exchange: "NSE", setupsOnly: true } : { setupsOnly: true },
   );
   if (!base.length) return [];
 
@@ -203,12 +206,7 @@ export async function getStrongSwingCandidates(
     ),
     query<BarRow>(
       `with chosen as (
-         select a.id
-           from public.assets a
-          where a.country=$1 and a.ticker=any($2::text[])
-          order by array_position($2::text[],a.ticker),
-                   (select count(*) from public.daily_ohlcv o where o.asset_id=a.id) desc
-          limit 1
+         ${chosenBenchmarkSql("$1", "$2")}
        )
        select o.asset_id,o.date::text date,o.open,o.high,o.low,o.close,o.volume,o.open_interest
          from public.daily_ohlcv o join chosen c on c.id=o.asset_id

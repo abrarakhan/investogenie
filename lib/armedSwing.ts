@@ -16,6 +16,7 @@ import {
 } from "@/lib/market-calendar.mjs";
 import type { SwingSettings } from "@/lib/settings";
 import type { OHLCV } from "@/lib/types";
+import { chosenBenchmarkSql } from "@/lib/benchmarkSql";
 
 export interface ArmedSwingCandidate extends ArmedSwingAssessment {
   assetId: string;
@@ -163,11 +164,7 @@ export async function getArmedSwingCandidates(
     ),
     query<BarRow>(
       `with chosen as (
-         select a.id from public.assets a
-          where a.country=$1 and a.ticker=any($2::text[])
-          order by array_position($2::text[],a.ticker),
-                   (select count(*) from public.daily_ohlcv o where o.asset_id=a.id) desc
-          limit 1
+         ${chosenBenchmarkSql("$1", "$2")}
        )
        select o.asset_id,o.date::text date,o.open,o.high,o.low,o.close,o.volume,o.open_interest
          from public.daily_ohlcv o join chosen c on c.id=o.asset_id

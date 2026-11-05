@@ -25,11 +25,12 @@ export default async function TerminalScreener({
   const isUS = marketId === "US";
   const settings = await getUserSwingSettings();
   const buyOnlySettings = { ...settings, includeShort: false };
-  // India: NSE only, capped to the 20 highest-conviction buy candidates.
+  // India: NSE only, every buy-side classifier setup (no row cap), ranked by
+  // score and then by normalized breakout quality.
   // Strategy views are selected from each strategy's own buy matches, uncapped,
   // so a match the default classifier ranks low (or flags no setup) still shows.
   const [rows, strategyRows] = await Promise.all([
-    runScreener(country, buyOnlySettings, isUS ? {} : { exchange: "NSE", limit: 20 }),
+    runScreener(country, buyOnlySettings, isUS ? {} : { exchange: "NSE", setupsOnly: true }),
     runScreener(country, buyOnlySettings, isUS ? { strategyMatches: true } : { exchange: "NSE", strategyMatches: true }),
   ]);
   // Every listed match joins the bounded live WebSocket feed, which keeps its quote fresh
@@ -45,7 +46,7 @@ export default async function TerminalScreener({
       subtitle="Buy-side swing candidates ranked inside the selected market workspace."
     >
       {/* The browser's Breeze REST refresh stays on the default top rows to bound API calls. */}
-      <MarketDataAutoRefresh market={marketId} assetIds={rows.map((row) => row.assetId)} />
+      <MarketDataAutoRefresh market={marketId} assetIds={rows.slice(0, 20).map((row) => row.assetId)} />
       <div className="mb-8">
         <p className="max-w-2xl text-white/50">
             {isUS ? (
@@ -56,8 +57,10 @@ export default async function TerminalScreener({
               </>
             ) : (
               <>
-                The 20 highest-conviction buy candidates from the NSE universe,
-                ranked by the derivative-aided classifier on 10 years of EOD data.
+                Every buy-side setup the classifier finds across the NSE universe,
+                ranked by score and then by breakout clearance, volume expansion
+                and relative strength. Cash stocks have no open interest, so a
+                volume build-up confirms them instead.
                 The strategy ribbon lists every NSE buy match of a legendary
                 system — Qullamaggie, Minervini, Darvas, PTJ, or Simons.
               </>

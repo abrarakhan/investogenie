@@ -155,6 +155,47 @@ describe("assessStrongSwing", () => {
     expect(result.gates.find((gate) => gate.key === "extension_10d")?.passed).toBe(false);
   });
 
+  /** Steep 25-session advance, then a confirmed two-close breakout inside the buy zone. */
+  function stretchedConfirmedBars(atr = 12): { bars: OHLCV[]; entry: number; close: number } {
+    const bars = Array.from({ length: 240 }, (_, index) => {
+      const close = index < 215 ? 100 + index * 0.5 : 207 + (index - 215) * 5;
+      return {
+        date: new Date(Date.UTC(2025, 0, 1 + index)).toISOString().slice(0, 10),
+        open: close - 0.8, high: close + 0.3, low: close - 1, close,
+        volume: index >= 235 ? 3_000_000 : 1_000_000, openInterest: null,
+      };
+    });
+    const entry = Math.max(...bars.slice(-22, -2).map((bar) => bar.high)) + 0.25 * atr;
+    const close = entry + 0.4 * atr;
+    for (let index = bars.length - 2; index < bars.length; index++) {
+      bars[index] = { ...bars[index], open: close - 1, high: close + 0.2, low: close - 1.5, close, volume: 4_000_000 };
+    }
+    return { bars, entry, close };
+  }
+
+  it("treats a confirmed breakout stretched above SMA20 as a pullback candidate", () => {
+    const { bars, entry, close } = stretchedConfirmedBars();
+    const result = assessStrongSwing({
+      market: "IN", verdict: "LONG_BREAKOUT", isBreakout: true,
+      trigger: entry, atr: 12, trailingStop: null, currentPrice: close,
+      stopAtrMult: 1.5, bars, benchmarkBars: benchmark(),
+    });
+
+    const failed = result.gates.filter((gate) => gate.blocking && !gate.passed).map((gate) => gate.key);
+    expect(failed).toEqual(["sma20_extension"]);
+    expect(result.status).toBe("WAIT_FOR_ENTRY");
+  });
+
+  it("keeps an unconfirmed stretched setup risk off", () => {
+    const { bars, entry, close } = stretchedConfirmedBars();
+    const result = assessStrongSwing({
+      market: "IN", verdict: "BREAKOUT_UNCONFIRMED", isBreakout: false,
+      trigger: entry, atr: 12, trailingStop: null, currentPrice: close,
+      stopAtrMult: 1.5, bars, benchmarkBars: benchmark(),
+    });
+    expect(result.status).toBe("RISK_OFF");
+  });
+
   it("keeps a first-day breakout on the watchlist", () => {
     // Only the final bar clears the level, so follow-through has not been proven.
     const bars = breakoutBars();

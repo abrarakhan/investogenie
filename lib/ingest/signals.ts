@@ -15,6 +15,7 @@ import { classifySwingSetup, deriveLevels } from "@/lib/analytics/swingClassifie
 import {
   evaluateLegendary, momentumLeaderPercentiles, relativeStrengthRatings, type MomentumCloses, type RsCloses,
 } from "@/lib/analytics/legendaryStrategies";
+import { swingTieBreakScore } from "@/lib/analytics/candidateRanking";
 import type { OHLCV } from "@/lib/types";
 
 export interface ScanSummary {
@@ -48,7 +49,8 @@ const UPSERT_SQL = `insert into public.swing_signals
      bandwidth_pct,is_squeeze,is_breakout,is_long_buildup,reason,as_of,
      current_price,entry_price,target_price,stop_loss,trailing_stop,atr,risk_reward,
      bias,long_trigger,short_trigger,hh22,ll22,daily_velocity,
-     strategy_tags,strategy_scores)
+     strategy_tags,strategy_scores,
+     buildup_source,participation_ratio,volume_expansion,breakout_clearance_atr,rs_rating,rank_score)
   values %VALUES%
   on conflict (asset_id) do update set
     verdict=excluded.verdict, score=excluded.score, last_close=excluded.last_close,
@@ -61,9 +63,12 @@ const UPSERT_SQL = `insert into public.swing_signals
     long_trigger=excluded.long_trigger, short_trigger=excluded.short_trigger,
     hh22=excluded.hh22, ll22=excluded.ll22, daily_velocity=excluded.daily_velocity,
     strategy_tags=excluded.strategy_tags, strategy_scores=excluded.strategy_scores,
+    buildup_source=excluded.buildup_source, participation_ratio=excluded.participation_ratio,
+    volume_expansion=excluded.volume_expansion, breakout_clearance_atr=excluded.breakout_clearance_atr,
+    rs_rating=excluded.rs_rating, rank_score=excluded.rank_score,
     computed_at=now()`;
 
-const COLS = 29;
+const COLS = 35;
 const ASSET_BATCH = 60; // assets per round → bounded memory + small upserts
 // Fetching each batch's bars is ~70% of the job's wall clock and is I/O-bound, so a few
 // batches run at a time. Batches hold disjoint asset ids, so their upserts never contend
@@ -208,8 +213,14 @@ export async function computeSignals(databaseUrl: string): Promise<ScanSummary> 
             if (s.verdict !== "NO_SETUP") setups++;
             const dir = s.bias === "SHORT" ? "SHORT" : "LONG";
             const lv = deriveLevels(s.setup, dir);
+            const rating = rsRating.get(assetId) ?? null;
+            const tieBreak = swingTieBreakScore({
+              isBreakout: s.isBreakout, close: s.close, donchianHigh: s.donchianHigh,
+              upperBand: s.bollinger.upper, atr: s.setup.atr,
+              volumeExpansion: s.volumeExpansion, rsRating: rating,
+            });
             const legendary = evaluateLegendary(series, {
-              rsRating: rsRating.get(assetId) ?? null,
+              rsRating: rating,
               momentumPercentile: momentumPercentile.get(assetId) ?? null,
             });
             out.push([
@@ -221,6 +232,8 @@ export async function computeSignals(databaseUrl: string): Promise<ScanSummary> 
               s.bias, s.setup.longTrigger, s.setup.shortTrigger,
               s.setup.hh22, s.setup.ll22, s.setup.dailyVelocity,
               legendary.tags, JSON.stringify(legendary.scores),
+              s.buildupSource, s.participationRatio, s.volumeExpansion,
+              tieBreak.breakoutClearanceAtr, rating, tieBreak.rankScore,
             ]);
           } catch {
             // too few bars — skip

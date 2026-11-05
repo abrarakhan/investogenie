@@ -71,7 +71,9 @@ function CandidateCard({ candidate, rank }: { candidate: NewsSwingCandidate; ran
 
       <div className="mt-3 flex flex-wrap gap-2 text-[10px] uppercase tracking-wide text-white/40">
         <span className="rounded border border-white/10 px-2 py-1">{candidate.isBreakout ? "Breakout" : candidate.isSqueeze ? "Squeeze" : "Structural setup"}</span>
-        <span className="rounded border border-white/10 px-2 py-1">{candidate.isLongBuildup ? "OI long build-up" : "OI unconfirmed"}</span>
+        <span className="rounded border border-white/10 px-2 py-1">{candidate.isLongBuildup
+          ? candidate.buildupSource === "VOLUME" ? "Volume build-up" : "OI long build-up"
+          : "Build-up unconfirmed"}</span>
         {candidate.strategyTags.map((strategy) => <span key={strategy} className="rounded border border-white/10 px-2 py-1">{strategy.replaceAll("_", " ")}</span>)}
       </div>
 

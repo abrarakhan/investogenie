@@ -43,8 +43,8 @@ const swingEngine: HelpArticle = {
       <H2>Layer 1 — the structural classifier</H2>
       <P>
         For each stock the classifier reads its daily bars and evaluates the most recent one.
-        It looks for a <em>structural trigger</em> and, where derivatives data exists, a
-        confirming Open-Interest build-up.
+        It looks for a <em>structural trigger</em> and a confirming build-up: rising Open
+        Interest where derivatives data exists, otherwise expanding volume.
       </P>
       <SpecTable
         rows={[
@@ -52,20 +52,22 @@ const swingEngine: HelpArticle = {
           { k: "Squeeze", v: "current bandwidth sits in the lowest 25% of its own recent history — a volatility compression." },
           { k: "Donchian channel", v: "highest high / lowest low of the prior 20 bars (the current bar is excluded)." },
           { k: "Breakout", v: "close > prior-20-bar Donchian high, or close > upper Bollinger band." },
-          { k: "Long build-up", v: "price up AND Open Interest up ≥ 5% over the short window (derivatives only)." },
+          { k: "Long build-up (OI)", v: "price up AND Open Interest up ≥ 5% over the 5-bar short window (derivatives)." },
+          { k: "Volume build-up (cash)", v: "no OI: price up over the 5-bar window AND its average volume ≥ 1.2× the 20 bars before it." },
           { k: "Volume", v: "latest volume ÷ 20-bar average; ≥ 1.5× corroborates a trigger." },
         ]}
       />
       <P>
         The conviction <strong>score (0–1)</strong> adds up the evidence: breakout 0.35, squeeze
-        0.25, OI build-up 0.30, volume confirmation 0.10. Cash equities have no Open Interest, so
-        they top out at <strong>0.70</strong> and carry a &ldquo;breakout unconfirmed&rdquo;
-        verdict — the OI leg that would confirm a breakout simply isn&apos;t available.
+        0.25, build-up 0.30, volume confirmation 0.10. A breakout with a build-up is a
+        <em> long breakout</em>; a squeeze with a build-up is a <em>coiled spring</em>; a breakout
+        without one stays &ldquo;breakout unconfirmed&rdquo;.
       </P>
-      <Callout tone="warn">
-        Because most Indian and US equities have no live OI feed here, a 0.70 score is the normal
-        ceiling for a clean cash breakout — not a weakness in the individual name.
-      </Callout>
+      <P>
+        Equal scores are ordered by a tie-break, never by name: the average of breakout clearance
+        (ATRs above the broken level, full credit at 2 ATR), volume expansion (full credit at 3×)
+        and the 1–99 relative-strength rating. The Swing page lists every buy-side setup.
+      </P>
 
       <H2>Layer 2 — the trade levels</H2>
       <P>
@@ -1144,14 +1146,14 @@ const tradableStocks: HelpArticle = {
       <H2>Tier 2 — next in line (watch, prepare orders)</H2>
       <UL>
         <LI><strong>Armed Swing · Armed</strong> — place a buy-stop limit order in advance; it only fills if the breakout happens.</LI>
-        <LI><strong>Strong Swing · Wait for entry</strong> — confirmed, but price has run more than 0.5 ATR past the entry. Wait for it to come back.</LI>
+        <LI><strong>Strong Swing · Pullback candidate</strong> — confirmed, but price has run more than 0.5 ATR past the entry or sits more than 15% above its 20-day average. Don&apos;t chase; it turns ready only if price comes back into the zone.</LI>
         <LI><strong>Momentum Ignition V2 · Pre-ignition / First thrust / Retest setup</strong> — within 3% of the trigger, or broken out but still missing volume or a strong close.</LI>
         <LI><strong>Trend Continuation · Impulse detected</strong> — a heavy-volume range breakout on day one. It is re-checked after 10:15 IST on day two and may turn <strong>Continuation ready</strong>. This engine is observation-only: it never unlocks buying.</LI>
       </UL>
 
       <H2>Tier 3 — research and shortlisting</H2>
       <UL>
-        <LI><strong>Swing Candidates</strong> — the base classifier&apos;s top 20 plus every buy match of the five legendary systems. Levels are plans, not execution checks.</LI>
+        <LI><strong>Swing Candidates</strong> — every base classifier setup plus every buy match of the five legendary systems. Levels are plans, not execution checks.</LI>
         <LI><strong>News &amp; AI Swing</strong> — re-ranks existing technical setups by recent news; it can never create a setup.</LI>
         <LI><strong>Stock Screener, Long-Term, Probability</strong> — filters, fundamentals and forecasts for building watchlists.</LI>
       </UL>
@@ -1185,7 +1187,7 @@ const strongSwingArticle: HelpArticle = {
   Body: () => (
     <>
       <P>
-        Strong Swing does not find new stocks. It re-checks the base Swing shortlist and only calls a
+        Strong Swing does not find new stocks. It re-checks every base Swing setup and only calls a
         breakout <strong>Execution ready</strong> when the technical confirmation and every
         execution-safety gate agree. The strength score is the share of gates passed.
       </P>
@@ -1194,7 +1196,7 @@ const strongSwingArticle: HelpArticle = {
         rows={[
           { k: "Structural setup", v: "The base engine flagged a breakout." },
           { k: "Primary trend", v: "Price above the 50- and 200-day averages; 20 > 50 and the 50-day rising." },
-          { k: "Relative strength", v: "Outperforming the benchmark over 20 sessions." },
+          { k: "Relative strength", v: "Outperforming the benchmark over 20 sessions. The benchmark is the first of Nifty / NIFTYBEES with 200+ current daily bars." },
           { k: "Decisive breakout", v: "At least 0.25 ATR above the 20-session high." },
           { k: "Strong close", v: "Close in the top 30% of the day's range." },
           { k: "Volume", v: "At least 1.5x the 20-session average." },
@@ -1205,7 +1207,7 @@ const strongSwingArticle: HelpArticle = {
       <H2>Execution safety</H2>
       <SpecTable
         rows={[
-          { k: "Entry discipline", v: "No more than 0.5 ATR above the entry — otherwise Wait for entry." },
+          { k: "Entry discipline", v: "No more than 0.5 ATR above the entry — otherwise Pullback candidate." },
           { k: "Extension", v: "5-session return ≤ 30%, 10-session ≤ 50%, ≤ 15% above the 20-day average." },
           { k: "Volatility / stop risk", v: "ATR ≤ 5% of price; stop no more than 7% away." },
           { k: "Liquidity, price, circuits", v: "Traded-value and price floors; fewer than two circuit-like sessions in 20." },
@@ -1215,7 +1217,7 @@ const strongSwingArticle: HelpArticle = {
       <H2>Statuses</H2>
       <UL>
         <LI><strong>Execution ready</strong> — every blocking gate passes; a plan is frozen when you log the trade.</LI>
-        <LI><strong>Wait for entry</strong> — technically confirmed but extended past the entry.</LI>
+        <LI><strong>Pullback candidate</strong> — technically confirmed but above the buy zone or more than 15% above its 20-day average. Not chased; buyable only after price returns inside the zone with every gate passing.</LI>
         <LI><strong>Awaiting confirmation</strong> — some technical gates still fail.</LI>
         <LI><strong>Risk off</strong> — an extension, volatility, stop-width, liquidity, circuit or live-data check failed.</LI>
         <LI><strong>Invalidated</strong> — closed below the trailing stop, or a full ATR back below the breakout level.</LI>

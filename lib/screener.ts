@@ -40,6 +40,14 @@ export interface ScreenRow {
   isSqueeze: boolean;
   isBreakout: boolean;
   isLongBuildup: boolean;
+  /** OI for derivatives, VOLUME for cash equities (null until the next scan). */
+  buildupSource: "OI" | "VOLUME" | null;
+  participationRatio: number | null;
+  volumeExpansion: number | null;
+  breakoutClearanceAtr: number | null;
+  rsRating: number | null;
+  /** Normalized breakout quality used only to order equal scores. */
+  rankScore: number | null;
   reason: string;
   asOf: string;
   entry: number | null;
@@ -60,7 +68,7 @@ export interface ScreenRow {
 }
 
 const SELECT =
-  "asset_id,ticker,country,exchange,asset_class,verdict,score,last_close,bandwidth_pct,is_squeeze,is_breakout,is_long_buildup,reason,as_of,bias,current_price,atr,long_trigger,short_trigger,hh22,ll22,daily_velocity,strategy_tags,strategy_scores";
+  "asset_id,ticker,country,exchange,asset_class,verdict,score,last_close,bandwidth_pct,is_squeeze,is_breakout,is_long_buildup,reason,as_of,bias,current_price,atr,long_trigger,short_trigger,hh22,ll22,daily_velocity,strategy_tags,strategy_scores,buildup_source,participation_ratio,volume_expansion,breakout_clearance_atr,rs_rating,rank_score";
 
 export async function runScreener(
   country?: string,
@@ -72,6 +80,8 @@ export async function runScreener(
      * classifier's setups. The strategy's own direction decides buy/short, so
      * neither the default verdict nor its bias filters these rows. */
     strategyMatches?: boolean;
+    /** Every classifier setup (no NO_SETUP rows), without a row cap. */
+    setupsOnly?: boolean;
   } = {},
 ): Promise<ScreenRow[]> {
   if (country === "IN") await refreshMarketHolidays("IN");
@@ -103,15 +113,16 @@ export async function runScreener(
       ? `cardinality(strategy_tags) > 0`
       : `exists (select 1 from jsonb_each(strategy_scores) s where s.value->>'dir' = 'LONG')`);
   } else {
-    if (opts.limit) conds.push(`verdict <> 'NO_SETUP'`);
+    if (opts.limit || opts.setupsOnly) conds.push(`verdict <> 'NO_SETUP'`);
     if (!settings.includeShort) conds.push(`bias <> 'SHORT'`);
   }
   const where = conds.length ? `where ${conds.join(" and ")}` : "";
-  let sql = `select ${SELECT} from public.swing_signals ${where} order by score desc, ticker asc`;
+  let sql = `select ${SELECT} from public.swing_signals ${where} order by score desc, rank_score desc nulls last, ticker asc`;
   if (opts.limit) { params.push(opts.limit); sql += ` limit $${params.length}`; }
 
   const raw = await query<Record<string, unknown>>(sql, params);
   const num = (v: unknown) => (v === null || v === undefined ? 0 : Number(v));
+  const nullableNum = (v: unknown) => (v === null || v === undefined ? null : Number(v));
   const setupByAsset = new Map<string, SwingSetup>();
   const scoresByAsset = new Map<string, Record<string, StrategyScore>>();
 
@@ -173,6 +184,12 @@ export async function runScreener(
         isSqueeze: Boolean(r.is_squeeze),
         isBreakout: Boolean(r.is_breakout),
         isLongBuildup: Boolean(r.is_long_buildup),
+        buildupSource: r.buildup_source === "OI" || r.buildup_source === "VOLUME" ? r.buildup_source : null,
+        participationRatio: nullableNum(r.participation_ratio),
+        volumeExpansion: nullableNum(r.volume_expansion),
+        breakoutClearanceAtr: nullableNum(r.breakout_clearance_atr),
+        rsRating: nullableNum(r.rs_rating),
+        rankScore: nullableNum(r.rank_score),
         reason: (r.reason as string) ?? "",
         asOf: r.as_of instanceof Date
           ? r.as_of.toISOString()
@@ -200,6 +217,8 @@ export async function runScreener(
     const bb = b.verdict === "NO_SETUP" ? 0 : 1;
     if (aa !== bb) return bb - aa;
     if (b.score !== a.score) return b.score - a.score;
+    const rankDelta = (b.rankScore ?? Number.NEGATIVE_INFINITY) - (a.rankScore ?? Number.NEGATIVE_INFINITY);
+    if (rankDelta > 0 || rankDelta < 0) return rankDelta;
     return a.ticker.localeCompare(b.ticker);
   });
   const rows = opts.limit ? out.slice(0, opts.limit) : out;

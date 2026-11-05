@@ -46,6 +46,16 @@ describe("runScreener selection", () => {
     expect(params).toEqual(["2026-09-15", "IN", "NSE"]);
   });
 
+  it("selects every setup without a row cap and orders ties by rank score", async () => {
+    await runScreener("IN", { ...DEFAULT_SETTINGS, includeShort: false }, { exchange: "NSE", setupsOnly: true });
+
+    const [sql, params] = mocks.query.mock.calls[0];
+    expect(sql).toContain("verdict <> 'NO_SETUP'");
+    expect(sql).toContain("order by score desc, rank_score desc nulls last, ticker asc");
+    expect(sql).not.toMatch(/ limit /);
+    expect(params).toEqual(["2026-09-15", "IN", "NSE"]);
+  });
+
   it("does not exclude shorts when they are enabled", async () => {
     await runScreener("IN", { ...DEFAULT_SETTINGS, includeShort: true }, { exchange: "NSE", limit: 20 });
 

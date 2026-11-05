@@ -8,14 +8,14 @@ import type { TrendContinuationStatus } from "@/lib/trendContinuation";
 
 export const STRONG_SWING_STATUS_LABEL: Record<StrongSwingStatus, string> = {
   EXECUTION_READY: "Execution ready",
-  WAIT_FOR_ENTRY: "Wait for entry",
+  WAIT_FOR_ENTRY: "Pullback candidate",
   WATCHLIST: "Awaiting confirmation",
   RISK_OFF: "Risk off",
   INVALIDATED: "Invalidated",
 };
 
 export const STRONG_SWING_BLOCKED_BUY_LABEL: Record<Exclude<StrongSwingStatus, "EXECUTION_READY">, string> = {
-  WAIT_FOR_ENTRY: "Buy after confirmation",
+  WAIT_FOR_ENTRY: "Buy only on a pullback into the zone",
   WATCHLIST: "Buy unavailable",
   RISK_OFF: "Buy blocked: risk off",
   INVALIDATED: "Buy blocked: invalidated",

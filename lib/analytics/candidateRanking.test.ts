@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { rankStrongSwingCandidates, rankSwingCandidates } from "./candidateRanking";
+import { rankStrongSwingCandidates, rankSwingCandidates, swingTieBreakScore } from "./candidateRanking";
 
 describe("candidate display ranking", () => {
   it("orders swing candidates by the active strategy score", () => {
@@ -35,5 +35,44 @@ describe("candidate display ranking", () => {
     expect(rankStrongSwingCandidates(rows).map((row) => row.ticker)).toEqual([
       "READY_HIGH", "READY_LOW", "WAIT_ENTRY", "WATCH_HIGH", "RISK_OFF", "INVALID",
     ]);
+  });
+
+  it("breaks equal swing scores on breakout quality, not ticker name", () => {
+    const rows = [
+      { ticker: "AAA", verdict: "BREAKOUT_UNCONFIRMED", score: 0.45, rankScore: 0.2, strategyLevels: {} },
+      { ticker: "ZZZ", verdict: "BREAKOUT_UNCONFIRMED", score: 0.45, rankScore: 0.8, strategyLevels: {} },
+      { ticker: "MMM", verdict: "BREAKOUT_UNCONFIRMED", score: 0.45, rankScore: null, strategyLevels: {} },
+      { ticker: "TOP", verdict: "LONG_BREAKOUT", score: 0.75, rankScore: 0.1, strategyLevels: {} },
+    ];
+    expect(rankSwingCandidates(rows).map((row) => row.ticker)).toEqual(["TOP", "ZZZ", "AAA", "MMM"]);
+  });
+
+  it("breaks equal strong swing strength on breakout quality", () => {
+    const rows = [
+      { ticker: "AAA", status: "WATCHLIST" as const, strengthScore: 80, score: 0.45, rankScore: 0.3 },
+      { ticker: "ZZZ", status: "WATCHLIST" as const, strengthScore: 80, score: 0.45, rankScore: 0.6 },
+    ];
+    expect(rankStrongSwingCandidates(rows).map((row) => row.ticker)).toEqual(["ZZZ", "AAA"]);
+  });
+});
+
+describe("swingTieBreakScore", () => {
+  const base = { isBreakout: true, close: 110, donchianHigh: 106, upperBand: 108, atr: 2, volumeExpansion: 1.5, rsRating: 50 };
+
+  it("averages clearance, volume and relative strength into 0..1", () => {
+    const result = swingTieBreakScore(base);
+    expect(result.breakoutClearanceAtr).toBe(2); // (110 - 106) / 2, measured from the Donchian high
+    expect(result.rankScore).toBeCloseTo((1 + 0.5 + 49 / 98) / 3, 4);
+  });
+
+  it("measures an upper-band-only breakout from the band and saturates each input", () => {
+    const result = swingTieBreakScore({ ...base, close: 109, donchianHigh: 112, volumeExpansion: 9, rsRating: 99 });
+    expect(result.breakoutClearanceAtr).toBe(0.5);
+    expect(result.rankScore).toBeCloseTo((0.25 + 1 + 1) / 3, 4);
+  });
+
+  it("gives no clearance credit without a breakout and no strength credit when unrated", () => {
+    const result = swingTieBreakScore({ ...base, isBreakout: false, rsRating: null, volumeExpansion: 0 });
+    expect(result).toEqual({ rankScore: 0, breakoutClearanceAtr: 0 });
   });
 });

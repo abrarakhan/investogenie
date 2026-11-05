@@ -95,7 +95,7 @@ const TRADABLE_STEPS: { when: string; title: string; href: string; body: string 
     when: "Watch",
     title: "Next in line — Tier 2",
     href: "/terminal/in/strong-swing",
-    body: "Strong Swing · Wait for entry (confirmed but extended), Momentum Ignition V2 · Pre-ignition, First thrust or Retest setup, Armed Swing · Armed. Wait for them to turn ready; don't buy early.",
+    body: "Strong Swing · Pullback candidate (confirmed but extended), Momentum Ignition V2 · Pre-ignition, First thrust or Retest setup, Armed Swing · Armed. Wait for them to turn ready; don't buy early.",
   },
   {
     when: "From 10:15",
