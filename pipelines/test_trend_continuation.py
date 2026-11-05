@@ -154,6 +154,21 @@ class DayTwoBreakoutTests(unittest.TestCase):
         self.assertEqual(result["status"], "EXTENDED_RISK")
         self.assertFalse(result["ready"])
 
+    def test_day_two_more_than_two_atr_above_ema10_is_not_chased(self):
+        # The bar can hold the day-one close without exceeding the one-ATR
+        # day-one chase check, while the whole launch is already too stretched
+        # from short-term trend structure.
+        extended_base = [
+            Bar(f"2026-08-{index:02d}", 100, 101, 99, 100, 100_000)
+            for index in range(60)
+        ]
+        ignition = Bar("2026-10-29", 100.0, 108.2, 99.8, 108.0, 300_000)
+        confirm = Bar("2026-10-30", 108.0, 108.4, 107.2, 108.1, 120_000)
+        result = assess_trend_continuation(extended_base + [ignition, confirm])
+        self.assertEqual(result["status"], "EXTENDED_RISK")
+        self.assertFalse(result["ready"])
+        self.assertGreater(result["metrics"]["distance_ema10_atr"], 2.0)
+
     def test_day_two_weak_close_is_not_ready(self):
         weak_close = Bar("2026-10-30", 104.2, 105.0, 103.0, 103.6, 160_000)
         result = assess_trend_continuation(range_base() + [IGNITION, weak_close])

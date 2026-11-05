@@ -182,6 +182,8 @@ def _assess_day_two_breakout(
             (confirm.close - confirm.low) / confirm_range if confirm_range > 0 else 1.0
         )
         return5 = _pct(confirm.close, series[-6].close)
+        ema10 = _ema([bar.close for bar in series][-40:], 10)
+        distance_ema10_atr = (confirm.close - ema10) / atr14
         rs5 = None
         rs_acceleration = None
         if benchmark_closes and len(benchmark_closes) >= 21:
@@ -196,6 +198,7 @@ def _assess_day_two_breakout(
             "ignition_volume_ratio": ignition["volume_ratio"], "breakout_level": ignition["breakout_level"],
             "launch_sessions": ignition["launch_sessions"], "day_two_volume_ratio": confirm_volume_ratio,
             "day_two_close_location": confirm_close_location, "return5_pct": return5,
+            "distance_ema10_atr": distance_ema10_atr,
             "relative_strength5_pct": rs5,
             "relative_strength_acceleration_pct": rs_acceleration,
             "session_minutes": session_minutes,
@@ -211,6 +214,7 @@ def _assess_day_two_breakout(
         volume_on_pace = confirm_volume_ratio >= 1.0
         clears_level = confirm.close > ignition["breakout_level"]
         closes_firm = confirm_close_location >= 0.50
+        structurally_extended = distance_ema10_atr > 2.0 or return5 > 12.0
         metrics.update({"day_two_holds_gain": holds_gain, "day_two_holds_range": holds_range})
         if not (holds_gain and holds_range):
             return None  # failed follow-through; the pullback path decides
@@ -224,9 +228,11 @@ def _assess_day_two_breakout(
             f"Range breakout ignited on {day_one.date}: {ignition['gain_atr']:.2f} ATR in {ignition['launch_sessions']} session(s) on {ignition['volume_ratio']:.2f}x volume, {'closing above' if ignition['closed_above_breakout'] else 'trading through'} the 20-session high {ignition['breakout_level']:.2f}.",
             f"Day two holds the gain and the breakout level on {confirm_volume_ratio:.2f}x {'paced ' if live else ''}volume.",
         ]
-        if chasing:
+        if chasing or structurally_extended:
             status, ready = "EXTENDED_RISK", False
-            reasons.append("Entry is blocked because day two has run more than 1 ATR beyond the day-one close.")
+            reasons.append(
+                "Entry is blocked because day two is too far beyond the day-one close or more than 2 ATR above EMA10."
+            )
         elif not clears_level:
             status, ready = "CONTINUATION_WATCH", False
             reasons.append(f"Waiting for day two to trade above the breakout level {ignition['breakout_level']:.2f}.")
