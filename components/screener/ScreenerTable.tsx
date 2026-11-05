@@ -6,6 +6,7 @@ import type { ScreenRow, StrategyLevel } from "@/lib/screener";
 import { STRATEGY_META, type StrategyKey } from "@/lib/analytics/legendaryStrategies";
 import { rankSwingCandidates, swingDisplayScore } from "@/lib/analytics/candidateRanking";
 import { swingBuildupLabel, swingVerdictLabel } from "@/lib/candidateStatusCopy";
+import TradingViewChartModal, { useTradingViewChart } from "@/components/charts/TradingViewChartModal";
 
 const VERDICT_STYLE: Record<string, string> = {
   LONG_BREAKOUT: "bg-emerald-500/15 text-emerald-300 border-emerald-500/30",
@@ -146,6 +147,7 @@ export default function ScreenerTable({
   scoped?: boolean;
 }) {
   const router = useRouter();
+  const { chart, closeChart, bindChartGesture } = useTradingViewChart();
   const [q, setQ] = useState("");
   const [market, setMarket] = useState<MarketFilter>("ALL");
   const [setup, setSetup] = useState<SetupFilter>("SETUPS");
@@ -356,6 +358,10 @@ export default function ScreenerTable({
         <span className="ml-auto">{filtered.length} shown</span>
       </div>
 
+      <p className="mb-3 text-[11px] text-white/35">
+        Double-click a stock row, or long-press a stock card on mobile, to open its TradingView chart.
+      </p>
+
       {filtered.length === 0 && (
         <div className="rounded-2xl border border-white/10 px-4 py-10 text-center text-white/40">
           {activeStrategy ? "No buy-side matches for this strategy." : "No matches."}
@@ -389,7 +395,11 @@ export default function ScreenerTable({
               {filtered.map((r) => {
                 const lv = effectiveLevels(r, activeStrategy);
                 return (
-                  <tr key={`${r.exchange}:${r.ticker}`} className="border-t border-white/5">
+                  <tr
+                    key={`${r.exchange}:${r.ticker}`}
+                    {...bindChartGesture({ ticker: r.ticker, exchange: r.exchange })}
+                    className="select-none border-t border-white/5 touch-pan-y hover:bg-white/[0.02]"
+                  >
                     <td className="px-4 py-3">
                       <span className="font-semibold">{r.ticker}</span>
                       <span className="ml-2 font-mono text-[10px] font-semibold text-[var(--ig-accent)]">{swingDisplayScore(r, activeStrategy).toFixed(1)}</span>
@@ -466,7 +476,8 @@ export default function ScreenerTable({
           return (
             <div
               key={`${r.exchange}:${r.ticker}`}
-              className="rounded-2xl border border-white/10 bg-white/[0.02] p-4"
+              {...bindChartGesture({ ticker: r.ticker, exchange: r.exchange })}
+              className="select-none touch-pan-y rounded-2xl border border-white/10 bg-white/[0.02] p-4"
             >
               {/* Header: ticker + action + verdict/strategy */}
               <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2">
@@ -552,6 +563,7 @@ export default function ScreenerTable({
           );
         })}
       </div>
+      <TradingViewChartModal chart={chart} onClose={closeChart} />
     </div>
   );
 }

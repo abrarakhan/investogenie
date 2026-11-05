@@ -1,0 +1,114 @@
+"use client";
+
+import { useCallback, useEffect, useRef, useState, type HTMLAttributes, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
+
+export interface ChartSymbol {
+  ticker: string;
+  exchange: string;
+}
+
+export type ChartGestureProps = HTMLAttributes<HTMLElement>;
+
+const INTERACTIVE_SELECTOR = "a,button,input,select,textarea,summary,form,[data-chart-ignore]";
+const LONG_PRESS_MS = 550;
+const MOVE_TOLERANCE_PX = 12;
+
+function isInteractiveTarget(target: EventTarget | null): boolean {
+  return target instanceof Element && target.closest(INTERACTIVE_SELECTOR) !== null;
+}
+
+function tradingViewSymbol({ ticker, exchange }: ChartSymbol): string {
+  const cleanTicker = ticker.trim().toUpperCase().replace(/[^A-Z0-9._-]/g, "");
+  const cleanExchange = exchange.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+  return `${cleanExchange}:${cleanTicker}`;
+}
+
+function chartUrl(symbol: ChartSymbol): string {
+  const params = new URLSearchParams({
+    symbol: tradingViewSymbol(symbol),
+    interval: "D",
+    theme: "dark",
+    style: "1",
+    locale: "en",
+    toolbar_bg: "#080b12",
+    hide_side_toolbar: "0",
+    allow_symbol_change: "1",
+    save_image: "0",
+    calendar: "0",
+  });
+  return `https://s.tradingview.com/widgetembed/?${params.toString()}`;
+}
+
+export function useTradingViewChart() {
+  const [chart, setChart] = useState<ChartSymbol | null>(null);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const start = useRef<{ x: number; y: number } | null>(null);
+
+  const cancelLongPress = useCallback(() => {
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = null;
+    start.current = null;
+  }, []);
+  const closeChart = useCallback(() => setChart(null), []);
+
+  useEffect(() => cancelLongPress, [cancelLongPress]);
+
+  const bindChartGesture = useCallback((symbol: ChartSymbol): ChartGestureProps => ({
+    title: `Double-click or long-press to open ${symbol.ticker} chart`,
+    onDoubleClick: (event: ReactMouseEvent<HTMLElement>) => {
+      if (isInteractiveTarget(event.target)) return;
+      event.preventDefault();
+      setChart(symbol);
+    },
+    onPointerDown: (event: ReactPointerEvent<HTMLElement>) => {
+      if ((event.pointerType !== "touch" && event.pointerType !== "pen") || isInteractiveTarget(event.target)) return;
+      cancelLongPress();
+      start.current = { x: event.clientX, y: event.clientY };
+      timer.current = setTimeout(() => {
+        timer.current = null;
+        start.current = null;
+        setChart(symbol);
+      }, LONG_PRESS_MS);
+    },
+    onPointerMove: (event: ReactPointerEvent<HTMLElement>) => {
+      if (!start.current) return;
+      if (Math.hypot(event.clientX - start.current.x, event.clientY - start.current.y) > MOVE_TOLERANCE_PX) cancelLongPress();
+    },
+    onPointerUp: cancelLongPress,
+    onPointerCancel: cancelLongPress,
+  }), [cancelLongPress]);
+
+  return { chart, closeChart, bindChartGesture };
+}
+
+export default function TradingViewChartModal({ chart, onClose }: { chart: ChartSymbol | null; onClose: () => void }) {
+  useEffect(() => {
+    if (!chart) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", onKeyDown);
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [chart, onClose]);
+
+  if (!chart) return null;
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 p-2 backdrop-blur-sm sm:p-6" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <section role="dialog" aria-modal="true" aria-label={`${chart.ticker} TradingView chart`} className="flex h-[88dvh] w-full max-w-6xl flex-col overflow-hidden rounded-xl border border-white/15 bg-[#080b12] shadow-2xl">
+        <header className="flex min-h-14 items-center justify-between gap-3 border-b border-white/10 px-4">
+          <div>
+            <div className="font-bold">{chart.ticker}</div>
+            <div className="text-[10px] uppercase tracking-wider text-white/40">{chart.exchange} · TradingView daily chart</div>
+          </div>
+          <button type="button" onClick={onClose} className="inline-flex min-h-10 items-center rounded-lg border border-white/15 px-4 text-sm font-semibold text-white/75 hover:bg-white/10">Close</button>
+        </header>
+        <iframe title={`${chart.ticker} TradingView chart`} src={chartUrl(chart)} className="min-h-0 flex-1 border-0" allowFullScreen />
+      </section>
+    </div>
+  );
+}

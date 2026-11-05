@@ -1,8 +1,11 @@
+"use client";
+
 import Link from "next/link";
 import type { StrongSwingCandidate } from "@/lib/strongSwing";
 import type { StrongSwingStatus } from "@/lib/analytics/strongSwing";
 import { rankStrongSwingCandidates } from "@/lib/analytics/candidateRanking";
 import { STRONG_SWING_BLOCKED_BUY_LABEL, STRONG_SWING_STATUS_LABEL } from "@/lib/candidateStatusCopy";
+import TradingViewChartModal, { useTradingViewChart, type ChartGestureProps, type ChartSymbol } from "@/components/charts/TradingViewChartModal";
 
 const STATUS_STYLE: Record<StrongSwingStatus, string> = {
   EXECUTION_READY: "border-emerald-400/35 bg-emerald-400/10 text-emerald-300",
@@ -33,7 +36,7 @@ function rankReason(candidate: StrongSwingCandidate): string {
     : "Strong score reflects the confirmation gates passed.";
 }
 
-function CandidateCard({ candidate, planId }: { candidate: StrongSwingCandidate; planId: string | null }) {
+function CandidateCard({ candidate, planId, chartGesture }: { candidate: StrongSwingCandidate; planId: string | null; chartGesture: ChartGestureProps }) {
   const passed = candidate.gates.filter((gate) => gate.passed).length;
   const ledgerParams = new URLSearchParams({
     assetId: candidate.assetId,
@@ -48,7 +51,7 @@ function CandidateCard({ candidate, planId }: { candidate: StrongSwingCandidate;
     days: String(candidate.strongExpectedDays),
   });
   return (
-    <article className="rounded-lg border border-white/10 bg-white/[0.025] p-4 sm:p-5">
+    <article {...chartGesture} className="select-none touch-pan-y rounded-lg border border-white/10 bg-white/[0.025] p-4 sm:p-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="flex flex-wrap items-center gap-2">
@@ -168,6 +171,7 @@ function CandidateGroup({
   note,
   totalCount,
   planIds,
+  bindChartGesture,
 }: {
   title: string;
   candidates: StrongSwingCandidate[];
@@ -176,6 +180,7 @@ function CandidateGroup({
   note?: string;
   totalCount?: number;
   planIds: Record<string, string>;
+  bindChartGesture: (symbol: ChartSymbol) => ChartGestureProps;
 }) {
   if (candidates.length === 0) return null;
   return (
@@ -191,13 +196,14 @@ function CandidateGroup({
         <span className="hidden shrink-0 text-xs font-semibold text-white/45 group-open:inline">Collapse</span>
       </summary>
       <div className="space-y-3 border-t border-white/8 p-3 sm:p-4">
-        {candidates.map((candidate) => <CandidateCard key={candidate.assetId} candidate={candidate} planId={planIds[`STRONG_SWING:${candidate.status}:${candidate.assetId}`] ?? null} />)}
+        {candidates.map((candidate) => <CandidateCard key={candidate.assetId} candidate={candidate} planId={planIds[`STRONG_SWING:${candidate.status}:${candidate.assetId}`] ?? null} chartGesture={bindChartGesture({ ticker: candidate.ticker, exchange: candidate.exchange })} />)}
       </div>
     </details>
   );
 }
 
 export default function StrongSwingCandidates({ candidates, planIds }: { candidates: StrongSwingCandidate[]; planIds: Record<string, string> }) {
+  const { chart, closeChart, bindChartGesture } = useTradingViewChart();
   const ranked = rankStrongSwingCandidates(candidates);
   const executionReady = ranked.filter((candidate) => candidate.status === "EXECUTION_READY");
   const waitingForEntry = ranked.filter((candidate) => candidate.status === "WAIT_FOR_ENTRY");
@@ -211,6 +217,7 @@ export default function StrongSwingCandidates({ candidates, planIds }: { candida
     <div className="space-y-8">
       <div className="rounded-lg border border-cyan-400/15 bg-cyan-400/[0.035] px-4 py-3 text-xs leading-relaxed text-cyan-50/65">
         Strong Swing starts with the same base Swing classifier. Every base Swing setup is assessed; base rank is its position in that list. Pullback candidates are confirmed breakouts that are above the buy zone (confirmed entry + 0.50 ATR) or more than 15% above the 20-day average. They are not buyable, and a later pullback does not reactivate them automatically: Execution ready still needs a current breakout with two confirming closes, so most re-qualify only by setting up again. Strong rank is recalculated after confirmation, liquidity, volatility, circuit-behaviour and entry-safety gates.
+        <span className="mt-2 block text-white/45">Double-click a stock card, or long-press it on mobile, to open its TradingView chart.</span>
       </div>
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-5 sm:gap-3">
         {[
@@ -233,8 +240,8 @@ export default function StrongSwingCandidates({ candidates, planIds }: { candida
         </div>
       )}
 
-      <CandidateGroup title="Execution ready" candidates={executionReady} planIds={planIds} color="text-emerald-300" defaultOpen />
-      <CandidateGroup title="Pullback candidates" candidates={waitingForEntry} planIds={planIds} color="text-cyan-200" />
+      <CandidateGroup title="Execution ready" candidates={executionReady} planIds={planIds} color="text-emerald-300" defaultOpen bindChartGesture={bindChartGesture} />
+      <CandidateGroup title="Pullback candidates" candidates={waitingForEntry} planIds={planIds} color="text-cyan-200" bindChartGesture={bindChartGesture} />
       <CandidateGroup
         title="Awaiting confirmation"
         candidates={visibleWatchlist}
@@ -242,8 +249,9 @@ export default function StrongSwingCandidates({ candidates, planIds }: { candida
         totalCount={watchlist.length}
         color="text-amber-200"
         note={watchlist.length > visibleWatchlist.length ? `Showing the strongest ${visibleWatchlist.length} of ${watchlist.length}` : undefined}
+        bindChartGesture={bindChartGesture}
       />
-      <CandidateGroup title="Risk off" candidates={riskOff.slice(0, 30)} planIds={planIds} totalCount={riskOff.length} color="text-orange-200" />
+      <CandidateGroup title="Risk off" candidates={riskOff.slice(0, 30)} planIds={planIds} totalCount={riskOff.length} color="text-orange-200" bindChartGesture={bindChartGesture} />
       <CandidateGroup
         title="Invalidated"
         candidates={visibleInvalidated}
@@ -251,7 +259,9 @@ export default function StrongSwingCandidates({ candidates, planIds }: { candida
         totalCount={invalidated.length}
         color="text-rose-300"
         note={invalidated.length > visibleInvalidated.length ? `Showing the highest-ranked ${visibleInvalidated.length} of ${invalidated.length}` : undefined}
+        bindChartGesture={bindChartGesture}
       />
+      <TradingViewChartModal chart={chart} onClose={closeChart} />
     </div>
   );
 }

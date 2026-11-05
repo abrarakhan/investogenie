@@ -1,8 +1,11 @@
+"use client";
+
 import Link from "next/link";
 import type { ArmedSwingCandidate, ArmedSwingResult } from "@/lib/armedSwing";
 import type { ArmedSwingStatus } from "@/lib/analytics/armedSwing";
 import { ARMED_STATUS_LABEL as STATUS_LABEL, ARMED_WHEN_TO_ENTER as WHEN_TO_ENTER } from "@/lib/armedSwingCopy";
 import { createPendingBuyStop } from "@/app/terminal/[market]/trade-ledger/pendingOrderActions";
+import TradingViewChartModal, { useTradingViewChart, type ChartGestureProps, type ChartSymbol } from "@/components/charts/TradingViewChartModal";
 
 const STATUS_STYLE: Record<ArmedSwingStatus, string> = {
   BUY_ZONE: "border-emerald-400/35 bg-emerald-400/10 text-emerald-300",
@@ -22,7 +25,7 @@ const BUY_ENABLED: ReadonlySet<ArmedSwingStatus> = new Set(["BUY_ZONE"]);
 const fmt = (value: number | null | undefined, digits = 2) =>
   value === null || value === undefined || !Number.isFinite(value) ? "-" : value.toFixed(digits);
 
-function CandidateCard({ candidate, planId }: { candidate: ArmedSwingCandidate; planId: string | null }) {
+function CandidateCard({ candidate, planId, chartGesture }: { candidate: ArmedSwingCandidate; planId: string | null; chartGesture: ChartGestureProps }) {
   const { plan } = candidate;
   const blocking = candidate.gates.filter((gate) => gate.blocking);
   // Only the server-held plan id travels to the ledger; the levels are read back from the
@@ -36,7 +39,7 @@ function CandidateCard({ candidate, planId }: { candidate: ArmedSwingCandidate; 
   });
   const buyEnabled = BUY_ENABLED.has(candidate.status) && planId !== null;
   return (
-    <article className="rounded-lg border border-white/10 bg-white/[0.025] p-4 sm:p-5">
+    <article {...chartGesture} className="select-none touch-pan-y rounded-lg border border-white/10 bg-white/[0.025] p-4 sm:p-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="flex flex-wrap items-center gap-2">
@@ -146,8 +149,8 @@ function CandidateCard({ candidate, planId }: { candidate: ArmedSwingCandidate; 
   );
 }
 
-function Group({ title, candidates, planIds, color, defaultOpen = false, limit = 30 }: {
-  title: string; candidates: ArmedSwingCandidate[]; planIds: Record<string, string>; color: string; defaultOpen?: boolean; limit?: number;
+function Group({ title, candidates, planIds, color, bindChartGesture, defaultOpen = false, limit = 30 }: {
+  title: string; candidates: ArmedSwingCandidate[]; planIds: Record<string, string>; color: string; bindChartGesture: (symbol: ChartSymbol) => ChartGestureProps; defaultOpen?: boolean; limit?: number;
 }) {
   if (!candidates.length) return null;
   const visible = candidates.slice(0, limit);
@@ -164,13 +167,14 @@ function Group({ title, candidates, planIds, color, defaultOpen = false, limit =
         <span className="hidden shrink-0 text-xs font-semibold text-white/45 group-open:inline">Collapse</span>
       </summary>
       <div className="space-y-3 border-t border-white/8 p-3 sm:p-4">
-        {visible.map((candidate) => <CandidateCard key={candidate.assetId} candidate={candidate} planId={planIds[candidate.assetId] ?? null} />)}
+        {visible.map((candidate) => <CandidateCard key={candidate.assetId} candidate={candidate} planId={planIds[candidate.assetId] ?? null} chartGesture={bindChartGesture({ ticker: candidate.ticker, exchange: candidate.exchange })} />)}
       </div>
     </details>
   );
 }
 
 export default function ArmedSwingCandidates({ result, planIds }: { result: ArmedSwingResult; planIds: Record<string, string> }) {
+  const { chart, closeChart, bindChartGesture } = useTradingViewChart();
   const by = (status: ArmedSwingStatus) => result.candidates.filter((candidate) => candidate.status === status);
   const groups: Array<[string, ArmedSwingStatus, string, boolean]> = [
     ["Buy zone", "BUY_ZONE", "text-emerald-300", true],
@@ -189,6 +193,7 @@ export default function ArmedSwingCandidates({ result, planIds }: { result: Arme
         Scanned {result.universeCount.toLocaleString("en-IN")} active stocks; {result.scannedCount} completed-session bases within 10% of their pivot were assessed.
         Bases use completed sessions only{result.marketOpen ? "; today's session is used only for the live trigger and volume-pace check" : ""}.
         Relative strength is ranked across the whole market on weighted 3/6/9/12-month return.
+        <span className="mt-2 block text-white/45">Double-click a stock card, or long-press it on mobile, to open its TradingView chart.</span>
       </div>
       {result.candidates.length > 0 && (
         <div className={`rounded-lg border px-4 py-3 text-xs leading-relaxed ${result.resultsVerifiedCount / result.candidates.length >= 0.9 ? "border-white/10 text-white/50" : "border-amber-400/25 bg-amber-400/[0.04] text-amber-100/75"}`}>
@@ -210,8 +215,9 @@ export default function ArmedSwingCandidates({ result, planIds }: { result: Arme
         </div>
       )}
       {groups.map(([label, status, color, open]) => (
-        <Group key={status} title={label} candidates={by(status)} planIds={planIds} color={color} defaultOpen={open} />
+        <Group key={status} title={label} candidates={by(status)} planIds={planIds} color={color} defaultOpen={open} bindChartGesture={bindChartGesture} />
       ))}
+      <TradingViewChartModal chart={chart} onClose={closeChart} />
     </div>
   );
 }
