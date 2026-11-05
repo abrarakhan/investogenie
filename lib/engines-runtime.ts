@@ -18,7 +18,7 @@ import type { MarketId, FundStockWeight, UserFundHolding } from "@/lib/types";
 import { deriveLevels, type SwingSetup, type TradeDirection } from "@/lib/analytics/swingClassifier";
 import { DEFAULT_SETTINGS, type SwingSettings } from "@/lib/settings";
 import { fundDisplayIdentity } from "@/lib/funds/displayName";
-import { latestSignalSessionDate, refreshMarketHolidays } from "@/lib/market-calendar.mjs";
+import { isMarketOpenNow, latestSignalSessionDate, refreshMarketHolidays } from "@/lib/market-calendar.mjs";
 
 export interface TopSetup {
   ticker: string;
@@ -58,6 +58,7 @@ export async function getTopSwingSetups(
   const market = country === "IN" || country === "US" ? country : null;
   if (market) await refreshMarketHolidays(market);
   const signalSession = market ? latestSignalSessionDate(market) : "1970-01-01";
+  const marketOpen = market ? isMarketOpenNow(market) : false;
   const rows = await query<Record<string, unknown>>(
     `select s.ticker, s.verdict, s.score, s.reason, s.bias,
             q.price as current_price, s.atr,
@@ -70,9 +71,10 @@ export async function getTopSwingSetups(
         and not exists (select 1 from public.asset_tracking_exclusions x where x.asset_id=s.asset_id)
         and exists (select 1 from public.daily_ohlcv o where o.asset_id=s.asset_id and o.date >= $3::date)
         and q.as_of::date >= $3::date
+        and (not $4::boolean or q.updated_at >= now() - interval '7 minutes')
       order by s.score desc
       limit $2`,
-    [country, limit * 2, signalSession],
+    [country, limit * 2, signalSession, marketOpen],
   );
   return rows
     .filter((r) => settings.includeShort || (r.bias as string) !== "SHORT")

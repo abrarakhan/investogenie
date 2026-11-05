@@ -24,6 +24,8 @@ export interface ScanSummary {
   setups: number;
   /** Previously active rows this scan could not recompute, now retired to NO_SETUP. */
   retired: number;
+  /** Markets whose retirement pass was withheld because scan coverage was incomplete. */
+  retirementSkippedMarkets: string[];
   durationMs: number;
 }
 
@@ -84,15 +86,15 @@ const RETIRE_SQL = `update public.swing_signals set
     buildup_source=null, participation_ratio=null, volume_expansion=null,
     breakout_clearance_atr=null, rs_rating=null, rank_score=null,
     reason='Retired: signal is older than the latest published market session or was not recomputed.'
-  where (computed_at < $1
-      or (country='IN' and as_of < $2::date)
-      or (country='US' and as_of < $3::date))
+  where ((country='IN' and $4::boolean and (computed_at < $1 or as_of < $2::date))
+      or (country='US' and $5::boolean and (computed_at < $1 or as_of < $3::date)))
     and (verdict <> 'NO_SETUP' or cardinality(strategy_tags) > 0 or rank_score is not null)`;
 const ASSET_BATCH = 60; // assets per round → bounded memory + small upserts
 // Fetching each batch's bars is ~70% of the job's wall clock and is I/O-bound, so a few
 // batches run at a time. Batches hold disjoint asset ids, so their upserts never contend
 // for the same row.
 const BATCH_CONCURRENCY = 4;
+const MIN_RETIREMENT_COVERAGE = 0.8;
 
 export async function computeSignals(databaseUrl: string): Promise<ScanSummary> {
   const t0 = Date.now();
@@ -108,6 +110,16 @@ export async function computeSignals(databaseUrl: string): Promise<ScanSummary> 
   try {
     // Database clock, so retirement compares against the same clock as computed_at.
     const { rows: [{ started_at: scanStartedAt }] } = await client.query<{ started_at: Date }>("select now() started_at");
+    const { rows: universeRows } = await client.query<{ country: string; total: string | number }>(
+      `select a.country,count(*) total
+         from public.assets a
+        where a.is_active
+          and a.country in ('IN','US')
+          and not exists (select 1 from public.asset_tracking_exclusions x where x.asset_id=a.id)
+          and exists (select 1 from public.daily_ohlcv o where o.asset_id=a.id and o.open>0 and o.high>0 and o.low>0 and o.close>0)
+        group by a.country`,
+    );
+    const universeByMarket = new Map(universeRows.map((row) => [row.country, Number(row.total)]));
     // Data Health keeps reporting stale assets so they can be repaired, but the
     // signal scan fails closed: only assets current for their market's latest
     // published EOD session are allowed into calculations.
@@ -173,6 +185,7 @@ export async function computeSignals(databaseUrl: string): Promise<ScanSummary> 
 
     let scanned = 0;
     let setups = 0;
+    const scannedByMarket = new Map<string, number>();
 
     const batches: AssetMeta[][] = [];
     for (let i = 0; i < assets.length; i += ASSET_BATCH) {
@@ -248,6 +261,7 @@ export async function computeSignals(databaseUrl: string): Promise<ScanSummary> 
               s.buildupSource, s.participationRatio, s.volumeExpansion,
               tieBreak.breakoutClearanceAtr, rating, tieBreak.rankScore,
             ]);
+            scannedByMarket.set(meta.country, (scannedByMarket.get(meta.country) ?? 0) + 1);
           } catch {
             // too few bars — skip
           }
@@ -269,13 +283,23 @@ export async function computeSignals(databaseUrl: string): Promise<ScanSummary> 
 
     await Promise.all(Array.from({ length: BATCH_CONCURRENCY }, runWorker));
 
+    // Only retire a market after a representative scan. This prevents an empty asset
+    // query, or the 18:30 gap before a full bhavcopy lands, from clearing every setup.
+    // Screens already hide stale rows, so withholding retirement is the safer failure mode.
+    const canRetire = (market: "IN" | "US") => {
+      const total = universeByMarket.get(market) ?? 0;
+      const marketScanned = scannedByMarket.get(market) ?? 0;
+      return total > 0 && marketScanned > 0 && marketScanned / total >= MIN_RETIREMENT_COVERAGE;
+    };
+    const retireIndia = canRetire("IN");
+    const retireUs = canRetire("US");
+    const retirementSkippedMarkets = (["IN", "US"] as const).filter((market) => !canRetire(market));
     // Only after every batch succeeded: a failed scan throws above and retires nothing.
-    const retired = (await client.query(
-      RETIRE_SQL,
-      [scanStartedAt, indiaSignalSession, usSignalSession],
-    )).rowCount ?? 0;
+    const retired = retireIndia || retireUs
+      ? (await client.query(RETIRE_SQL, [scanStartedAt, indiaSignalSession, usSignalSession, retireIndia, retireUs])).rowCount ?? 0
+      : 0;
 
-    return { scanned, setups, retired, durationMs: Date.now() - t0 };
+    return { scanned, setups, retired, retirementSkippedMarkets, durationMs: Date.now() - t0 };
   } finally {
     await client.end();
   }

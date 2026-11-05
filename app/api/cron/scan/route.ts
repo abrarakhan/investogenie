@@ -69,6 +69,7 @@ export async function GET(request: NextRequest) {
       scanned: summary?.scanned,
       setups: summary?.setups,
       retired: summary?.retired,
+      retirementSkippedMarkets: summary?.retirementSkippedMarkets,
       attempts: result.attempts,
       durationMs: result.durationMs,
     });
