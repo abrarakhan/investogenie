@@ -24,7 +24,7 @@ from typing import Iterable
 import psycopg2
 from psycopg2.extras import execute_values
 
-FEATURE_VERSION = "trend_continuation_v3"
+FEATURE_VERSION = "trend_continuation_v4"
 IST = timezone(timedelta(hours=5, minutes=30))
 SESSION_MINUTES = 375  # 09:15-15:30 IST
 CONFIRMATION_MINUTES = 60  # day-two confirmation opens at 10:15 IST
@@ -165,7 +165,9 @@ def _ignition(series: list[Bar], index: int) -> dict | None:
     return result
 
 
-def _assess_day_two_breakout(series: list[Bar], session_minutes: float | None) -> dict | None:
+def _assess_day_two_breakout(
+    series: list[Bar], benchmark_closes: list[float] | None, session_minutes: float | None,
+) -> dict | None:
     """Catch an ignition on day one, confirm it during the first hour of day two."""
     live = session_minutes is not None
     today = _ignition(series, len(series) - 1)
@@ -175,10 +177,28 @@ def _assess_day_two_breakout(series: list[Bar], session_minutes: float | None) -
         ignition, confirm = yesterday, series[-1]
         atr14, day_one = ignition["atr14"], ignition["bar"]
         confirm_volume_ratio = confirm.volume / ignition["normal_volume"] if ignition["normal_volume"] else 0.0
+        confirm_range = confirm.high - confirm.low
+        confirm_close_location = (
+            (confirm.close - confirm.low) / confirm_range if confirm_range > 0 else 1.0
+        )
+        return5 = _pct(confirm.close, series[-6].close)
+        rs5 = None
+        rs_acceleration = None
+        if benchmark_closes and len(benchmark_closes) >= 21:
+            benchmark5 = _pct(benchmark_closes[-1], benchmark_closes[-6])
+            benchmark20 = _pct(benchmark_closes[-1], benchmark_closes[-21])
+            rs5 = return5 - benchmark5
+            rs20 = _pct(confirm.close, series[-21].close) - benchmark20
+            rs_acceleration = rs5 - rs20
+        rs_pass = rs5 is None or (rs5 > 0 and (rs_acceleration is None or rs_acceleration > -1.0))
         metrics = {
             "early_breakout": True, "ignition_gain_atr": ignition["gain_atr"],
             "ignition_volume_ratio": ignition["volume_ratio"], "breakout_level": ignition["breakout_level"],
-            "launch_sessions": ignition["launch_sessions"], "day_two_volume_ratio": confirm_volume_ratio, "session_minutes": session_minutes,
+            "launch_sessions": ignition["launch_sessions"], "day_two_volume_ratio": confirm_volume_ratio,
+            "day_two_close_location": confirm_close_location, "return5_pct": return5,
+            "relative_strength5_pct": rs5,
+            "relative_strength_acceleration_pct": rs_acceleration,
+            "session_minutes": session_minutes,
         }
         if live and session_minutes < CONFIRMATION_MINUTES:
             return {"status": "IMPULSE_DETECTED", "ready": False, "metrics": metrics, "reasons": [
@@ -190,6 +210,7 @@ def _assess_day_two_breakout(series: list[Bar], session_minutes: float | None) -
         chasing = confirm.close > day_one.close + 1.0 * atr14
         volume_on_pace = confirm_volume_ratio >= 1.0
         clears_level = confirm.close > ignition["breakout_level"]
+        closes_firm = confirm_close_location >= 0.50
         metrics.update({"day_two_holds_gain": holds_gain, "day_two_holds_range": holds_range})
         if not (holds_gain and holds_range):
             return None  # failed follow-through; the pullback path decides
@@ -212,6 +233,12 @@ def _assess_day_two_breakout(series: list[Bar], session_minutes: float | None) -
         elif not volume_on_pace:
             status, ready = "CONTINUATION_WATCH", False
             reasons.append("Waiting for day-two volume to reach a normal session's pace.")
+        elif not closes_firm:
+            status, ready = "CONTINUATION_WATCH", False
+            reasons.append("Day two is closing in the lower half of its range; wait for demand to regain control before considering entry.")
+        elif not rs_pass:
+            status, ready = "CONTINUATION_WATCH", False
+            reasons.append("Day-two continuation is withheld because five-session relative strength versus NIFTY is not positive and stable.")
         elif not geometry_valid:
             status, ready = "CONTINUATION_WATCH", False
             reasons.append("The protective stop is more than 6% away; entry geometry is not valid.")
@@ -243,7 +270,7 @@ def assess_trend_continuation(
     result = _assess_pullback_continuation(series, benchmark_closes)
     if result["status"] == "INVALID_DATA" or len(series) < 30:
         return result
-    early = _assess_day_two_breakout(series, session_minutes)
+    early = _assess_day_two_breakout(series, benchmark_closes, session_minutes)
     result.setdefault("metrics", {})["early_breakout"] = False
     if early is None or (result.get("ready") and not early["ready"]):
         return result

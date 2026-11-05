@@ -154,6 +154,24 @@ class DayTwoBreakoutTests(unittest.TestCase):
         self.assertEqual(result["status"], "EXTENDED_RISK")
         self.assertFalse(result["ready"])
 
+    def test_day_two_weak_close_is_not_ready(self):
+        weak_close = Bar("2026-10-30", 104.2, 105.0, 103.0, 103.6, 160_000)
+        result = assess_trend_continuation(range_base() + [IGNITION, weak_close])
+        self.assertEqual(result["status"], "CONTINUATION_WATCH")
+        self.assertFalse(result["ready"])
+        self.assertLess(result["metrics"]["day_two_close_location"], 0.5)
+        self.assertTrue(any("lower half" in reason for reason in result["reasons"]))
+
+    def test_day_two_requires_positive_relative_strength_when_benchmark_is_available(self):
+        confirm = Bar("2026-10-30", 104.0, 104.8, 103.0, 104.2, 120_000)
+        series = range_base() + [IGNITION, confirm]
+        benchmark = [100 + index * 1.5 for index in range(len(series))]
+        result = assess_trend_continuation(series, benchmark_closes=benchmark)
+        self.assertEqual(result["status"], "CONTINUATION_WATCH")
+        self.assertFalse(result["ready"])
+        self.assertLess(result["metrics"]["relative_strength5_pct"], 0)
+        self.assertTrue(any("relative strength" in reason for reason in result["reasons"]))
+
     def test_breakout_on_light_volume_is_ignored(self):
         quiet = Bar("2026-10-29", 100.2, 104.2, 100.0, 104.0, 120_000)
         result = assess_trend_continuation(range_base() + [quiet])
