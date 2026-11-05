@@ -1,5 +1,8 @@
+"use client";
+
 import type { TrendContinuationCandidate, TrendContinuationStatus } from "@/lib/trendContinuation";
 import { TREND_CONTINUATION_STATUS_LABEL } from "@/lib/candidateStatusCopy";
+import TradingViewChartModal, { useTradingViewChart, type ChartGestureProps, type ChartSymbol } from "@/components/charts/TradingViewChartModal";
 
 const style: Record<TrendContinuationStatus, string> = {
   IMPULSE_DETECTED: "border-cyan-400/30 text-cyan-200",
@@ -11,14 +14,14 @@ const style: Record<TrendContinuationStatus, string> = {
 const value = (number: unknown, suffix = "") => typeof number === "number" && Number.isFinite(number)
   ? `${number.toFixed(2)}${suffix}` : "—";
 
-function CandidateCard({ candidate, rank }: { candidate: TrendContinuationCandidate; rank: number }) {
+function CandidateCard({ candidate, rank, chartGesture }: { candidate: TrendContinuationCandidate; rank: number; chartGesture: ChartGestureProps }) {
   const developingStaircase = candidate.metrics.developing_staircase === true;
   const volumeRatios = Array.isArray(candidate.metrics.volume_ratios)
     ? candidate.metrics.volume_ratios.filter((item): item is number => typeof item === "number") : [];
   const averageVolume = volumeRatios.length
     ? volumeRatios.reduce((sum, item) => sum + item, 0) / volumeRatios.length : null;
 
-  return <article className="rounded-lg border border-white/10 bg-white/[0.025] p-4 sm:p-5">
+  return <article {...chartGesture} className="select-none touch-pan-y rounded-lg border border-white/10 bg-white/[0.025] p-4 sm:p-5">
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div>
         <div className="flex items-center gap-2">
@@ -65,11 +68,12 @@ function CandidateCard({ candidate, rank }: { candidate: TrendContinuationCandid
   </article>;
 }
 
-function CandidateGroup({ title, candidates, color, ranked, defaultOpen = false }: {
+function CandidateGroup({ title, candidates, color, ranked, bindChartGesture, defaultOpen = false }: {
   title: string;
   candidates: TrendContinuationCandidate[];
   color: string;
   ranked: Map<string, number>;
+  bindChartGesture: (symbol: ChartSymbol) => ChartGestureProps;
   defaultOpen?: boolean;
 }) {
   if (!candidates.length) return null;
@@ -82,12 +86,13 @@ function CandidateGroup({ title, candidates, color, ranked, defaultOpen = false 
       <span className="hidden shrink-0 text-xs font-semibold text-white/45 group-open:inline">Collapse</span>
     </summary>
     <div className="space-y-3 border-t border-white/8 p-3 sm:p-4">
-      {candidates.map((candidate) => <CandidateCard key={candidate.assetId} candidate={candidate} rank={ranked.get(candidate.assetId) ?? 0} />)}
+      {candidates.map((candidate) => <CandidateCard key={candidate.assetId} candidate={candidate} rank={ranked.get(candidate.assetId) ?? 0} chartGesture={bindChartGesture({ ticker: candidate.ticker, exchange: "NSE" })} />)}
     </div>
   </details>;
 }
 
 export default function TrendContinuationCandidates({ candidates }: { candidates: TrendContinuationCandidate[] }) {
+  const { chart, closeChart, bindChartGesture } = useTradingViewChart();
   const ranked = new Map(candidates.map((candidate, index) => [candidate.assetId, index + 1]));
   const ready = candidates.filter((candidate) => candidate.status === "TREND_CONTINUATION_READY");
   const watch = candidates.filter((candidate) => candidate.status === "CONTINUATION_WATCH");
@@ -123,16 +128,18 @@ export default function TrendContinuationCandidates({ candidates }: { candidates
 
     <div className="rounded-lg border border-violet-400/15 bg-violet-400/[0.035] px-4 py-3 text-xs leading-relaxed text-violet-100/65">
       Continuation ready means day two is holding a confirmed breakout (stop under the day-one low), or an orderly pullback passes the trend, persistence and entry-geometry checks. It remains observation-only: it does not create a frozen trade plan, unlock buying, or feed auto-buy.
+      <span className="mt-2 block text-white/45">Double-click a stock card, or long-press it on mobile, to open its TradingView chart.</span>
     </div>
 
     {!candidates.length
       ? <div className="rounded-lg border border-white/10 px-4 py-8 text-center text-sm text-white/45">No recent multi-session impulse currently passes the Trend Continuation floor.</div>
       : <div className="space-y-3">
-        <CandidateGroup title="Continuation ready · observation only" candidates={ready} ranked={ranked} color="text-emerald-300" defaultOpen />
-        <CandidateGroup title="Continuation watch" candidates={watch} ranked={ranked} color="text-amber-200" />
-        <CandidateGroup title="Developing staircase / impulse detected" candidates={impulse} ranked={ranked} color="text-cyan-200" />
-        <CandidateGroup title="Extended · do not chase" candidates={extended} ranked={ranked} color="text-rose-200" />
+        <CandidateGroup title="Continuation ready · observation only" candidates={ready} ranked={ranked} color="text-emerald-300" defaultOpen bindChartGesture={bindChartGesture} />
+        <CandidateGroup title="Continuation watch" candidates={watch} ranked={ranked} color="text-amber-200" bindChartGesture={bindChartGesture} />
+        <CandidateGroup title="Developing staircase / impulse detected" candidates={impulse} ranked={ranked} color="text-cyan-200" bindChartGesture={bindChartGesture} />
+        <CandidateGroup title="Extended · do not chase" candidates={extended} ranked={ranked} color="text-rose-200" bindChartGesture={bindChartGesture} />
       </div>}
+    <TradingViewChartModal chart={chart} onClose={closeChart} />
   </div>;
 }
 

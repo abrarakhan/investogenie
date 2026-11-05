@@ -1,8 +1,11 @@
+"use client";
+
 import Link from "next/link";
 import type { MomentumIgnitionCandidate, MomentumIgnitionResult } from "@/lib/momentumIgnitionLegacy";
 import type { MomentumIgnitionStatus } from "@/lib/analytics/momentumIgnition";
 import { isMomentumExecutionReady } from "@/lib/momentumExecution";
 import { MOMENTUM_IGNITION_LEGACY_STATUS_LABEL } from "@/lib/candidateStatusCopy";
+import TradingViewChartModal, { useTradingViewChart, type ChartGestureProps, type ChartSymbol } from "@/components/charts/TradingViewChartModal";
 
 const STATUS_STYLE: Record<MomentumIgnitionStatus, string> = {
   ENTRY_READY: "border-emerald-400/35 bg-emerald-400/10 text-emerald-200",
@@ -21,7 +24,7 @@ const breakoutDistance = (value: number) => value >= 0
   ? `${number(value, 1)}% below`
   : `${number(Math.abs(value), 1)}% above`;
 
-function IgnitionCard({ candidate, rank, market, planId }: { candidate: MomentumIgnitionCandidate; rank: number; market: "IN" | "US"; planId: string | null }) {
+function IgnitionCard({ candidate, rank, market, planId, chartGesture }: { candidate: MomentumIgnitionCandidate; rank: number; market: "IN" | "US"; planId: string | null; chartGesture: ChartGestureProps }) {
   const keyGates = candidate.gates.filter((item) => [
     "trend", "relative_strength", "compression", "dry_up", "live_volume", "liquidity", "volatility", "circuit",
   ].includes(item.key));
@@ -39,7 +42,7 @@ function IgnitionCard({ candidate, rank, market, planId }: { candidate: Momentum
     days: String(candidate.projectedDays),
   });
   return (
-    <article className="rounded-lg border border-white/10 bg-white/[0.025] p-4">
+    <article {...chartGesture} className="select-none touch-pan-y rounded-lg border border-white/10 bg-white/[0.025] p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
@@ -129,6 +132,7 @@ function CandidateGroup({
   market,
   defaultOpen = false,
   planIds,
+  bindChartGesture,
 }: {
   title: string;
   candidates: Array<{ candidate: MomentumIgnitionCandidate; rank: number }>;
@@ -136,6 +140,7 @@ function CandidateGroup({
   market: "IN" | "US";
   defaultOpen?: boolean;
   planIds: Record<string, string>;
+  bindChartGesture: (symbol: ChartSymbol) => ChartGestureProps;
 }) {
   if (!candidates.length) return null;
   return <details open={defaultOpen} className="group rounded-lg border border-white/10 bg-white/[0.012]">
@@ -147,12 +152,13 @@ function CandidateGroup({
       <span className="hidden shrink-0 text-xs font-semibold text-white/45 group-open:inline">Collapse</span>
     </summary>
     <div className="space-y-3 border-t border-white/8 p-3 sm:p-4">
-      {candidates.map(({ candidate, rank }) => <IgnitionCard key={candidate.assetId} candidate={candidate} rank={rank} market={market} planId={planIds[`MOMENTUM_IGNITION:${candidate.status}:${candidate.assetId}`] ?? null} />)}
+      {candidates.map(({ candidate, rank }) => <IgnitionCard key={candidate.assetId} candidate={candidate} rank={rank} market={market} planId={planIds[`MOMENTUM_IGNITION:${candidate.status}:${candidate.assetId}`] ?? null} chartGesture={bindChartGesture({ ticker: candidate.ticker, exchange: candidate.exchange })} />)}
     </div>
   </details>;
 }
 
 export default function MomentumIgnitionCandidates({ result, planIds }: { result: MomentumIgnitionResult; planIds: Record<string, string> }) {
+  const { chart, closeChart, bindChartGesture } = useTradingViewChart();
   const marketLabel = result.market === "IN" ? "NSE" : "US";
   const ranked = result.candidates.map((candidate, index) => ({ candidate, rank: index + 1 }));
   const executionReady = ranked.filter(({ candidate }) => isMomentumExecutionReady(candidate.status));
@@ -189,16 +195,18 @@ export default function MomentumIgnitionCandidates({ result, planIds }: { result
 
       <div className="rounded-lg border border-cyan-400/15 bg-cyan-400/[0.035] px-4 py-3 text-xs leading-relaxed text-cyan-100/65">
         Momentum ready is independently actionable after this engine&apos;s freshness, liquidity, trend, volume, extension, volatility and circuit checks pass. Strong Swing remains a separate, later-confirmation strategy.
+        <span className="mt-2 block text-white/45">Double-click a stock card, or long-press it on mobile, to open its TradingView chart.</span>
       </div>
 
       {ranked.length === 0
         ? <div className="rounded-lg border border-white/10 px-4 py-8 text-center text-sm text-white/45">No {marketLabel} stock currently passes the Momentum Ignition discovery floor.</div>
         : <div className="space-y-3">
-          <CandidateGroup title="Execution ready" candidates={executionReady} planIds={planIds} color="text-emerald-200" market={result.market} defaultOpen />
-          <CandidateGroup title="Triggered" candidates={triggered} planIds={planIds} color="text-cyan-200" market={result.market} />
-          <CandidateGroup title="Early watch" candidates={early} planIds={planIds} color="text-amber-200" market={result.market} />
-          <CandidateGroup title="Wait for pullback" candidates={pullback} planIds={planIds} color="text-orange-200" market={result.market} />
+          <CandidateGroup title="Execution ready" candidates={executionReady} planIds={planIds} color="text-emerald-200" market={result.market} defaultOpen bindChartGesture={bindChartGesture} />
+          <CandidateGroup title="Triggered" candidates={triggered} planIds={planIds} color="text-cyan-200" market={result.market} bindChartGesture={bindChartGesture} />
+          <CandidateGroup title="Early watch" candidates={early} planIds={planIds} color="text-amber-200" market={result.market} bindChartGesture={bindChartGesture} />
+          <CandidateGroup title="Wait for pullback" candidates={pullback} planIds={planIds} color="text-orange-200" market={result.market} bindChartGesture={bindChartGesture} />
         </div>}
+      <TradingViewChartModal chart={chart} onClose={closeChart} />
     </section>
   );
 }
