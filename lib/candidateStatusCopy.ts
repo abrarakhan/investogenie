@@ -15,7 +15,7 @@ export const STRONG_SWING_STATUS_LABEL: Record<StrongSwingStatus, string> = {
 };
 
 export const STRONG_SWING_BLOCKED_BUY_LABEL: Record<Exclude<StrongSwingStatus, "EXECUTION_READY">, string> = {
-  WAIT_FOR_ENTRY: "Buy only on a pullback into the zone",
+  WAIT_FOR_ENTRY: "Buy blocked: extended, do not chase",
   WATCHLIST: "Buy unavailable",
   RISK_OFF: "Buy blocked: risk off",
   INVALIDATED: "Buy blocked: invalidated",

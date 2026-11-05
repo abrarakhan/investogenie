@@ -95,6 +95,9 @@ export async function runScreener(
   if (market) {
     params.push(latestExpectedSessionDate(market));
     const expectedSessionParam = `$${params.length}::date`;
+    // The signal itself must be current, not just the asset's bars and quote:
+    // a stale row's ATR, trigger and verdict would otherwise be priced live.
+    conds.push(`swing_signals.as_of >= ${expectedSessionParam}`);
     conds.push(`exists (select 1 from public.daily_ohlcv o where o.asset_id=swing_signals.asset_id and o.date >= ${expectedSessionParam})`);
     conds.push(`exists (
       select 1 from public.latest_quotes q
@@ -103,6 +106,7 @@ export async function runScreener(
          ${marketOpen ? "and q.updated_at >= now() - interval '7 minutes'" : ""}
     )`);
   } else {
+    conds.push(`swing_signals.as_of >= current_date - interval '4 days'`);
     conds.push(`exists (select 1 from public.daily_ohlcv o where o.asset_id=swing_signals.asset_id and o.date >= current_date - interval '4 days')`);
     conds.push(`exists (select 1 from public.latest_quotes q where q.asset_id=swing_signals.asset_id and q.as_of::date >= current_date - interval '4 days')`);
   }

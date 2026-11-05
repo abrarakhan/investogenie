@@ -210,7 +210,7 @@ export default function StrongSwingCandidates({ candidates, planIds }: { candida
   return (
     <div className="space-y-8">
       <div className="rounded-lg border border-cyan-400/15 bg-cyan-400/[0.035] px-4 py-3 text-xs leading-relaxed text-cyan-50/65">
-        Strong Swing starts with the same base Swing classifier. Every base Swing setup is assessed; base rank is its position in that list. Pullback candidates are confirmed breakouts that are above the buy zone (confirmed entry + 0.50 ATR) or more than 15% above the 20-day average — they are not chased and become buyable only after price returns inside the zone. Strong rank is recalculated after confirmation, liquidity, volatility, circuit-behaviour and entry-safety gates.
+        Strong Swing starts with the same base Swing classifier. Every base Swing setup is assessed; base rank is its position in that list. Pullback candidates are confirmed breakouts that are above the buy zone (confirmed entry + 0.50 ATR) or more than 15% above the 20-day average. They are not buyable, and a later pullback does not reactivate them automatically: Execution ready still needs a current breakout with two confirming closes, so most re-qualify only by setting up again. Strong rank is recalculated after confirmation, liquidity, volatility, circuit-behaviour and entry-safety gates.
       </div>
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-5 sm:gap-3">
         {[

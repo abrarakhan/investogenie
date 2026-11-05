@@ -1146,7 +1146,7 @@ const tradableStocks: HelpArticle = {
       <H2>Tier 2 — next in line (watch, prepare orders)</H2>
       <UL>
         <LI><strong>Armed Swing · Armed</strong> — place a buy-stop limit order in advance; it only fills if the breakout happens.</LI>
-        <LI><strong>Strong Swing · Pullback candidate</strong> — confirmed, but price has run more than 0.5 ATR past the entry or sits more than 15% above its 20-day average. Don&apos;t chase; it turns ready only if price comes back into the zone.</LI>
+        <LI><strong>Strong Swing · Pullback candidate</strong> — confirmed, but price has run more than 0.5 ATR past the entry or sits more than 15% above its 20-day average. Don&apos;t chase. A pullback does not reactivate it automatically; it needs a fresh confirmed breakout.</LI>
         <LI><strong>Momentum Ignition V2 · Pre-ignition / First thrust / Retest setup</strong> — within 3% of the trigger, or broken out but still missing volume or a strong close.</LI>
         <LI><strong>Trend Continuation · Impulse detected</strong> — a heavy-volume range breakout on day one. It is re-checked after 10:15 IST on day two and may turn <strong>Continuation ready</strong>. This engine is observation-only: it never unlocks buying.</LI>
       </UL>
@@ -1217,7 +1217,7 @@ const strongSwingArticle: HelpArticle = {
       <H2>Statuses</H2>
       <UL>
         <LI><strong>Execution ready</strong> — every blocking gate passes; a plan is frozen when you log the trade.</LI>
-        <LI><strong>Pullback candidate</strong> — technically confirmed but above the buy zone or more than 15% above its 20-day average. Not chased; buyable only after price returns inside the zone with every gate passing.</LI>
+        <LI><strong>Pullback candidate</strong> — technically confirmed but above the buy zone or more than 15% above its 20-day average. Not buyable. A later pullback does not reactivate it automatically: Execution ready still needs a current breakout with two confirming closes.</LI>
         <LI><strong>Awaiting confirmation</strong> — some technical gates still fail.</LI>
         <LI><strong>Risk off</strong> — an extension, volatility, stop-width, liquidity, circuit or live-data check failed.</LI>
         <LI><strong>Invalidated</strong> — closed below the trailing stop, or a full ATR back below the breakout level.</LI>

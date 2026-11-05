@@ -31,6 +31,7 @@ describe("runScreener selection", () => {
     const [sql, params] = mocks.query.mock.calls[0];
     expect(sql).toContain("bias <> 'SHORT'");
     expect(sql).toContain("q.updated_at >= now() - interval '7 minutes'");
+    expect(sql).toContain("swing_signals.as_of >= $1::date");
     expect(sql).toContain("limit $4");
     expect(params).toEqual(["2026-09-15", "IN", "NSE", 20]);
   });

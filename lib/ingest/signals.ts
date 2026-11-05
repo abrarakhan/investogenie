@@ -21,6 +21,8 @@ import type { OHLCV } from "@/lib/types";
 export interface ScanSummary {
   scanned: number;
   setups: number;
+  /** Previously active rows this scan could not recompute, now retired to NO_SETUP. */
+  retired: number;
   durationMs: number;
 }
 
@@ -69,6 +71,21 @@ const UPSERT_SQL = `insert into public.swing_signals
     computed_at=now()`;
 
 const COLS = 35;
+
+// Rows the scan did not recompute (no current bars, too little history, delisted)
+// otherwise keep their last verdict, and readers that join on swing_signals would
+// show an August breakout at today's price. Retire them to NO_SETUP. ATR and level
+// fields stay untouched because open ledger trades read them; as_of and computed_at
+// stay too, as the record of when the row was last genuinely calculated.
+const RETIRE_SQL = `update public.swing_signals set
+    verdict='NO_SETUP', bias='NONE', score=0,
+    is_breakout=false, is_squeeze=false, is_long_buildup=false,
+    strategy_tags='{}', strategy_scores='{}'::jsonb,
+    buildup_source=null, participation_ratio=null, volume_expansion=null,
+    breakout_clearance_atr=null, rs_rating=null, rank_score=null,
+    reason='Retired: not recomputed by the latest scan (no current daily bars or too little history).'
+  where computed_at < $1
+    and (verdict <> 'NO_SETUP' or cardinality(strategy_tags) > 0 or rank_score is not null)`;
 const ASSET_BATCH = 60; // assets per round → bounded memory + small upserts
 // Fetching each batch's bars is ~70% of the job's wall clock and is I/O-bound, so a few
 // batches run at a time. Batches hold disjoint asset ids, so their upserts never contend
@@ -84,6 +101,8 @@ export async function computeSignals(databaseUrl: string): Promise<ScanSummary> 
   });
   const client = pool;
   try {
+    // Database clock, so retirement compares against the same clock as computed_at.
+    const { rows: [{ started_at: scanStartedAt }] } = await client.query<{ started_at: Date }>("select now() started_at");
     // Data Health keeps reporting stale assets so they can be repaired, but the
     // signal scan fails closed: only active, tracked assets with a recent daily
     // bar are allowed into calculations. Four days spans a normal weekend.
@@ -256,7 +275,10 @@ export async function computeSignals(databaseUrl: string): Promise<ScanSummary> 
 
     await Promise.all(Array.from({ length: BATCH_CONCURRENCY }, runWorker));
 
-    return { scanned, setups, durationMs: Date.now() - t0 };
+    // Only after every batch succeeded: a failed scan throws above and retires nothing.
+    const retired = scanned > 0 ? (await client.query(RETIRE_SQL, [scanStartedAt])).rowCount ?? 0 : 0;
+
+    return { scanned, setups, retired, durationMs: Date.now() - t0 };
   } finally {
     await client.end();
   }

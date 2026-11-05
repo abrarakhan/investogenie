@@ -7,8 +7,9 @@ export const BENCHMARK_MIN_HISTORY = 200;
  * Preference order alone is not enough: the India `NIFTY` index series only
  * started recently, and choosing it left the 50-session market-regime check
  * permanently unreachable. A candidate with sufficient, current history
- * (`NIFTYBEES` today) now wins; preference order only breaks ties, and the
- * longest history remains the last resort when nothing qualifies.
+ * (`NIFTYBEES` today) now wins. Among equally qualified (or equally
+ * unqualified) candidates the listed preference order decides, and total
+ * history length only breaks a tie between two assets with the same ticker.
  */
 export function chosenBenchmarkSql(countryParam: string, tickersParam: string): string {
   return `select a.id from public.assets a
