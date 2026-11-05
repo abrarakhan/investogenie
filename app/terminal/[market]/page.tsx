@@ -12,6 +12,7 @@ import { addToWatchlist, ensureScaffold, recordTrade, removeWatchlistItem } from
 import ScreenerWidget from "@/components/stock-screener/ScreenerWidget";
 import ConsolidatedHoldingsSection from "@/components/dashboard/ConsolidatedHoldings";
 import { getConsolidatedIndiaHoldings } from "@/lib/portfolioHoldings";
+import { getRecordedLedgerPositions } from "@/lib/recordedPositions";
 
 export const dynamic = "force-dynamic";
 
@@ -65,7 +66,7 @@ export default async function TerminalPage({
   const settings = await getUserSwingSettings();
   const buyOnlySettings = { ...settings, includeShort: false };
 
-  const [holdingRows, watchRows, benchmarkQuoteRows, swing, macro, consolidated] = await Promise.all([
+  const [holdingRows, ledgerPositions, watchRows, benchmarkQuoteRows, swing, macro, consolidated] = await Promise.all([
     query<HoldingRow>(
       `select h.id as hid, h.quantity, h.avg_cost,
               a.id, a.ticker, a.name, a.asset_class, a.exchange, a.currency, a.country
@@ -75,6 +76,7 @@ export default async function TerminalPage({
         order by h.updated_at desc`,
       [user.id],
     ),
+    getRecordedLedgerPositions(user.id, marketId),
     query<WatchRow>(
       `select w.id as wid, a.id, a.ticker, a.name, a.asset_class, a.currency, a.country
          from public.watchlist_items w join public.assets a on a.id = w.asset_id
@@ -100,8 +102,9 @@ export default async function TerminalPage({
   });
   // Scope holdings + watchlist to THIS market only.
   const holdings = holdingRows
-    .map((h) => ({ id: h.hid, quantity: Number(h.quantity), avgCost: Number(h.avg_cost ?? 0), asset: asset(h) }))
-    .filter((h) => h.asset.country === country);
+    .map((h) => ({ id: h.hid, quantity: Number(h.quantity), avgCost: Number(h.avg_cost ?? 0), sourceLabel: "Manual", asset: asset(h) }))
+    .filter((h) => h.asset.country === country)
+    .concat(ledgerPositions);
   const watch = watchRows
     .map((w) => ({ id: w.wid, asset: asset(w) }))
     .filter((w) => w.asset.country === country);
@@ -227,6 +230,7 @@ export default async function TerminalPage({
                         <td className="py-2.5">
                           <span className="font-semibold">{h.asset?.ticker}</span>
                           <span className="ml-2 text-xs text-white/40">{h.asset?.asset_class}</span>
+                          <span className="block text-[10px] text-white/35">{h.sourceLabel}</span>
                         </td>
                         <td className="py-2.5 text-right tabular-nums">{h.quantity}</td>
                         <td className="py-2.5 text-right tabular-nums">{formatMoney(h.avgCost, ccy)}</td>
