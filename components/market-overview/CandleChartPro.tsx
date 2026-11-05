@@ -1,20 +1,22 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   CandlestickSeries,
   ColorType,
   CrosshairMode,
   HistogramSeries,
+  LineSeries,
   createChart,
   type CandlestickData,
   type HistogramData,
   type IChartApi,
-  type ISeriesApi,
+  type LineData,
   type MouseEventParams,
   type Time,
 } from "lightweight-charts";
 import type { OverviewCandle } from "@/lib/marketOverview";
+import { aggregateChartPoints, movingAverage, selectChartRange, type ChartInterval, type ChartRange } from "@/lib/chartSeries";
 
 function fmtDate(iso: string): string {
   return new Intl.DateTimeFormat("en-IN", { day: "2-digit", month: "short", year: "2-digit" }).format(new Date(`${iso}T00:00:00Z`));
@@ -60,33 +62,51 @@ export default function CandleChartPro({
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
-  const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
-  const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
   const [readout, setReadout] = useState<Readout | null>(null);
+  const [interval, setInterval] = useState<ChartInterval>("1D");
+  const [range, setRange] = useState<ChartRange>("1Y");
+  const [chartStyle, setChartStyle] = useState<"CANDLES" | "LINE">("CANDLES");
+  const [showVolume, setShowVolume] = useState(true);
+  const [showSma20, setShowSma20] = useState(false);
+  const [showSma50, setShowSma50] = useState(false);
+
+  const displayedPoints = useMemo(
+    () => aggregateChartPoints(selectChartRange(candle.points, range), interval),
+    [candle.points, interval, range],
+  );
 
   const candleData = useMemo<CandlestickData<Time>[]>(
-    () => candle.points.map((point) => ({
+    () => displayedPoints.map((point) => ({
       time: point.date,
       open: point.open,
       high: point.high,
       low: point.low,
       close: point.close,
     })),
-    [candle.points],
+    [displayedPoints],
   );
 
   const volumeData = useMemo<HistogramData<Time>[]>(
-    () => candle.points.map((point) => ({
+    () => displayedPoints.map((point) => ({
       time: point.date,
       value: point.volume ?? 0,
       color: point.close >= point.open ? "rgba(53, 211, 153, 0.32)" : "rgba(255, 107, 118, 0.32)",
     })),
-    [candle.points],
+    [displayedPoints],
+  );
+
+  const sma20Data = useMemo<LineData<Time>[]>(
+    () => movingAverage(displayedPoints, 20).map((point) => ({ time: point.date, value: point.value })),
+    [displayedPoints],
+  );
+  const sma50Data = useMemo<LineData<Time>[]>(
+    () => movingAverage(displayedPoints, 50).map((point) => ({ time: point.date, value: point.value })),
+    [displayedPoints],
   );
 
   const byTime = useMemo(() => {
     const map = new Map<string, Readout>();
-    for (const point of candle.points) {
+    for (const point of displayedPoints) {
       map.set(point.date, {
         date: point.date,
         open: point.open,
@@ -97,9 +117,9 @@ export default function CandleChartPro({
       });
     }
     return map;
-  }, [candle.points]);
+  }, [displayedPoints]);
 
-  const latest = candle.points[candle.points.length - 1] ?? null;
+  const latest = displayedPoints[displayedPoints.length - 1] ?? null;
   const shown = readout ?? (latest ? {
     date: latest.date,
     open: latest.open,
@@ -162,32 +182,33 @@ export default function CandleChartPro({
       },
     });
 
-    const candleSeries = chart.addSeries(CandlestickSeries, {
-      upColor: "#35d399",
-      downColor: "#ff6b76",
-      borderUpColor: "#35d399",
-      borderDownColor: "#ff6b76",
-      wickUpColor: "#35d399",
-      wickDownColor: "#ff6b76",
-      priceLineColor: accent,
-      priceLineWidth: 2,
-      priceFormat: { type: "price", precision: currency === "INR" ? 2 : 2, minMove: 0.01 },
-    });
+    if (chartStyle === "CANDLES") {
+      const candleSeries = chart.addSeries(CandlestickSeries, {
+        upColor: "#35d399", downColor: "#ff6b76", borderUpColor: "#35d399", borderDownColor: "#ff6b76",
+        wickUpColor: "#35d399", wickDownColor: "#ff6b76", priceLineColor: accent, priceLineWidth: 2,
+        priceFormat: { type: "price", precision: 2, minMove: 0.01 },
+      });
+      candleSeries.setData(candleData);
+    } else {
+      const lineSeries = chart.addSeries(LineSeries, { color: accent, lineWidth: 2, priceLineColor: accent });
+      lineSeries.setData(displayedPoints.map((point) => ({ time: point.date, value: point.close })));
+    }
 
-    const volumeSeries = chart.addSeries(HistogramSeries, {
-      priceFormat: { type: "volume" },
-      priceScaleId: "volume",
-      lastValueVisible: false,
-      priceLineVisible: false,
-    });
-
-    chart.priceScale("volume").applyOptions({
-      scaleMargins: { top: 0.82, bottom: 0 },
-      borderVisible: false,
-    });
-
-    candleSeries.setData(candleData);
-    volumeSeries.setData(volumeData);
+    if (showVolume) {
+      const volumeSeries = chart.addSeries(HistogramSeries, {
+        priceFormat: { type: "volume" }, priceScaleId: "volume", lastValueVisible: false, priceLineVisible: false,
+      });
+      chart.priceScale("volume").applyOptions({ scaleMargins: { top: 0.82, bottom: 0 }, borderVisible: false });
+      volumeSeries.setData(volumeData);
+    }
+    if (showSma20 && sma20Data.length) {
+      const series = chart.addSeries(LineSeries, { color: "#fbbf24", lineWidth: 2, priceLineVisible: false, lastValueVisible: false });
+      series.setData(sma20Data);
+    }
+    if (showSma50 && sma50Data.length) {
+      const series = chart.addSeries(LineSeries, { color: "#a78bfa", lineWidth: 2, priceLineVisible: false, lastValueVisible: false });
+      series.setData(sma50Data);
+    }
     chart.timeScale().fitContent();
 
     const handleCrosshair = (param: MouseEventParams<Time>) => {
@@ -200,20 +221,29 @@ export default function CandleChartPro({
 
     chart.subscribeCrosshairMove(handleCrosshair);
     chartRef.current = chart;
-    candleSeriesRef.current = candleSeries;
-    volumeSeriesRef.current = volumeSeries;
 
     return () => {
       chart.unsubscribeCrosshairMove(handleCrosshair);
       chart.remove();
       chartRef.current = null;
-      candleSeriesRef.current = null;
-      volumeSeriesRef.current = null;
     };
-  }, [accent, byTime, candleData, currency, volumeData]);
+  }, [accent, byTime, candleData, chartStyle, currency, displayedPoints, showSma20, showSma50, showVolume, sma20Data, sma50Data, volumeData]);
 
   return (
-    <div className="relative overflow-hidden rounded-md border border-[#293039] bg-[#0d1115]">
+    <div className="overflow-hidden rounded-md border border-[#293039] bg-[#0d1115]">
+      <div className="flex flex-wrap items-center gap-1.5 border-b border-white/10 bg-[#0a0e13] px-2 py-2 text-[10px] font-bold text-white/55 sm:px-3">
+        <ControlGroup label="Interval" values={["1D", "5D", "1W", "1M"]} active={interval} onChange={(value) => setInterval(value as ChartInterval)} />
+        <span className="mx-1 h-5 w-px bg-white/10" />
+        <ControlGroup label="Range" values={["1M", "3M", "6M", "1Y", "ALL"]} active={range} onChange={(value) => setRange(value as ChartRange)} />
+        <span className="mx-1 h-5 w-px bg-white/10" />
+        <Toggle active={chartStyle === "CANDLES"} onClick={() => setChartStyle("CANDLES")}>Candles</Toggle>
+        <Toggle active={chartStyle === "LINE"} onClick={() => setChartStyle("LINE")}>Line</Toggle>
+        <Toggle active={showVolume} onClick={() => setShowVolume((value) => !value)}>Volume</Toggle>
+        <Toggle active={showSma20} color="text-amber-300" onClick={() => setShowSma20((value) => !value)}>SMA 20</Toggle>
+        <Toggle active={showSma50} color="text-violet-300" onClick={() => setShowSma50((value) => !value)}>SMA 50</Toggle>
+        <button type="button" onClick={() => chartRef.current?.timeScale().fitContent()} className="ml-auto rounded border border-white/10 px-2 py-1.5 hover:bg-white/10">Fit</button>
+      </div>
+      <div className="relative">
       <div className="pointer-events-none absolute left-3 top-3 z-10 rounded-md border border-[#2b333d] bg-[#0d1115]/92 px-3 py-2 shadow-xl backdrop-blur">
         <div className="mb-1 flex flex-wrap items-center gap-2 text-[10px] uppercase tracking-[0.16em] text-white/35">
           <span className="font-bold text-white/70">{candle.ticker}</span>
@@ -234,8 +264,19 @@ export default function CandleChartPro({
       <div ref={containerRef} className="h-[430px] w-full" />
 
       <div className="pointer-events-none absolute bottom-2 right-3 rounded-full border border-white/10 bg-black/35 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-white/35">
-        Scroll to zoom · drag to pan
+        {interval} · Scroll to zoom · drag to pan
+      </div>
       </div>
     </div>
   );
+}
+
+function Toggle({ active, onClick, color = "text-white/65", children }: { active: boolean; onClick: () => void; color?: string; children: ReactNode }) {
+  return <button type="button" onClick={onClick} className={`rounded border px-2 py-1.5 ${active ? `border-cyan-400/40 bg-cyan-400/10 ${color}` : "border-white/10 text-white/40 hover:bg-white/10"}`}>{children}</button>;
+}
+
+function ControlGroup({ label, values, active, onChange }: { label: string; values: string[]; active: string; onChange: (value: string) => void }) {
+  return <div className="flex items-center gap-1" aria-label={label}>
+    {values.map((value) => <button key={value} type="button" onClick={() => onChange(value)} className={`rounded px-2 py-1.5 ${active === value ? "bg-white/12 text-white" : "text-white/40 hover:bg-white/8"}`}>{value}</button>)}
+  </div>;
 }
