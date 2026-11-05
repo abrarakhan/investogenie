@@ -359,7 +359,7 @@ export default function ScreenerTable({
       </div>
 
       <p className="mb-3 text-[11px] text-white/35">
-        Double-click a stock row, or long-press a stock card on mobile, to open its TradingView chart.
+        Double-click a stock row, or long-press a stock card on mobile, to open its interactive chart.
       </p>
 
       {filtered.length === 0 && (

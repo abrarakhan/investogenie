@@ -219,7 +219,7 @@ export default function MomentumIgnitionCandidates({ result, planIds }: { result
 
       <div className="rounded-lg border border-cyan-400/15 bg-cyan-400/[0.035] px-4 py-3 text-xs leading-relaxed text-cyan-100/65">
         V2 targets the first thrust or first retest over the next 1–2 sessions. Momentum ready is independently actionable after its freshness, liquidity, trend, volume, volatility, circuit and early-timing checks pass. Strong Swing remains a separate, later-confirmation strategy.
-        <span className="mt-2 block text-white/45">Double-click a stock card, or long-press it on mobile, to open its TradingView chart.</span>
+        <span className="mt-2 block text-white/45">Double-click a stock card, or long-press it on mobile, to open its interactive chart.</span>
       </div>
 
       {ranked.length === 0

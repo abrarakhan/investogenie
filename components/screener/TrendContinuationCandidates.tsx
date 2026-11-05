@@ -128,7 +128,7 @@ export default function TrendContinuationCandidates({ candidates }: { candidates
 
     <div className="rounded-lg border border-violet-400/15 bg-violet-400/[0.035] px-4 py-3 text-xs leading-relaxed text-violet-100/65">
       Continuation ready means day two is holding a confirmed breakout (stop under the day-one low), or an orderly pullback passes the trend, persistence and entry-geometry checks. It remains observation-only: it does not create a frozen trade plan, unlock buying, or feed auto-buy.
-      <span className="mt-2 block text-white/45">Double-click a stock card, or long-press it on mobile, to open its TradingView chart.</span>
+      <span className="mt-2 block text-white/45">Double-click a stock card, or long-press it on mobile, to open its interactive chart.</span>
     </div>
 
     {!candidates.length

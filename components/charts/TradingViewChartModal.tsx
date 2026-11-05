@@ -1,6 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type HTMLAttributes, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type HTMLAttributes, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
+import CandleChartPro from "@/components/market-overview/CandleChartPro";
+import type { OverviewCandle } from "@/lib/marketOverview";
 
 export interface ChartSymbol {
   ticker: string;
@@ -23,20 +25,8 @@ function tradingViewSymbol({ ticker, exchange }: ChartSymbol): string {
   return `${cleanExchange}:${cleanTicker}`;
 }
 
-function chartUrl(symbol: ChartSymbol): string {
-  const params = new URLSearchParams({
-    symbol: tradingViewSymbol(symbol),
-    interval: "D",
-    theme: "dark",
-    style: "1",
-    locale: "en",
-    toolbar_bg: "#080b12",
-    hide_side_toolbar: "0",
-    allow_symbol_change: "1",
-    save_image: "0",
-    calendar: "0",
-  });
-  return `https://s.tradingview.com/widgetembed/?${params.toString()}`;
+function tradingViewUrl(symbol: ChartSymbol): string {
+  return `https://www.tradingview.com/chart/?symbol=${encodeURIComponent(tradingViewSymbol(symbol))}`;
 }
 
 export function useTradingViewChart() {
@@ -82,6 +72,15 @@ export function useTradingViewChart() {
 }
 
 export default function TradingViewChartModal({ chart, onClose }: { chart: ChartSymbol | null; onClose: () => void }) {
+  const [chartData, setChartData] = useState<{ key: string; candle: OverviewCandle | null; error: string | null } | null>(null);
+  const market = chart && ["NSE", "BSE"].includes(chart.exchange.trim().toUpperCase()) ? "IN" : "US";
+  const requestKey = chart ? `${market}:${chart.ticker.trim().toUpperCase()}` : "";
+  const currentData = chartData?.key === requestKey ? chartData : null;
+  const candle = currentData?.candle ?? null;
+  const error = currentData?.error ?? null;
+  const loading = Boolean(chart) && currentData === null;
+  const externalUrl = useMemo(() => chart ? tradingViewUrl(chart) : "https://www.tradingview.com/", [chart]);
+
   useEffect(() => {
     if (!chart) return;
     const onKeyDown = (event: KeyboardEvent) => {
@@ -96,18 +95,45 @@ export default function TradingViewChartModal({ chart, onClose }: { chart: Chart
     };
   }, [chart, onClose]);
 
+  useEffect(() => {
+    if (!chart) return;
+    const controller = new AbortController();
+    const params = new URLSearchParams({ market, ticker: chart.ticker, days: "400" });
+    fetch(`/api/market-overview/candles?${params.toString()}`, { signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) throw new Error(`Chart request failed (${response.status})`);
+        return response.json() as Promise<{ candle?: OverviewCandle | null; error?: string }>;
+      })
+      .then((payload) => {
+        if (!payload.candle?.points.length) throw new Error(payload.error ?? "No OHLCV history is available for this stock.");
+        setChartData({ key: requestKey, candle: payload.candle, error: null });
+      })
+      .catch((reason: unknown) => {
+        if (reason instanceof DOMException && reason.name === "AbortError") return;
+        setChartData({ key: requestKey, candle: null, error: reason instanceof Error ? reason.message : "Could not load this chart." });
+      });
+    return () => controller.abort();
+  }, [chart, market, requestKey]);
+
   if (!chart) return null;
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 p-2 backdrop-blur-sm sm:p-6" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-      <section role="dialog" aria-modal="true" aria-label={`${chart.ticker} TradingView chart`} className="flex h-[88dvh] w-full max-w-6xl flex-col overflow-hidden rounded-xl border border-white/15 bg-[#080b12] shadow-2xl">
+      <section role="dialog" aria-modal="true" aria-label={`${chart.ticker} candlestick chart`} className="flex max-h-[92dvh] w-full max-w-6xl flex-col overflow-hidden rounded-xl border border-white/15 bg-[#080b12] shadow-2xl">
         <header className="flex min-h-14 items-center justify-between gap-3 border-b border-white/10 px-4">
           <div>
             <div className="font-bold">{chart.ticker}</div>
-            <div className="text-[10px] uppercase tracking-wider text-white/40">{chart.exchange} · TradingView daily chart</div>
+            <div className="text-[10px] uppercase tracking-wider text-white/40">{chart.exchange} · InvestoGenie daily OHLCV</div>
           </div>
-          <button type="button" onClick={onClose} className="inline-flex min-h-10 items-center rounded-lg border border-white/15 px-4 text-sm font-semibold text-white/75 hover:bg-white/10">Close</button>
+          <div className="flex items-center gap-2">
+            <a href={externalUrl} target="_blank" rel="noreferrer" className="inline-flex min-h-10 items-center rounded-lg border border-cyan-400/25 px-3 text-xs font-semibold text-cyan-200 hover:bg-cyan-400/10">Open in TradingView</a>
+            <button type="button" onClick={onClose} className="inline-flex min-h-10 items-center rounded-lg border border-white/15 px-4 text-sm font-semibold text-white/75 hover:bg-white/10">Close</button>
+          </div>
         </header>
-        <iframe title={`${chart.ticker} TradingView chart`} src={chartUrl(chart)} className="min-h-0 flex-1 border-0" allowFullScreen />
+        <div className="min-h-[470px] overflow-auto p-2 sm:p-4">
+          {loading && <div className="flex min-h-[430px] items-center justify-center text-sm text-white/45">Loading {chart.ticker} candles…</div>}
+          {error && <div className="flex min-h-[430px] flex-col items-center justify-center gap-3 px-6 text-center text-sm text-amber-100/75"><p>{error}</p><a href={externalUrl} target="_blank" rel="noreferrer" className="rounded-lg border border-cyan-400/25 px-4 py-2 font-semibold text-cyan-200">Open in TradingView</a></div>}
+          {candle && <CandleChartPro candle={candle} accent="#22d3ee" currency={market === "IN" ? "INR" : "USD"} />}
+        </div>
       </section>
     </div>
   );

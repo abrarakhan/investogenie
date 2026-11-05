@@ -193,7 +193,7 @@ export default function ArmedSwingCandidates({ result, planIds }: { result: Arme
         Scanned {result.universeCount.toLocaleString("en-IN")} active stocks; {result.scannedCount} completed-session bases within 10% of their pivot were assessed.
         Bases use completed sessions only{result.marketOpen ? "; today's session is used only for the live trigger and volume-pace check" : ""}.
         Relative strength is ranked across the whole market on weighted 3/6/9/12-month return.
-        <span className="mt-2 block text-white/45">Double-click a stock card, or long-press it on mobile, to open its TradingView chart.</span>
+        <span className="mt-2 block text-white/45">Double-click a stock card, or long-press it on mobile, to open its interactive chart.</span>
       </div>
       {result.candidates.length > 0 && (
         <div className={`rounded-lg border px-4 py-3 text-xs leading-relaxed ${result.resultsVerifiedCount / result.candidates.length >= 0.9 ? "border-white/10 text-white/50" : "border-amber-400/25 bg-amber-400/[0.04] text-amber-100/75"}`}>
