@@ -37,6 +37,15 @@ class IndiaQuotePriorityTests(unittest.TestCase):
         self.assertEqual(connection.last_cursor.sql.count("interval '7 days'"), 2)
         self.assertNotIn("interval '1 day'", connection.last_cursor.sql)
 
+    def test_same_session_breeze_quotes_are_not_selected_for_fallback_overwrite(self) -> None:
+        connection = _Connection()
+
+        load_assets(connection, "NSE", None, priority_only=True)
+
+        self.assertIn("q.source='BREEZE_LIVE'", connection.last_cursor.sql)
+        self.assertIn("Asia/Kolkata", connection.last_cursor.sql)
+        self.assertNotIn("q.updated_at >= now() - interval '20 minutes'", connection.last_cursor.sql)
+
 
 if __name__ == "__main__":
     unittest.main()

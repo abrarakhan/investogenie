@@ -28,6 +28,8 @@ export interface StrongSwingInput {
   bars: OHLCV[];
   benchmarkBars: OHLCV[];
   microstructure?: { bestBid: number | null; bestAsk: number | null; lowerCircuit: number | null; quoteFresh: boolean };
+  /** Live broker execution data is mandatory only while the exchange is open. */
+  requireLiveExecutionData?: boolean;
 }
 
 export interface StrongSwingAssessment {
@@ -283,9 +285,25 @@ export function assessStrongSwing(input: StrongSwingInput): StrongSwingAssessmen
       `Technical stop requires ${stopRiskPct.toFixed(1)}% risk; maximum 7%.`, "execution"),
     gate("circuit_behaviour", "Circuit behaviour", circuitLikeSessions20 < 2,
       `${circuitLikeSessions20} circuit-like closes in 20 sessions; maximum 1.`, "execution"),
-    gate("live_quote", "Live broker quote", input.market !== "IN" || !input.microstructure || Boolean(input.microstructure.quoteFresh), input.microstructure?.quoteFresh ? "Breeze quote is current." : "No Breeze execution quote; existing safety gates apply.", "execution"),
-    gate("live_spread", "Live bid-ask spread", input.market !== "IN" || !input.microstructure?.bestBid || !input.microstructure?.bestAsk || ((input.microstructure.bestAsk-input.microstructure.bestBid)/input.microstructure.bestAsk)*100 <= 0.75, input.microstructure?.bestBid && input.microstructure?.bestAsk ? `${(((input.microstructure.bestAsk-input.microstructure.bestBid)/input.microstructure.bestAsk)*100).toFixed(2)}% spread; maximum 0.75%.` : "Not verified: Breeze depth absent on this tick.", "execution"),
-    gate("live_circuit", "Circuit exit room", input.market !== "IN" || !input.microstructure?.lowerCircuit || currentPrice > input.microstructure.lowerCircuit * 1.03, input.microstructure?.lowerCircuit ? `${(((currentPrice/input.microstructure.lowerCircuit)-1)*100).toFixed(1)}% above lower circuit; requires 3%.` : "Not verified: Breeze circuit band absent on this tick.", "execution"),
+    gate("live_quote", "Live broker quote", input.market !== "IN" || !input.requireLiveExecutionData || Boolean(input.microstructure?.quoteFresh),
+      input.market !== "IN" || !input.requireLiveExecutionData ? "Live broker verification is required only during the open India session."
+        : input.microstructure?.quoteFresh ? "Breeze quote is current." : "Fresh Breeze execution quote is unavailable.", "execution"),
+    gate("live_spread", "Live bid-ask spread", input.market !== "IN" || !input.requireLiveExecutionData || Boolean(
+      input.microstructure?.bestBid && input.microstructure?.bestAsk
+      && ((input.microstructure.bestAsk-input.microstructure.bestBid)/input.microstructure.bestAsk)*100 <= 0.75,
+    ), input.market !== "IN" || !input.requireLiveExecutionData ? "Live depth is required only during the open India session."
+      : input.microstructure?.bestBid && input.microstructure?.bestAsk
+        ? `${(((input.microstructure.bestAsk-input.microstructure.bestBid)/input.microstructure.bestAsk)*100).toFixed(2)}% spread; maximum 0.75%.`
+        : "Not verified: Breeze bid/ask depth is absent.", "execution"),
+    // Breeze cash quotes do not consistently supply circuit bands. Keep the
+    // historical circuit-behaviour gate authoritative instead of turning a
+    // provider coverage gap into zero candidates across the entire market.
+    gate("live_circuit", "Circuit exit room", input.market !== "IN" || !input.requireLiveExecutionData
+      || !input.microstructure?.lowerCircuit || currentPrice > input.microstructure.lowerCircuit * 1.03,
+    input.market !== "IN" || !input.requireLiveExecutionData ? "Live circuit verification is required only during the open India session."
+      : input.microstructure?.lowerCircuit
+        ? `${(((currentPrice/input.microstructure.lowerCircuit)-1)*100).toFixed(1)}% above lower circuit; requires 3%.`
+        : "Live circuit band is unavailable; the 20-session circuit-behaviour gate remains authoritative.", "execution"),
   ];
 
   const passed = gates.filter((item) => item.passed).length;

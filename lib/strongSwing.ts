@@ -5,6 +5,7 @@ import { assessStrongSwing, type StrongSwingAssessment } from "@/lib/analytics/s
 import { rankStrongSwingCandidates } from "@/lib/analytics/candidateRanking";
 import type { SwingSettings } from "@/lib/settings";
 import type { MarketId, OHLCV } from "@/lib/types";
+import { isMarketOpenNow, refreshMarketHolidays, zonedMarketClock } from "@/lib/market-calendar.mjs";
 
 interface BarRow {
   asset_id: string;
@@ -170,6 +171,9 @@ export async function getStrongSwingCandidates(
   capture: StrongSwingSnapshotCapture = { source: "interactive" },
 ): Promise<StrongSwingCandidate[]> {
   const country = market;
+  await refreshMarketHolidays(market);
+  const marketOpen = isMarketOpenNow(market);
+  const marketDate = zonedMarketClock(market).date;
   const base = await runScreener(
     country,
     { ...settings, includeShort: false },
@@ -188,9 +192,10 @@ export async function getStrongSwingCandidates(
          from (
            select o.*,row_number() over(partition by asset_id order by date desc) rn
              from public.daily_ohlcv o where asset_id = any($1::uuid[])
+              and not ($2::boolean and o.date >= $3::date)
          ) ranked
         where rn <= 260 order by asset_id,date`,
-      [ids],
+      [ids, marketOpen, marketDate],
     ),
     query<SignalContext>(
       `select s.asset_id,s.long_trigger,s.atr,q.best_bid,q.best_ask,q.lower_circuit,q.updated_at::text quote_updated_at,q.source quote_source from public.swing_signals s left join public.latest_quotes q on q.asset_id=s.asset_id where s.asset_id = any($1::uuid[])`,
@@ -207,8 +212,9 @@ export async function getStrongSwingCandidates(
        )
        select o.asset_id,o.date::text date,o.open,o.high,o.low,o.close,o.volume,o.open_interest
          from public.daily_ohlcv o join chosen c on c.id=o.asset_id
+        where not ($3::boolean and o.date >= $4::date)
         order by o.date desc limit 260`,
-      [country, market === "IN" ? ["NIFTY", "NIFTYBEES"] : ["SPY"]],
+      [country, market === "IN" ? ["NIFTY", "NIFTYBEES"] : ["SPY"], marketOpen, marketDate],
     ),
   ]);
 
@@ -248,7 +254,8 @@ export async function getStrongSwingCandidates(
       stopAtrMult: settings.stopAtrMult,
       bars,
       benchmarkBars,
-      microstructure: context.quote_source === "BREEZE_LIVE" ? { bestBid: context.best_bid === null ? null : Number(context.best_bid), bestAsk: context.best_ask === null ? null : Number(context.best_ask), lowerCircuit: context.lower_circuit === null ? null : Number(context.lower_circuit), quoteFresh: Boolean(context.quote_updated_at) && Date.now() - Date.parse(context.quote_updated_at!) <= 10 * 60 * 1000 } : undefined,
+      requireLiveExecutionData: market === "IN" && marketOpen,
+      microstructure: context.quote_source === "BREEZE_LIVE" ? { bestBid: context.best_bid === null ? null : Number(context.best_bid), bestAsk: context.best_ask === null ? null : Number(context.best_ask), lowerCircuit: context.lower_circuit === null ? null : Number(context.lower_circuit), quoteFresh: Boolean(context.quote_updated_at) && Date.now() - Date.parse(context.quote_updated_at!) <= 5 * 60 * 1000 } : undefined,
     });
     const recent = bars.slice(-22);
     // Strong Swing freezes the confirmed breakout entry. Repricing entry to a

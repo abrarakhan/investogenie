@@ -506,7 +506,7 @@ export async function refreshQuotes(databaseUrl: string, startISO = localToday()
            from public.latest_quotes
           where source = any($1::text[])
             and as_of = (now() at time zone 'Asia/Kolkata')::date
-            and updated_at >= now() - interval '30 minutes'`,
+            and (source='BREEZE_LIVE' or updated_at >= now() - interval '30 minutes')`,
         [["BREEZE_LIVE", "GOOGLE_FINANCE_LIVE", "YAHOO_FINANCE_LIVE"]],
       );
       const recentPrimaryIds = new Set(
@@ -514,9 +514,10 @@ export async function refreshQuotes(databaseUrl: string, startISO = localToday()
           .filter((row) => row.source === "YAHOO_FINANCE_LIVE" || row.source === "BREEZE_LIVE")
           .map((row) => row.assetId),
       );
-      // Bhavcopy is authoritative for EOD history, but must never replace a
-      // current-session intraday quote. Retaining the existing row also keeps
-      // its real provider timestamp instead of making an old close look fresh.
+      // A lower-priority source must never replace a same-session Breeze row.
+      // If Breeze becomes stale the row remains visibly stale and execution
+      // fails closed; replacing it with Yahoo/bhavcopy made classifications
+      // oscillate between two prices and two source-authority states.
       for (const row of recentLive.rows) rowsByAsset.delete(row.assetId);
       for (const [assetId, q] of indiaLive) {
         if (!recentPrimaryIds.has(assetId)) {
@@ -537,7 +538,12 @@ export async function refreshQuotes(databaseUrl: string, startISO = localToday()
         `insert into public.latest_quotes (asset_id, price, change_pct, currency, as_of, source)
          values ${vals.join(",")}
          on conflict (asset_id) do update set price=excluded.price, change_pct=excluded.change_pct,
-           currency=excluded.currency, as_of=excluded.as_of, source=excluded.source, updated_at=now()`,
+           currency=excluded.currency, as_of=excluded.as_of, source=excluded.source, updated_at=now()
+         where not (
+           public.latest_quotes.source='BREEZE_LIVE'
+           and public.latest_quotes.as_of::date=(now() at time zone 'Asia/Kolkata')::date
+           and excluded.source<>'BREEZE_LIVE'
+         )`,
         params);
     }
 

@@ -87,10 +87,40 @@ describe("assessStrongSwing", () => {
       market: "IN", verdict: "LONG_BREAKOUT", isBreakout: true,
       trigger: entry, atr: 2, trailingStop: null, currentPrice: entry + 0.2,
       stopAtrMult: 1.5, bars, benchmarkBars: benchmark(),
+      requireLiveExecutionData: true,
       microstructure: { bestBid: 100, bestAsk: 101, lowerCircuit: 90, quoteFresh: true },
     });
     expect(result.status).toBe("RISK_OFF");
     expect(result.gates.find((gate) => gate.key === "live_spread")?.passed).toBe(false);
+  });
+
+  it("fails closed during India market hours when Breeze execution data is absent", () => {
+    const { bars, entry } = cleanConfirmedBars();
+    const result = assessStrongSwing({
+      market: "IN", verdict: "LONG_BREAKOUT", isBreakout: true,
+      trigger: entry, atr: 2, trailingStop: null, currentPrice: entry + 0.2,
+      stopAtrMult: 1.5, bars, benchmarkBars: benchmark(),
+      requireLiveExecutionData: true,
+    });
+
+    expect(result.status).toBe("RISK_OFF");
+    expect(result.gates.find((gate) => gate.key === "live_quote")?.passed).toBe(false);
+    expect(result.gates.find((gate) => gate.key === "live_spread")?.passed).toBe(false);
+    expect(result.gates.find((gate) => gate.key === "live_circuit")?.passed).toBe(true);
+  });
+
+  it("does not require intraday depth after the India session closes", () => {
+    const { bars, entry } = cleanConfirmedBars();
+    const result = assessStrongSwing({
+      market: "IN", verdict: "LONG_BREAKOUT", isBreakout: true,
+      trigger: entry, atr: 2, trailingStop: null, currentPrice: entry + 0.2,
+      stopAtrMult: 1.5, bars, benchmarkBars: benchmark(),
+      requireLiveExecutionData: false,
+    });
+
+    expect(result.gates.find((gate) => gate.key === "live_quote")?.passed).toBe(true);
+    expect(result.gates.find((gate) => gate.key === "live_spread")?.passed).toBe(true);
+    expect(result.gates.find((gate) => gate.key === "live_circuit")?.passed).toBe(true);
   });
 
   it("does not reprice a missed breakout into a new entry", () => {

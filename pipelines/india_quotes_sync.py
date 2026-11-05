@@ -120,7 +120,7 @@ def load_assets(conn, exchange: str, limit: int | None, priority_only: bool = Fa
                )
                and not (
                  q.source='BREEZE_LIVE'
-                 and q.updated_at >= now() - interval '20 minutes'
+                 and q.as_of::date=(now() at time zone 'Asia/Kolkata')::date
                )
              order by ledger_open desc,(priority.last_seen_at is not null) desc,
                       priority.last_seen_at desc nulls last,(signal.score is not null) desc,
@@ -226,6 +226,11 @@ def upsert_market_data(conn, rows: list[tuple]) -> int:
               as_of=excluded.as_of,
               source=excluded.source,
               updated_at=now()
+            where not (
+              public.latest_quotes.source='BREEZE_LIVE'
+              and public.latest_quotes.as_of::date=(now() at time zone 'Asia/Kolkata')::date
+              and excluded.source<>'BREEZE_LIVE'
+            )
             """,
             [row[:6] for row in rows],
             page_size=500,

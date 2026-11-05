@@ -15,6 +15,8 @@ import { markLiveMarketTargets } from "@/lib/liveMarketTargets";
 import { zonedMarketClock } from "@/lib/market-calendar.mjs";
 import { captureExecutionPlans, momentumExecutionPlanInputs, strongSwingExecutionPlanInputs, type ExecutionPlanInput } from "@/lib/swingExecutionPlans";
 import { getTrendContinuationCandidates } from "@/lib/trendContinuation";
+import ReadySignalHistory from "@/components/screener/ReadySignalHistory";
+import { getTodayReadySignalHistory } from "@/lib/candidateSignalHistory";
 
 export const dynamic = "force-dynamic";
 
@@ -30,11 +32,12 @@ export default async function StrongSwingPage({
   if (!user) redirect("/login");
 
   const settings = await getUserSwingSettings();
-  const [candidates, legacyMomentumIgnition, momentumIgnition, trendContinuation] = await Promise.all([
+  const [candidates, legacyMomentumIgnition, momentumIgnition, trendContinuation, readyHistory] = await Promise.all([
     getStrongSwingCandidates(market, settings),
     getLegacyMomentumIgnitionCandidates(market, settings),
     getMomentumIgnitionCandidates(market, settings),
     getTrendContinuationCandidates(market),
+    getTodayReadySignalHistory(user.id, market),
   ]);
   const executionPlans: ExecutionPlanInput[] = [
     ...strongSwingExecutionPlanInputs(candidates, settings.trailAtrMult),
@@ -49,6 +52,7 @@ export default async function StrongSwingPage({
       ...candidates.map((candidate) => candidate.assetId),
       ...legacyMomentumIgnition.candidates.map((candidate) => candidate.assetId),
       ...momentumIgnition.candidates.map((candidate) => candidate.assetId),
+      ...trendContinuation.map((candidate) => candidate.assetId),
     ],
     "strong_swing",
   );
@@ -65,10 +69,12 @@ export default async function StrongSwingPage({
         ...candidates.map((candidate) => candidate.assetId),
         ...legacyMomentumIgnition.candidates.map((candidate) => candidate.assetId),
         ...momentumIgnition.candidates.map((candidate) => candidate.assetId),
+        ...trendContinuation.map((candidate) => candidate.assetId),
       ]} />
       <div className="mb-6 border-l-2 border-[var(--ig-accent)] pl-4 text-sm leading-relaxed text-white/52">
         Buy &amp; Track is enabled only for green Execution Ready setups and records the frozen plan in your ledger. Breeze currently supplies live market data; it does not place the broker order, so confirm exchange restrictions in ICICI Direct before buying.
       </div>
+      <ReadySignalHistory rows={readyHistory} market={market} />
       <section id="strong-swing" className="scroll-mt-6">
         {market === "IN" && <div className="mb-6">
           <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-emerald-300">Base Swing lineage · confirmed execution engine</div>
