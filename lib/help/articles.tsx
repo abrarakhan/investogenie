@@ -53,15 +53,17 @@ const swingEngine: HelpArticle = {
           { k: "Donchian channel", v: "highest high / lowest low of the prior 20 bars (the current bar is excluded)." },
           { k: "Breakout", v: "close > prior-20-bar Donchian high, or close > upper Bollinger band." },
           { k: "Long build-up (OI)", v: "price up AND Open Interest up ≥ 5% over the 5-bar short window (derivatives)." },
-          { k: "Volume build-up (cash)", v: "no OI: price up over the 5-bar window AND its average volume ≥ 1.2× the 20 bars before it." },
+          { k: "Volume participation build-up (cash)", v: "no OI: price up over the 5-bar window AND its average volume ≥ 1.2× the 20 bars before it. This is participation over five sessions, not breakout-day volume confirmation; breakout-day volume is shown separately." },
           { k: "Volume", v: "latest volume ÷ 20-bar average; ≥ 1.5× corroborates a trigger." },
         ]}
       />
       <P>
         The conviction <strong>score (0–1)</strong> adds up the evidence: breakout 0.35, squeeze
-        0.25, build-up 0.30, volume confirmation 0.10. A breakout with a build-up is a
-        <em> long breakout</em>; a squeeze with a build-up is a <em>coiled spring</em>; a breakout
-        without one stays &ldquo;breakout unconfirmed&rdquo;.
+        0.25, build-up 0.30, breakout-day volume ≥ 1.5× 0.10. Verdicts describe evidence:
+        <em> breakout + build-up</em>, <em>squeeze + build-up</em> or <em>breakout, no build-up</em>.
+        They are discovery and ranking signals, not buy calls; a replay of 6,944 build-up breakouts
+        did not show them to be directly tradable. Execution readiness is decided by Strong Swing,
+        which still requires 1.5× volume on the confirmation session.
       </P>
       <P>
         Equal scores are ordered by a tie-break, never by name: the average of breakout clearance

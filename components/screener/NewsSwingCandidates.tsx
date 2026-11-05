@@ -1,4 +1,5 @@
 import type { NewsSwingCandidate } from "@/lib/newsSwing";
+import { swingBuildupLabel } from "@/lib/candidateStatusCopy";
 
 const STATE_STYLE = {
   FAVORED: "border-emerald-400/35 bg-emerald-400/10 text-emerald-300",
@@ -72,8 +73,8 @@ function CandidateCard({ candidate, rank }: { candidate: NewsSwingCandidate; ran
       <div className="mt-3 flex flex-wrap gap-2 text-[10px] uppercase tracking-wide text-white/40">
         <span className="rounded border border-white/10 px-2 py-1">{candidate.isBreakout ? "Breakout" : candidate.isSqueeze ? "Squeeze" : "Structural setup"}</span>
         <span className="rounded border border-white/10 px-2 py-1">{candidate.isLongBuildup
-          ? candidate.buildupSource === "VOLUME" ? "Volume build-up" : "OI long build-up"
-          : "Build-up unconfirmed"}</span>
+          ? swingBuildupLabel(candidate.buildupSource)
+          : "No build-up"}</span>
         {candidate.strategyTags.map((strategy) => <span key={strategy} className="rounded border border-white/10 px-2 py-1">{strategy.replaceAll("_", " ")}</span>)}
       </div>
 

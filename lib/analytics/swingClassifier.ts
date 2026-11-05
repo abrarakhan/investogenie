@@ -326,7 +326,7 @@ export function classifySwingSetup(
     longScore += 0.3;
     longReasons.push(hasOi
       ? `Long build-up: price +${(priceChangePct * 100).toFixed(1)}% with OI +${(oiChangePct * 100).toFixed(1)}% over ${config.shortWindow} bars`
-      : `Volume build-up: price +${(priceChangePct * 100).toFixed(1)}% with ${participationText}`);
+      : `Volume participation build-up: price +${(priceChangePct * 100).toFixed(1)}% with ${participationText}`);
   }
   if (volumeConfirms && (isBreakout || isSqueeze)) { longScore += 0.1; longReasons.push(volReason); }
   let longVerdict: SwingVerdict = "NO_SETUP";
@@ -343,7 +343,7 @@ export function classifySwingSetup(
     shortScore += 0.3;
     shortReasons.push(hasOi
       ? `Short build-up: price ${(priceChangePct * 100).toFixed(1)}% with OI +${(oiChangePct * 100).toFixed(1)}% over ${config.shortWindow} bars`
-      : `Distribution build-up: price ${(priceChangePct * 100).toFixed(1)}% with ${participationText}`);
+      : `Volume participation distribution: price ${(priceChangePct * 100).toFixed(1)}% with ${participationText}`);
   }
   if (volumeConfirms && (isBreakdown || isSqueeze)) { shortScore += 0.1; shortReasons.push(volReason); }
   let shortVerdict: SwingVerdict = "NO_SETUP";

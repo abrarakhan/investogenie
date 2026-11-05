@@ -1,4 +1,5 @@
 import type { TopSetup } from "@/lib/engines-runtime";
+import { swingVerdictLabel } from "@/lib/candidateStatusCopy";
 import type { MacroMatrix } from "@/lib/analytics/macroCorrelator";
 
 const VERDICT_STYLE: Record<string, string> = {
@@ -18,7 +19,7 @@ const MACRO_STYLE: Record<string, string> = {
   WEAK: "text-white/40",
 };
 
-const formatVerdict = (verdict: string) => verdict.replace(/^LONG_/, "BUY_").replaceAll("_", " ");
+const formatVerdict = swingVerdictLabel;
 
 function Panel({
   title,

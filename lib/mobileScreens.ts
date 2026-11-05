@@ -4,7 +4,7 @@ import type { ArmedSwingStatus } from "@/lib/analytics/armedSwing";
 import { rankStrongSwingCandidates, rankSwingCandidates, swingDisplayScore } from "@/lib/analytics/candidateRanking";
 import {
   MOMENTUM_IGNITION_LEGACY_STATUS_LABEL, MOMENTUM_IGNITION_STATUS_LABEL, STRONG_SWING_BLOCKED_BUY_LABEL,
-  STRONG_SWING_STATUS_LABEL, TREND_CONTINUATION_STATUS_LABEL,
+  STRONG_SWING_STATUS_LABEL, TREND_CONTINUATION_STATUS_LABEL, swingBuildupLabel, swingVerdictLabel,
 } from "@/lib/candidateStatusCopy";
 import { STRATEGY_META, type StrategyKey } from "@/lib/analytics/legendaryStrategies";
 import { LONG_TERM_STRATEGY_META, type LongTermStrategyKey } from "@/lib/analytics/longTermStrategies";
@@ -136,7 +136,6 @@ export function formatMarketDate(value: Date | string | null | undefined, market
   }).format(date);
 }
 
-const label = (value: string) => value.replaceAll("_", " ");
 const pick = <T extends string>(value: string | null, allowed: readonly T[], fallback: T): T =>
   value && (allowed as readonly string[]).includes(value) ? value as T : fallback;
 
@@ -280,12 +279,12 @@ export function swingCard(row: ScreenRow, market: MobileMarket, strategy: Strate
   const riskReward = levels?.riskReward ?? row.riskReward;
   const expectedDays = levels?.expectedDays ?? row.expectedDays;
   const current = row.lastQuote ?? row.close;
-  const flags = [row.isBreakout && "Breakout", row.isSqueeze && "Squeeze", row.isLongBuildup && (row.buildupSource === "VOLUME" ? "Volume build-up" : "OI long build-up")].filter(Boolean);
+  const flags = [row.isBreakout && "Breakout", row.isSqueeze && "Squeeze", row.isLongBuildup && swingBuildupLabel(row.buildupSource)].filter(Boolean);
   const strategyNames = row.strategyTags.map((key) => STRATEGY_META.find((meta) => meta.key === key)?.label ?? key);
   return {
     id: row.assetId,
     title: `#${rank} ${row.ticker}`,
-    subtitle: `${row.exchange} · ${label(row.verdict)}`,
+    subtitle: `${row.exchange} · ${swingVerdictLabel(row.verdict)}`,
     badge: finite(row.quoteChangePct) ? { label: formatPct(row.quoteChangePct), tone: toneOf(row.quoteChangePct) } : null,
     score: formatNumber(swingDisplayScore(row, strategy)),
     metrics: [
@@ -313,6 +312,8 @@ export function swingCard(row: ScreenRow, market: MobileMarket, strategy: Strate
         title: "Signal",
         rows: [
           ...flags.map((flag) => ({ label: String(flag), passed: true })),
+          { label: "Breakout-day volume", value: row.volumeExpansion === null ? nil : `${formatNumber(row.volumeExpansion, 2)}x avg` },
+          { label: "5-session participation", value: row.participationRatio === null ? nil : `${formatNumber(row.participationRatio, 2)}x prior 20` },
           { label: "Bollinger bandwidth", value: formatPct(row.bandwidthPct, false) },
           { label: "Strategies", value: strategyNames.length ? strategyNames.join(", ") : nil },
           { label: "P/E", value: formatNumber(row.peRatio) },
@@ -349,7 +350,7 @@ async function swingCandidates(market: MobileMarket, params: URLSearchParams, us
     generatedAt: new Date().toISOString(),
     summary: strategy
       ? `${ranked.length} ${STRATEGY_META.find((meta) => meta.key === strategy)?.label ?? strategy} buy matches · ${matches.filter((row) => row.verdict !== "NO_SETUP").length} also flagged by the base classifier${shown.length < ranked.length ? ` · top ${shown.length} shown` : ""}`
-      : `${rows.length} scanned · ${setups.length} buy candidates · ${rows.filter((row) => row.verdict === "LONG_BREAKOUT").length} confirmed buy breakouts${shown.length < ranked.length ? ` · top ${shown.length} shown` : ""}`,
+      : `${rows.length} scanned · ${setups.length} buy candidates · ${rows.filter((row) => row.verdict === "LONG_BREAKOUT").length} breakouts with build-up${shown.length < ranked.length ? ` · top ${shown.length} shown` : ""}`,
     notice: isUS ? "US bars are an anchored demo feed." : null,
     options: [{
       param: "strategy", label: "Strategy", value: strategyParam,

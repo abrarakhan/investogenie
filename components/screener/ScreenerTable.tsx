@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import type { ScreenRow, StrategyLevel } from "@/lib/screener";
 import { STRATEGY_META, type StrategyKey } from "@/lib/analytics/legendaryStrategies";
 import { rankSwingCandidates, swingDisplayScore } from "@/lib/analytics/candidateRanking";
+import { swingBuildupLabel, swingVerdictLabel } from "@/lib/candidateStatusCopy";
 
 const VERDICT_STYLE: Record<string, string> = {
   LONG_BREAKOUT: "bg-emerald-500/15 text-emerald-300 border-emerald-500/30",
@@ -27,7 +28,22 @@ const STRATEGY_LABEL: Record<StrategyKey, string> = Object.fromEntries(
 const fmt2 = (n: number | null) => (n === null ? "—" : n.toFixed(2));
 const fmtRatio = (n: number | null) => (n === null ? "—" : n.toFixed(1));
 const fmtPct = (n: number | null) => (n === null ? "—" : `${n >= 0 ? "+" : ""}${n.toFixed(1)}%`);
-const formatVerdict = (verdict: string) => verdict.replace(/^LONG_/, "BUY_").replaceAll("_", " ");
+const formatVerdict = swingVerdictLabel;
+const fmtX = (n: number | null): string => (n === null || !Number.isFinite(n) ? "—" : `${n.toFixed(2)}×`);
+
+/** Breakout-day volume is shown separately from the five-session participation build-up. */
+function VolumeEvidence({ row, className = "" }: { row: ScreenRow; className?: string }) {
+  if (row.volumeExpansion === null && row.participationRatio === null) return null;
+  return (
+    <div className={`text-[10px] tabular-nums text-white/45 ${className}`}>
+      <span title="Latest session volume vs its 20-session average">Breakout-day vol {fmtX(row.volumeExpansion)}</span>
+      <span className="mx-1 text-white/25">·</span>
+      <span title="Five-session average volume vs the 20 sessions before it">
+        {row.isLongBuildup ? swingBuildupLabel(row.buildupSource) : "5-session participation"} {fmtX(row.participationRatio)}
+      </span>
+    </div>
+  );
+}
 /** Compact Rs. Crore — rolls up to Lakh-Cr / k-Cr for large caps. */
 const fmtCr = (n: number | null): string => {
   if (n === null) return "—";
@@ -334,7 +350,7 @@ export default function ScreenerTable({
           <>
             <span>{counts.total} scanned</span>
             <span>{counts.setups} buy candidates</span>
-            <span className="text-emerald-400">{counts.long} confirmed buy breakouts</span>
+            <span className="text-emerald-400">{counts.long} breakouts with build-up</span>
           </>
         )}
         <span className="ml-auto">{filtered.length} shown</span>
@@ -433,6 +449,7 @@ export default function ScreenerTable({
                           {formatVerdict(r.verdict)}
                         </span>
                       )}
+                      <VolumeEvidence row={r} className="mt-1 whitespace-nowrap" />
                     </td>
                   </tr>
                 );
@@ -492,6 +509,8 @@ export default function ScreenerTable({
                   ))}
                 </div>
               )}
+
+              <VolumeEvidence row={r} className="mt-2" />
 
               {/* Levels grid — generous touch targets */}
               <div className="mt-3 grid grid-cols-3 gap-2 text-center tabular-nums">

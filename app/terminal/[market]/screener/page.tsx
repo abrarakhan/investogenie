@@ -52,15 +52,19 @@ export default async function TerminalScreener({
             {isUS ? (
               <>
                 Buy-side swing candidates, precomputed nightly across the S&P 100
-                subset. Breakouts and volatility squeezes are flagged; an OI
-                build-up upgrades a breakout to a confirmed buy candidate.
+                subset. Breakouts and volatility squeezes are flagged, with any
+                OI build-up shown as supporting evidence. These are discovery
+                signals; execution readiness is decided on Strong Swing.
               </>
             ) : (
               <>
                 Every buy-side setup the classifier finds across the NSE universe,
                 ranked by score and then by breakout clearance, volume expansion
                 and relative strength. Cash stocks have no open interest, so a
-                volume build-up confirms them instead.
+                five-session volume participation build-up stands in as
+                evidence; breakout-day volume is shown separately. These are
+                discovery signals, not buy calls — execution readiness is
+                decided on Strong Swing.
                 The strategy ribbon lists every NSE buy match of a legendary
                 system — Qullamaggie, Minervini, Darvas, PTJ, or Simons.
               </>
