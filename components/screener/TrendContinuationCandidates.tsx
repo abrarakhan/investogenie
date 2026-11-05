@@ -21,7 +21,7 @@ function CandidateCard({ candidate, rank, chartGesture }: { candidate: TrendCont
   const averageVolume = volumeRatios.length
     ? volumeRatios.reduce((sum, item) => sum + item, 0) / volumeRatios.length : null;
 
-  return <article {...chartGesture} className="select-none touch-pan-y rounded-lg border border-white/10 bg-white/[0.025] p-4 sm:p-5">
+  return <article {...chartGesture} className="pointer-coarse:select-none touch-pan-y rounded-lg border border-white/10 bg-white/[0.025] p-4 sm:p-5">
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div>
         <div className="flex items-center gap-2">

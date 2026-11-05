@@ -16,7 +16,7 @@ import {
   type Time,
 } from "lightweight-charts";
 import type { OverviewCandle } from "@/lib/marketOverview";
-import { aggregateChartPoints, movingAverage, selectChartRange, type ChartInterval, type ChartRange } from "@/lib/chartSeries";
+import { buildChartSeries, type ChartInterval, type ChartRange } from "@/lib/chartSeries";
 
 function fmtDate(iso: string): string {
   return new Intl.DateTimeFormat("en-IN", { day: "2-digit", month: "short", year: "2-digit" }).format(new Date(`${iso}T00:00:00Z`));
@@ -63,17 +63,18 @@ export default function CandleChartPro({
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const [readout, setReadout] = useState<Readout | null>(null);
-  const [interval, setInterval] = useState<ChartInterval>("1D");
+  const [chartInterval, setChartInterval] = useState<ChartInterval>("1D");
   const [range, setRange] = useState<ChartRange>("1Y");
   const [chartStyle, setChartStyle] = useState<"CANDLES" | "LINE">("CANDLES");
   const [showVolume, setShowVolume] = useState(true);
   const [showSma20, setShowSma20] = useState(false);
   const [showSma50, setShowSma50] = useState(false);
 
-  const displayedPoints = useMemo(
-    () => aggregateChartPoints(selectChartRange(candle.points, range), interval),
-    [candle.points, interval, range],
+  const series = useMemo(
+    () => buildChartSeries(candle.points, range, chartInterval, [20, 50]),
+    [candle.points, chartInterval, range],
   );
+  const displayedPoints = series.points;
 
   const candleData = useMemo<CandlestickData<Time>[]>(
     () => displayedPoints.map((point) => ({
@@ -96,12 +97,12 @@ export default function CandleChartPro({
   );
 
   const sma20Data = useMemo<LineData<Time>[]>(
-    () => movingAverage(displayedPoints, 20).map((point) => ({ time: point.date, value: point.value })),
-    [displayedPoints],
+    () => (series.averages[20] ?? []).map((point) => ({ time: point.date, value: point.value })),
+    [series],
   );
   const sma50Data = useMemo<LineData<Time>[]>(
-    () => movingAverage(displayedPoints, 50).map((point) => ({ time: point.date, value: point.value })),
-    [displayedPoints],
+    () => (series.averages[50] ?? []).map((point) => ({ time: point.date, value: point.value })),
+    [series],
   );
 
   const byTime = useMemo(() => {
@@ -232,7 +233,7 @@ export default function CandleChartPro({
   return (
     <div className="overflow-hidden rounded-md border border-[#293039] bg-[#0d1115]">
       <div className="flex flex-wrap items-center gap-1.5 border-b border-white/10 bg-[#0a0e13] px-2 py-2 text-[10px] font-bold text-white/55 sm:px-3">
-        <ControlGroup label="Interval" values={["1D", "5D", "1W", "1M"]} active={interval} onChange={(value) => setInterval(value as ChartInterval)} />
+        <ControlGroup label="Interval" values={["1D", "5D", "1W", "1M"]} active={chartInterval} onChange={(value) => setChartInterval(value as ChartInterval)} />
         <span className="mx-1 h-5 w-px bg-white/10" />
         <ControlGroup label="Range" values={["1M", "3M", "6M", "1Y", "ALL"]} active={range} onChange={(value) => setRange(value as ChartRange)} />
         <span className="mx-1 h-5 w-px bg-white/10" />
@@ -264,7 +265,7 @@ export default function CandleChartPro({
       <div ref={containerRef} className="h-[430px] w-full" />
 
       <div className="pointer-events-none absolute bottom-2 right-3 rounded-full border border-white/10 bg-black/35 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-white/35">
-        {interval} · Scroll to zoom · drag to pan
+        {chartInterval} · Scroll to zoom · drag to pan
       </div>
       </div>
     </div>

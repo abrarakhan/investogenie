@@ -51,7 +51,7 @@ function CandidateCard({ candidate, planId, chartGesture }: { candidate: StrongS
     days: String(candidate.strongExpectedDays),
   });
   return (
-    <article {...chartGesture} className="select-none touch-pan-y rounded-lg border border-white/10 bg-white/[0.025] p-4 sm:p-5">
+    <article {...chartGesture} className="pointer-coarse:select-none touch-pan-y rounded-lg border border-white/10 bg-white/[0.025] p-4 sm:p-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="flex flex-wrap items-center gap-2">

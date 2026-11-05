@@ -20,6 +20,11 @@ vi.mock("pg", () => ({
 vi.mock("@/lib/market-calendar.mjs", () => ({
   refreshMarketHolidays: async () => true,
   latestSignalSessionDate: (market: string) => market === "IN" ? "2026-11-04" : "2026-11-03",
+  previousTradingDay: (_market: string, date: string) => {
+    const value = new Date(`${date}T00:00:00Z`);
+    value.setUTCDate(value.getUTCDate() - 1);
+    return value.toISOString().slice(0, 10);
+  },
 }));
 
 import { computeSignals } from "@/lib/ingest/signals";
@@ -57,8 +62,11 @@ describe("computeSignals retirement", () => {
     expect(retire?.sql).toContain("country='US' and $5::boolean");
     expect(retire?.sql).toContain("as_of < $3::date");
     expect(retire?.params).toEqual([new Date("2026-11-05T09:00:00Z"), "2026-11-04", "2026-11-03", true, false]);
-    const assetSelection = db.calls.find((call) => call.sql.includes("from public.assets a\n        where a.is_active") && call.params?.length === 2);
+    const assetSelection = db.calls.find((call) => call.sql.includes("from public.assets a\n        where a.is_active") && !call.sql.includes("group by"));
     expect(assetSelection?.params).toEqual(["2026-11-04", "2026-11-03"]);
+    // The coverage denominator only counts assets that traded in the last five sessions.
+    const universe = db.calls.find((call) => call.sql.includes("group by a.country"));
+    expect(universe?.params).toEqual(["2026-10-30", "2026-10-29"]);
     // Retirement runs after the upsert, never before it.
     const upsertIndex = db.calls.findIndex((call) => call.sql.startsWith("insert into public.swing_signals"));
     expect(upsertIndex).toBeGreaterThan(-1);

@@ -70,6 +70,7 @@ export async function GET(request: NextRequest) {
       setups: summary?.setups,
       retired: summary?.retired,
       retirementSkippedMarkets: summary?.retirementSkippedMarkets,
+      coverageByMarket: summary?.coverageByMarket,
       attempts: result.attempts,
       durationMs: result.durationMs,
     });

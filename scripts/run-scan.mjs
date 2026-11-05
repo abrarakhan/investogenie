@@ -26,10 +26,22 @@ try {
   await logCronRun(databaseUrl, {
     job: "scan",
     status: "ok",
-    detail: { scanned: summary.scanned, setups: summary.setups, retired: summary.retired, runner: "standalone" },
+    detail: {
+      scanned: summary.scanned,
+      setups: summary.setups,
+      retired: summary.retired,
+      retirementSkippedMarkets: summary.retirementSkippedMarkets,
+      coverageByMarket: summary.coverageByMarket,
+      runner: "standalone",
+    },
     durationMs,
   }).catch(() => null);
-  console.log(`[scan] ok scanned=${summary.scanned} setups=${summary.setups} retired=${summary.retired} in ${(durationMs / 1000).toFixed(1)}s`);
+  const skipped = summary.retirementSkippedMarkets?.length
+    ? ` retirement-skipped=${summary.retirementSkippedMarkets.join(",")}`
+    : "";
+  const coverage = Object.entries(summary.coverageByMarket ?? {})
+    .map(([market, ratio]) => `${market}=${(ratio * 100).toFixed(1)}%`).join(",");
+  console.log(`[scan] ok scanned=${summary.scanned} setups=${summary.setups} retired=${summary.retired}${skipped} coverage=${coverage} in ${(durationMs / 1000).toFixed(1)}s`);
   process.exit(0);
 } catch (error) {
   const durationMs = Date.now() - startedAt;

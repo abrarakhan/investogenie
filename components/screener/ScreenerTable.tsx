@@ -477,7 +477,7 @@ export default function ScreenerTable({
             <div
               key={`${r.exchange}:${r.ticker}`}
               {...bindChartGesture({ ticker: r.ticker, exchange: r.exchange })}
-              className="select-none touch-pan-y rounded-2xl border border-white/10 bg-white/[0.02] p-4"
+              className="pointer-coarse:select-none touch-pan-y rounded-2xl border border-white/10 bg-white/[0.02] p-4"
             >
               {/* Header: ticker + action + verdict/strategy */}
               <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2">

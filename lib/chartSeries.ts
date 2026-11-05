@@ -58,6 +58,25 @@ export function aggregateChartPoints(points: ChartPoint[], interval: ChartInterv
   return [...grouped.values()].map(combine);
 }
 
+/**
+ * Bars and moving averages for one interval and range. Aggregation and averages run on
+ * the full history first and the range is applied last, so an SMA 50 on a 1M view is
+ * still the 50-bar average at each visible bar rather than missing or starting late.
+ */
+export function buildChartSeries(
+  points: ChartPoint[],
+  range: ChartRange,
+  interval: ChartInterval,
+  periods: number[],
+): { points: ChartPoint[]; averages: Record<number, Array<{ date: string; value: number }>> } {
+  const bars = aggregateChartPoints(points, interval);
+  const firstVisible = selectChartRange(points, range)[0]?.date;
+  const visible = (date: string) => firstVisible === undefined || date >= firstVisible;
+  const averages: Record<number, Array<{ date: string; value: number }>> = {};
+  for (const period of periods) averages[period] = movingAverage(bars, period).filter((point) => visible(point.date));
+  return { points: bars.filter((point) => visible(point.date)), averages };
+}
+
 export function movingAverage(points: ChartPoint[], period: number): Array<{ date: string; value: number }> {
   if (period < 1) return [];
   let sum = 0;

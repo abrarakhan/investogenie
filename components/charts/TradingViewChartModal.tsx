@@ -74,7 +74,7 @@ export function useTradingViewChart() {
 export default function TradingViewChartModal({ chart, onClose }: { chart: ChartSymbol | null; onClose: () => void }) {
   const [chartData, setChartData] = useState<{ key: string; candle: OverviewCandle | null; error: string | null } | null>(null);
   const market = chart && ["NSE", "BSE"].includes(chart.exchange.trim().toUpperCase()) ? "IN" : "US";
-  const requestKey = chart ? `${market}:${chart.ticker.trim().toUpperCase()}` : "";
+  const requestKey = chart ? `${market}:${chart.exchange.trim().toUpperCase()}:${chart.ticker.trim().toUpperCase()}` : "";
   const currentData = chartData?.key === requestKey ? chartData : null;
   const candle = currentData?.candle ?? null;
   const error = currentData?.error ?? null;
@@ -98,7 +98,7 @@ export default function TradingViewChartModal({ chart, onClose }: { chart: Chart
   useEffect(() => {
     if (!chart) return;
     const controller = new AbortController();
-    const params = new URLSearchParams({ market, ticker: chart.ticker, days: "400" });
+    const params = new URLSearchParams({ market, ticker: chart.ticker, exchange: chart.exchange, days: "800" });
     fetch(`/api/market-overview/candles?${params.toString()}`, { signal: controller.signal })
       .then(async (response) => {
         if (!response.ok) throw new Error(`Chart request failed (${response.status})`);

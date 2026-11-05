@@ -48,7 +48,7 @@ function IgnitionCard({ candidate, rank, market, planId, chartGesture }: { candi
     days: String(candidate.projectedDays),
   });
   return (
-    <article {...chartGesture} className="select-none touch-pan-y rounded-lg border border-white/10 bg-white/[0.025] p-4">
+    <article {...chartGesture} className="pointer-coarse:select-none touch-pan-y rounded-lg border border-white/10 bg-white/[0.025] p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">

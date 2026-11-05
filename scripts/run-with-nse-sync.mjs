@@ -481,7 +481,11 @@ function runMarketRefresh(trigger) {
   marketRefreshPromise = (async () => {
     try {
       console.log(`[market-refresh] starting ${trigger}`);
-      await runNodeScript("refreshing security listings", "scripts/ingest-listings.mjs");
+      // Listings only add or rename securities; existing assets keep their bars and
+      // signals. An exchange refusing the download (BSE has returned 403) must not
+      // block quotes, history and the signal scan for the whole refresh.
+      await runNodeScript("refreshing security listings", "scripts/ingest-listings.mjs")
+        .catch((error) => console.error(`[market-refresh] listings refresh failed; continuing: ${error.message ?? error}`));
       if (marketHoursQuoteRefreshPromise) {
         console.log("[market-refresh] waiting for the market-hours quote refresh to finish");
         await marketHoursQuoteRefreshPromise;
@@ -543,6 +547,31 @@ function scheduleRecurringMarketRefresh() {
     () => runMarketRefresh("recurring"),
     marketRefreshIntervalMinutes * 60 * 1000,
   );
+  // Each restart (every deploy) restarts this interval, so several deploys in an evening
+  // can postpone the scan indefinitely. Catch up once if the last good scan is overdue.
+  setTimeout(() => catchUpMarketRefresh().catch((error) =>
+    console.error(`[market-refresh] catch-up check failed: ${error.message ?? error}`)), 2 * 60 * 1000);
+}
+
+async function catchUpMarketRefresh() {
+  if (shuttingDown || marketRefreshPromise || !process.env.DATABASE_URL) return;
+  const client = new Client({ connectionString: process.env.DATABASE_URL, connectionTimeoutMillis: 10_000 });
+  await client.connect();
+  try {
+    const { rows: [row] } = await client.query(
+      `select extract(epoch from now() - max(created_at)) / 60 minutes_since
+         from public.cron_logs where job='scan' and status='ok'`,
+    );
+    const minutesSince = row?.minutes_since === null || row?.minutes_since === undefined ? null : Number(row.minutes_since);
+    if (minutesSince !== null && minutesSince < marketRefreshIntervalMinutes) {
+      console.log(`[market-refresh] last scan ${minutesSince.toFixed(0)} min ago; no catch-up needed`);
+      return;
+    }
+  } finally {
+    await client.end().catch(() => {});
+  }
+  console.log("[market-refresh] last good scan is overdue after restart; running catch-up refresh");
+  await runMarketRefresh("catch-up");
 }
 
 function istClock() {

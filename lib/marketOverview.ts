@@ -208,9 +208,13 @@ export async function getCandlesForTicker(
   market: MarketId,
   ticker: string,
   days = 260,
+  exchange?: string | null,
 ): Promise<OverviewCandle | null> {
   const cfg = REGION[market];
-  const primaryExchange = cfg.exchanges[0];
+  // A caller that knows the listing (a BSE swing card) gets that listing first;
+  // otherwise the market's primary exchange wins as before.
+  const requested = String(exchange ?? "").trim().toUpperCase();
+  const primaryExchange = (cfg.exchanges as readonly string[]).includes(requested) ? requested : cfg.exchanges[0];
   const wanted = String(ticker).trim().toUpperCase();
   if (!wanted) return null;
   const windowDays = Math.max(20, Math.min(800, Math.round(days)));

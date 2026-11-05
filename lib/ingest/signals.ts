@@ -16,7 +16,7 @@ import {
   evaluateLegendary, momentumLeaderPercentiles, relativeStrengthRatings, type MomentumCloses, type RsCloses,
 } from "@/lib/analytics/legendaryStrategies";
 import { swingTieBreakScore } from "@/lib/analytics/candidateRanking";
-import { latestSignalSessionDate, refreshMarketHolidays } from "@/lib/market-calendar.mjs";
+import { latestSignalSessionDate, previousTradingDay, refreshMarketHolidays } from "@/lib/market-calendar.mjs";
 import type { OHLCV } from "@/lib/types";
 
 export interface ScanSummary {
@@ -26,6 +26,8 @@ export interface ScanSummary {
   retired: number;
   /** Markets whose retirement pass was withheld because scan coverage was incomplete. */
   retirementSkippedMarkets: string[];
+  /** Share of each market's recently traded assets this scan recomputed (0-1). */
+  coverageByMarket: Record<string, number>;
   durationMs: number;
 }
 
@@ -95,12 +97,24 @@ const ASSET_BATCH = 60; // assets per round → bounded memory + small upserts
 // for the same row.
 const BATCH_CONCURRENCY = 4;
 const MIN_RETIREMENT_COVERAGE = 0.8;
+// Coverage is measured against assets that traded recently, not every asset that ever
+// had a bar: dormant or delisted rows would otherwise hold coverage below the floor
+// forever and silently disable retirement for that market.
+const COVERAGE_LOOKBACK_SESSIONS = 5;
+
+function sessionsBefore(market: "IN" | "US", dateIso: string, sessions: number): string {
+  let date = dateIso;
+  for (let i = 0; i < sessions; i += 1) date = previousTradingDay(market, date);
+  return date;
+}
 
 export async function computeSignals(databaseUrl: string): Promise<ScanSummary> {
   const t0 = Date.now();
   await Promise.all([refreshMarketHolidays("IN"), refreshMarketHolidays("US")]);
   const indiaSignalSession = latestSignalSessionDate("IN");
   const usSignalSession = latestSignalSessionDate("US");
+  const indiaCoverageFrom = sessionsBefore("IN", indiaSignalSession, COVERAGE_LOOKBACK_SESSIONS);
+  const usCoverageFrom = sessionsBefore("US", usSignalSession, COVERAGE_LOOKBACK_SESSIONS);
   const pool = new Pool({
     connectionString: databaseUrl,
     ssl: /127\.0\.0\.1|localhost/.test(databaseUrl) ? false : { rejectUnauthorized: false },
@@ -116,8 +130,12 @@ export async function computeSignals(databaseUrl: string): Promise<ScanSummary> 
         where a.is_active
           and a.country in ('IN','US')
           and not exists (select 1 from public.asset_tracking_exclusions x where x.asset_id=a.id)
-          and exists (select 1 from public.daily_ohlcv o where o.asset_id=a.id and o.open>0 and o.high>0 and o.low>0 and o.close>0)
+          and exists (
+            select 1 from public.daily_ohlcv o
+             where o.asset_id=a.id and o.open>0 and o.high>0 and o.low>0 and o.close>0
+               and o.date >= case when a.country='IN' then $1::date else $2::date end)
         group by a.country`,
+      [indiaCoverageFrom, usCoverageFrom],
     );
     const universeByMarket = new Map(universeRows.map((row) => [row.country, Number(row.total)]));
     // Data Health keeps reporting stale assets so they can be repaired, but the
@@ -294,12 +312,16 @@ export async function computeSignals(databaseUrl: string): Promise<ScanSummary> 
     const retireIndia = canRetire("IN");
     const retireUs = canRetire("US");
     const retirementSkippedMarkets = (["IN", "US"] as const).filter((market) => !canRetire(market));
+    const coverageByMarket = Object.fromEntries((["IN", "US"] as const).map((market) => {
+      const total = universeByMarket.get(market) ?? 0;
+      return [market, total > 0 ? Math.round(((scannedByMarket.get(market) ?? 0) / total) * 1000) / 1000 : 0];
+    }));
     // Only after every batch succeeded: a failed scan throws above and retires nothing.
     const retired = retireIndia || retireUs
       ? (await client.query(RETIRE_SQL, [scanStartedAt, indiaSignalSession, usSignalSession, retireIndia, retireUs])).rowCount ?? 0
       : 0;
 
-    return { scanned, setups, retired, retirementSkippedMarkets, durationMs: Date.now() - t0 };
+    return { scanned, setups, retired, retirementSkippedMarkets, coverageByMarket, durationMs: Date.now() - t0 };
   } finally {
     await client.end();
   }

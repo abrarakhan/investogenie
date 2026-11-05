@@ -12,13 +12,14 @@ export async function GET(request: NextRequest) {
   const market: MarketId = params.get("market") === "US" ? "US" : "IN";
   const ticker = (params.get("ticker") ?? "").trim();
   const days = Number(params.get("days") ?? 260);
+  const exchange = params.get("exchange");
 
   if (!ticker) {
     return NextResponse.json({ candle: null });
   }
 
   try {
-    const candle = await getCandlesForTicker(market, ticker, Number.isFinite(days) ? days : 260);
+    const candle = await getCandlesForTicker(market, ticker, Number.isFinite(days) ? days : 260, exchange);
     return NextResponse.json({ candle });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
