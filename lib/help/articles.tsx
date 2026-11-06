@@ -1150,7 +1150,7 @@ const tradableStocks: HelpArticle = {
         <LI><strong>Armed Swing · Armed</strong> — place a buy-stop limit order in advance; it only fills if the breakout happens.</LI>
         <LI><strong>Strong Swing · Pullback candidate</strong> — confirmed, but price has run more than 0.5 ATR past the entry or sits more than 15% above its 20-day average. Don&apos;t chase. A pullback does not reactivate it automatically; it needs a fresh confirmed breakout.</LI>
         <LI><strong>Momentum Ignition V2 · Pre-ignition / First thrust / Retest setup</strong> — within 3% of the trigger, or broken out but still missing volume or a strong close.</LI>
-        <LI><strong>Trend Continuation · Impulse detected</strong> — a heavy-volume range breakout on day one. It is re-checked after 10:15 IST on day two and may turn <strong>Continuation ready</strong>. This engine is observation-only: it never unlocks buying.</LI>
+        <LI><strong>Trend Continuation · Impulse detected</strong> — a heavy-volume range breakout on day one. It is re-checked after 10:15 IST on day two and may turn <strong>Continuation ready</strong>. Only the confirmed day-two breakout path can unlock a protected manual plan; auto-buy remains disabled.</LI>
       </UL>
 
       <H2>Tier 3 — research and shortlisting</H2>
@@ -1345,8 +1345,7 @@ const trendContinuationArticle: HelpArticle = {
         close in the upper half of its range; a reversal sold into the close is not an entry.
       </P>
       <Callout tone="warn">
-        This engine is observation-only. Continuation ready never creates a frozen plan or unlocks
-        buying, and it is held back whenever the Breeze quote is not fresh.
+        Day-one impulses and later pullbacks are observation-only. A confirmed day-two breakout can create a frozen manual plan only after the live execution and results gates pass; it never enables auto-buy.
       </Callout>
     </>
   ),

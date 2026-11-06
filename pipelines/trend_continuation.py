@@ -275,6 +275,7 @@ def _assess_day_two_breakout(
         rs_pass = rs5 is None or (rs5 > 0 and (rs_acceleration is None or rs_acceleration > -1.0))
         metrics = {
             "early_breakout": True, "ignition_gain_atr": ignition["gain_atr"],
+            "atr14": atr14, "expected_holding_days": 5,
             "ignition_volume_ratio": ignition["volume_ratio"], "breakout_level": ignition["breakout_level"],
             "launch_sessions": ignition["launch_sessions"], "day_two_volume_ratio": confirm_volume_ratio,
             "day_two_close_location": confirm_close_location, "return5_pct": return5,

@@ -43,7 +43,7 @@ const JOURNEY: { step: string; title: string; href: string; body: string }[] = [
     step: "5",
     title: "Find buyable setups — Strong Swing and Armed Swing",
     href: "/terminal/in/strong-swing",
-    body: "The execution engines: Strong Swing, Momentum Ignition (legacy and V2) and Trend Continuation on one page, and Armed Swing for pre-breakout buy-stops. Only Execution ready, Momentum ready and Buy zone unlock Buy & Track.",
+    body: "The execution engines: Strong Swing, Momentum Ignition (legacy and V2) and Trend Continuation on one page, and Armed Swing for pre-breakout buy-stops. Execution ready, Momentum ready, protected day-two Continuation ready and Buy zone can unlock Buy & Track.",
   },
   {
     step: "6",
@@ -89,7 +89,7 @@ const TRADABLE_STEPS: { when: string; title: string; href: string; body: string 
     when: "From 09:15",
     title: "Buy only what is ready — the Tier 1 statuses",
     href: "/terminal/in/strong-swing",
-    body: "Strong Swing · Execution ready, Momentum Ignition · Momentum ready, Momentum Ignition V2 · Momentum ready, Armed Swing · Buy zone. These alone pass every gate, freeze a plan and unlock Buy & Track. They need market hours and a fresh live quote.",
+    body: "Strong Swing · Execution ready, Momentum Ignition · Momentum ready, Momentum Ignition V2 · Momentum ready, Trend Continuation · confirmed day-two ready, Armed Swing · Buy zone. These alone pass every required gate, freeze a plan and unlock Buy & Track. They need market hours and a fresh live quote.",
   },
   {
     when: "Watch",
@@ -101,7 +101,7 @@ const TRADABLE_STEPS: { when: string; title: string; href: string; body: string 
     when: "From 10:15",
     title: "Day-two confirmations — Trend Continuation",
     href: "/terminal/in/strong-swing",
-    body: "Impulse-detected names re-scanned an hour after the open may turn Continuation ready. It is observation only and never unlocks Buy & Track.",
+    body: "Impulse-detected names re-scanned after 10:15 IST may turn Continuation ready. Only the confirmed day-two breakout path can unlock manual Buy & Track after live depth, spread, circuit, results and plan checks; day one and pullbacks remain observation-only.",
   },
   {
     when: "After buying",

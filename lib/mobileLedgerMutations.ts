@@ -68,7 +68,7 @@ export async function createMobileTrade(userId: string, input: CreateMobileTrade
     throw new Error("Strategy trades must be recorded from the protected web candidate workflow");
   }
   let plan: StoredExecutionPlan | null = null;
-  if (preferredStrategy === "STRONG_SWING" || preferredStrategy === "MOMENTUM_IGNITION") {
+  if (preferredStrategy === "STRONG_SWING" || preferredStrategy === "MOMENTUM_IGNITION" || preferredStrategy === "TREND_CONTINUATION") {
     plan = await loadExecutionPlan(userId, String(input.planId ?? "").trim());
     const planError = validateExecutionPlanPurchase(plan, {
       assetId: asset.id, market, strategyKey: preferredStrategy, boughtOn, buyPrice,

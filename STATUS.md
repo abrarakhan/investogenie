@@ -39,7 +39,7 @@ The shared Linux release script applies an explicit 0033–0063 list. Fresh data
 
 Authenticated web pages expose an opt-in browser-alert control. While the site is open in a foreground or background tab, it polls deduplicated server events and uses the browser Notification API for candidate-ready transitions and material ledger actions. Permission is requested only from an explicit user click; denied permission is never bypassed.
 
-Trend Continuation v1 is an India-only, Python-calculated observation engine for persistent 3–5 session moves. It stores versioned impulse/watch/ready/extended states, appears on web and mobile Strong Swing surfaces, and participates in ready-transition notifications. It cannot create an execution plan, unlock Buy & Track, or feed auto-buy.
+Trend Continuation v1 is an India-only, Python-calculated engine for persistent 3–5 session moves. It stores versioned impulse/watch/ready/extended states and appears on web and mobile Strong Swing surfaces. Day-one impulses and later pullbacks remain observational. A confirmed day-two breakout after 10:15 IST can create an immutable manual Buy & Track plan only when fresh Breeze depth, spread, circuit room, results-calendar, price-range and plan-freshness gates pass. It never feeds auto-buy.
 
 ## Verified production baseline — 26 October 2026
 

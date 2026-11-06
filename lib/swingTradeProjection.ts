@@ -36,7 +36,8 @@ export async function resolveSignalProjection(
   const isStrongSwing = preferredStrategy === "STRONG_SWING";
   const isMomentumIgnition = preferredStrategy === "MOMENTUM_IGNITION";
   const isArmedSwing = preferredStrategy === "ARMED_SWING";
-  const strategyKey = isStrongSwing || isMomentumIgnition || isArmedSwing
+  const isTrendContinuation = preferredStrategy === "TREND_CONTINUATION";
+  const strategyKey = isStrongSwing || isMomentumIgnition || isArmedSwing || isTrendContinuation
     ? preferredStrategy
     : preferredStrategy && preferredScore?.dir === "LONG"
       ? preferredStrategy
@@ -46,7 +47,7 @@ export async function resolveSignalProjection(
     atr: num(row.atr), longTrigger: buyPrice, shortTrigger: num(row.short_trigger),
     hh22: Math.min(num(row.hh22) || buyPrice, buyPrice), ll22: num(row.ll22), dailyVelocity: num(row.daily_velocity),
   };
-  const strategyScore = isStrongSwing || isMomentumIgnition || isArmedSwing ? undefined : row.strategy_scores?.[strategyKey];
+  const strategyScore = isStrongSwing || isMomentumIgnition || isArmedSwing || isTrendContinuation ? undefined : row.strategy_scores?.[strategyKey];
   const settings = await getUserSwingSettings(userId);
   // A legendary strategy keeps its own stop and trailing line under the actual buy price.
   const levels = strategyScore?.dir === "LONG"
@@ -58,6 +59,8 @@ export async function resolveSignalProjection(
       ? "Armed Strong Swing"
     : isMomentumIgnition
       ? "Momentum Ignition"
+      : isTrendContinuation
+        ? "Trend Continuation"
       : STRATEGY_META.find((item) => item.key === strategyKey)?.label ?? "Default Swing";
   return { row, levels, label, strategyKey, strategyScore, trailingDistance: settings.trailAtrMult * levels.atr };
 }

@@ -79,7 +79,7 @@ export async function addSwingTrade(formData: FormData) {
     armedPlan = await loadArmedPlan(user.id, String(formData.get("planId") ?? "").trim());
     const planError = validatePlanForPurchase(armedPlan, { assetId: asset.id, market, boughtOn, buyPrice });
     if (planError) throw new Error(planError);
-  } else if (preferredStrategy === "STRONG_SWING" || preferredStrategy === "MOMENTUM_IGNITION") {
+  } else if (preferredStrategy === "STRONG_SWING" || preferredStrategy === "MOMENTUM_IGNITION" || preferredStrategy === "TREND_CONTINUATION") {
     if (entryStatus !== "OPEN") throw new Error("Candidate purchases must be recorded from the current candidate card");
     executionPlan = await loadExecutionPlan(user.id, String(formData.get("planId") ?? "").trim());
     const planError = validateExecutionPlanPurchase(executionPlan, {

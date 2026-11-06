@@ -24,7 +24,7 @@ import {
 import { isMomentumExecutionReady } from "@/lib/momentumExecution";
 import { getStrongSwingCandidates, type StrongSwingCandidate } from "@/lib/strongSwing";
 import {
-  captureExecutionPlans, executionPlanKey, momentumExecutionPlanInputs, strongSwingExecutionPlanInputs,
+  captureExecutionPlans, executionPlanKey, momentumExecutionPlanInputs, strongSwingExecutionPlanInputs, trendContinuationExecutionPlanInputs,
   type ProtectedSwingStrategy,
 } from "@/lib/swingExecutionPlans";
 import { getTrendContinuationCandidates, type TrendContinuationCandidate } from "@/lib/trendContinuation";
@@ -470,7 +470,7 @@ export function momentumIgnitionCard(
   };
 }
 
-export function trendContinuationCard(candidate: TrendContinuationCandidate, market: MobileMarket, rank: number): MobileCard {
+export function trendContinuationCard(candidate: TrendContinuationCandidate, market: MobileMarket, rank: number, planId: string | null = null): MobileCard {
   const metric = (key: string) => typeof candidate.metrics[key] === "number" ? candidate.metrics[key] as number : null;
   const volumes = Array.isArray(candidate.metrics.volume_ratios) ? candidate.metrics.volume_ratios.filter((item): item is number => typeof item === "number") : [];
   return {
@@ -492,7 +492,8 @@ export function trendContinuationCard(candidate: TrendContinuationCandidate, mar
       ],
     footer: candidate.reasons[0] ?? null,
     chartTicker: candidate.ticker,
-    guidance: "Observation only — no Buy & Track or auto-buy action.",
+    guidance: candidate.executionEligible ? "Manual Buy & Track is available from the protected frozen plan; auto-buy is disabled."
+      : candidate.executionBlockers[0] ?? "Observation only — wait for confirmed day-two execution gates.",
     sections: [
       { title: "Why it is here", rows: candidate.reasons.map((reason) => ({ label: reason })) },
       {
@@ -508,6 +509,7 @@ export function trendContinuationCard(candidate: TrendContinuationCandidate, mar
         ],
       },
     ],
+    trade: planId && candidate.executionEligible ? { assetId: candidate.assetId, ticker: candidate.ticker, strategyKey: "TREND_CONTINUATION", planId, suggestedPrice: candidate.currentPrice ?? candidate.entry ?? 0 } : null,
   };
 }
 
@@ -526,8 +528,9 @@ async function strongSwing(market: MobileMarket, params: URLSearchParams, userId
     ...strongSwingExecutionPlanInputs(strong, settings.trailAtrMult),
     ...momentumExecutionPlanInputs(legacy.candidates, "LEGACY"),
     ...momentumExecutionPlanInputs(v2.candidates, "V2"),
+    ...trendContinuationExecutionPlanInputs(trend),
   ], settings.trailAtrMult);
-  await markLiveMarketTargets([...strong, ...legacy.candidates, ...v2.candidates].map((item) => item.assetId), "strong_swing");
+  await markLiveMarketTargets([...strong, ...legacy.candidates, ...v2.candidates, ...trend].map((item) => item.assetId), "strong_swing");
   const plan = (strategy: ProtectedSwingStrategy, status: string, assetId: string) => planIds.get(executionPlanKey(strategy, status, assetId)) ?? null;
 
   const models = STRONG_MODELS.filter((model) => model !== "TREND_CONTINUATION" || market === "IN");
@@ -537,7 +540,7 @@ async function strongSwing(market: MobileMarket, params: URLSearchParams, userId
     STRONG_SWING: [ranked.length, ranked.filter((item) => item.status === "EXECUTION_READY").length],
     MOMENTUM_IGNITION: [legacy.candidates.length, legacy.candidates.filter((item) => isMomentumExecutionReady(item.status)).length],
     MOMENTUM_IGNITION_V2: [v2.candidates.length, v2.candidates.filter((item) => isMomentumExecutionReady(item.status)).length],
-    TREND_CONTINUATION: [trend.length, trend.filter((item) => item.status === "TREND_CONTINUATION_READY").length],
+    TREND_CONTINUATION: [trend.length, trend.filter((item) => item.executionEligible).length],
   } satisfies Record<(typeof STRONG_MODELS)[number], [number, number]>;
   const names: Record<(typeof STRONG_MODELS)[number], string> = {
     STRONG_SWING: "Strong Swing", MOMENTUM_IGNITION: "Momentum Ignition", MOMENTUM_IGNITION_V2: "Momentum Ignition V2", TREND_CONTINUATION: "Trend Continuation",
@@ -554,7 +557,7 @@ async function strongSwing(market: MobileMarket, params: URLSearchParams, userId
       ? legacy.candidates.map((item, index) => momentumIgnitionCard(item, market, index + 1, plan("MOMENTUM_IGNITION", item.status, item.assetId)))
       : model === "MOMENTUM_IGNITION_V2"
         ? v2.candidates.map((item, index) => momentumIgnitionCard(item, market, index + 1, plan("MOMENTUM_IGNITION", item.status, item.assetId)))
-        : trend.map((item, index) => trendContinuationCard(item, market, index + 1));
+        : trend.map((item, index) => trendContinuationCard(item, market, index + 1, plan("TREND_CONTINUATION", item.status, item.assetId)));
   const [total, ready] = counts[model];
   const scanned = model === "MOMENTUM_IGNITION" ? legacy : model === "MOMENTUM_IGNITION_V2" ? v2 : null;
   return {
@@ -564,7 +567,7 @@ async function strongSwing(market: MobileMarket, params: URLSearchParams, userId
     generatedAt: new Date().toISOString(),
     summary: `${total} candidates · ${ready} ready${scanned ? ` · ${scanned.universeScanned} scanned` : ""}${cards.length > MOBILE_CARD_LIMIT ? ` · top ${MOBILE_CARD_LIMIT} shown` : ""}`,
     notice: model === "TREND_CONTINUATION"
-      ? "Observation only: it does not create a frozen plan or unlock buying."
+      ? "Only confirmed day-two breakouts with every live execution gate may unlock manual Buy & Track. Auto-buy remains disabled."
       : "Breeze supplies live data but does not place the order; confirm exchange restrictions in ICICI Direct before buying.",
     options: [{
       param: "model", label: "Model", value: model,

@@ -2,8 +2,9 @@ import { createHash } from "node:crypto";
 import { query, queryOne } from "@/lib/db";
 import { isMomentumExecutionReady } from "@/lib/momentumExecution";
 import type { StrongSwingCandidate } from "@/lib/strongSwing";
+import type { TrendContinuationCandidate } from "@/lib/trendContinuation";
 
-export type ProtectedSwingStrategy = "STRONG_SWING" | "MOMENTUM_IGNITION";
+export type ProtectedSwingStrategy = "STRONG_SWING" | "MOMENTUM_IGNITION" | "TREND_CONTINUATION";
 export const EXECUTION_PLAN_MAX_AGE_MINUTES = 30;
 
 export interface ExecutionPlanInput {
@@ -117,8 +118,8 @@ export function validateExecutionPlanPurchase(plan: StoredExecutionPlan | null, 
   if (plan.assetId !== input.assetId || plan.market !== input.market || plan.strategyKey !== input.strategyKey) {
     return "The execution plan does not match this stock and strategy";
   }
-  const actionable = plan.strategyKey === "STRONG_SWING"
-    ? plan.status === "EXECUTION_READY"
+  const actionable = plan.strategyKey === "STRONG_SWING" ? plan.status === "EXECUTION_READY"
+    : plan.strategyKey === "TREND_CONTINUATION" ? plan.status === "TREND_CONTINUATION_READY"
     : plan.status === "ENTRY_READY" || plan.status === "MOMENTUM_READY";
   if (!actionable) return "The stored plan is not execution ready";
   if (plan.sessionDate !== input.today || input.boughtOn !== plan.sessionDate) return "The execution plan is not from today's market session";
@@ -129,7 +130,7 @@ export function validateExecutionPlanPurchase(plan: StoredExecutionPlan | null, 
 }
 
 export function protectedExecutionEditViolation(strategyKey: string | null, entry: number | null, buyPrice: number): string | null {
-  if (strategyKey !== "STRONG_SWING" && strategyKey !== "MOMENTUM_IGNITION") return null;
+  if (strategyKey !== "STRONG_SWING" && strategyKey !== "MOMENTUM_IGNITION" && strategyKey !== "TREND_CONTINUATION") return null;
   if (entry === null || buyPrice < entry * 0.999) return "A protected strategy purchase cannot be edited below its recorded entry";
   return null;
 }
@@ -163,6 +164,19 @@ export function momentumExecutionPlanInputs(
     entry: candidate.projectedEntry, target: candidate.projectedTarget, stop: candidate.projectedStop,
     trail: candidate.projectedTrail, atr: candidate.atr14, expectedDays: candidate.projectedDays,
     signalAsOf: candidate.latestDate, score: candidate.score / 100, snapshot: { model, gates: candidate.gates },
+  }));
+}
+
+/** Confirmed day-two continuation plans. Pullbacks and day-one impulses remain observation-only. */
+export function trendContinuationExecutionPlanInputs(candidates: readonly TrendContinuationCandidate[]): ExecutionPlanInput[] {
+  return candidates.filter((candidate) => candidate.executionEligible && candidate.entry !== null
+    && candidate.stop !== null && candidate.target !== null).map((candidate) => ({
+    assetId: candidate.assetId, strategyKey: "TREND_CONTINUATION" as const, status: candidate.status,
+    entry: candidate.entry!, target: candidate.target!, stop: candidate.stop!, trail: null,
+    atr: typeof candidate.metrics.atr14 === "number" ? candidate.metrics.atr14 : candidate.entry! - candidate.stop!,
+    expectedDays: typeof candidate.metrics.expected_holding_days === "number" ? Math.round(candidate.metrics.expected_holding_days) : 5,
+    signalAsOf: candidate.asOfMarketDate, score: candidate.score / 100,
+    snapshot: { model: "DAY_TWO_BREAKOUT", metrics: candidate.metrics, reasons: candidate.reasons },
   }));
 }
 

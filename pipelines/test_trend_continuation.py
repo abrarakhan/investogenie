@@ -149,6 +149,8 @@ class DayTwoBreakoutTests(unittest.TestCase):
         result = assess_trend_continuation(range_base() + [IGNITION, confirm])
         self.assertEqual(result["status"], "TREND_CONTINUATION_READY")
         self.assertEqual(result["entry"], 104.2)
+        self.assertGreater(result["metrics"]["atr14"], 0)
+        self.assertEqual(result["metrics"]["expected_holding_days"], 5)
         self.assertLess(result["stop"], 100.75)  # below the 20-session high it broke
         self.assertAlmostEqual(result["target"] - result["entry"], 2 * (result["entry"] - result["stop"]))
 

@@ -2,10 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   isExecutablePlanGeometry,
   protectedExecutionEditViolation,
+  trendContinuationExecutionPlanInputs,
   validateExecutionPlanPurchase,
   type ExecutionPlanInput,
   type StoredExecutionPlan,
 } from "@/lib/swingExecutionPlans";
+import type { TrendContinuationCandidate } from "@/lib/trendContinuation";
 
 const plan = (overrides: Partial<StoredExecutionPlan> = {}): StoredExecutionPlan => ({
   id: "00000000-0000-0000-0000-000000000001", assetId: "asset-1", market: "IN",
@@ -37,7 +39,28 @@ describe("protected swing execution plans", () => {
   it("protects subsequent edits without affecting manual trades", () => {
     expect(protectedExecutionEditViolation("STRONG_SWING", 100, 99)).toMatch(/recorded entry/);
     expect(protectedExecutionEditViolation("MOMENTUM_IGNITION", 100, 101)).toBeNull();
+    expect(protectedExecutionEditViolation("TREND_CONTINUATION", 100, 99)).toMatch(/recorded entry/);
     expect(protectedExecutionEditViolation("DEFAULT_SWING", 100, 50)).toBeNull();
+  });
+
+  it("accepts only a confirmed Trend Continuation plan", () => {
+    const continuation = plan({ strategyKey: "TREND_CONTINUATION", status: "TREND_CONTINUATION_READY" });
+    expect(validateExecutionPlanPurchase(continuation, { ...purchase, strategyKey: "TREND_CONTINUATION" })).toBeNull();
+    expect(validateExecutionPlanPurchase({ ...continuation, status: "CONTINUATION_WATCH" }, { ...purchase, strategyKey: "TREND_CONTINUATION" }))
+      .toMatch(/not execution ready/);
+  });
+
+  it("builds a plan only for an execution-eligible day-two continuation", () => {
+    const candidate = {
+      assetId: "asset-1", status: "TREND_CONTINUATION_READY", executionEligible: true,
+      entry: 104.2, target: 112, stop: 100, score: 90, asOfMarketDate: "2026-10-13",
+      metrics: { atr14: 2.1, expected_holding_days: 5 }, reasons: ["Day two confirmed."],
+    } as unknown as TrendContinuationCandidate;
+    expect(trendContinuationExecutionPlanInputs([candidate])).toMatchObject([{
+      strategyKey: "TREND_CONTINUATION", status: "TREND_CONTINUATION_READY", entry: 104.2,
+      target: 112, stop: 100, atr: 2.1, expectedDays: 5,
+    }]);
+    expect(trendContinuationExecutionPlanInputs([{ ...candidate, executionEligible: false }])).toEqual([]);
   });
 
   it("fails closed when a candidate produces unsafe execution geometry", () => {

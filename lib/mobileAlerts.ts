@@ -103,7 +103,7 @@ async function candidateSignals(market: "IN" | "US", userId: string): Promise<Ca
     })),
     ...continuation.map((candidate) => ({
       assetId: candidate.assetId, ticker: candidate.ticker, engine: "TREND_CONTINUATION" as const,
-      status: candidate.status, ready: candidate.status === "TREND_CONTINUATION_READY",
+      status: candidate.status, ready: candidate.executionEligible,
       earlyWatch: candidate.metrics.developing_staircase === true
         && candidate.metrics.execution_data_verified === true,
       quoteAsOf: candidate.computedAt,
@@ -145,7 +145,7 @@ async function dispatchCandidateAlerts(userId: string, tokens: PushTokenRow[], m
         : candidate.engine === "MOMENTUM_IGNITION" ? "Momentum Ignition"
         : candidate.engine === "MOMENTUM_IGNITION_V2" ? "Momentum Ignition V2" : "Trend Continuation";
       const statusLabel = candidate.status === "EXECUTION_READY" ? "Execution Ready"
-        : candidate.status === "TREND_CONTINUATION_READY" ? "Continuation Ready (observation)" : "Momentum Ready";
+        : candidate.status === "TREND_CONTINUATION_READY" ? "Continuation Ready" : "Momentum Ready";
       await query(
         `insert into public.browser_notification_events
            (user_id,market,kind,asset_id,title,body,route,signature,market_date)
@@ -175,7 +175,7 @@ async function dispatchCandidateAlerts(userId: string, tokens: PushTokenRow[], m
         : candidate.engine === "MOMENTUM_IGNITION" ? "Momentum Ignition"
         : candidate.engine === "MOMENTUM_IGNITION_V2" ? "Momentum Ignition V2" : "Trend Continuation";
       const statusLabel = candidate.status === "EXECUTION_READY" ? "Execution Ready"
-        : candidate.status === "TREND_CONTINUATION_READY" ? "Continuation Ready (observation)" : "Momentum Ready";
+        : candidate.status === "TREND_CONTINUATION_READY" ? "Continuation Ready" : "Momentum Ready";
       const receipts = await sendExpoMessages(tokens, {
         title: `InvestoGenie: ${statusLabel}`,
         body: `${candidate.ticker} entered ${statusLabel} in ${engineLabel}. Open Strong Swing to review it.`,

@@ -254,7 +254,7 @@ export interface ScreenCard {
 }
 
 /** A plan-backed purchase: only the plan id is sent, and the server reads every level from it. */
-export interface TradeAction { assetId: string; ticker: string; strategyKey: "STRONG_SWING" | "MOMENTUM_IGNITION"; planId: string; suggestedPrice: number }
+export interface TradeAction { assetId: string; ticker: string; strategyKey: "STRONG_SWING" | "MOMENTUM_IGNITION" | "TREND_CONTINUATION"; planId: string; suggestedPrice: number }
 
 export interface ScreenOption { param: string; label: string; value: string; choices: Array<{ value: string; label: string }> }
 

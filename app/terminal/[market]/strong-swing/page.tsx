@@ -13,7 +13,7 @@ import { getStrongSwingCandidates } from "@/lib/strongSwing";
 import MarketDataAutoRefresh from "@/components/app/MarketDataAutoRefresh";
 import { markLiveMarketTargets } from "@/lib/liveMarketTargets";
 import { zonedMarketClock } from "@/lib/market-calendar.mjs";
-import { captureExecutionPlans, momentumExecutionPlanInputs, strongSwingExecutionPlanInputs, type ExecutionPlanInput } from "@/lib/swingExecutionPlans";
+import { captureExecutionPlans, momentumExecutionPlanInputs, strongSwingExecutionPlanInputs, trendContinuationExecutionPlanInputs, type ExecutionPlanInput } from "@/lib/swingExecutionPlans";
 import { getTrendContinuationCandidates } from "@/lib/trendContinuation";
 import ReadySignalHistory from "@/components/screener/ReadySignalHistory";
 import { getTodayReadySignalHistory } from "@/lib/candidateSignalHistory";
@@ -43,6 +43,7 @@ export default async function StrongSwingPage({
     ...strongSwingExecutionPlanInputs(candidates, settings.trailAtrMult),
     ...momentumExecutionPlanInputs(legacyMomentumIgnition.candidates, "LEGACY"),
     ...momentumExecutionPlanInputs(momentumIgnition.candidates, "V2"),
+    ...trendContinuationExecutionPlanInputs(trendContinuation),
   ];
   const planIds = await captureExecutionPlans(
     user.id, market, zonedMarketClock(market).date, executionPlans, settings.trailAtrMult,
@@ -90,7 +91,7 @@ export default async function StrongSwingPage({
         <MomentumIgnitionCandidates result={momentumIgnition} planIds={Object.fromEntries(planIds)} />
       </section>
       {market === "IN" && <section id="trend-continuation" className="mt-12 scroll-mt-6 border-t border-white/10 pt-8">
-        <TrendContinuationCandidates candidates={trendContinuation} />
+        <TrendContinuationCandidates candidates={trendContinuation} planIds={Object.fromEntries(planIds)} />
       </section>}
     </AppShell>
   );

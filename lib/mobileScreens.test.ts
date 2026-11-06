@@ -138,15 +138,26 @@ describe("momentumIgnitionCard", () => {
 });
 
 describe("trendContinuationCard", () => {
-  it("is observation only and shows the stored levels", () => {
+  const continuation = {
+    assetId: "a3", ticker: "SAREGAMA", name: "Saregama", status: "TREND_CONTINUATION_READY", ready: true, observationOnly: true,
+    score: 100, entry: 536, stop: 507.5, target: 593, currentPrice: 538, asOfMarketDate: "2026-10-29", computedAt: "", reasons: ["Range breakout ignited."],
+    executionEligible: false, executionBlockers: ["A fresh Breeze quote is required."],
+    metrics: { breakout_level: 519.35, ignition_gain_atr: 1.77, volume_ratios: [1.05, 2.98] },
+  } as TrendContinuationCandidate;
+
+  it("keeps blocked candidates observational and shows the stored levels", () => {
     const card = trendContinuationCard({
-      assetId: "a3", ticker: "SAREGAMA", name: "Saregama", status: "TREND_CONTINUATION_READY", ready: true, observationOnly: true,
-      score: 100, entry: 536, stop: 507.5, target: 593, asOfMarketDate: "2026-10-29", computedAt: "", reasons: ["Range breakout ignited."],
-      metrics: { breakout_level: 519.35, ignition_gain_atr: 1.77, volume_ratios: [1.05, 2.98] },
-    } as TrendContinuationCandidate, "IN", 1);
+      ...continuation,
+    }, "IN", 1);
     expect(card.badge).toEqual({ label: "Continuation ready", tone: "positive" });
     expect(card.metrics[0]).toEqual({ label: "ENTRY", value: "₹536.00" });
-    expect(card.trade).toBeUndefined();
-    expect(card.guidance).toContain("Observation only");
+    expect(card.trade).toBeNull();
+    expect(card.guidance).toContain("fresh Breeze quote");
+  });
+
+  it("offers the immutable manual plan only after every execution gate passes", () => {
+    const card = trendContinuationCard({ ...continuation, executionEligible: true, executionBlockers: [], observationOnly: false }, "IN", 1, "plan-3");
+    expect(card.trade).toEqual({ assetId: "a3", ticker: "SAREGAMA", strategyKey: "TREND_CONTINUATION", planId: "plan-3", suggestedPrice: 538 });
+    expect(card.guidance).toContain("auto-buy is disabled");
   });
 });

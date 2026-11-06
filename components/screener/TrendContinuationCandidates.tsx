@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import type { TrendContinuationCandidate, TrendContinuationStatus } from "@/lib/trendContinuation";
 import { TREND_CONTINUATION_STATUS_LABEL } from "@/lib/candidateStatusCopy";
 import TradingViewChartModal, { useTradingViewChart, type ChartGestureProps, type ChartSymbol } from "@/components/charts/TradingViewChartModal";
@@ -14,12 +15,17 @@ const style: Record<TrendContinuationStatus, string> = {
 const value = (number: unknown, suffix = "") => typeof number === "number" && Number.isFinite(number)
   ? `${number.toFixed(2)}${suffix}` : "—";
 
-function CandidateCard({ candidate, rank, chartGesture }: { candidate: TrendContinuationCandidate; rank: number; chartGesture: ChartGestureProps }) {
+function CandidateCard({ candidate, rank, planId, chartGesture }: { candidate: TrendContinuationCandidate; rank: number; planId: string | null; chartGesture: ChartGestureProps }) {
   const developingStaircase = candidate.metrics.developing_staircase === true;
   const volumeRatios = Array.isArray(candidate.metrics.volume_ratios)
     ? candidate.metrics.volume_ratios.filter((item): item is number => typeof item === "number") : [];
   const averageVolume = volumeRatios.length
     ? volumeRatios.reduce((sum, item) => sum + item, 0) / volumeRatios.length : null;
+  const ledgerParams = new URLSearchParams({
+    assetId: candidate.assetId, ticker: candidate.ticker, strategy: "TREND_CONTINUATION", planId: planId ?? "",
+    current: String(candidate.currentPrice ?? candidate.entry ?? ""), entry: String(candidate.entry ?? ""),
+    target: String(candidate.target ?? ""), stop: String(candidate.stop ?? ""), days: String(candidate.metrics.expected_holding_days ?? 5),
+  });
 
   return <article {...chartGesture} className="pointer-coarse:select-none touch-pan-y rounded-lg border border-white/10 bg-white/[0.025] p-4 sm:p-5">
     <div className="flex flex-wrap items-start justify-between gap-3">
@@ -62,17 +68,25 @@ function CandidateCard({ candidate, rank, chartGesture }: { candidate: TrendCont
     </details>
 
     <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-white/8 pt-3 text-[11px]">
-      <span className="font-semibold text-violet-200/75">Observation only — no Buy &amp; Track or auto-buy action.</span>
+      {candidate.executionEligible && planId ? <Link
+        href={`/terminal/in/trade-ledger?${ledgerParams.toString()}`}
+        className="inline-flex min-h-11 items-center rounded-lg border border-emerald-400/35 bg-emerald-400/10 px-4 text-sm font-bold text-emerald-200 hover:bg-emerald-400/15"
+      >Buy &amp; Track</Link> : <span className="font-semibold text-violet-200/75">
+        {candidate.status === "TREND_CONTINUATION_READY" && candidate.executionBlockers.length
+          ? `Buy blocked: ${candidate.executionBlockers[0]}`
+          : "Observation only — wait for confirmed day-two execution gates."}
+      </span>}
       <span className="text-white/30">Signal session {candidate.asOfMarketDate}</span>
     </div>
   </article>;
 }
 
-function CandidateGroup({ title, candidates, color, ranked, bindChartGesture, defaultOpen = false }: {
+function CandidateGroup({ title, candidates, color, ranked, planIds, bindChartGesture, defaultOpen = false }: {
   title: string;
   candidates: TrendContinuationCandidate[];
   color: string;
   ranked: Map<string, number>;
+  planIds: Record<string, string>;
   bindChartGesture: (symbol: ChartSymbol) => ChartGestureProps;
   defaultOpen?: boolean;
 }) {
@@ -86,12 +100,12 @@ function CandidateGroup({ title, candidates, color, ranked, bindChartGesture, de
       <span className="hidden shrink-0 text-xs font-semibold text-white/45 group-open:inline">Collapse</span>
     </summary>
     <div className="space-y-3 border-t border-white/8 p-3 sm:p-4">
-      {candidates.map((candidate) => <CandidateCard key={candidate.assetId} candidate={candidate} rank={ranked.get(candidate.assetId) ?? 0} chartGesture={bindChartGesture({ ticker: candidate.ticker, exchange: "NSE" })} />)}
+      {candidates.map((candidate) => <CandidateCard key={candidate.assetId} candidate={candidate} rank={ranked.get(candidate.assetId) ?? 0} planId={planIds[`TREND_CONTINUATION:${candidate.status}:${candidate.assetId}`] ?? null} chartGesture={bindChartGesture({ ticker: candidate.ticker, exchange: "NSE" })} />)}
     </div>
   </details>;
 }
 
-export default function TrendContinuationCandidates({ candidates }: { candidates: TrendContinuationCandidate[] }) {
+export default function TrendContinuationCandidates({ candidates, planIds }: { candidates: TrendContinuationCandidate[]; planIds: Record<string, string> }) {
   const { chart, closeChart, bindChartGesture } = useTradingViewChart();
   const ranked = new Map(candidates.map((candidate, index) => [candidate.assetId, index + 1]));
   const ready = candidates.filter((candidate) => candidate.status === "TREND_CONTINUATION_READY");
@@ -102,7 +116,7 @@ export default function TrendContinuationCandidates({ candidates }: { candidates
   return <div className="space-y-4">
     <div className="flex flex-wrap items-end justify-between gap-3 border-b border-white/10 pb-4">
       <div>
-        <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-violet-300">Python signal engine · observation mode</div>
+        <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-violet-300">Python signal engine · protected manual execution</div>
         <h2 className="mt-1 text-2xl font-black">Trend Continuation</h2>
         <p className="mt-1 max-w-3xl text-sm leading-relaxed text-white/45">
           Surfaces a firm two-session staircase early, then requires a heavy-volume completed launch and confirmation after the first hour of the following session (10:15 IST); orderly pullbacks after an older impulse remain a second entry path.
@@ -127,17 +141,17 @@ export default function TrendContinuationCandidates({ candidates }: { candidates
     </div>
 
     <div className="rounded-lg border border-violet-400/15 bg-violet-400/[0.035] px-4 py-3 text-xs leading-relaxed text-violet-100/65">
-      Continuation ready means day two is holding a confirmed breakout (stop under the day-one low), or an orderly pullback passes the trend, persistence and entry-geometry checks. It remains observation-only: it does not create a frozen trade plan, unlock buying, or feed auto-buy.
+      A confirmed day-two breakout may unlock manual Buy &amp; Track after 10:15 IST only when fresh Breeze depth, spread, circuit room, results calendar, plan geometry and freshness checks pass. Day-one impulses and later pullbacks remain observation-only; auto-buy stays disabled.
       <span className="mt-2 block text-white/45">Double-click a stock card, or long-press it on mobile, to open its interactive chart.</span>
     </div>
 
     {!candidates.length
       ? <div className="rounded-lg border border-white/10 px-4 py-8 text-center text-sm text-white/45">No recent multi-session impulse currently passes the Trend Continuation floor.</div>
       : <div className="space-y-3">
-        <CandidateGroup title="Continuation ready · observation only" candidates={ready} ranked={ranked} color="text-emerald-300" defaultOpen bindChartGesture={bindChartGesture} />
-        <CandidateGroup title="Continuation watch" candidates={watch} ranked={ranked} color="text-amber-200" bindChartGesture={bindChartGesture} />
-        <CandidateGroup title="Developing staircase / impulse detected" candidates={impulse} ranked={ranked} color="text-cyan-200" bindChartGesture={bindChartGesture} />
-        <CandidateGroup title="Extended · do not chase" candidates={extended} ranked={ranked} color="text-rose-200" bindChartGesture={bindChartGesture} />
+        <CandidateGroup title="Continuation ready" candidates={ready} ranked={ranked} planIds={planIds} color="text-emerald-300" defaultOpen bindChartGesture={bindChartGesture} />
+        <CandidateGroup title="Continuation watch" candidates={watch} ranked={ranked} planIds={planIds} color="text-amber-200" bindChartGesture={bindChartGesture} />
+        <CandidateGroup title="Developing staircase / impulse detected" candidates={impulse} ranked={ranked} planIds={planIds} color="text-cyan-200" bindChartGesture={bindChartGesture} />
+        <CandidateGroup title="Extended · do not chase" candidates={extended} ranked={ranked} planIds={planIds} color="text-rose-200" bindChartGesture={bindChartGesture} />
       </div>}
     <TradingViewChartModal chart={chart} onClose={closeChart} />
   </div>;

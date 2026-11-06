@@ -22,7 +22,7 @@ const RELEASES = [
       ["Local OHLCV charting", "Restricted TradingView embeds were replaced by InvestoGenie candles, with an optional link to open the full TradingView site."],
       ["Advanced chart workspace", "Charts now include 1D/5D/1W/1M intervals, 1M/3M/6M/1Y/All ranges, candle and line modes, volume, SMA 20/50, crosshair readouts, zoom, pan, and fit-to-screen."],
     ],
-    note: "No auto-buy authority was added. Trend Continuation remains observation-only, Pullback Candidates remain non-buyable, and the freshness changes do not alter trading formulas, thresholds, scores, or ranking calculations.",
+    note: "No auto-buy authority was added. Only confirmed day-two Trend Continuation breakouts can use a protected manual plan; day-one impulses and pullbacks remain non-buyable.",
   },
 ] as const;
 
