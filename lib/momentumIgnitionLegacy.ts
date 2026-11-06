@@ -1,4 +1,6 @@
 import { assessMomentumIgnition, type MomentumIgnitionAssessment } from "@/lib/analytics/momentumIgnition";
+import { assessMomentumIgnitionV2, type MomentumIgnitionV2Status } from "@/lib/analytics/momentumIgnitionV2";
+import { reconcileMomentumExecutionStatus } from "@/lib/momentumExecution";
 import type { SwingSettings } from "@/lib/settings";
 import type { OHLCV } from "@/lib/types";
 import { isMarketOpenNow, latestSignalSessionDate, refreshMarketHolidays } from "@/lib/market-calendar.mjs";
@@ -28,6 +30,8 @@ export interface MomentumIgnitionCandidate extends MomentumIgnitionAssessment {
   projectedTarget: number;
   projectedTrail: number;
   projectedDays: number;
+  timingStatus: MomentumIgnitionV2Status;
+  executionVetoReason: string | null;
 }
 
 export interface MomentumIgnitionResult {
@@ -145,7 +149,7 @@ export async function getMomentumIgnitionCandidates(
     const bars = liveDataVerified && marketOpen && liveRow
       ? [...completedBars, toBar(liveRow)]
       : completedBars;
-    const assessment = assessMomentumIgnition({
+    const assessmentInput = {
       currentPrice: Number(row.current_price),
       bars,
       benchmarkBars,
@@ -155,13 +159,17 @@ export async function getMomentumIgnitionCandidates(
       liquidityFloor: config.liquidityFloor,
       liquidityRequirementLabel: config.liquidityRequirementLabel,
       priceFloor: config.priceFloor,
-    });
+    };
+    const assessment = assessMomentumIgnition(assessmentInput);
     if (!assessment.qualifies) continue;
+    const timingAssessment = assessMomentumIgnitionV2(assessmentInput);
     // A live price must never be combined with the previous session's candle
     // to authorize an entry. Keep discovery visible, but fail closed.
     if (marketOpen && assessment.status === "ENTRY_READY" && !liveDataVerified) {
       assessment.status = "BREAKOUT_TRIGGERED";
     }
+    const consensus = reconcileMomentumExecutionStatus(assessment.status, timingAssessment.status);
+    assessment.status = consensus.status;
     const risk = assessment.atr14 * settings.stopAtrMult;
     const projectedEntry = assessment.status === "ENTRY_READY"
       ? Number(row.current_price)
@@ -200,6 +208,8 @@ export async function getMomentumIgnitionCandidates(
       projectedTarget: projectedEntry + risk * settings.targetRR,
       projectedTrail: projectedEntry - assessment.atr14 * settings.trailAtrMult,
       projectedDays: Math.min(20, Math.max(1, Math.round(targetDistance / Math.max(velocity, 0.01)))),
+      timingStatus: timingAssessment.status,
+      executionVetoReason: consensus.vetoReason,
     });
   }
 

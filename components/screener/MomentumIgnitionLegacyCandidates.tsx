@@ -99,6 +99,9 @@ function IgnitionCard({ candidate, rank, market, planId, chartGesture }: { candi
       </details>
 
       <div className="mt-3 border-t border-white/8 pt-3">
+        {candidate.executionVetoReason ? <p className="mb-3 rounded-md border border-amber-400/20 bg-amber-400/5 px-3 py-2 text-[11px] leading-relaxed text-amber-200/80">
+          <span className="font-bold">Execution blocked:</span> {candidate.executionVetoReason}
+        </p> : null}
         {canTrack && planId ? <Link
           href={`/terminal/${market.toLowerCase()}/trade-ledger?${ledgerParams.toString()}`}
           className="inline-flex min-h-11 items-center rounded-lg border border-emerald-400/35 bg-emerald-400/10 px-4 text-sm font-bold text-emerald-200 hover:bg-emerald-400/15"
