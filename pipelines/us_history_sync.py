@@ -57,6 +57,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--symbols", help="Comma-separated US tickers to synchronize")
     parser.add_argument("--all-active", action="store_true", help="Refresh all eligible active stocks, including same-day intraday bars, for EOD")
+    parser.add_argument(
+        "--behind-session",
+        help="YYYY-MM-DD: refresh only recently traded stocks still missing this session's bar. "
+             "Yahoo publishes daily candles for thinner listings (units, preferreds, OTC) hours after close.",
+    )
     parser.add_argument("--limit", type=int, default=250, help="Maximum tickers to process this run")
     parser.add_argument("--min-bars", type=int, default=DEFAULT_MIN_BARS, help="Coverage target per ticker")
     parser.add_argument(
@@ -86,13 +91,21 @@ def yahoo_symbol(ticker: str) -> str:
 
 def load_assets(
     conn, requested: set[str] | None, limit: int | None, min_bars: int, stale_days: int,
-    refresh_all: bool = False,
+    refresh_all: bool = False, behind_session: str | None = None,
 ) -> list[AssetState]:
     params: list[object] = []
     filters = ["a.country='US'", "a.asset_class='STOCK'", "a.is_active=true"]
     if requested:
         filters.append("a.ticker=any(%s)")
         params.append(sorted(requested))
+    elif behind_session:
+        # Traded within the last fortnight but not on the session: the late-candle
+        # gap. Long-dead tickers stay with the normal backoff rotation instead.
+        filters.append(
+            "o.last_date < %s::date"
+            " and o.last_date >= %s::date - interval '14 days'"
+        )
+        params.extend([behind_session, behind_session])
     elif not refresh_all:
         # Select a ticker if it either needs deeper history (below min_bars) OR
         # already has enough bars but hasn't been refreshed recently (stale).
@@ -105,7 +118,7 @@ def load_assets(
         )
         params.extend([min_bars, stale_days])
 
-    if not requested:
+    if not requested and not behind_session:
         # Backoff for symbols that keep coming back empty (delisted, warrants,
         # tickers with no Yahoo coverage). Wait consecutive_empty days before
         # retrying, capped at 14 — so dead tickers consume progressively fewer
@@ -285,7 +298,9 @@ def main() -> None:
     requested = requested_symbols(args.symbols)
     conn = psycopg2.connect(args.database_url)
     try:
-        assets = load_assets(conn, requested, args.limit, args.min_bars, args.stale_days, args.all_active)
+        assets = load_assets(
+            conn, requested, args.limit, args.min_bars, args.stale_days, args.all_active, args.behind_session,
+        )
         print(f"Synchronizing US OHLCV for {len(assets)} stocks (target {args.min_bars} bars).")
         fetched = 0
         bars_written = 0

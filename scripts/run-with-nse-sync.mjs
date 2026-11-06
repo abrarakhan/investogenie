@@ -1644,6 +1644,19 @@ async function refreshTechnicalScreener(market) {
   await run(python, [screenerFeaturePipeline, "--market", market, "--incremental"]);
   await run(process.execPath, [screenerRefreshScript, market]);
 }
+function runEodPython(args) {
+  return new Promise((resolveRun, rejectRun) => {
+    if (shuttingDown) { rejectRun(new Error("Service is shutting down")); return; }
+    const child = spawn(python, args, { cwd: root, env: process.env, stdio: "inherit", timeout: 6 * 60 * 60_000 });
+    eodChild = child;
+    child.once("error", rejectRun);
+    child.once("close", (code, signal) => {
+      if (eodChild === child) eodChild = null;
+      if (code === 0 && !signal) resolveRun();
+      else rejectRun(new Error(`US EOD job exited ${signal ?? code}`));
+    });
+  });
+}
 const stopEodScheduler = startEodScheduler({
   databaseUrl: process.env.DATABASE_URL,
   runIndia: async () => {
@@ -1654,21 +1667,17 @@ const stopEodScheduler = startEodScheduler({
   },
   runUS: async () => {
     if (usQuoteDisabled || usHistoryDisabled) throw new Error("US quote/history updates disabled");
-    const run = (args) => new Promise((resolveRun, rejectRun) => {
-      if (shuttingDown) { rejectRun(new Error("Service is shutting down")); return; }
-      const child = spawn(python, args, { cwd: root, env: process.env, stdio: "inherit", timeout: 6 * 60 * 60_000 });
-      eodChild = child;
-      child.once("error", rejectRun);
-      child.once("close", (code, signal) => {
-        if (eodChild === child) eodChild = null;
-        if (code === 0 && !signal) resolveRun();
-        else rejectRun(new Error(`US EOD job exited ${signal ?? code}`));
-      });
-    });
+    const run = runEodPython;
     // No recurring-job cap: cover the full active universe after US close.
     await run([usPipeline, "--quotes-only", "--quote-batch-size", usQuoteBatchSize,
       "--google-fallback-limit", usGoogleFallbackLimit, "--sleep", usSyncSleep]);
     await run([usHistoryPipeline, "--all-active", "--limit", "100000", "--stale-days", "0",
+      "--min-bars", usHistoryMinBars, "--sleep", usHistorySleep]);
+    await runSignalScan();
+  },
+  runUSLate: async (session) => {
+    if (usHistoryDisabled) throw new Error("US history updates disabled");
+    await runEodPython([usHistoryPipeline, "--behind-session", session,
       "--min-bars", usHistoryMinBars, "--sleep", usHistorySleep]);
     await runSignalScan();
   },

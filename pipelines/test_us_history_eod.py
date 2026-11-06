@@ -5,11 +5,12 @@ from us_history_sync import load_assets
 
 
 class EodSelectionTests(unittest.TestCase):
-    def query(self, refresh_all):
+    def query(self, refresh_all, behind_session=None):
         conn = MagicMock()
         cursor = conn.cursor.return_value.__enter__.return_value
         cursor.fetchall.return_value = []
-        load_assets(conn, None, 100000, 260, 0, refresh_all)
+        load_assets(conn, None, 100000, 260, 0, refresh_all, behind_session)
+        self.params = cursor.execute.call_args.args[1]
         return cursor.execute.call_args.args[0]
 
     def test_eod_includes_same_session_bars(self):
@@ -20,6 +21,15 @@ class EodSelectionTests(unittest.TestCase):
 
     def test_recurring_selection_is_unchanged(self):
         self.assertIn("o.last_date < current_date", self.query(False))
+
+    def test_late_pass_selects_only_recent_assets_missing_the_session(self):
+        sql = self.query(False, "2026-11-05")
+        self.assertIn("o.last_date < %s::date", sql)
+        self.assertIn("interval '14 days'", sql)
+        self.assertNotIn("current_date", sql)
+        # No empty-result backoff: these symbols were just attempted by the EOD pass.
+        self.assertNotIn("s.last_attempt_at <", sql)
+        self.assertEqual(self.params[:2], ["2026-11-05", "2026-11-05"])
 
 
 if __name__ == "__main__":
