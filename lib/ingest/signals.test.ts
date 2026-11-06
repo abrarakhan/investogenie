@@ -95,4 +95,22 @@ describe("computeSignals retirement", () => {
     expect(summary.coverageGaps.IN).toEqual({ lagging: 9, shortHistory: 0, laggingSample: ["BBB", "CCC"] });
     expect(db.calls.some((call) => call.sql.startsWith("update public.swing_signals"))).toBe(false);
   });
+
+  it("does not count US preferred shares in the common-stock coverage numerator", async () => {
+    db.assets = [
+      { id: "a1", ticker: "AAPL", country: "US", exchange: "NASDAQ", asset_class: "STOCK" },
+      { id: "a2", ticker: "ABR-PD", country: "US", exchange: "NYSE", asset_class: "STOCK" },
+    ];
+    db.bars = [
+      ...bars.map((bar) => ({ ...bar, asset_id: "a1" })),
+      ...bars.map((bar) => ({ ...bar, asset_id: "a2" })),
+    ];
+    db.universe = [{ country: "US", total: 1, lagging: 0, lagging_sample: [] }];
+
+    const summary = await computeSignals("postgres://localhost/test");
+
+    expect(summary.scanned).toBe(2);
+    expect(summary.coverageByMarket.US).toBe(1);
+    expect(summary.coverageGaps.US.shortHistory).toBe(0);
+  });
 });

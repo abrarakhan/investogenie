@@ -104,6 +104,14 @@ const MIN_RETIREMENT_COVERAGE = 0.8;
 // had a bar: dormant or delisted rows would otherwise hold coverage below the floor
 // forever and silently disable retirement for that market.
 const COVERAGE_LOOKBACK_SESSIONS = 5;
+const US_PRIMARY_EXCHANGES = new Set(["NASDAQ", "NYSE", "AMEX", "NYSEAMERICAN", "NYSEARCA"]);
+
+function isCoverageEligibleAsset(asset: Pick<AssetMeta, "country" | "exchange" | "ticker">): boolean {
+  if (asset.country !== "US") return true;
+  if (!US_PRIMARY_EXCHANGES.has(asset.exchange)) return false;
+  if (/-P[A-Z]?$/.test(asset.ticker) || /-UN$/.test(asset.ticker)) return false;
+  return !(asset.exchange === "NASDAQ" && asset.ticker.length === 5 && /[PUW]$/.test(asset.ticker));
+}
 
 function sessionsBefore(market: "IN" | "US", dateIso: string, sessions: number): string {
   let date = dateIso;
@@ -222,6 +230,7 @@ export async function computeSignals(databaseUrl: string): Promise<ScanSummary> 
     let scanned = 0;
     let setups = 0;
     const scannedByMarket = new Map<string, number>();
+    const coverageEligibleAssetIds = new Set(assets.filter(isCoverageEligibleAsset).map((asset) => asset.id));
 
     const batches: AssetMeta[][] = [];
     for (let i = 0; i < assets.length; i += ASSET_BATCH) {
@@ -297,7 +306,9 @@ export async function computeSignals(databaseUrl: string): Promise<ScanSummary> 
               s.buildupSource, s.participationRatio, s.volumeExpansion,
               tieBreak.breakoutClearanceAtr, rating, tieBreak.rankScore,
             ]);
-            scannedByMarket.set(meta.country, (scannedByMarket.get(meta.country) ?? 0) + 1);
+            if (coverageEligibleAssetIds.has(meta.id)) {
+              scannedByMarket.set(meta.country, (scannedByMarket.get(meta.country) ?? 0) + 1);
+            }
           } catch {
             // too few bars — skip
           }
@@ -340,7 +351,11 @@ export async function computeSignals(databaseUrl: string): Promise<ScanSummary> 
       : 0;
 
     const selectedByMarket = new Map<string, number>();
-    for (const asset of assets) selectedByMarket.set(asset.country, (selectedByMarket.get(asset.country) ?? 0) + 1);
+    for (const asset of assets) {
+      if (coverageEligibleAssetIds.has(asset.id)) {
+        selectedByMarket.set(asset.country, (selectedByMarket.get(asset.country) ?? 0) + 1);
+      }
+    }
     const coverageGaps = Object.fromEntries((["IN", "US"] as const).map((market) => [market, {
       lagging: laggingByMarket.get(market)?.lagging ?? 0,
       shortHistory: Math.max(0, (selectedByMarket.get(market) ?? 0) - (scannedByMarket.get(market) ?? 0)),
