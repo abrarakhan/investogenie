@@ -26,10 +26,13 @@ class EodSelectionTests(unittest.TestCase):
         sql = self.query(False, "2026-11-05")
         self.assertIn("o.last_date < %s::date", sql)
         self.assertIn("interval '14 days'", sql)
+        self.assertIn("public.latest_quotes", sql)
+        self.assertIn("a.exchange in ('NASDAQ','NYSE','AMEX','NYSEAMERICAN','NYSEARCA')", sql)
+        self.assertIn("a.ticker ~ '-P[A-Z]?$'", sql)
         self.assertNotIn("current_date", sql)
         # No empty-result backoff: these symbols were just attempted by the EOD pass.
         self.assertNotIn("s.last_attempt_at <", sql)
-        self.assertEqual(self.params[:2], ["2026-11-05", "2026-11-05"])
+        self.assertEqual(self.params[:3], ["2026-11-05", "2026-11-05", "2026-11-05"])
 
     def test_late_completion_rejects_provider_failures(self):
         self.assertEqual(late_completion_error(1000, 1, 0), "1 downloads failed")

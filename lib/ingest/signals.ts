@@ -141,6 +141,11 @@ export async function computeSignals(databaseUrl: string): Promise<ScanSummary> 
          ) l
         where a.is_active
           and a.country in ('IN','US')
+          and (a.country <> 'US' or (
+            a.exchange in ('NASDAQ','NYSE','AMEX','NYSEAMERICAN','NYSEARCA')
+            and not (a.ticker ~ '-P[A-Z]?$' or a.ticker ~ '-UN$'
+              or (a.exchange='NASDAQ' and length(a.ticker)=5 and right(a.ticker,1) in ('P','U','W')))
+          ))
           and not exists (select 1 from public.asset_tracking_exclusions x where x.asset_id=a.id)
           and l.last_date >= case when a.country='IN' then $1::date else $2::date end
         group by a.country`,

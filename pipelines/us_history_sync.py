@@ -106,13 +106,20 @@ def load_assets(
         filters.append("a.ticker=any(%s)")
         params.append(sorted(requested))
     elif behind_session:
-        # Traded within the last fortnight but not on the session: the late-candle
-        # gap. Long-dead tickers stay with the normal backoff rotation instead.
+        # A primary-exchange common stock with a quote from this session but no
+        # matching daily bar is a real late-candle gap. OTC securities, preferreds,
+        # SPAC units and listings that did not trade that day are not expected to
+        # publish a candle and must not keep the repair loop alive.
         filters.append(
             "o.last_date < %s::date"
             " and o.last_date >= %s::date - interval '14 days'"
+            " and a.exchange in ('NASDAQ','NYSE','AMEX','NYSEAMERICAN','NYSEARCA')"
+            " and not (a.ticker ~ '-P[A-Z]?$' or a.ticker ~ '-UN$'"
+            "   or (a.exchange='NASDAQ' and length(a.ticker)=5 and right(a.ticker,1) in ('P','U','W')))"
+            " and exists (select 1 from public.latest_quotes q"
+            "              where q.asset_id=a.id and q.as_of >= %s::date)"
         )
-        params.extend([behind_session, behind_session])
+        params.extend([behind_session, behind_session, behind_session])
     elif not refresh_all:
         # Select a ticker if it either needs deeper history (below min_bars) OR
         # already has enough bars but hasn't been refreshed recently (stale).
@@ -173,7 +180,7 @@ def load_assets(
 
 
 def count_behind_session_assets(conn, session: str) -> tuple[int, list[str]]:
-    """Count recently traded active stocks still missing a completed session bar."""
+    """Count quoted primary common stocks still missing a completed session bar."""
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -190,8 +197,13 @@ def count_behind_session_assets(conn, session: str) -> tuple[int, list[str]]:
                and a.is_active=true
                and o.last_date < %s::date
                and o.last_date >= %s::date - interval '14 days'
+               and a.exchange in ('NASDAQ','NYSE','AMEX','NYSEAMERICAN','NYSEARCA')
+               and not (a.ticker ~ '-P[A-Z]?$' or a.ticker ~ '-UN$'
+                 or (a.exchange='NASDAQ' and length(a.ticker)=5 and right(a.ticker,1) in ('P','U','W')))
+               and exists (select 1 from public.latest_quotes q
+                            where q.asset_id=a.id and q.as_of >= %s::date)
             """,
-            [session, session],
+            [session, session, session],
         )
         count, sample = cur.fetchone()
         return int(count), list(sample or [])

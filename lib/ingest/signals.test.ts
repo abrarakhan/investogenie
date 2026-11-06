@@ -67,6 +67,8 @@ describe("computeSignals retirement", () => {
     // The coverage denominator only counts assets that traded in the last five sessions.
     const universe = db.calls.find((call) => call.sql.includes("group by a.country"));
     expect(universe?.params).toEqual(["2026-10-30", "2026-10-29", "2026-11-04", "2026-11-03"]);
+    expect(universe?.sql).toContain("a.exchange in ('NASDAQ','NYSE','AMEX','NYSEAMERICAN','NYSEARCA')");
+    expect(universe?.sql).toContain("a.ticker ~ '-P[A-Z]?$'");
     // Retirement runs after the upsert, never before it.
     const upsertIndex = db.calls.findIndex((call) => call.sql.startsWith("insert into public.swing_signals"));
     expect(upsertIndex).toBeGreaterThan(-1);
