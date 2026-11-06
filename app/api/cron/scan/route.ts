@@ -71,6 +71,7 @@ export async function GET(request: NextRequest) {
       retired: summary?.retired,
       retirementSkippedMarkets: summary?.retirementSkippedMarkets,
       coverageByMarket: summary?.coverageByMarket,
+      coverageGaps: summary?.coverageGaps,
       attempts: result.attempts,
       durationMs: result.durationMs,
     });

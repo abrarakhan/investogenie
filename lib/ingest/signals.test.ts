@@ -66,7 +66,7 @@ describe("computeSignals retirement", () => {
     expect(assetSelection?.params).toEqual(["2026-11-04", "2026-11-03"]);
     // The coverage denominator only counts assets that traded in the last five sessions.
     const universe = db.calls.find((call) => call.sql.includes("group by a.country"));
-    expect(universe?.params).toEqual(["2026-10-30", "2026-10-29"]);
+    expect(universe?.params).toEqual(["2026-10-30", "2026-10-29", "2026-11-04", "2026-11-03"]);
     // Retirement runs after the upsert, never before it.
     const upsertIndex = db.calls.findIndex((call) => call.sql.startsWith("insert into public.swing_signals"));
     expect(upsertIndex).toBeGreaterThan(-1);
@@ -83,13 +83,14 @@ describe("computeSignals retirement", () => {
   it("withholds retirement when current-session coverage is only partial", async () => {
     db.assets = [{ id: "a1", ticker: "AAA", country: "IN", exchange: "NSE", asset_class: "STOCK" }];
     db.bars = bars;
-    db.universe = [{ country: "IN", total: 10 }];
+    db.universe = [{ country: "IN", total: 10, lagging: 9, lagging_sample: ["BBB", "CCC"] }];
 
     const summary = await computeSignals("postgres://localhost/test");
 
     expect(summary.scanned).toBe(1);
     expect(summary.retired).toBe(0);
     expect(summary.retirementSkippedMarkets).toContain("IN");
+    expect(summary.coverageGaps.IN).toEqual({ lagging: 9, shortHistory: 0, laggingSample: ["BBB", "CCC"] });
     expect(db.calls.some((call) => call.sql.startsWith("update public.swing_signals"))).toBe(false);
   });
 });

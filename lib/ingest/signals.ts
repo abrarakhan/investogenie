@@ -28,6 +28,9 @@ export interface ScanSummary {
   retirementSkippedMarkets: string[];
   /** Share of each market's recently traded assets this scan recomputed (0-1). */
   coverageByMarket: Record<string, number>;
+  /** Why coverage fell short: recently traded assets missing the signal session's bar,
+   *  current assets with too little history to classify, and a few lagging tickers. */
+  coverageGaps: Record<string, { lagging: number; shortHistory: number; laggingSample: string[] }>;
   durationMs: number;
 }
 
@@ -124,20 +127,30 @@ export async function computeSignals(databaseUrl: string): Promise<ScanSummary> 
   try {
     // Database clock, so retirement compares against the same clock as computed_at.
     const { rows: [{ started_at: scanStartedAt }] } = await client.query<{ started_at: Date }>("select now() started_at");
-    const { rows: universeRows } = await client.query<{ country: string; total: string | number }>(
-      `select a.country,count(*) total
+    const { rows: universeRows } = await client.query<{
+      country: string; total: string | number; lagging?: string | number | null; lagging_sample?: string[] | null;
+    }>(
+      `select a.country,count(*) total,
+              count(*) filter (where l.last_date < case when a.country='IN' then $3::date else $4::date end) lagging,
+              (array_agg(a.ticker order by a.ticker)
+                 filter (where l.last_date < case when a.country='IN' then $3::date else $4::date end))[1:8] lagging_sample
          from public.assets a
+         cross join lateral (
+           select max(o.date) last_date from public.daily_ohlcv o
+            where o.asset_id=a.id and o.open>0 and o.high>0 and o.low>0 and o.close>0
+         ) l
         where a.is_active
           and a.country in ('IN','US')
           and not exists (select 1 from public.asset_tracking_exclusions x where x.asset_id=a.id)
-          and exists (
-            select 1 from public.daily_ohlcv o
-             where o.asset_id=a.id and o.open>0 and o.high>0 and o.low>0 and o.close>0
-               and o.date >= case when a.country='IN' then $1::date else $2::date end)
+          and l.last_date >= case when a.country='IN' then $1::date else $2::date end
         group by a.country`,
-      [indiaCoverageFrom, usCoverageFrom],
+      [indiaCoverageFrom, usCoverageFrom, indiaSignalSession, usSignalSession],
     );
     const universeByMarket = new Map(universeRows.map((row) => [row.country, Number(row.total)]));
+    const laggingByMarket = new Map(universeRows.map((row) => [row.country, {
+      lagging: Number(row.lagging ?? 0),
+      laggingSample: row.lagging_sample ?? [],
+    }]));
     // Data Health keeps reporting stale assets so they can be repaired, but the
     // signal scan fails closed: only assets current for their market's latest
     // published EOD session are allowed into calculations.
@@ -321,7 +334,15 @@ export async function computeSignals(databaseUrl: string): Promise<ScanSummary> 
       ? (await client.query(RETIRE_SQL, [scanStartedAt, indiaSignalSession, usSignalSession, retireIndia, retireUs])).rowCount ?? 0
       : 0;
 
-    return { scanned, setups, retired, retirementSkippedMarkets, coverageByMarket, durationMs: Date.now() - t0 };
+    const selectedByMarket = new Map<string, number>();
+    for (const asset of assets) selectedByMarket.set(asset.country, (selectedByMarket.get(asset.country) ?? 0) + 1);
+    const coverageGaps = Object.fromEntries((["IN", "US"] as const).map((market) => [market, {
+      lagging: laggingByMarket.get(market)?.lagging ?? 0,
+      shortHistory: Math.max(0, (selectedByMarket.get(market) ?? 0) - (scannedByMarket.get(market) ?? 0)),
+      laggingSample: laggingByMarket.get(market)?.laggingSample ?? [],
+    }]));
+
+    return { scanned, setups, retired, retirementSkippedMarkets, coverageByMarket, coverageGaps, durationMs: Date.now() - t0 };
   } finally {
     await client.end();
   }

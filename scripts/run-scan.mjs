@@ -32,6 +32,7 @@ try {
       retired: summary.retired,
       retirementSkippedMarkets: summary.retirementSkippedMarkets,
       coverageByMarket: summary.coverageByMarket,
+      coverageGaps: summary.coverageGaps,
       runner: "standalone",
     },
     durationMs,
@@ -41,6 +42,11 @@ try {
     : "";
   const coverage = Object.entries(summary.coverageByMarket ?? {})
     .map(([market, ratio]) => `${market}=${(ratio * 100).toFixed(1)}%`).join(",");
+  for (const [market, gap] of Object.entries(summary.coverageGaps ?? {})) {
+    if (!gap.lagging && !gap.shortHistory) continue;
+    const sample = gap.laggingSample?.length ? ` e.g. ${gap.laggingSample.join(",")}` : "";
+    console.log(`[scan] ${market} coverage gap: lagging=${gap.lagging} short-history=${gap.shortHistory}${sample}`);
+  }
   console.log(`[scan] ok scanned=${summary.scanned} setups=${summary.setups} retired=${summary.retired}${skipped} coverage=${coverage} in ${(durationMs / 1000).toFixed(1)}s`);
   process.exit(0);
 } catch (error) {
