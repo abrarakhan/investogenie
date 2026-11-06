@@ -73,15 +73,17 @@ export default async function StrongSwingPage({
         ...trendContinuation.map((candidate) => candidate.assetId),
       ]} />
       <div className="mb-6 border-l-2 border-[var(--ig-accent)] pl-4 text-sm leading-relaxed text-white/52">
-        Buy &amp; Track is enabled only for green Execution Ready setups and records the frozen plan in your ledger. Breeze currently supplies live market data; it does not place the broker order, so confirm exchange restrictions in ICICI Direct before buying.
+        {market === "IN"
+          ? <>Buy &amp; Track is enabled only for green Execution Ready setups and records the frozen plan in your ledger. Breeze currently supplies live market data; it does not place the broker order, so confirm exchange restrictions in ICICI Direct before buying.</>
+          : <>Buy &amp; Track is enabled only for green Execution Ready setups and records the frozen plan in your ledger. US setups use end-of-day and delayed quotes: there is no live quote, spread or circuit check, so confirm the live price and spread with your broker before buying.</>}
       </div>
       <ReadySignalHistory rows={readyHistory} market={market} />
       <section id="strong-swing" className="scroll-mt-6">
-        {market === "IN" && <div className="mb-6">
+        <div className="mb-6">
           <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-emerald-300">Base Swing lineage · confirmed execution engine</div>
           <h2 className="mt-1 text-2xl font-black">Strong Swing Confirmation</h2>
           <p className="mt-1 text-sm text-white/45">The same base Swing signals are re-ranked only after the two-close confirmation and execution-safety gates.</p>
-        </div>}
+        </div>
         <StrongSwingCandidates candidates={candidates} planIds={Object.fromEntries(planIds)} />
       </section>
       <section id="momentum-ignition" className="mt-12 scroll-mt-6 border-t border-white/10 pt-8">
