@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import MagicMock
 
-from us_history_sync import late_completion_error, load_assets
+from us_history_sync import count_behind_session_assets, late_completion_error, load_assets
 
 
 class EodSelectionTests(unittest.TestCase):
@@ -36,6 +36,17 @@ class EodSelectionTests(unittest.TestCase):
 
     def test_late_completion_rejects_provider_failures(self):
         self.assertEqual(late_completion_error(1000, 1, 0), "1 downloads failed")
+
+    def test_late_completion_budget_uses_the_eligible_universe(self):
+        # A retry that selected only one straggler must not fail on that straggler.
+        self.assertIsNone(late_completion_error(6500, 0, 1))
+        conn = MagicMock()
+        cursor = conn.cursor.return_value.__enter__.return_value
+        cursor.fetchone.return_value = (1, 6500, ["WLYB"])
+        self.assertEqual(count_behind_session_assets(conn, "2026-11-05"), (1, 6500, ["WLYB"]))
+        sql, params = cursor.execute.call_args.args
+        self.assertIn("count(*) filter (where o.last_date < %s::date)", sql)
+        self.assertEqual(params, ["2026-11-05"] * 4)
 
     def test_late_completion_rejects_more_than_five_percent_remaining(self):
         self.assertIsNone(late_completion_error(1474, 0, 73))

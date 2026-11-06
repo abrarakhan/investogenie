@@ -179,13 +179,18 @@ def load_assets(
         return [AssetState(row[0], row[1], row[2], int(row[3]), row[4]) for row in cur.fetchall()]
 
 
-def count_behind_session_assets(conn, session: str) -> tuple[int, list[str]]:
-    """Count quoted primary common stocks still missing a completed session bar."""
+def count_behind_session_assets(conn, session: str) -> tuple[int, int, list[str]]:
+    """Count quoted primary common stocks still missing a completed session bar.
+
+    Also returns the whole eligible universe (the same stocks, with or without the
+    bar), so the exception budget does not shrink as retries narrow the selection.
+    """
     with conn.cursor() as cur:
         cur.execute(
             """
-            select count(*),
-                   coalesce((array_agg(a.ticker order by a.ticker))[1:8], '{}')
+            select count(*) filter (where o.last_date < %s::date),
+                   count(*),
+                   coalesce((array_agg(a.ticker order by a.ticker) filter (where o.last_date < %s::date))[1:8], '{}')
               from public.assets a
               join (
                 select asset_id,max(date) last_date
@@ -195,7 +200,6 @@ def count_behind_session_assets(conn, session: str) -> tuple[int, list[str]]:
              where a.country='US'
                and a.asset_class='STOCK'
                and a.is_active=true
-               and o.last_date < %s::date
                and o.last_date >= %s::date - interval '14 days'
                and a.exchange in ('NASDAQ','NYSE','AMEX','NYSEAMERICAN','NYSEARCA')
                and not (a.ticker ~ '-P[A-Z]?$' or a.ticker ~ '-UN$'
@@ -203,24 +207,24 @@ def count_behind_session_assets(conn, session: str) -> tuple[int, list[str]]:
                and exists (select 1 from public.latest_quotes q
                             where q.asset_id=a.id and q.as_of >= %s::date)
             """,
-            [session, session, session],
+            [session, session, session, session],
         )
-        count, sample = cur.fetchone()
-        return int(count), list(sample or [])
+        remaining, universe, sample = cur.fetchone()
+        return int(remaining), int(universe), list(sample or [])
 
 
-def late_completion_error(processed: int, failed: int, remaining: int) -> str | None:
+def late_completion_error(universe: int, failed: int, remaining: int) -> str | None:
     """Return why a late pass is incomplete, allowing a small unavailable tail.
 
     Thin, halted, or provider-unsupported listings do not always publish a daily
     candle. Five percent is the explicit exception budget; provider failures are
     never accepted because they may indicate throttling or an outage.
     """
-    allowed_remaining = math.floor(processed * MAX_LATE_UNAVAILABLE_RATIO)
+    allowed_remaining = math.floor(universe * MAX_LATE_UNAVAILABLE_RATIO)
     if failed:
         return f"{failed} downloads failed"
     if remaining > allowed_remaining:
-        return f"{remaining} session gaps remain (allowed {allowed_remaining} of {processed})"
+        return f"{remaining} session gaps remain (allowed {allowed_remaining} of {universe})"
     return None
 
 
@@ -405,10 +409,13 @@ def main() -> None:
         if args.require_session_complete:
             if not args.behind_session:
                 raise SystemExit("--require-session-complete requires --behind-session")
-            remaining, remaining_sample = count_behind_session_assets(conn, args.behind_session)
+            remaining, universe, remaining_sample = count_behind_session_assets(conn, args.behind_session)
             sample = f" e.g. {','.join(remaining_sample)}" if remaining_sample else ""
-            print(f"Late-session completion: remaining={remaining}{sample}")
-            error = late_completion_error(len(assets), failed, remaining)
+            print(f"Late-session completion: remaining={remaining} of {universe}{sample}")
+            # Budget against the full eligible universe, not this run's selection: a
+            # retry selects only the stragglers, so a selection-based budget rounds to
+            # zero and one unpublished candle would fail every retry until next session.
+            error = late_completion_error(universe, failed, remaining)
             if error:
                 raise SystemExit(f"Late-session pass incomplete: {error}")
     finally:
