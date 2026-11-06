@@ -16,6 +16,7 @@ Examples:
 from __future__ import annotations
 
 import argparse
+import math
 import os
 import time
 from dataclasses import dataclass
@@ -37,6 +38,7 @@ OVERLAP_DAYS = 7
 # latest bar gets — this job's WHERE clause used to only ever grow shallow
 # coverage, never refresh deep-but-stale coverage.
 DEFAULT_STALE_DAYS = 3
+MAX_LATE_UNAVAILABLE_RATIO = 0.05
 
 
 @dataclass(frozen=True)
@@ -61,6 +63,11 @@ def parse_args() -> argparse.Namespace:
         "--behind-session",
         help="YYYY-MM-DD: refresh only recently traded stocks still missing this session's bar. "
              "Yahoo publishes daily candles for thinner listings (units, preferreds, OTC) hours after close.",
+    )
+    parser.add_argument(
+        "--require-session-complete",
+        action="store_true",
+        help="Fail the run when downloads fail or more than 5%% of the selected late-session universe remains missing",
     )
     parser.add_argument("--limit", type=int, default=250, help="Maximum tickers to process this run")
     parser.add_argument("--min-bars", type=int, default=DEFAULT_MIN_BARS, help="Coverage target per ticker")
@@ -163,6 +170,46 @@ def load_assets(
             params,
         )
         return [AssetState(row[0], row[1], row[2], int(row[3]), row[4]) for row in cur.fetchall()]
+
+
+def count_behind_session_assets(conn, session: str) -> tuple[int, list[str]]:
+    """Count recently traded active stocks still missing a completed session bar."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            select count(*),
+                   coalesce((array_agg(a.ticker order by a.ticker))[1:8], '{}')
+              from public.assets a
+              join (
+                select asset_id,max(date) last_date
+                  from public.daily_ohlcv
+                 group by asset_id
+              ) o on o.asset_id=a.id
+             where a.country='US'
+               and a.asset_class='STOCK'
+               and a.is_active=true
+               and o.last_date < %s::date
+               and o.last_date >= %s::date - interval '14 days'
+            """,
+            [session, session],
+        )
+        count, sample = cur.fetchone()
+        return int(count), list(sample or [])
+
+
+def late_completion_error(processed: int, failed: int, remaining: int) -> str | None:
+    """Return why a late pass is incomplete, allowing a small unavailable tail.
+
+    Thin, halted, or provider-unsupported listings do not always publish a daily
+    candle. Five percent is the explicit exception budget; provider failures are
+    never accepted because they may indicate throttling or an outage.
+    """
+    allowed_remaining = math.floor(processed * MAX_LATE_UNAVAILABLE_RATIO)
+    if failed:
+        return f"{failed} downloads failed"
+    if remaining > allowed_remaining:
+        return f"{remaining} session gaps remain (allowed {allowed_remaining} of {processed})"
+    return None
 
 
 def record_attempt(conn, asset_id: str, bars_written: int, error: str | None) -> None:
@@ -343,6 +390,15 @@ def main() -> None:
             f"stocks={len(assets)} fetched={fetched} bars_written={bars_written} "
             f"no_data={no_data} failed={failed}"
         )
+        if args.require_session_complete:
+            if not args.behind_session:
+                raise SystemExit("--require-session-complete requires --behind-session")
+            remaining, remaining_sample = count_behind_session_assets(conn, args.behind_session)
+            sample = f" e.g. {','.join(remaining_sample)}" if remaining_sample else ""
+            print(f"Late-session completion: remaining={remaining}{sample}")
+            error = late_completion_error(len(assets), failed, remaining)
+            if error:
+                raise SystemExit(f"Late-session pass incomplete: {error}")
     finally:
         conn.close()
 

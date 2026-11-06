@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import MagicMock
 
-from us_history_sync import load_assets
+from us_history_sync import late_completion_error, load_assets
 
 
 class EodSelectionTests(unittest.TestCase):
@@ -30,6 +30,16 @@ class EodSelectionTests(unittest.TestCase):
         # No empty-result backoff: these symbols were just attempted by the EOD pass.
         self.assertNotIn("s.last_attempt_at <", sql)
         self.assertEqual(self.params[:2], ["2026-11-05", "2026-11-05"])
+
+    def test_late_completion_rejects_provider_failures(self):
+        self.assertEqual(late_completion_error(1000, 1, 0), "1 downloads failed")
+
+    def test_late_completion_rejects_more_than_five_percent_remaining(self):
+        self.assertIsNone(late_completion_error(1474, 0, 73))
+        self.assertEqual(
+            late_completion_error(1474, 0, 74),
+            "74 session gaps remain (allowed 73 of 1474)",
+        )
 
 
 if __name__ == "__main__":
