@@ -2,8 +2,8 @@
 
 # Project context
 
-Reviewed 26 October 2026 against runtime revision `1c7aac3`.
+Use `AGENTS.md` for repository and workflow instructions. Use `ARCHITECTURE.md`,
+`CAPABILITIES.md`, and `STATUS.md` only when the task needs those details.
 
-Use [README.md](README.md) for setup/routes and [ARCHITECTURE.md](ARCHITECTURE.md) for calculation and persistence boundaries. [STATUS.md](STATUS.md) distinguishes implemented code from unverified runtime state.
-
-The repository includes automated context hooks under `.claude/hooks/`. Generated session summaries describe a prior session and do not establish current code or deployment status.
+Generated Claude session summaries and decision history are machine-local state
+under `.claude/context/`; they are not part of the source repository contract.
