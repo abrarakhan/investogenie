@@ -1677,7 +1677,8 @@ const stopEodScheduler = startEodScheduler({
   },
   runUSLate: async (session) => {
     if (usHistoryDisabled) throw new Error("US history updates disabled");
-    await runEodPython([usHistoryPipeline, "--behind-session", session,
+    // --limit: the script's default cap (250) is for the hourly rotation, not this pass.
+    await runEodPython([usHistoryPipeline, "--behind-session", session, "--limit", "100000",
       "--min-bars", usHistoryMinBars, "--sleep", usHistorySleep]);
     await runSignalScan();
   },
