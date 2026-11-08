@@ -343,18 +343,40 @@ def load_cash_instruments(conn, archive: ZipFile, exchanges: list[str], limit: i
         if limit > 0 and len(instruments) >= limit:
             break
     if instruments:
+        mappings = [
+            (item.asset_id, item.exchange, item.breeze_code, item.token, dt.datetime.now(dt.timezone.utc))
+            for item in instruments
+        ]
         with conn.cursor() as cur:
+            # An asset can be renamed or move between Breeze master entries. A
+            # single INSERT cannot resolve both the asset PK and contract
+            # unique key when the old mapping occupies the other constraint.
+            # Clear only the exact incoming asset/contract keys, then replace
+            # them atomically with the current security-master ownership.
+            execute_values(
+                cur,
+                """
+                delete from public.breeze_instrument_map existing
+                 using (values %s) as incoming(asset_id,exchange_code,stock_code)
+                 where existing.asset_id=incoming.asset_id::uuid
+                    or (existing.exchange_code,existing.stock_code)=(incoming.exchange_code,incoming.stock_code)
+                """,
+                [(asset_id, exchange, stock_code) for asset_id, exchange, stock_code, _token, _updated_at in mappings],
+                page_size=500,
+            )
             execute_values(
                 cur,
                 """
                 insert into public.breeze_instrument_map
                   (asset_id,exchange_code,stock_code,token,updated_at)
                 values %s
-                on conflict (exchange_code,stock_code) do update set
+                on conflict (asset_id) do update set
+                  exchange_code=excluded.exchange_code,
+                  stock_code=excluded.stock_code,
                   token=excluded.token,
                   updated_at=excluded.updated_at
                 """,
-                [(item.asset_id, item.exchange, item.breeze_code, item.token, dt.datetime.now(dt.timezone.utc)) for item in instruments],
+                mappings,
                 page_size=500,
             )
         conn.commit()
