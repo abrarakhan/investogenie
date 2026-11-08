@@ -6,7 +6,7 @@
 import { Client } from "pg";
 import { isMarketOpen } from "@/lib/backfill/classifier";
 import { fetchTextLenient } from "@/lib/ingest/fetchText";
-import { latestSignalSessionDate } from "@/lib/market-calendar.mjs";
+import { isTradingDay, latestSignalSessionDate } from "@/lib/market-calendar.mjs";
 
 const UA =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36";
@@ -341,7 +341,7 @@ async function fetchBhavSeries(
   const start = new Date(`${startISO}T00:00:00Z`);
   for (let i = 0; i < 8; i++) {
     const d = new Date(start); d.setUTCDate(d.getUTCDate() - i);
-    if (d.getUTCDay() === 0 || d.getUTCDay() === 6) continue;
+    if (!isTradingDay("IN", d.toISOString().slice(0, 10))) continue;
     const requestUrl = url(d);
     const headers = { "User-Agent": UA, Accept: "text/csv,*/*", Referer: referer };
     const res = await fetch(requestUrl, {

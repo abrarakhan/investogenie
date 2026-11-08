@@ -8,6 +8,21 @@ export interface MarketClock {
 
 export function zonedMarketClock(market: CalendarMarket, at?: Date): MarketClock;
 export function isTradingDay(market: CalendarMarket, dateIso: string): boolean;
+export function marketSessionForDate(market: CalendarMarket, dateIso: string): {
+  name: string;
+  openMinutes: number;
+  closeMinutes: number;
+  special: boolean;
+};
+export function marketSessionProgress(market: CalendarMarket, at?: Date): {
+  date: string;
+  open: boolean;
+  progress: number;
+  name: string;
+  openMinutes: number;
+  closeMinutes: number;
+  special: boolean;
+};
 export function marketHolidayDates(market: CalendarMarket): string[];
 export function previousTradingDay(market: CalendarMarket, dateIso: string): string;
 export function tradingDayOffset(market: CalendarMarket, dateIso: string, sessions: number): string | null;

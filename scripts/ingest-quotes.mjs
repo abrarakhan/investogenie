@@ -6,6 +6,7 @@
 //
 //   DATABASE_URL=postgresql://... node scripts/ingest-quotes.mjs
 import pg from "pg";
+import { isTradingDay } from "../lib/market-calendar.mjs";
 
 const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36";
 const START = new Date(`${new Date().toISOString().slice(0, 10)}T00:00:00Z`);
@@ -49,7 +50,7 @@ async function fetchUS() {
 async function fetchNSE() {
   for (let i = 0; i < 8; i++) {
     const d = new Date(START); d.setUTCDate(d.getUTCDate() - i);
-    if (d.getUTCDay() === 0 || d.getUTCDay() === 6) continue;
+    if (!isTradingDay("IN", d.toISOString().slice(0, 10))) continue;
     const url = `https://archives.nseindia.com/products/content/sec_bhavdata_full_${ddmmyyyy(d)}.csv`;
     const res = await fetch(url, { headers: { "User-Agent": UA, Referer: "https://www.nseindia.com/" } }).catch(() => null);
     if (!res || !res.ok) continue;
@@ -79,7 +80,7 @@ async function fetchNSE() {
 async function fetchBSE() {
   for (let i = 0; i < 8; i++) {
     const d = new Date(START); d.setUTCDate(d.getUTCDate() - i);
-    if (d.getUTCDay() === 0 || d.getUTCDay() === 6) continue;
+    if (!isTradingDay("IN", d.toISOString().slice(0, 10))) continue;
     const url = `https://www.bseindia.com/download/BhavCopy/Equity/BhavCopy_BSE_CM_0_0_0_${yyyymmdd(d)}_F_0000.CSV`;
     const res = await fetch(url, { headers: { "User-Agent": UA, Referer: "https://www.bseindia.com/" } }).catch(() => null);
     if (!res || !res.ok) continue;

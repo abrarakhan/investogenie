@@ -5,7 +5,7 @@ import {
 } from "@/lib/analytics/momentumIgnitionV2";
 import type { SwingSettings } from "@/lib/settings";
 import type { OHLCV } from "@/lib/types";
-import { isMarketOpenNow, latestSignalSessionDate, refreshMarketHolidays } from "@/lib/market-calendar.mjs";
+import { isMarketOpenNow, latestSignalSessionDate, marketSessionProgress, refreshMarketHolidays } from "@/lib/market-calendar.mjs";
 import {
   loadMomentumBars,
   loadMomentumLiveBars,
@@ -79,27 +79,7 @@ const toBar = (row: BarRow): OHLCV => ({
 });
 
 function marketSession(market: "IN" | "US", now = new Date()): { date: string; open: boolean; progress: number } {
-  const isIndia = market === "IN";
-  const parts = Object.fromEntries(new Intl.DateTimeFormat("en-US", {
-    timeZone: isIndia ? "Asia/Kolkata" : "America/New_York",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    weekday: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23",
-  }).formatToParts(now).map((part) => [part.type, part.value]));
-  const date = `${parts.year}-${parts.month}-${parts.day}`;
-  const minutes = Number(parts.hour) * 60 + Number(parts.minute);
-  const weekday = parts.weekday !== "Sat" && parts.weekday !== "Sun";
-  const start = isIndia ? 9 * 60 + 15 : 9 * 60 + 30;
-  const end = isIndia ? 15 * 60 + 30 : 16 * 60;
-  return {
-    date,
-    open: weekday && minutes >= start && minutes <= end,
-    progress: Math.max(0, Math.min(1, (minutes - start) / (end - start))),
-  };
+  return marketSessionProgress(market, now);
 }
 
 const marketConfig = (market: "IN" | "US") => market === "IN" ? {

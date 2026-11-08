@@ -17,6 +17,7 @@ import argparse
 import json
 import math
 import os
+from pathlib import Path
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from typing import Iterable
@@ -33,6 +34,25 @@ CONFIRMATION_MINUTES = 60  # day-two confirmation opens at 10:15 IST
 # volume a normal session has done by the same time, not with a full day.
 VOLUME_CURVE = ((0, 0.0), (15, 0.09), (30, 0.15), (60, 0.25), (120, 0.40), (180, 0.52),
                 (240, 0.64), (300, 0.77), (345, 0.88), (375, 1.0))
+
+
+def _load_india_special_sessions() -> dict[str, tuple[int, int]]:
+    try:
+        with (Path(__file__).resolve().parents[1] / "config" / "market-special-sessions.json").open(encoding="utf-8") as source:
+            rows = json.load(source).get("IN", {})
+        return {
+            date_value: (int(values["openMinutes"]), int(values["closeMinutes"]))
+            for date_value, values in rows.items()
+        }
+    except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
+        return {}
+
+
+INDIA_SPECIAL_SESSIONS = _load_india_special_sessions()
+
+
+def india_session_bounds(date_value: str) -> tuple[int, int]:
+    return INDIA_SPECIAL_SESSIONS.get(date_value, (9 * 60 + 15, 15 * 60 + 30))
 
 
 @dataclass(frozen=True)
@@ -67,11 +87,14 @@ def _atr(bars: list[Bar], period: int = 14) -> float:
     return value
 
 
-def session_volume_share(minutes: float) -> float:
-    minutes = min(max(minutes, 0.0), float(SESSION_MINUTES))
+def session_volume_share(minutes: float, session_duration: float = SESSION_MINUTES) -> float:
+    # Preserve the established intraday curve while scaling it to the exact
+    # duration of an exceptional session such as Diwali Muhurat trading.
+    minutes = min(max(minutes, 0.0), float(session_duration))
+    normalized_minutes = minutes * SESSION_MINUTES / session_duration
     for (left_minutes, left_share), (right_minutes, right_share) in zip(VOLUME_CURVE, VOLUME_CURVE[1:]):
-        if minutes <= right_minutes:
-            return left_share + (right_share - left_share) * (minutes - left_minutes) / (right_minutes - left_minutes)
+        if normalized_minutes <= right_minutes:
+            return left_share + (right_share - left_share) * (normalized_minutes - left_minutes) / (right_minutes - left_minutes)
     return 1.0
 
 
@@ -80,15 +103,18 @@ def india_session_minutes(last_bar_date: str, now: datetime) -> float | None:
     local = now.astimezone(IST)
     if last_bar_date != local.date().isoformat():
         return None
-    minutes = (local.hour * 60 + local.minute + local.second / 60.0) - (9 * 60 + 15)
-    return minutes if minutes < SESSION_MINUTES else None
+    open_minutes, close_minutes = india_session_bounds(last_bar_date)
+    minutes = (local.hour * 60 + local.minute + local.second / 60.0) - open_minutes
+    return minutes if 0 <= minutes < close_minutes - open_minutes else None
 
 
 def _project_live_volume(series: list[Bar], session_minutes: float | None) -> list[Bar]:
     if session_minutes is None:
         return series
     # The opening auction distorts the first quarter hour, so projection starts there.
-    share = session_volume_share(max(session_minutes, 15.0))
+    open_minutes, close_minutes = india_session_bounds(series[-1].date)
+    duration = close_minutes - open_minutes
+    share = session_volume_share(max(session_minutes, min(15.0, duration)), duration)
     return series[:-1] + [replace(series[-1], volume=series[-1].volume / share)]
 
 

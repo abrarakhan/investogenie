@@ -28,6 +28,20 @@ describe("market calendar", () => {
     expect(latestExpectedSessionDate("IN", new Date("2026-09-13T07:00:00Z"))).toBe("2026-09-11");
   });
 
+  it("recognizes the Sunday Diwali Muhurat session and its exact shortened hours", () => {
+    const beforeOpen = new Date("2026-11-08T08:49:00Z"); // 14:19 IST
+    const duringSession = new Date("2026-11-08T09:25:00Z"); // 14:55 IST
+    const afterClose = new Date("2026-11-08T10:01:00Z"); // 15:31 IST
+
+    expect(isMarketHoliday("IN", duringSession)).toBe(false);
+    expect(isMarketOpenNow("IN", beforeOpen)).toBe(false);
+    expect(isMarketOpenNow("IN", duringSession)).toBe(true);
+    expect(isMarketOpenNow("IN", afterClose)).toBe(false);
+    expect(tradingDayOffset("IN", "2026-11-06", 1)).toBe("2026-11-08");
+    expect(tradingDayOffset("IN", "2026-11-08", 1)).toBe("2026-11-09");
+    expect(tradingSessionLag("IN", "2026-11-06", "2026-11-09")).toBe(2);
+  });
+
   it("waits for each market's EOD publication window before requiring the new signal session", () => {
     expect(latestSignalSessionDate("IN", new Date("2026-11-05T12:00:00Z"))).toBe("2026-11-04");
     expect(latestSignalSessionDate("IN", new Date("2026-11-05T13:01:00Z"))).toBe("2026-11-05");

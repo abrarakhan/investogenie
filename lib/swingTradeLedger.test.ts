@@ -30,6 +30,7 @@ describe("swing trade ledger progress", () => {
 
   it("counts trading sessions rather than weekends", () => {
     expect(tradingDaysBetween("2026-08-21", "2026-08-24")).toBe(1);
+    expect(tradingDaysBetween("2026-11-06", "2026-11-09", "IN")).toBe(2);
   });
 
   it("reports target progress and projected upside remaining", () => {

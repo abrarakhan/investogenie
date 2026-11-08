@@ -46,6 +46,37 @@ INDIA_MARKET_HOLIDAYS = {
 }
 
 
+def load_india_special_sessions() -> dict[dt.date, tuple[dt.time, dt.time]]:
+    path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "config", "market-special-sessions.json",
+    )
+    try:
+        with open(path, encoding="utf-8") as source:
+            rows = json.load(source).get("IN", {})
+        return {
+            dt.date.fromisoformat(date_value): (
+                dt.time(int(values["openMinutes"]) // 60, int(values["openMinutes"]) % 60),
+                dt.time(int(values["closeMinutes"]) // 60, int(values["closeMinutes"]) % 60),
+            )
+            for date_value, values in rows.items()
+        }
+    except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
+        return {}
+
+
+INDIA_SPECIAL_SESSIONS = load_india_special_sessions()
+
+
+def india_market_bounds(date_value: dt.date) -> tuple[dt.time, dt.time] | None:
+    special = INDIA_SPECIAL_SESSIONS.get(date_value)
+    if special:
+        return special
+    if date_value.weekday() >= 5 or date_value in INDIA_MARKET_HOLIDAYS:
+        return None
+    return INDIA_MARKET_OPEN, INDIA_MARKET_CLOSE
+
+
 def load_runtime_market_holidays() -> bool:
     default_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".runtime-india-market-holidays.json")
     path = env("MARKET_CALENDAR_FILE", default_path)
@@ -216,12 +247,14 @@ def is_india_market_session(timestamp: dt.datetime, now: dt.datetime | None = No
     """Accept only a live tick from the currently open Indian cash session."""
     tick_time = timestamp.astimezone(IST)
     current = (now or dt.datetime.now(IST)).astimezone(IST)
+    bounds = india_market_bounds(current.date())
+    if bounds is None:
+        return False
+    market_open, market_close = bounds
     return (
         tick_time.date() == current.date()
-        and tick_time.weekday() < 5
-        and tick_time.date() not in INDIA_MARKET_HOLIDAYS
-        and INDIA_MARKET_OPEN <= tick_time.time().replace(tzinfo=None) <= INDIA_MARKET_CLOSE
-        and INDIA_MARKET_OPEN <= current.time().replace(tzinfo=None) <= INDIA_MARKET_CLOSE
+        and market_open <= tick_time.time().replace(tzinfo=None) <= market_close
+        and market_open <= current.time().replace(tzinfo=None) <= market_close
     )
 
 

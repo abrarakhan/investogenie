@@ -14,6 +14,11 @@ describe("post-close scheduling", () => {
     expect(dueEodSession("IN", new Date("2026-09-14T14:00:00Z"))).toBe("2026-09-11");
     expect(dueEodSession("US", new Date("2026-09-19T22:00:00Z"))).toBe("2026-09-18");
   });
+  it("treats the Sunday Muhurat session as the completed India session", () => {
+    expect(dueEodSession("IN", new Date("2026-11-08T12:30:00Z"))).toBe("2026-11-06");
+    expect(dueEodSession("IN", new Date("2026-11-08T13:01:00Z"))).toBe("2026-11-08");
+    expect(dueEodSession("IN", new Date("2026-11-09T03:00:00Z"))).toBe("2026-11-08");
+  });
   it("runs the late US pass at 22:00 New York time", () => {
     // 2026-11-05 is EST (UTC-5): 22:00 ET = 03:00Z next day.
     expect(dueLateUsSession(new Date("2026-11-06T02:30:00Z"))).toBe("2026-11-04");

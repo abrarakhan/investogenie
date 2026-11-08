@@ -221,6 +221,14 @@ class DayTwoBreakoutTests(unittest.TestCase):
         self.assertIsNone(india_session_minutes("2026-10-29", ten_fifteen))
         self.assertIsNone(india_session_minutes("2026-10-30", datetime(2026, 10, 30, 10, 30, tzinfo=timezone.utc)))
 
+    def test_muhurat_session_uses_exact_open_and_shortened_volume_clock(self):
+        # 14:55 IST is 35 minutes into the 14:20-15:30 exceptional session.
+        during = datetime(2026, 11, 8, 9, 25, tzinfo=timezone.utc)
+        self.assertAlmostEqual(india_session_minutes("2026-11-08", during), 35)
+        self.assertAlmostEqual(session_volume_share(35, 70), session_volume_share(187.5, 375))
+        self.assertIsNone(india_session_minutes("2026-11-08", datetime(2026, 11, 8, 8, 45, tzinfo=timezone.utc)))
+        self.assertIsNone(india_session_minutes("2026-11-08", datetime(2026, 11, 8, 10, 1, tzinfo=timezone.utc)))
+
 
 if __name__ == "__main__":
     unittest.main()

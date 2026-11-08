@@ -2,7 +2,7 @@ import { query } from "@/lib/db";
 import { scoreNewsSwing, type NewsDirection, type NewsScope } from "@/lib/analytics/newsSwing";
 import { assessTradeRisk, type TradeRiskAssessment, type TradeRiskState } from "@/lib/analytics/tradeRisk";
 import { reviseSwingTradePlan, type TradePlanRevision } from "@/lib/analytics/tradePlanRevision";
-import { isMarketOpenNow, refreshMarketHolidays } from "@/lib/market-calendar.mjs";
+import { isMarketOpenNow, isTradingDay, refreshMarketHolidays } from "@/lib/market-calendar.mjs";
 import { calculateRecoveryTargets } from "@/lib/tradeRecoveryTargets";
 
 export type SwingTradeState =
@@ -26,6 +26,7 @@ export interface SwingTradeProgressInput {
   expectedDays: number;
   exitPrice?: number | null;
   asOf?: string;
+  market?: "IN" | "US";
 }
 
 export interface SwingTradeProgress {
@@ -213,7 +214,7 @@ function utcDate(value: string): Date {
 }
 
 /** Trading-session approximation used by the swing engine's bar-based horizon. */
-export function tradingDaysBetween(from: string, to: string): number {
+export function tradingDaysBetween(from: string, to: string, market: "IN" | "US" = "IN"): number {
   const start = utcDate(from);
   const end = utcDate(to);
   if (end <= start) return 0;
@@ -221,8 +222,7 @@ export function tradingDaysBetween(from: string, to: string): number {
   const cursor = new Date(start);
   cursor.setUTCDate(cursor.getUTCDate() + 1);
   while (cursor <= end) {
-    const day = cursor.getUTCDay();
-    if (day !== 0 && day !== 6) count += 1;
+    if (isTradingDay(market, cursor.toISOString().slice(0, 10))) count += 1;
     cursor.setUTCDate(cursor.getUTCDate() + 1);
   }
   return count;
@@ -230,7 +230,7 @@ export function tradingDaysBetween(from: string, to: string): number {
 
 export function calculateSwingTradeProgress(input: SwingTradeProgressInput): SwingTradeProgress {
   const today = (input.asOf ?? new Date().toISOString()).slice(0, 10);
-  const daysHeld = tradingDaysBetween(input.boughtOn, today);
+  const daysHeld = tradingDaysBetween(input.boughtOn, today, input.market ?? "IN");
   const calendarDaysHeld = Math.max(0, Math.floor((utcDate(today).getTime() - utcDate(input.boughtOn).getTime()) / 86_400_000));
   const mark = input.status === "CLOSED" ? (input.exitPrice ?? input.currentPrice) : input.currentPrice;
   const investedValue = input.buyPrice * input.quantity;
@@ -572,6 +572,7 @@ export async function getSwingTradeLedger(userId: string, market: "IN" | "US"): 
       currentPrice, target: trade.projectedTarget, stop: trade.projectedStop,
       trailingStop: effectiveTrailingStop, expectedDays: trade.expectedHoldingDays,
       exitPrice: trade.exitPrice, asOf: trade.closedOn ?? undefined,
+      market,
     });
     const relevantImpacts = impacts.filter((impact) =>
       impact.scope === "MARKET"

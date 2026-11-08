@@ -1,5 +1,6 @@
 import { Client } from "pg";
 import { fetchTextLenient } from "@/lib/ingest/fetchText";
+import { isTradingDay } from "@/lib/market-calendar.mjs";
 
 const NSE_BHAVCOPY_URL =
   "https://archives.nseindia.com/products/content/sec_bhavdata_full_{date}.csv";
@@ -332,11 +333,10 @@ async function backfillIndianExchangeHistory(
     const skipped: { date: string; reason: string }[] = [];
 
     while (cursor <= end && sessionsFetched < maxSessions) {
-      const day = cursor.getUTCDay();
       const date = isoDay(cursor);
       cursor = addDays(cursor, 1);
-      if (day === 0 || day === 6) {
-        skipped.push({ date, reason: "weekend" });
+      if (!isTradingDay("IN", date)) {
+        skipped.push({ date, reason: "exchange closed" });
         continue;
       }
 
