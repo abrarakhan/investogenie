@@ -7,6 +7,8 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": fileURLToPath(new URL("./", import.meta.url)),
+      // Next.js aliases this marker itself; tests run as server code.
+      "server-only": fileURLToPath(new URL("./node_modules/next/dist/compiled/server-only/empty.js", import.meta.url)),
     },
   },
   test: {

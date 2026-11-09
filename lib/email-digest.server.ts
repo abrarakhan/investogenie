@@ -3,6 +3,7 @@
  * user's preferences and sendEmailDigest decrypts a user's SMTP password, so
  * neither may be a browser-callable Server Action. Cron routes only.
  */
+import "server-only";
 import { query, queryOne } from "@/lib/db";
 import { buildEmailHtml, type EmailDigestData } from "@/lib/email/digest-template";
 import { sendEmailWithConfig } from "@/lib/email/nodemailer-service";

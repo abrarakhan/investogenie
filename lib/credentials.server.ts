@@ -4,6 +4,7 @@
  * export there is a browser-callable Server Action) or imported by client code.
  * Callers must already have authorized the request.
  */
+import "server-only";
 import { getSessionUser } from "@/lib/auth";
 import { query, queryOne } from "@/lib/db";
 import { decryptCredential } from "@/lib/crypto/credentials";
