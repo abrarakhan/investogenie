@@ -1,5 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
-import type { ActiveAIConfig } from "@/lib/credentials-actions";
+import type { ActiveAIConfig } from "@/lib/credentials.server";
 import type { MarketId } from "@/lib/types";
 import type { NewsDirection, NewsHorizon, NewsScope } from "@/lib/analytics/newsSwing";
 import type { NormalizedNewsArticle } from "./providers";

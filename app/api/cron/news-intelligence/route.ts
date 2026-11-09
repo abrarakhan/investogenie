@@ -1,5 +1,5 @@
 import { type NextRequest, NextResponse } from "next/server";
-import { getSystemAIConfig, getSystemNewsConfigs } from "@/lib/credentials-actions";
+import { getSystemAIConfig, getSystemNewsConfigs } from "@/lib/credentials.server";
 import { checkCronAuth, logCronRun } from "@/lib/ingest/cronLog";
 import { refreshNewsIntelligence } from "@/lib/news/sync";
 import type { MarketId } from "@/lib/types";

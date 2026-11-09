@@ -1,5 +1,5 @@
 import { tx, query } from "@/lib/db";
-import type { ActiveAIConfig, ActiveNewsConfig } from "@/lib/credentials-actions";
+import type { ActiveAIConfig, ActiveNewsConfig } from "@/lib/credentials.server";
 import type { MarketId } from "@/lib/types";
 import { classifyNews, type NewsAssetRef } from "./classifier";
 import { fetchNews } from "./providers";

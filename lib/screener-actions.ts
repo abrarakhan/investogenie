@@ -6,7 +6,7 @@ import { ensureScaffold } from "@/lib/dashboard-actions";
 import type { Filter, SortSpec } from "@/lib/screener/filterEngine";
 import { parseScreenQuery, MAX_QUERY_CHARS, type ScreenIntent } from "@/lib/screener/nlQuery";
 import { getSectors, getUniverses, type Market } from "@/lib/screener/service";
-import { getActiveAIConfig } from "@/lib/credentials-actions";
+import { getActiveAIConfig } from "@/lib/credentials.server";
 
 /** Add an asset to the user's default watchlist by id (screener row action). */
 export async function addToWatchlistById(assetId: string): Promise<{ ok: boolean }> {

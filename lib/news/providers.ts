@@ -1,4 +1,4 @@
-import type { ActiveNewsConfig } from "@/lib/credentials-actions";
+import type { ActiveNewsConfig } from "@/lib/credentials.server";
 import type { MarketId } from "@/lib/types";
 
 export interface NewsCandidateRef {

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getEnabledEmailPreferences, sendEmailDigest } from "@/lib/email-actions";
+import { getEnabledEmailPreferences, sendEmailDigest } from "@/lib/email-digest.server";
 import { logCronRun } from "@/lib/ingest/cronLog";
 
 export const maxDuration = 300; // 5 minutes

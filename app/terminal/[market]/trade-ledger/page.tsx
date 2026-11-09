@@ -5,7 +5,7 @@ import LedgerAutoRefresh from "@/components/trade-ledger/LedgerAutoRefresh";
 import MarketDataAutoRefresh from "@/components/app/MarketDataAutoRefresh";
 import NewsRefreshButton from "@/components/screener/NewsRefreshButton";
 import { getSessionUser } from "@/lib/auth";
-import { getActiveNewsConfigs } from "@/lib/credentials-actions";
+import { getActiveNewsConfigs } from "@/lib/credentials.server";
 import { normalizeMarket } from "@/lib/markets";
 import { getSwingTradeLedger } from "@/lib/swingTradeLedger";
 import { getPendingOrders } from "@/lib/swingPendingOrders";

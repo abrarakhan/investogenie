@@ -4,7 +4,7 @@ import AppShell from "@/components/app/AppShell";
 import NewsRefreshButton from "@/components/screener/NewsRefreshButton";
 import NewsSwingCandidates from "@/components/screener/NewsSwingCandidates";
 import { getSessionUser } from "@/lib/auth";
-import { getActiveAIConfig, getActiveNewsConfigs } from "@/lib/credentials-actions";
+import { getActiveAIConfig, getActiveNewsConfigs } from "@/lib/credentials.server";
 import { normalizeMarket } from "@/lib/markets";
 import { getNewsSwingWorkspace } from "@/lib/newsSwing";
 import { getUserSwingSettings } from "@/lib/settings";

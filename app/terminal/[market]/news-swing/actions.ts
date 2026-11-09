@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { getSessionUser } from "@/lib/auth";
-import { getActiveAIConfig, getActiveNewsConfigs } from "@/lib/credentials-actions";
+import { getActiveAIConfig, getActiveNewsConfigs } from "@/lib/credentials.server";
 import { normalizeMarket } from "@/lib/markets";
 import { refreshNewsIntelligence } from "@/lib/news/sync";
 
