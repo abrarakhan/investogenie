@@ -2,7 +2,7 @@ import { notFound, redirect } from "next/navigation";
 import AppShell from "@/components/app/AppShell";
 import MarketOverview from "@/components/market-overview/MarketOverview";
 import { getSessionUser } from "@/lib/auth";
-import { getMarketOverview } from "@/lib/marketOverview";
+import { displayMarketOverview } from "@/lib/displayScanCache";
 import { MARKETS, normalizeMarket } from "@/lib/markets";
 
 export const dynamic = "force-dynamic";
@@ -27,7 +27,7 @@ export default async function MarketOverviewPage({
       subtitle={`${cfg.label} breadth, leaders, performance, candidates, and freshness in one workspace.`}
       maxWidth="max-w-[1500px]"
     >
-      <MarketOverview data={await getMarketOverview(marketId)} />
+      <MarketOverview data={await displayMarketOverview(marketId)} />
     </AppShell>
   );
 }

@@ -202,9 +202,15 @@ function CandidateGroup({
   );
 }
 
-export default function StrongSwingCandidates({ candidates, planIds }: { candidates: StrongSwingCandidate[]; planIds: Record<string, string> }) {
+export default function StrongSwingCandidates({ candidates, counts, planIds }: {
+  candidates: StrongSwingCandidate[];
+  /** Exact per-status totals when the server trimmed `candidates` to the rendered cards. */
+  counts?: Partial<Record<StrongSwingStatus, number>>;
+  planIds: Record<string, string>;
+}) {
   const { chart, closeChart, bindChartGesture } = useTradingViewChart();
   const ranked = rankStrongSwingCandidates(candidates);
+  const total = (status: StrongSwingStatus, shown: number) => counts?.[status] ?? shown;
   const executionReady = ranked.filter((candidate) => candidate.status === "EXECUTION_READY");
   const waitingForEntry = ranked.filter((candidate) => candidate.status === "WAIT_FOR_ENTRY");
   const watchlist = ranked.filter((candidate) => candidate.status === "WATCHLIST");
@@ -221,11 +227,11 @@ export default function StrongSwingCandidates({ candidates, planIds }: { candida
       </div>
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-5 sm:gap-3">
         {[
-          ["Execution ready", executionReady.length, "text-emerald-300"],
-          ["Pullback candidates", waitingForEntry.length, "text-cyan-200"],
-          ["Watchlist", watchlist.length, "text-amber-200"],
-          ["Risk off", riskOff.length, "text-orange-200"],
-          ["Invalidated", invalidated.length, "text-rose-300"],
+          ["Execution ready", total("EXECUTION_READY", executionReady.length), "text-emerald-300"],
+          ["Pullback candidates", total("WAIT_FOR_ENTRY", waitingForEntry.length), "text-cyan-200"],
+          ["Watchlist", total("WATCHLIST", watchlist.length), "text-amber-200"],
+          ["Risk off", total("RISK_OFF", riskOff.length), "text-orange-200"],
+          ["Invalidated", total("INVALIDATED", invalidated.length), "text-rose-300"],
         ].map(([label, value, color]) => (
           <div key={String(label)} className="border-b border-white/10 px-1 pb-3">
             <div className={`font-mono text-2xl font-bold ${color}`}>{value}</div>
@@ -246,19 +252,19 @@ export default function StrongSwingCandidates({ candidates, planIds }: { candida
         title="Awaiting confirmation"
         candidates={visibleWatchlist}
         planIds={planIds}
-        totalCount={watchlist.length}
+        totalCount={total("WATCHLIST", watchlist.length)}
         color="text-amber-200"
-        note={watchlist.length > visibleWatchlist.length ? `Showing the strongest ${visibleWatchlist.length} of ${watchlist.length}` : undefined}
+        note={total("WATCHLIST", watchlist.length) > visibleWatchlist.length ? `Showing the strongest ${visibleWatchlist.length} of ${total("WATCHLIST", watchlist.length)}` : undefined}
         bindChartGesture={bindChartGesture}
       />
-      <CandidateGroup title="Risk off" candidates={riskOff.slice(0, 30)} planIds={planIds} totalCount={riskOff.length} color="text-orange-200" bindChartGesture={bindChartGesture} />
+      <CandidateGroup title="Risk off" candidates={riskOff.slice(0, 30)} planIds={planIds} totalCount={total("RISK_OFF", riskOff.length)} color="text-orange-200" bindChartGesture={bindChartGesture} />
       <CandidateGroup
         title="Invalidated"
         candidates={visibleInvalidated}
         planIds={planIds}
-        totalCount={invalidated.length}
+        totalCount={total("INVALIDATED", invalidated.length)}
         color="text-rose-300"
-        note={invalidated.length > visibleInvalidated.length ? `Showing the highest-ranked ${visibleInvalidated.length} of ${invalidated.length}` : undefined}
+        note={total("INVALIDATED", invalidated.length) > visibleInvalidated.length ? `Showing the highest-ranked ${visibleInvalidated.length} of ${total("INVALIDATED", invalidated.length)}` : undefined}
         bindChartGesture={bindChartGesture}
       />
       <TradingViewChartModal chart={chart} onClose={closeChart} />

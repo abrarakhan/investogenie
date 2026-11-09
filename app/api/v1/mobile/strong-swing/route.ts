@@ -1,11 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getMobileSessionUser } from "@/lib/mobileAuth";
-import { getStrongSwingCandidates } from "@/lib/strongSwing";
+import { displayStrongSwing, displayTrendContinuation } from "@/lib/displayScanCache";
 import { getUserSwingSettings } from "@/lib/settings";
 import { normalizeMarket } from "@/lib/markets";
 import { zonedMarketClock } from "@/lib/market-calendar.mjs";
 import { captureExecutionPlans, executionPlanKey, strongSwingExecutionPlanInputs } from "@/lib/swingExecutionPlans";
-import { getTrendContinuationCandidates } from "@/lib/trendContinuation";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -19,7 +18,7 @@ export async function GET(request: NextRequest) {
   const limit = Number.isFinite(requestedLimit) ? Math.min(50, Math.max(1, Math.trunc(requestedLimit))) : 30;
   const settings = await getUserSwingSettings(user.id);
   const [strongSwing, trendContinuation] = await Promise.all([
-    getStrongSwingCandidates(market, settings), getTrendContinuationCandidates(market, limit),
+    displayStrongSwing(market, settings), displayTrendContinuation(market, limit),
   ]);
   const candidates = strongSwing.slice(0, limit);
   // Record the server-held plan for each actionable candidate; a mobile purchase references it by

@@ -1,4 +1,5 @@
-import { getArmedSwingCandidates, type ArmedSwingCandidate } from "@/lib/armedSwing";
+import type { ArmedSwingCandidate } from "@/lib/armedSwing";
+import { displayArmedSwing, displayLegacyMomentum, displayMomentumV2, displayStrongSwing, displayTrendContinuation } from "@/lib/displayScanCache";
 import { ARMED_STATUS_LABEL, ARMED_WHEN_TO_ENTER } from "@/lib/armedSwingCopy";
 import type { ArmedSwingStatus } from "@/lib/analytics/armedSwing";
 import { rankStrongSwingCandidates, rankSwingCandidates, swingDisplayScore } from "@/lib/analytics/candidateRanking";
@@ -17,17 +18,15 @@ import { PRESETS, PRESET_BY_KEY } from "@/lib/screener/presets";
 import { query } from "@/lib/db";
 import { getUserSwingSettings } from "@/lib/settings";
 import { zonedMarketClock } from "@/lib/market-calendar.mjs";
-import { getMomentumIgnitionCandidates, type MomentumIgnitionCandidate } from "@/lib/momentumIgnition";
-import {
-  getMomentumIgnitionCandidates as getLegacyMomentumIgnitionCandidates, type MomentumIgnitionCandidate as LegacyMomentumIgnitionCandidate,
-} from "@/lib/momentumIgnitionLegacy";
+import type { MomentumIgnitionCandidate } from "@/lib/momentumIgnition";
+import type { MomentumIgnitionCandidate as LegacyMomentumIgnitionCandidate } from "@/lib/momentumIgnitionLegacy";
 import { isMomentumExecutionReady } from "@/lib/momentumExecution";
-import { getStrongSwingCandidates, type StrongSwingCandidate } from "@/lib/strongSwing";
+import type { StrongSwingCandidate } from "@/lib/strongSwing";
 import {
   captureExecutionPlans, executionPlanKey, momentumExecutionPlanInputs, strongSwingExecutionPlanInputs, trendContinuationExecutionPlanInputs,
   type ProtectedSwingStrategy,
 } from "@/lib/swingExecutionPlans";
-import { getTrendContinuationCandidates, type TrendContinuationCandidate } from "@/lib/trendContinuation";
+import type { TrendContinuationCandidate } from "@/lib/trendContinuation";
 
 /**
  * Server-driven mobile screens. Every value is computed and formatted here from the same
@@ -519,10 +518,11 @@ async function strongSwing(market: MobileMarket, params: URLSearchParams, userId
   const settings = await getUserSwingSettings(userId);
   // The same four engines and plan capture as the web Strong Swing page.
   const [strong, legacy, v2, trend] = await Promise.all([
-    getStrongSwingCandidates(market, settings),
-    getLegacyMomentumIgnitionCandidates(market, settings),
-    getMomentumIgnitionCandidates(market, settings),
-    market === "IN" ? getTrendContinuationCandidates(market) : Promise.resolve([]),
+    // Same 60 s display cache as the web page (lib/displayScanCache.ts).
+    displayStrongSwing(market, settings),
+    displayLegacyMomentum(market, settings),
+    displayMomentumV2(market, settings),
+    market === "IN" ? displayTrendContinuation(market) : Promise.resolve([]),
   ]);
   const planIds = await captureExecutionPlans(userId, market, zonedMarketClock(market).date, [
     ...strongSwingExecutionPlanInputs(strong, settings.trailAtrMult),
@@ -630,7 +630,7 @@ export function armedSwingCard(candidate: ArmedSwingCandidate, market: MobileMar
 
 async function armedSwing(market: MobileMarket, _params: URLSearchParams, userId: string): Promise<MobileScreen> {
   const settings = await getUserSwingSettings(userId);
-  const result = await getArmedSwingCandidates(market, settings);
+  const result = await displayArmedSwing(market, settings);
   // As on the web page: viewing these keeps their five-minute live quotes flowing, which the
   // execution gates require.
   await markLiveMarketTargets(result.candidates.filter((candidate) => ARMED_LIVE.has(candidate.status)).map((candidate) => candidate.assetId), "strong_swing");

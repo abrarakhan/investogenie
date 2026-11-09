@@ -7,14 +7,12 @@ import StrongSwingCandidates from "@/components/screener/StrongSwingCandidates";
 import { getSessionUser } from "@/lib/auth";
 import { normalizeMarket } from "@/lib/markets";
 import { getUserSwingSettings } from "@/lib/settings";
-import { getMomentumIgnitionCandidates } from "@/lib/momentumIgnition";
-import { getMomentumIgnitionCandidates as getLegacyMomentumIgnitionCandidates } from "@/lib/momentumIgnitionLegacy";
-import { getStrongSwingCandidates } from "@/lib/strongSwing";
+import { displayLegacyMomentum, displayMomentumV2, displayStrongSwing, displayTrendContinuation } from "@/lib/displayScanCache";
+import { trimStrongSwingForDisplay } from "@/lib/candidateDisplay";
 import MarketDataAutoRefresh from "@/components/app/MarketDataAutoRefresh";
 import { markLiveMarketTargets } from "@/lib/liveMarketTargets";
 import { zonedMarketClock } from "@/lib/market-calendar.mjs";
 import { captureExecutionPlans, momentumExecutionPlanInputs, strongSwingExecutionPlanInputs, trendContinuationExecutionPlanInputs, type ExecutionPlanInput } from "@/lib/swingExecutionPlans";
-import { getTrendContinuationCandidates } from "@/lib/trendContinuation";
 import ReadySignalHistory from "@/components/screener/ReadySignalHistory";
 import { getTodayReadySignalHistory } from "@/lib/candidateSignalHistory";
 
@@ -33,10 +31,10 @@ export default async function StrongSwingPage({
 
   const settings = await getUserSwingSettings();
   const [candidates, legacyMomentumIgnition, momentumIgnition, trendContinuation, readyHistory] = await Promise.all([
-    getStrongSwingCandidates(market, settings),
-    getLegacyMomentumIgnitionCandidates(market, settings),
-    getMomentumIgnitionCandidates(market, settings),
-    getTrendContinuationCandidates(market),
+    displayStrongSwing(market, settings),
+    displayLegacyMomentum(market, settings),
+    displayMomentumV2(market, settings),
+    displayTrendContinuation(market),
     getTodayReadySignalHistory(user.id, market),
   ]);
   const executionPlans: ExecutionPlanInput[] = [
@@ -48,6 +46,9 @@ export default async function StrongSwingPage({
   const planIds = await captureExecutionPlans(
     user.id, market, zonedMarketClock(market).date, executionPlans, settings.trailAtrMult,
   );
+  // The browser receives only the cards it renders (exact group counts travel
+  // separately); plans and live-stream targets above still cover every candidate.
+  const strongDisplay = trimStrongSwingForDisplay(candidates);
   await markLiveMarketTargets(
     [
       ...candidates.map((candidate) => candidate.assetId),
@@ -67,7 +68,7 @@ export default async function StrongSwingPage({
       subtitle="Execution-ready setups only after technical confirmation, entry discipline, volatility, stop-risk, liquidity and circuit-behaviour checks agree."
     >
       <MarketDataAutoRefresh market={market} assetIds={[
-        ...candidates.map((candidate) => candidate.assetId),
+        ...strongDisplay.candidates.map((candidate) => candidate.assetId),
         ...legacyMomentumIgnition.candidates.map((candidate) => candidate.assetId),
         ...momentumIgnition.candidates.map((candidate) => candidate.assetId),
         ...trendContinuation.map((candidate) => candidate.assetId),
@@ -84,7 +85,7 @@ export default async function StrongSwingPage({
           <h2 className="mt-1 text-2xl font-black">Strong Swing Confirmation</h2>
           <p className="mt-1 text-sm text-white/45">The same base Swing signals are re-ranked only after the two-close confirmation and execution-safety gates.</p>
         </div>
-        <StrongSwingCandidates candidates={candidates} planIds={Object.fromEntries(planIds)} />
+        <StrongSwingCandidates candidates={strongDisplay.candidates} counts={strongDisplay.counts} planIds={Object.fromEntries(planIds)} />
       </section>
       <section id="momentum-ignition" className="mt-12 scroll-mt-6 border-t border-white/10 pt-8">
         <MomentumIgnitionLegacyCandidates result={legacyMomentumIgnition} planIds={Object.fromEntries(planIds)} />

@@ -3,7 +3,8 @@ import AppShell from "@/components/app/AppShell";
 import ArmedSwingCandidates from "@/components/screener/ArmedSwingCandidates";
 import MarketDataAutoRefresh from "@/components/app/MarketDataAutoRefresh";
 import { getSessionUser } from "@/lib/auth";
-import { getArmedSwingCandidates } from "@/lib/armedSwing";
+import { displayArmedSwing } from "@/lib/displayScanCache";
+import { trimArmedSwingForDisplay } from "@/lib/candidateDisplay";
 import { captureArmedSwingPlans } from "@/lib/armedSwingPlans";
 import { markLiveMarketTargets } from "@/lib/liveMarketTargets";
 import { normalizeMarket } from "@/lib/markets";
@@ -19,7 +20,7 @@ export default async function ArmedSwingPage({ params }: { params: Promise<{ mar
   if (!user) redirect("/login");
 
   const settings = await getUserSwingSettings();
-  const result = await getArmedSwingCandidates(market, settings);
+  const result = await displayArmedSwing(market, settings);
   // Actionable names, and qualifying setups still waiting on live execution data, need the
   // five-minute live quote that the execution gates require.
   const liveIds = result.candidates
@@ -44,7 +45,7 @@ export default async function ArmedSwingPage({ params }: { params: Promise<{ mar
         Armed enters earlier than Strong Swing, so it accepts more failed breakouts in exchange for a lower entry and a tighter structure stop.
         Projections are model estimates, not guarantees. Strong Swing&apos;s gates and rankings are unchanged.
       </div>
-      <ArmedSwingCandidates result={result} planIds={Object.fromEntries(planIds)} />
+      <ArmedSwingCandidates result={{ ...result, ...trimArmedSwingForDisplay(result.candidates) }} planIds={Object.fromEntries(planIds)} />
     </AppShell>
   );
 }

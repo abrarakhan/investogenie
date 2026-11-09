@@ -1,5 +1,6 @@
 import { query, queryOne } from "@/lib/db";
-import { getStrongSwingCandidates, type StrongSwingCandidate } from "@/lib/strongSwing";
+import type { StrongSwingCandidate } from "@/lib/strongSwing";
+import { displayStrongSwing } from "@/lib/displayScanCache";
 import { rankNewsSwingCandidates, scoreNewsSwing, type NewsDirection, type NewsHorizon, type NewsScope, type NewsSwingScore } from "@/lib/analytics/newsSwing";
 import type { SwingSettings } from "@/lib/settings";
 import type { MarketId } from "@/lib/types";
@@ -59,7 +60,7 @@ export async function getNewsSwingWorkspace(
   market: MarketId,
   settings: SwingSettings,
 ): Promise<NewsSwingWorkspace> {
-  const base = (await getStrongSwingCandidates(market, settings)).slice(0, 30);
+  const base = (await displayStrongSwing(market, settings)).slice(0, 30);
   const ids = base.map((row) => row.assetId);
   const impacts = ids.length ? await query<ImpactRow>(
     `select i.asset_id,i.sector,i.scope,i.event_type,i.direction,i.sentiment_score,

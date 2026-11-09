@@ -149,19 +149,20 @@ function CandidateCard({ candidate, planId, chartGesture }: { candidate: ArmedSw
   );
 }
 
-function Group({ title, candidates, planIds, color, bindChartGesture, defaultOpen = false, limit = 30 }: {
-  title: string; candidates: ArmedSwingCandidate[]; planIds: Record<string, string>; color: string; bindChartGesture: (symbol: ChartSymbol) => ChartGestureProps; defaultOpen?: boolean; limit?: number;
+function Group({ title, candidates, totalCount, planIds, color, bindChartGesture, defaultOpen = false, limit = 30 }: {
+  title: string; candidates: ArmedSwingCandidate[]; totalCount?: number; planIds: Record<string, string>; color: string; bindChartGesture: (symbol: ChartSymbol) => ChartGestureProps; defaultOpen?: boolean; limit?: number;
 }) {
   if (!candidates.length) return null;
   const visible = candidates.slice(0, limit);
+  const count = totalCount ?? candidates.length;
   return (
     <details open={defaultOpen} className="group rounded-lg border border-white/10 bg-white/[0.012]">
       <summary className="flex min-h-12 cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 [&::-webkit-details-marker]:hidden">
         <div className="min-w-0">
           <div className={`text-sm font-bold uppercase tracking-[0.18em] ${color}`}>
-            {title} <span className="font-mono text-white/45">({candidates.length})</span>
+            {title} <span className="font-mono text-white/45">({count})</span>
           </div>
-          {candidates.length > visible.length && <div className="mt-1 text-[11px] normal-case tracking-normal text-white/35">Showing the strongest {visible.length}</div>}
+          {count > visible.length && <div className="mt-1 text-[11px] normal-case tracking-normal text-white/35">Showing the strongest {visible.length}</div>}
         </div>
         <span className="shrink-0 text-xs font-semibold text-white/45 group-open:hidden">Expand</span>
         <span className="hidden shrink-0 text-xs font-semibold text-white/45 group-open:inline">Collapse</span>
@@ -173,9 +174,15 @@ function Group({ title, candidates, planIds, color, bindChartGesture, defaultOpe
   );
 }
 
-export default function ArmedSwingCandidates({ result, planIds }: { result: ArmedSwingResult; planIds: Record<string, string> }) {
+export default function ArmedSwingCandidates({ result, planIds }: {
+  /** `counts`/`assessedCount` are exact totals when the server trimmed `candidates` to the rendered cards. */
+  result: ArmedSwingResult & { counts?: Partial<Record<ArmedSwingStatus, number>>; assessedCount?: number };
+  planIds: Record<string, string>;
+}) {
   const { chart, closeChart, bindChartGesture } = useTradingViewChart();
   const by = (status: ArmedSwingStatus) => result.candidates.filter((candidate) => candidate.status === status);
+  const total = (status: ArmedSwingStatus) => result.counts?.[status] ?? by(status).length;
+  const assessed = result.assessedCount ?? result.candidates.length;
   const groups: Array<[string, ArmedSwingStatus, string, boolean]> = [
     ["Buy zone", "BUY_ZONE", "text-emerald-300", true],
     ["Triggered · volume unconfirmed", "TRIGGERED_UNCONFIRMED", "text-lime-200", true],
@@ -186,7 +193,7 @@ export default function ArmedSwingCandidates({ result, planIds }: { result: Arme
     ["Risk off", "RISK_OFF", "text-orange-200", false],
     ["Invalidated", "INVALIDATED", "text-rose-300", false],
   ];
-  const actionable = by("BUY_ZONE").length + by("ARMED").length;
+  const actionable = total("BUY_ZONE") + total("ARMED");
   return (
     <div className="space-y-8">
       <div className="rounded-lg border border-cyan-400/15 bg-cyan-400/[0.035] px-4 py-3 text-xs leading-relaxed text-cyan-50/65">
@@ -195,16 +202,16 @@ export default function ArmedSwingCandidates({ result, planIds }: { result: Arme
         Relative strength is ranked across the whole market on weighted 3/6/9/12-month return.
         <span className="mt-2 block text-white/45">Double-click a stock card, or long-press it on mobile, to open its interactive chart.</span>
       </div>
-      {result.candidates.length > 0 && (
-        <div className={`rounded-lg border px-4 py-3 text-xs leading-relaxed ${result.resultsVerifiedCount / result.candidates.length >= 0.9 ? "border-white/10 text-white/50" : "border-amber-400/25 bg-amber-400/[0.04] text-amber-100/75"}`}>
-          Results calendar verified for {result.resultsVerifiedCount} of {result.candidates.length} assessed bases.
+      {assessed > 0 && (
+        <div className={`rounded-lg border px-4 py-3 text-xs leading-relaxed ${result.resultsVerifiedCount / assessed >= 0.9 ? "border-white/10 text-white/50" : "border-amber-400/25 bg-amber-400/[0.04] text-amber-100/75"}`}>
+          Results calendar verified for {result.resultsVerifiedCount} of {assessed} assessed bases.
           Unverified names stay blocked until the calendar sync confirms their next results date.
         </div>
       )}
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-8 sm:gap-3">
         {groups.map(([label, status, color]) => (
           <div key={status} className="border-b border-white/10 px-1 pb-3">
-            <div className={`font-mono text-2xl font-bold ${color}`}>{by(status).length}</div>
+            <div className={`font-mono text-2xl font-bold ${color}`}>{total(status)}</div>
             <div className="mt-1 text-[10px] uppercase tracking-wider text-white/38">{label}</div>
           </div>
         ))}
@@ -215,7 +222,7 @@ export default function ArmedSwingCandidates({ result, planIds }: { result: Arme
         </div>
       )}
       {groups.map(([label, status, color, open]) => (
-        <Group key={status} title={label} candidates={by(status)} planIds={planIds} color={color} defaultOpen={open} bindChartGesture={bindChartGesture} />
+        <Group key={status} title={label} candidates={by(status)} totalCount={total(status)} planIds={planIds} color={color} defaultOpen={open} bindChartGesture={bindChartGesture} />
       ))}
       <TradingViewChartModal chart={chart} onClose={closeChart} />
     </div>
