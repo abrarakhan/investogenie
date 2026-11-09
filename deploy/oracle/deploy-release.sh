@@ -30,6 +30,12 @@ if [[ "${INVESTOGENIE_DEPLOY_REEXEC:-0}" != "1" ]]; then
   exec env INVESTOGENIE_DEPLOY_REEXEC=1 bash "${APP_DIR}/deploy/oracle/deploy-release.sh"
 fi
 
+# Preflight before npm ci/build/migrations: a missing authorization setting
+# (owner email, trusted proxy header) stops here, leaving the running release
+# and its .next build untouched.
+sudo -u "${APP_USER}" bash -lc \
+  "set -a; source /etc/investogenie/investogenie.env; set +a; cd '${APP_DIR}' && node scripts/check-deploy-env.mjs"
+
 sudo -u "${APP_USER}" bash -lc \
   "set -a; source /etc/investogenie/investogenie.env; set +a; cd '${APP_DIR}' && npm ci --include=dev && npm audit --omit=dev --audit-level=high && npm run build"
 sudo -u "${APP_USER}" "${APP_DIR}/.venv/bin/pip" install -r "${APP_DIR}/pipelines/requirements.txt"
@@ -38,8 +44,8 @@ sudo -u "${APP_USER}" "${APP_DIR}/.venv/bin/pip" install -r "${APP_DIR}/workers/
 sudo -u "${APP_USER}" bash -lc \
   "set -a; source /etc/investogenie/investogenie.env; set +a; cd '${APP_DIR}' && node scripts/apply-production-migrations.mjs"
 
-# Fails the deploy (before the restart) unless DEFAULT_USER_EMAIL names exactly
-# one account; admin-only controls would otherwise be unreachable.
+# Makes DEFAULT_USER_EMAIL the ADMIN and single system owner. The preflight
+# check above already verified it names exactly one account.
 sudo -u "${APP_USER}" bash -lc \
   "set -a; source /etc/investogenie/investogenie.env; set +a; cd '${APP_DIR}' && node scripts/bootstrap-admin.mjs"
 
