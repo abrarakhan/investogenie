@@ -115,6 +115,9 @@ async function rejectCasArtifact(scaffold: { userId: string; portfolioId: string
 
 export async function importCasStatement(formData: FormData): Promise<void> {
   try {
+  // Authenticate before decrypting/parsing the upload: this action is reachable
+  // by direct POST, and PDF extraction is the expensive part.
+  if (!(await getSessionUser())) redirect("/login");
   const file = formData.get("casFile");
   if (!(file instanceof File) || file.size === 0) redirect("/terminal/in/cas?status=missing");
   const password = String(formData.get("pdfPassword") ?? "");
