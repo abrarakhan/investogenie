@@ -1,5 +1,6 @@
 import { cancelPendingBuyStop, fillPendingBuyStop } from "@/app/terminal/[market]/trade-ledger/pendingOrderActions";
 import { zonedMarketClock } from "@/lib/market-calendar.mjs";
+import PendingSubmit from "@/components/trade-ledger/PendingSubmit";
 import type { PendingOrder } from "@/lib/swingPendingOrders";
 
 const fmt = (value: number | null) => value === null ? "-" : value.toFixed(2);
@@ -46,14 +47,14 @@ export default function PendingOrders({ market, orders }: { market: "IN" | "US";
                 <label className="grid gap-1 text-[10px] uppercase tracking-wide text-white/40">Filled qty
                   <input name="fillQuantity" type="number" required step={market === "IN" ? 1 : "any"} min={market === "IN" ? 1 : 0.000001} max={order.remainingQuantity} defaultValue={order.remainingQuantity} className="field h-10 w-24" />
                 </label>
-                <button className="h-10 rounded-lg border border-emerald-400/35 bg-emerald-400/10 px-3 font-semibold text-emerald-200 hover:bg-emerald-400/15">Confirm fill</button>
+                <PendingSubmit pendingLabel="Confirming…" className="h-10 rounded-lg border border-emerald-400/35 bg-emerald-400/10 px-3 font-semibold text-emerald-200 hover:bg-emerald-400/15">Confirm fill</PendingSubmit>
               </form>
               <form action={cancelPendingBuyStop}>
                 <input type="hidden" name="market" value={market} />
                 <input type="hidden" name="orderId" value={order.id} />
-                <button className="h-10 rounded-lg border border-white/15 px-3 font-semibold text-white/60 hover:bg-white/5">
+                <PendingSubmit closeOnDone={false} pendingLabel="Cancelling…" className="h-10 rounded-lg border border-white/15 px-3 font-semibold text-white/60 hover:bg-white/5">
                   {order.filledQuantity > 0 ? "Cancel remainder" : "Cancel order"}
-                </button>
+                </PendingSubmit>
               </form>
             </div>
           </div>
