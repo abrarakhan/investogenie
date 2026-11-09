@@ -43,10 +43,10 @@ export async function getMobileSession(request: NextRequest): Promise<{
        from public.users u
       where s.token_hash=$1 and s.user_id=u.id
         and s.revoked_at is null and s.expires_at > now()
-      returning s.id session_id,u.id,u.email`,
+      returning s.id session_id,u.id,u.email,case when u.role = 'ADMIN' then 'ADMIN' else 'USER' end as role`,
     [hashMobileToken(token)],
   );
-  return row ? { sessionId: row.session_id, user: { id: row.id, email: row.email } } : null;
+  return row ? { sessionId: row.session_id, user: { id: row.id, email: row.email, role: row.role } } : null;
 }
 
 export async function revokeMobileSession(request: NextRequest): Promise<boolean> {

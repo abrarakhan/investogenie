@@ -17,9 +17,13 @@ const secret = new TextEncoder().encode(
   process.env.SESSION_SECRET ?? "dev-insecure-session-secret-change-me-0123456789",
 );
 
+export type UserRole = "USER" | "ADMIN";
+
 export interface SessionUser {
   id: string;
   email: string;
+  /** Read from PostgreSQL on every request, never from the cookie. */
+  role: UserRole;
 }
 
 // ---- passwords --------------------------------------------------------------
@@ -27,7 +31,7 @@ export const hashPassword = (pw: string) => bcrypt.hash(pw, 10);
 export const verifyPassword = (pw: string, hash: string) => bcrypt.compare(pw, hash);
 
 // ---- session cookie (set/clear only valid in actions & route handlers) -------
-export async function createSession(user: SessionUser): Promise<void> {
+export async function createSession(user: Pick<SessionUser, "id" | "email">): Promise<void> {
   const token = await new SignJWT({ email: user.email })
     .setProtectedHeader({ alg: "HS256" })
     .setSubject(user.id)
@@ -56,7 +60,7 @@ export const getSessionUser = cache(async (): Promise<SessionUser | null> => {
     const { payload } = await jwtVerify(token, secret);
     if (!payload.sub) return null;
     return queryOne<SessionUser>(
-      "select id, email from public.users where id = $1",
+      "select id, email, case when role = 'ADMIN' then 'ADMIN' else 'USER' end as role from public.users where id = $1",
       [payload.sub],
     );
   } catch {
@@ -85,5 +89,5 @@ export async function createUser(email: string, password: string): Promise<Sessi
     [email, hash],
   );
   if (!row) throw new Error("could not create user");
-  return { id: row.id, email: row.email };
+  return { id: row.id, email: row.email, role: "USER" };
 }

@@ -135,10 +135,12 @@ def load_breeze_credentials() -> BreezeCredentials | None:
                  where c.breeze_api_key_encrypted is not null
                    and c.breeze_api_secret_encrypted is not null
                    and c.breeze_session_token_encrypted is not null
-                 order by (u.email=%s) desc,u.created_at asc
+                   -- Canonical shared quotes come only from an admin's Breeze
+                   -- session, never from an ordinary user's broker account.
+                   and u.role='ADMIN'
+                 order by u.created_at asc
                  limit 1
                 """,
-                (env("DEFAULT_USER_EMAIL", ""),),
             )
             row = cur.fetchone()
         if row:

@@ -8,9 +8,13 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 10;
 
 export async function POST(request: NextRequest) {
-  const user = await getSessionUser();
+  // Starts a server-side worker over the shared queue: cron secret or admin only.
   const cron = checkCronAuth(request.headers.get("authorization"), process.env.CRON_SECRET);
-  if (!user && !cron.ok) return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
+  if (!cron.ok) {
+    const user = await getSessionUser();
+    if (!user) return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
+    if (user.role !== "ADMIN") return NextResponse.json({ ok: false, error: "forbidden" }, { status: 403 });
+  }
   const databaseUrl = process.env.DATABASE_URL;
   if (!databaseUrl) return NextResponse.json({ ok: false, error: "DATABASE_URL not configured" }, { status: 500 });
   const job = request.nextUrl.searchParams.get("job") === "cron" ? "backfill_ohlcv_cron" : "backfill_ohlcv";

@@ -24,3 +24,11 @@ export async function requireApiUser(...limits: Array<[bucket: string, rule: Rat
   }
   return { user };
 }
+
+/** Route-handler guard for shared system operations: admin session only. */
+export async function requireApiAdmin(): Promise<Guarded> {
+  const user = await getSessionUser();
+  if (!user) return { response: NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 }) };
+  if (user.role !== "ADMIN") return { response: NextResponse.json({ ok: false, error: "forbidden" }, { status: 403 }) };
+  return { user };
+}

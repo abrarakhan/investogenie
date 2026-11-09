@@ -29,10 +29,9 @@ export async function newsConfigsForUser(userId: string): Promise<ActiveNewsConf
 
 export async function getActiveNewsConfigs(): Promise<ActiveNewsConfig[]> {
   const user = await getSessionUser();
-  if (user) {
-    const configs = await newsConfigsForUser(user.id);
-    if (configs.length) return configs;
-  }
+  if (!user) return [];
+  const configs = await newsConfigsForUser(user.id);
+  if (configs.length) return configs;
   const legacy = await getActiveNewsConfig();
   return legacy ? [legacy] : [];
 }
@@ -45,9 +44,9 @@ export async function getSystemNewsConfigs(): Promise<ActiveNewsConfig[]> {
     process.env.ALPHA_VANTAGE_API_KEY && { provider: "alpha_vantage" as const, apiKey: process.env.ALPHA_VANTAGE_API_KEY },
   ].filter((item): item is ActiveNewsConfig => Boolean(item));
   if (environment.length) return environment;
+  // Owner fallback: admin accounts only, never an arbitrary (e.g. oldest) user.
   const owner = await queryOne<{ id: string }>(
-    `select id from public.users order by (email=$1) desc,created_at asc limit 1`,
-    [process.env.DEFAULT_USER_EMAIL ?? ""],
+    `select id from public.users where role='ADMIN' order by created_at asc limit 1`,
   );
   if (owner) {
     const configs = await newsConfigsForUser(owner.id);
@@ -57,10 +56,15 @@ export async function getSystemNewsConfigs(): Promise<ActiveNewsConfig[]> {
   return legacy ? [legacy] : [];
 }
 
-/** Resolve a user's news API, falling back to deployment environment keys. */
+/**
+ * Resolve the signed-in user's news API. Deployment environment keys are
+ * reserved for the owner (and cron via getSystemNewsConfig); ordinary users
+ * must bring their own key rather than spend the deployment's quota.
+ */
 export async function getActiveNewsConfig(): Promise<ActiveNewsConfig | null> {
   const user = await getSessionUser();
-  if (user) {
+  if (!user) return null;
+  {
     const row = await queryOne<{ news_provider: string | null; news_api_key_encrypted: string | null }>(
       `select news_provider, news_api_key_encrypted from public.user_credentials where user_id = $1`,
       [user.id],
@@ -72,7 +76,7 @@ export async function getActiveNewsConfig(): Promise<ActiveNewsConfig | null> {
       };
     }
   }
-  return getEnvironmentNewsConfig();
+  return user.role === "ADMIN" ? getEnvironmentNewsConfig() : null;
 }
 
 /**
@@ -87,10 +91,9 @@ export async function getSystemNewsConfig(): Promise<ActiveNewsConfig | null> {
     `select c.news_provider,c.news_api_key_encrypted
        from public.user_credentials c
        join public.users u on u.id=c.user_id
-      where c.news_api_key_encrypted is not null
-      order by (u.email=$1) desc,u.created_at asc
+      where c.news_api_key_encrypted is not null and u.role='ADMIN'
+      order by u.created_at asc
       limit 1`,
-    [process.env.DEFAULT_USER_EMAIL ?? ""],
   );
   if (!row?.news_api_key_encrypted || !NEWS_PROVIDERS.has(row.news_provider as NewsProvider)) return null;
   return {
@@ -136,6 +139,10 @@ export async function getActiveAIConfig(): Promise<ActiveAIConfig | null> {
     };
   }
 
+  // Deployment model keys are reserved for the owner; ordinary users must add
+  // their own key rather than spend the deployment's quota.
+  if (user.role !== "ADMIN") return null;
+
   if (process.env.DEEPSEEK_API_KEY) {
     return {
       provider: "deepseek",
@@ -144,8 +151,8 @@ export async function getActiveAIConfig(): Promise<ActiveAIConfig | null> {
     };
   }
 
-  // Fallback: an environment-owned model key keeps local deployments working
-  // without storing a key for every user.
+  // Fallback: an environment-owned model key keeps the owner's install working
+  // without storing a key.
   if (process.env.ANTHROPIC_API_KEY) {
     return {
       provider: "anthropic",
@@ -187,10 +194,9 @@ export async function getSystemAIConfig(): Promise<ActiveAIConfig | null> {
     `select c.ai_provider,c.ai_model,c.ai_api_key_encrypted
        from public.user_credentials c
        join public.users u on u.id=c.user_id
-      where c.ai_api_key_encrypted is not null
-      order by (u.email=$1) desc,u.created_at asc
+      where c.ai_api_key_encrypted is not null and u.role='ADMIN'
+      order by u.created_at asc
       limit 1`,
-    [process.env.DEFAULT_USER_EMAIL ?? ""],
   );
   if (!row?.ai_api_key_encrypted || !isAIProvider(row.ai_provider)) return null;
   return {
@@ -215,9 +221,8 @@ export async function getSMTPConfig(): Promise<{
   }>(
     `select smtp_host, smtp_port, smtp_user, smtp_password_encrypted
      from public.user_credentials
-     where user_id = (select id from public.users where email = $1)
+     where user_id = (select id from public.users where role = 'ADMIN' order by created_at asc limit 1)
      limit 1`,
-    [process.env.DEFAULT_USER_EMAIL || ""],
   );
 
   if (result?.smtp_host && result.smtp_user && result.smtp_password_encrypted) {

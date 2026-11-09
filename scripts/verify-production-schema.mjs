@@ -59,6 +59,7 @@ const requiredColumns = [
   ["gmail_connections", "needs_reconnect"],
   ["stock_snapshot", "distance_sma_200_pct"],
   ["browser_notification_events", "market_date"],
+  ["users", "role"],
 ];
 const client = new pg.Client({
   connectionString: url,

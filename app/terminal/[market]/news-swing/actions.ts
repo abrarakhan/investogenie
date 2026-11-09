@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { getSessionUser } from "@/lib/auth";
+import { isAdmin } from "@/lib/authz";
 import { getActiveAIConfig, getActiveNewsConfigs } from "@/lib/credentials.server";
 import { normalizeMarket } from "@/lib/markets";
 import { refreshNewsIntelligence } from "@/lib/news/sync";
@@ -16,6 +17,8 @@ export async function refreshNewsSwing(
 ): Promise<RefreshNewsState> {
   const user = await getSessionUser();
   if (!user) return { ok: false, message: "Sign in before refreshing news." };
+  // Writes the shared news_articles / news_impacts every account reads.
+  if (!isAdmin(user)) return { ok: false, message: "Shared news refresh is limited to the owner." };
   const market = normalizeMarket(String(formData.get("market") ?? ""));
   if (!market) return { ok: false, message: "Invalid market." };
   const [news, ai] = await Promise.all([getActiveNewsConfigs(), getActiveAIConfig()]);

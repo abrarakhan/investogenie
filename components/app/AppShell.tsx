@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { Suspense } from "react";
 import { signout } from "@/app/login/actions";
+import { getSessionUser } from "@/lib/auth";
+import { isAdmin } from "@/lib/authz";
 import { MARKETS } from "@/lib/markets";
 import type { MarketId } from "@/lib/types";
 import ApplyMarketTheme from "@/components/terminal/ApplyMarketTheme";
@@ -63,7 +65,7 @@ function MarketSwitch({ market, activeArea }: { market: MarketId; activeArea: st
   );
 }
 
-export default function AppShell({
+export default async function AppShell({
   children,
   email,
   market,
@@ -84,6 +86,8 @@ export default function AppShell({
 }) {
   const cfg = MARKETS[market];
   const m = marketPath(market);
+  // Pipeline diagnostics are owner-only; the page itself enforces this too.
+  const admin = isAdmin(await getSessionUser());
   const sections: NavSection[] = [
     {
       title: "Market Workspace",
@@ -118,7 +122,7 @@ export default function AppShell({
     {
       title: "Operations",
       items: [
-        { label: "Data Health", href: `/data/health?market=${m}`, active: active === "data", statusDot: "data-health" },
+        ...(admin ? [{ label: "Data Health", href: `/data/health?market=${m}`, active: active === "data", statusDot: "data-health" as const }] : []),
         { label: "Settings", href: `/settings?market=${m}`, active: active === "settings" },
         { label: "Help", href: "/help" },
       ],

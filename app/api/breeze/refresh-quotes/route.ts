@@ -12,6 +12,9 @@ const requests = new Map<string, number>();
 export async function POST(request: NextRequest) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
+  // These quotes are written to the shared latest_quotes table that drives every
+  // account's live execution gates, so only the owner's Breeze session may feed it.
+  if (user.role !== "ADMIN") return NextResponse.json({ skipped: true, reason: "owner_only", updated: 0, changed: 0 });
   const body = await request.json().catch(() => null);
   const ids = body?.assetIds;
   if (!Array.isArray(ids) || ids.length > 50 || ids.some((id) => typeof id !== "string" || !/^[0-9a-f-]{36}$/i.test(id))) {

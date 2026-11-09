@@ -1,6 +1,5 @@
-import { redirect } from "next/navigation";
 import Link from "next/link";
-import { getSessionUser } from "@/lib/auth";
+import { requireAdminPage } from "@/lib/authz";
 import AppShell from "@/components/app/AppShell";
 import { getSyncStatus } from "@/lib/syncStatus";
 
@@ -48,8 +47,7 @@ function Card({ title, children }: { title: string; children: React.ReactNode })
 }
 
 export default async function SyncAdminPage() {
-  const user = await getSessionUser();
-  if (!user) redirect("/login");
+  const user = await requireAdminPage();
   const data = await getSyncStatus();
 
   return (

@@ -38,6 +38,11 @@ sudo -u "${APP_USER}" "${APP_DIR}/.venv/bin/pip" install -r "${APP_DIR}/workers/
 sudo -u "${APP_USER}" bash -lc \
   "set -a; source /etc/investogenie/investogenie.env; set +a; cd '${APP_DIR}' && node scripts/apply-production-migrations.mjs"
 
+# Fails the deploy (before the restart) unless DEFAULT_USER_EMAIL names exactly
+# one account; admin-only controls would otherwise be unreachable.
+sudo -u "${APP_USER}" bash -lc \
+  "set -a; source /etc/investogenie/investogenie.env; set +a; cd '${APP_DIR}' && node scripts/bootstrap-admin.mjs"
+
 sudo -u "${APP_USER}" bash -lc \
   "set -a; source /etc/investogenie/investogenie.env; set +a; cd '${APP_DIR}' && .venv/bin/python pipelines/screener_technical_features.py --market IN --bootstrap && node scripts/refresh-screener.mjs IN"
 
