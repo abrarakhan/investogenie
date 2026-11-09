@@ -4,6 +4,7 @@
 //   • BSE — api.bseindia.com active equity scrip list
 //
 //   DATABASE_URL=postgresql://... node scripts/ingest-listings.mjs
+import { pathToFileURL } from "node:url";
 import pg from "pg";
 
 const UA_SEC = "InvestoGenie/1.0 (research; contact@investogenie.app)";
@@ -123,11 +124,38 @@ async function upsertBatch(client, batch) {
   );
 }
 
-async function main() {
-  const [us, nse, bse] = await Promise.all([fetchUS(), fetchNSE(), fetchBSE()]);
-  console.log(`fetched — US:${us.length}  NSE:${nse.length}  BSE:${bse.length}`);
+/**
+ * Fetch each source independently. One exchange refusing the download (BSE has
+ * returned 403 since 2026-10-28) must not discard the others: with Promise.all
+ * a single rejection dropped every new NSE and US listing too. This job only
+ * inserts/updates, so skipping a source never deactivates its existing assets.
+ */
+export async function fetchListingSources(sources) {
+  const settled = await Promise.allSettled(sources.map(([, fetcher]) => fetcher()));
+  const rows = [];
+  const counts = {};
+  const failures = [];
+  settled.forEach((result, index) => {
+    const name = sources[index][0];
+    if (result.status === "fulfilled") {
+      counts[name] = result.value.length;
+      rows.push(...result.value);
+    } else {
+      failures.push({ source: name, error: result.reason instanceof Error ? result.reason.message : String(result.reason) });
+    }
+  });
+  return { rows, counts, failures };
+}
 
-  const all = dedupe([...us, ...nse, ...bse]);
+async function main() {
+  const { rows, counts, failures } = await fetchListingSources([["US", fetchUS], ["NSE", fetchNSE], ["BSE", fetchBSE]]);
+  console.log(`fetched — ${Object.entries(counts).map(([name, n]) => `${name}:${n}`).join("  ") || "nothing"}`);
+  for (const failure of failures) {
+    console.warn(`[listings] ${failure.source} unavailable, skipped this run: ${failure.error}`);
+  }
+  if (!Object.keys(counts).length) throw new Error(`every listing source failed: ${failures.map((f) => f.error).join("; ")}`);
+
+  const all = dedupe(rows);
   console.log(`deduped total: ${all.length}`);
 
   const databaseUrl = process.env.DATABASE_URL ?? "postgresql://localhost:5432/investogenie";
@@ -154,6 +182,11 @@ async function main() {
   const total = await client.query("select count(*) n from public.assets where asset_class='STOCK'");
   console.log(`TOTAL STOCK assets: ${total.rows[0].n}`);
   await client.end();
+  if (failures.length) {
+    console.warn(`[listings] partial refresh: ingested ${Object.keys(counts).join(", ")}; skipped ${failures.map((f) => f.source).join(", ")}`);
+  }
 }
 
-main().catch((e) => { console.error(e); process.exit(1); });
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((e) => { console.error(e); process.exit(1); });
+}
