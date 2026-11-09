@@ -1,4 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server";
+import { requireApiUser } from "@/lib/apiGuards";
+import { RATE_LIMITS } from "@/lib/rateLimit";
 import { getScreenerResults, type Market } from "@/lib/screener/service";
 import type { Filter, SortSpec } from "@/lib/screener/filterEngine";
 
@@ -19,6 +21,8 @@ interface Body {
 }
 
 export async function POST(request: NextRequest) {
+  const guard = await requireApiUser(["screener", RATE_LIMITS.screener]);
+  if (guard.response) return guard.response;
   let body: Body;
   try {
     body = (await request.json()) as Body;

@@ -1,5 +1,6 @@
 "use server";
 
+import { getSessionUser } from "@/lib/auth";
 import { query } from "@/lib/db";
 import { getLongTermData } from "@/lib/long-term-data";
 import {
@@ -214,6 +215,8 @@ const withScore = (record: ScoredRecord, selectedScore: LongTermScore): LongTerm
 });
 
 export async function getLongTermCandidates(q: LongTermQuery): Promise<LongTermResult> {
+  // Browser-callable Server Action: require a signed-in user.
+  if (!(await getSessionUser())) throw new Error("Not signed in");
   const activeStrategy = validStrategy(q.strategy);
   const minScore = Math.min(100, Math.max(0, q.minScore ?? 50));
   const minConfidence = Math.min(100, Math.max(0, q.minConfidence ?? 60));

@@ -1,7 +1,9 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
+import { allowAuthAttempt, RATE_LIMITS } from "@/lib/rateLimit";
 import { query, queryOne } from "@/lib/db";
 import { isResetKeyConfigured, resetKeyMatches } from "@/lib/passwordReset";
 import { isOpenSignupEnabled, SIGNUP_CLOSED_MESSAGE } from "@/lib/signupPolicy";
@@ -26,6 +28,8 @@ export interface AuthState {
   message?: string;
 }
 
+const TOO_MANY_ATTEMPTS = "Too many attempts. Wait a few minutes and try again.";
+
 function readCredentials(formData: FormData) {
   const email = String(formData.get("email") ?? "").trim();
   const password = String(formData.get("password") ?? "");
@@ -35,6 +39,9 @@ function readCredentials(formData: FormData) {
 export async function login(_prev: AuthState, formData: FormData): Promise<AuthState> {
   const { email, password } = readCredentials(formData);
   if (!email || !password) return { error: "Email and password are required." };
+  if (!allowAuthAttempt("login", await headers(), RATE_LIMITS.loginPerIp, { value: email, rule: RATE_LIMITS.loginPerEmail })) {
+    return { error: TOO_MANY_ATTEMPTS };
+  }
 
   const user = await findUserByEmail(email);
   if (!user || !(await verifyPassword(password, user.password_hash))) {
@@ -48,6 +55,7 @@ export async function login(_prev: AuthState, formData: FormData): Promise<AuthS
 export async function signup(_prev: AuthState, formData: FormData): Promise<AuthState> {
   // Enforced here, not only by hiding the form: this action is reachable by direct POST.
   if (!isOpenSignupEnabled()) return { error: SIGNUP_CLOSED_MESSAGE };
+  if (!allowAuthAttempt("signup", await headers(), RATE_LIMITS.signupPerIp)) return { error: TOO_MANY_ATTEMPTS };
   const { email, password } = readCredentials(formData);
   if (!email || !password) return { error: "Email and password are required." };
   if (password.length < 6) return { error: "Password must be at least 6 characters." };
@@ -98,6 +106,9 @@ export async function resetPassword(_prev: AuthState, formData: FormData): Promi
   }
   if (password.length < 6) return { error: "Password must be at least 6 characters." };
   if (password !== confirm) return { error: "The two passwords do not match." };
+  if (!allowAuthAttempt("recovery-key", await headers(), RATE_LIMITS.passwordResetPerIp, { value: email, rule: RATE_LIMITS.loginPerEmail })) {
+    return { error: TOO_MANY_ATTEMPTS };
+  }
   if (!resetKeyMatches(suppliedKey, expectedKey)) {
     return { error: "That recovery key is not valid." };
   }
@@ -157,6 +168,9 @@ export async function requestPasswordResetEmail(
     message: `If that address has an account, a reset link is on its way. It expires in ${TOKEN_TTL_MINUTES} minutes.`,
   };
 
+  // Throttled with the same neutral reply, so the limit reveals nothing either.
+  if (!allowAuthAttempt("reset-email", await headers(), RATE_LIMITS.passwordResetPerIp)) return neutral;
+
   try {
     const user = await findUserByEmail(email);
     if (!user) return neutral;
@@ -196,6 +210,7 @@ export async function completePasswordReset(
   if (!password) return { error: "Enter a new password." };
   if (password.length < 6) return { error: "Password must be at least 6 characters." };
   if (password !== confirm) return { error: "The two passwords do not match." };
+  if (!allowAuthAttempt("reset-complete", await headers(), RATE_LIMITS.passwordResetPerIp)) return { error: TOO_MANY_ATTEMPTS };
 
   const redeemed = await redeemResetToken(token);
   if (!redeemed) {

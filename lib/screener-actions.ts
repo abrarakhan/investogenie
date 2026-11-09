@@ -7,6 +7,7 @@ import type { Filter, SortSpec } from "@/lib/screener/filterEngine";
 import { parseScreenQuery, MAX_QUERY_CHARS, type ScreenIntent } from "@/lib/screener/nlQuery";
 import { getSectors, getUniverses, type Market } from "@/lib/screener/service";
 import { getActiveAIConfig } from "@/lib/credentials.server";
+import { checkRateLimit, RATE_LIMITS } from "@/lib/rateLimit";
 
 /** Add an asset to the user's default watchlist by id (screener row action). */
 export async function addToWatchlistById(assetId: string): Promise<{ ok: boolean }> {
@@ -27,6 +28,9 @@ export async function addToWatchlistById(assetId: string): Promise<{ ok: boolean
 export async function parseScreenIntent(input: { query: string; market: string }): Promise<ScreenIntent> {
   const user = await getSessionUser();
   if (!user) throw new Error("Not signed in");
+  if (!checkRateLimit(`screen-intent:user:${user.id}`, RATE_LIMITS.screenIntent).ok) {
+    throw new Error("Too many AI screen requests; wait a minute and try again.");
+  }
   const query = input.query.trim().slice(0, MAX_QUERY_CHARS);
   if (!query) throw new Error("Enter a query first");
 

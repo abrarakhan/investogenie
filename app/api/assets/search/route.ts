@@ -1,4 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server";
+import { requireApiUser } from "@/lib/apiGuards";
+import { RATE_LIMITS } from "@/lib/rateLimit";
 import { query } from "@/lib/db";
 
 export const runtime = "nodejs";
@@ -18,6 +20,8 @@ interface Row {
 }
 
 export async function GET(request: NextRequest) {
+  const guard = await requireApiUser(["market-data", RATE_LIMITS.marketData]);
+  if (guard.response) return guard.response;
   const params = new URL(request.url).searchParams;
   const raw = (params.get("q") ?? "").trim();
   const country = params.get("country"); // 'US' | 'IN' | null

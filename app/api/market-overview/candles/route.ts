@@ -1,4 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server";
+import { requireApiUser } from "@/lib/apiGuards";
+import { RATE_LIMITS } from "@/lib/rateLimit";
 import { getCandlesForTicker } from "@/lib/marketOverview";
 import type { MarketId } from "@/lib/types";
 
@@ -8,6 +10,8 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest) {
+  const guard = await requireApiUser(["market-data", RATE_LIMITS.marketData]);
+  if (guard.response) return guard.response;
   const params = request.nextUrl.searchParams;
   const market: MarketId = params.get("market") === "US" ? "US" : "IN";
   const ticker = (params.get("ticker") ?? "").trim();
