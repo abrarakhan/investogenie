@@ -351,6 +351,17 @@ describe("server actions: role-specific behaviour", () => {
   });
 });
 
+describe("canonical system owner", () => {
+  it("reads shared sources from the designated owner, never the oldest admin", () => {
+    for (const file of ["lib/credentials.server.ts", "workers/breeze_market_daemon.py"]) {
+      const source = readFileSync(join(ROOT, file), "utf8");
+      expect(source, file).toMatch(/is_system_owner/);
+      expect(source, file).not.toMatch(/role\s*=\s*'ADMIN'/);
+      expect(source, file).not.toMatch(/order by \(u?\.?email\s*=/);
+    }
+  });
+});
+
 describe("page guards and deployment keys", () => {
   it("sends anonymous visitors to login and hides admin pages from ordinary users", async () => {
     const { requireAdminPage } = await import("@/lib/authz");

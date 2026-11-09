@@ -61,6 +61,7 @@ const requiredColumns = [
   ["stock_snapshot", "distance_sma_200_pct"],
   ["browser_notification_events", "market_date"],
   ["users", "role"],
+  ["users", "is_system_owner"],
 ];
 const client = new pg.Client({
   connectionString: url,

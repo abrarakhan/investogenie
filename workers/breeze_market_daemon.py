@@ -135,11 +135,10 @@ def load_breeze_credentials() -> BreezeCredentials | None:
                  where c.breeze_api_key_encrypted is not null
                    and c.breeze_api_secret_encrypted is not null
                    and c.breeze_session_token_encrypted is not null
-                   -- Canonical shared quotes come only from an admin's Breeze
-                   -- session, never from an ordinary user's broker account.
-                   and u.role='ADMIN'
-                 order by u.created_at asc
-                 limit 1
+                   -- Canonical shared quotes come only from the designated
+                   -- system owner's Breeze session (users.is_system_owner),
+                   -- never an ordinary user's or another admin's account.
+                   and u.is_system_owner
                 """,
             )
             row = cur.fetchone()

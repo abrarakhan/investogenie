@@ -45,9 +45,10 @@ export async function getSystemNewsConfigs(): Promise<ActiveNewsConfig[]> {
     process.env.ALPHA_VANTAGE_API_KEY && { provider: "alpha_vantage" as const, apiKey: process.env.ALPHA_VANTAGE_API_KEY },
   ].filter((item): item is ActiveNewsConfig => Boolean(item));
   if (environment.length) return environment;
-  // Owner fallback: admin accounts only, never an arbitrary (e.g. oldest) user.
+  // Owner fallback: the single designated system owner (users.is_system_owner),
+  // never "some admin" — promoting another admin must not switch shared sources.
   const owner = await queryOne<{ id: string }>(
-    `select id from public.users where role='ADMIN' order by created_at asc limit 1`,
+    `select id from public.users where is_system_owner`,
   );
   if (owner) {
     const configs = await newsConfigsForUser(owner.id);
@@ -92,9 +93,7 @@ export async function getSystemNewsConfig(): Promise<ActiveNewsConfig | null> {
     `select c.news_provider,c.news_api_key_encrypted
        from public.user_credentials c
        join public.users u on u.id=c.user_id
-      where c.news_api_key_encrypted is not null and u.role='ADMIN'
-      order by u.created_at asc
-      limit 1`,
+      where c.news_api_key_encrypted is not null and u.is_system_owner`,
   );
   if (!row?.news_api_key_encrypted || !NEWS_PROVIDERS.has(row.news_provider as NewsProvider)) return null;
   return {
@@ -195,9 +194,7 @@ export async function getSystemAIConfig(): Promise<ActiveAIConfig | null> {
     `select c.ai_provider,c.ai_model,c.ai_api_key_encrypted
        from public.user_credentials c
        join public.users u on u.id=c.user_id
-      where c.ai_api_key_encrypted is not null and u.role='ADMIN'
-      order by u.created_at asc
-      limit 1`,
+      where c.ai_api_key_encrypted is not null and u.is_system_owner`,
   );
   if (!row?.ai_api_key_encrypted || !isAIProvider(row.ai_provider)) return null;
   return {
@@ -222,7 +219,7 @@ export async function getSMTPConfig(): Promise<{
   }>(
     `select smtp_host, smtp_port, smtp_user, smtp_password_encrypted
      from public.user_credentials
-     where user_id = (select id from public.users where role = 'ADMIN' order by created_at asc limit 1)
+     where user_id = (select id from public.users where is_system_owner)
      limit 1`,
   );
 
