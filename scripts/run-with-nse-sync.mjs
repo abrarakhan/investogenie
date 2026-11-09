@@ -31,6 +31,7 @@ const amfiSchemeMasterScript = resolve(root, "scripts/sync-amfi-scheme-master.mj
 const mlSnapshotScript = resolve(root, "scripts/capture-ml-snapshots.mjs");
 const screenerFeaturePipeline = resolve(root, "pipelines/screener_technical_features.py");
 const trendContinuationPipeline = resolve(root, "pipelines/trend_continuation.py");
+const strategyRetrospectivePipeline = resolve(root, "pipelines/strategy_retrospective.py");
 const screenerRefreshScript = resolve(root, "scripts/refresh-screener.mjs");
 const pythonCandidates = [
   process.env.PYTHON_BIN,
@@ -1657,6 +1658,10 @@ function runEodPython(args) {
     });
   });
 }
+async function refreshStrategyRetrospective(market) {
+  if (!python) throw new Error("Python is required for strategy retrospective calculations");
+  await runEodPython([strategyRetrospectivePipeline, "--market", market]);
+}
 const stopEodScheduler = startEodScheduler({
   databaseUrl: process.env.DATABASE_URL,
   runIndia: async () => {
@@ -1664,6 +1669,7 @@ const stopEodScheduler = startEodScheduler({
     if (!await runBhavcopyNseSync("exchange-close")) throw new Error("India EOD update failed");
     await refreshTechnicalScreener("IN");
     await runSignalScan();
+    await refreshStrategyRetrospective("IN");
   },
   runUS: async () => {
     if (usQuoteDisabled || usHistoryDisabled) throw new Error("US quote/history updates disabled");
@@ -1674,6 +1680,7 @@ const stopEodScheduler = startEodScheduler({
     await run([usHistoryPipeline, "--all-active", "--limit", "100000", "--stale-days", "0",
       "--min-bars", usHistoryMinBars, "--sleep", usHistorySleep]);
     await runSignalScan();
+    await refreshStrategyRetrospective("US");
   },
   runUSLate: async (session) => {
     if (usHistoryDisabled) throw new Error("US history updates disabled");

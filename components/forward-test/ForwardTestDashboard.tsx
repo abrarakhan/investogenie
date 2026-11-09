@@ -29,7 +29,7 @@ export default function ForwardTestDashboard({
   return (
     <div className="space-y-6">
       <section className="rounded-3xl border border-white/10 bg-white/[0.03] p-5">
-        <p className="text-xs uppercase tracking-[0.22em] text-[var(--ig-accent)]">Forward test</p>
+        <p className="text-xs uppercase tracking-[0.22em] text-[var(--ig-accent)]">Forward test · frozen cohorts</p>
         <h2 className="mt-2 text-2xl font-black">Out-of-sample scorecard</h2>
         <p className="mt-2 max-w-3xl text-sm leading-relaxed text-white/55">
           Every call is frozen when it is made and graded against what actually happened — no re-running the

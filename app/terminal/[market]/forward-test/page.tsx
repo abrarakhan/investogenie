@@ -2,7 +2,9 @@ import { redirect, notFound } from "next/navigation";
 import { getSessionUser } from "@/lib/auth";
 import AppShell from "@/components/app/AppShell";
 import ForwardTestDashboard from "@/components/forward-test/ForwardTestDashboard";
+import RetrospectiveDashboard from "@/components/forward-test/RetrospectiveDashboard";
 import { getForwardTestScorecard, getForwardTestPositions } from "@/lib/forwardTest";
+import { getStrategyRetrospectiveScorecards } from "@/lib/strategyRetrospective";
 import { normalizeMarket } from "@/lib/markets";
 
 export const dynamic = "force-dynamic";
@@ -18,9 +20,10 @@ export default async function ForwardTestPage({
   const user = await getSessionUser();
   if (!user) redirect("/login");
 
-  const [scorecard, positions] = await Promise.all([
+  const [scorecard, positions, retrospective] = await Promise.all([
     getForwardTestScorecard(marketId),
     getForwardTestPositions(marketId),
+    getStrategyRetrospectiveScorecards(marketId),
   ]);
 
   return (
@@ -28,10 +31,13 @@ export default async function ForwardTestPage({
       email={user.email ?? ""}
       market={marketId}
       active="forward-test"
-      title="Forward test"
-      subtitle="Frozen predictions graded against realised outcomes, per method."
+      title="Strategy Tests"
+      subtitle="Compare true forward cohorts with backward-looking outcomes from recorded production signals."
     >
-      <ForwardTestDashboard scorecard={scorecard} positions={positions} />
+      <div className="space-y-8">
+        <ForwardTestDashboard scorecard={scorecard} positions={positions} />
+        <RetrospectiveDashboard rows={retrospective} />
+      </div>
     </AppShell>
   );
 }

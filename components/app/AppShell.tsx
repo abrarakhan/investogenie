@@ -104,7 +104,7 @@ export default function AppShell({
         { label: "Probability", href: `/terminal/${m}/probability`, active: active === "probability" },
         { label: "Adaptive Allocation", href: `/terminal/${m}/adaptive-allocation`, active: active === "adaptive-allocation", badge: "Lab" },
         { label: "Trade Ledger", href: `/terminal/${m}/trade-ledger`, active: active === "trade-ledger", badge: "Track" },
-        { label: "Forward Test", href: `/terminal/${m}/forward-test`, active: active === "forward-test" },
+        { label: "Strategy Tests", href: `/terminal/${m}/forward-test`, active: active === "forward-test" },
       ],
     },
     {

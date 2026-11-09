@@ -45,6 +45,8 @@ const requiredRelations = [
   "public.trend_continuation_signals",
   "public.browser_notification_events",
   "public.asset_symbol_changes",
+  "public.strategy_retrospective_results",
+  "public.strategy_retrospective_scorecards",
 ];
 const requiredColumns = [
   ["corporate_event_sync_state", "authoritative_source"],
