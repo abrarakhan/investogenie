@@ -23,8 +23,9 @@ const NO_AUTOFILL = {
   "data-bwignore": true,
 } as const;
 
-export default function LoginForm({ resetEnabled = false, signupEnabled = false }: { resetEnabled?: boolean; signupEnabled?: boolean }) {
-  const [mode, setMode] = useState<Mode>("signin");
+export default function LoginForm({ resetEnabled = false, inviteToken }: { resetEnabled?: boolean; inviteToken?: string }) {
+  const signupEnabled = Boolean(inviteToken);
+  const [mode, setMode] = useState<Mode>(inviteToken ? "signup" : "signin");
   const [revealed, setRevealed] = useState(false);
   const action =
     mode === "signin" ? login
@@ -73,6 +74,7 @@ export default function LoginForm({ resetEnabled = false, signupEnabled = false 
           same elements and a value the browser autofilled for sign-in stays in the field after
           switching to reset — which is how a password nobody chose can get submitted. */}
       <form key={mode} action={formAction} className="flex flex-col gap-4">
+        {mode === "signup" && inviteToken && <input type="hidden" name="invite" value={inviteToken} />}
         <label className="flex flex-col gap-1.5">
           <span className="text-xs uppercase tracking-widest text-white/50">Email</span>
           <input

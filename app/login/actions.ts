@@ -6,7 +6,7 @@ import { redirect } from "next/navigation";
 import { allowAuthAttempt, RATE_LIMITS } from "@/lib/rateLimit";
 import { query, queryOne } from "@/lib/db";
 import { isResetKeyConfigured, resetKeyMatches } from "@/lib/passwordReset";
-import { isOpenSignupEnabled, SIGNUP_CLOSED_MESSAGE } from "@/lib/signupPolicy";
+import { acceptInvitation } from "@/lib/invitations";
 import {
   issueResetToken,
   redeemResetToken,
@@ -18,7 +18,6 @@ import {
   createSession,
   destroySession,
   findUserByEmail,
-  createUser,
   hashPassword,
   verifyPassword,
 } from "@/lib/auth";
@@ -29,6 +28,7 @@ export interface AuthState {
 }
 
 const TOO_MANY_ATTEMPTS = "Too many attempts. Wait a few minutes and try again.";
+const SIGNUP_CLOSED_MESSAGE = "Sign-up is by invitation only. Ask the owner for an invitation link.";
 
 function readCredentials(formData: FormData) {
   const email = String(formData.get("email") ?? "").trim();
@@ -52,18 +52,28 @@ export async function login(_prev: AuthState, formData: FormData): Promise<AuthS
   redirect("/terminal/in");
 }
 
+/**
+ * Invitation-only sign-up. There is no open path: this action is reachable by
+ * direct POST, so the one-time invitation is validated here, atomically with
+ * account creation (lib/invitations.ts).
+ */
 export async function signup(_prev: AuthState, formData: FormData): Promise<AuthState> {
-  // Enforced here, not only by hiding the form: this action is reachable by direct POST.
-  if (!isOpenSignupEnabled()) return { error: SIGNUP_CLOSED_MESSAGE };
   if (!allowAuthAttempt("signup", await headers(), RATE_LIMITS.signupPerIp)) return { error: TOO_MANY_ATTEMPTS };
+  const invite = String(formData.get("invite") ?? "").trim();
+  if (!invite) return { error: SIGNUP_CLOSED_MESSAGE };
   const { email, password } = readCredentials(formData);
   if (!email || !password) return { error: "Email and password are required." };
   if (password.length < 6) return { error: "Password must be at least 6 characters." };
 
-  if (await findUserByEmail(email)) {
-    return { error: "An account with that email already exists." };
+  const result = await acceptInvitation(invite, email, await hashPassword(password));
+  if (!result.ok) {
+    return {
+      error: result.reason === "exists" ? "An account with that email already exists."
+        : result.reason === "email_mismatch" ? "This invitation was issued for a different email address."
+          : "This invitation is invalid, already used, revoked or expired. Ask the owner for a new one.",
+    };
   }
-  const user = await createUser(email, password);
+  const user = result.user;
   await createSession(user);
   revalidatePath("/", "layout");
   redirect("/terminal/in");
@@ -81,10 +91,6 @@ export async function signup(_prev: AuthState, formData: FormData): Promise<Auth
  * `scripts/reset-local-password.mjs` (and the "Reset InvestoGenie Password" desktop shortcut)
  * remain the host-access recovery path and need no key.
  */
-export async function isSignupEnabled(): Promise<boolean> {
-  return isOpenSignupEnabled();
-}
-
 export async function isPasswordResetEnabled(): Promise<boolean> {
   return isResetKeyConfigured(process.env.PASSWORD_RESET_KEY);
 }

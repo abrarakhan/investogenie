@@ -38,6 +38,7 @@ const requiredRelations = [
   "public.corporate_events",
   "public.corporate_event_sync_state",
   "public.armed_swing_plans",
+  "public.user_invitations",
   "public.swing_pending_orders",
   "public.swing_pending_order_fills",
   "public.swing_execution_plans",

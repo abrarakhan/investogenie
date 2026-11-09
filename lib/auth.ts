@@ -82,12 +82,4 @@ export function findUserByEmail(email: string) {
   );
 }
 
-export async function createUser(email: string, password: string): Promise<SessionUser> {
-  const hash = await hashPassword(password);
-  const row = await queryOne<{ id: string; email: string }>(
-    "insert into public.users (email, password_hash) values (lower($1), $2) returning id, email",
-    [email, hash],
-  );
-  if (!row) throw new Error("could not create user");
-  return { id: row.id, email: row.email, role: "USER" };
-}
+// Accounts are created only by invitation: see acceptInvitation in lib/invitations.ts.

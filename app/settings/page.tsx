@@ -11,6 +11,10 @@ import { saveBreezeAutoBuySettings } from "./actions";
 import { getBreezeAutoBuySettings } from "@/lib/breeze/autoBuy";
 import EmailPreferencesForm from "@/components/settings/EmailPreferencesForm";
 import CredentialsForm from "@/components/settings/CredentialsForm";
+import InviteForm from "@/components/settings/InviteForm";
+import { isAdmin } from "@/lib/authz";
+import { listOpenInvitations } from "@/lib/invitations";
+import { revokeInvitationAction } from "./invite-actions";
 
 export const dynamic = "force-dynamic";
 
@@ -52,6 +56,8 @@ export default async function SettingsPage({ searchParams }: {
   const s = await getUserSwingSettings();
   const emailPrefs = await getEmailPreferences();
   const [creds, newsProviders, autoBuy] = await Promise.all([getUserCredentials(), getUserNewsProviders(), getBreezeAutoBuySettings(user.id)]);
+  const admin = isAdmin(user);
+  const openInvitations = admin ? await listOpenInvitations() : [];
 
   return (
     <AppShell
@@ -130,6 +136,33 @@ export default async function SettingsPage({ searchParams }: {
           <CredentialsForm initialCreds={creds} initialNewsProviders={newsProviders} breezeStatus={breezeParam} breezeCallbackUrl={breezeCallbackUrl} />
         </div>
       </section>
+
+      {admin && (
+        <section className="mt-12 border-t border-white/10 pt-12">
+          <h2 className="text-2xl font-bold">Invite users</h2>
+          <p className="mt-2 text-sm text-white/50">
+            Sign-up is by invitation only. Each link works once and expires after 72 hours. New
+            accounts are ordinary users: they keep their own ledger, holdings and keys, and cannot
+            run shared operations or use the deployment&apos;s AI and news keys.
+          </p>
+          <InviteForm />
+          {openInvitations.length > 0 && (
+            <ul className="mt-6 divide-y divide-white/10 rounded-lg border border-white/10 text-sm">
+              {openInvitations.map((invite) => (
+                <li key={invite.id} className="flex items-center justify-between gap-3 px-3 py-2">
+                  <span className="text-white/70">
+                    {invite.email ?? "Any email"} · expires {new Date(invite.expiresAt).toLocaleString("en-IN")}
+                  </span>
+                  <form action={revokeInvitationAction}>
+                    <input type="hidden" name="id" value={invite.id} />
+                    <button type="submit" className="text-xs text-rose-300 underline">Revoke</button>
+                  </form>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      )}
     </AppShell>
   );
 }
