@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { query, queryOne } from "@/lib/db";
 import { isResetKeyConfigured, resetKeyMatches } from "@/lib/passwordReset";
+import { isOpenSignupEnabled, SIGNUP_CLOSED_MESSAGE } from "@/lib/signupPolicy";
 import {
   issueResetToken,
   redeemResetToken,
@@ -45,6 +46,8 @@ export async function login(_prev: AuthState, formData: FormData): Promise<AuthS
 }
 
 export async function signup(_prev: AuthState, formData: FormData): Promise<AuthState> {
+  // Enforced here, not only by hiding the form: this action is reachable by direct POST.
+  if (!isOpenSignupEnabled()) return { error: SIGNUP_CLOSED_MESSAGE };
   const { email, password } = readCredentials(formData);
   if (!email || !password) return { error: "Email and password are required." };
   if (password.length < 6) return { error: "Password must be at least 6 characters." };
@@ -70,6 +73,10 @@ export async function signup(_prev: AuthState, formData: FormData): Promise<Auth
  * `scripts/reset-local-password.mjs` (and the "Reset InvestoGenie Password" desktop shortcut)
  * remain the host-access recovery path and need no key.
  */
+export async function isSignupEnabled(): Promise<boolean> {
+  return isOpenSignupEnabled();
+}
+
 export async function isPasswordResetEnabled(): Promise<boolean> {
   return isResetKeyConfigured(process.env.PASSWORD_RESET_KEY);
 }

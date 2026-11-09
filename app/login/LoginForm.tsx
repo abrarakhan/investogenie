@@ -23,7 +23,7 @@ const NO_AUTOFILL = {
   "data-bwignore": true,
 } as const;
 
-export default function LoginForm({ resetEnabled = false }: { resetEnabled?: boolean }) {
+export default function LoginForm({ resetEnabled = false, signupEnabled = false }: { resetEnabled?: boolean; signupEnabled?: boolean }) {
   const [mode, setMode] = useState<Mode>("signin");
   const [revealed, setRevealed] = useState(false);
   const action =
@@ -41,7 +41,7 @@ export default function LoginForm({ resetEnabled = false }: { resetEnabled?: boo
 
   return (
     <div className="w-full max-w-md">
-      <div className="mb-6 flex rounded-full border border-white/10 bg-white/5 p-1 text-sm">
+      {signupEnabled && <div className="mb-6 flex rounded-full border border-white/10 bg-white/5 p-1 text-sm">
         {(["signin", "signup"] as const).map((m) => (
           <button
             key={m}
@@ -54,7 +54,7 @@ export default function LoginForm({ resetEnabled = false }: { resetEnabled?: boo
             {m === "signin" ? "Sign in" : "Create account"}
           </button>
         ))}
-      </div>
+      </div>}
 
       {mode === "emailreset" && (
         <p className="mb-4 rounded-lg border border-sky-500/25 bg-sky-500/10 px-3 py-2 text-xs leading-relaxed text-sky-200/90">
