@@ -48,8 +48,12 @@ interface Entry {
   lastRead: number;
   timer?: ReturnType<typeof setTimeout>;
 }
-const entries = new Map<string, Entry>();
-const computedAt = new WeakMap<object, number>();
+// Held on globalThis so the start-up warm-up (instrumentation bundle) and the
+// pages (app bundle) share one cache inside the same server process.
+const store = ((globalThis as { __investogenieDisplayScans?: { entries: Map<string, Entry>; computedAt: WeakMap<object, number> } })
+  .__investogenieDisplayScans ??= { entries: new Map(), computedAt: new WeakMap() });
+const entries = store.entries;
+const computedAt = store.computedAt;
 
 /** When a cached display scan result was computed; changes only when the scan is recomputed. */
 export function displayScanComputedAt(value: unknown): number {
