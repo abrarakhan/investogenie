@@ -4,6 +4,8 @@ import Link from "next/link";
 import type { TrendContinuationCandidate, TrendContinuationStatus } from "@/lib/trendContinuation";
 import { TREND_CONTINUATION_STATUS_LABEL } from "@/lib/candidateStatusCopy";
 import TradingViewChartModal, { useTradingViewChart, type ChartGestureProps, type ChartSymbol } from "@/components/charts/TradingViewChartModal";
+import LazyCandidateGroup, { type LazySource } from "@/components/screener/LazyCandidateGroup";
+import { LAZY_STATUSES } from "@/lib/lazyCandidateGroups";
 
 const style: Record<TrendContinuationStatus, string> = {
   IMPULSE_DETECTED: "border-cyan-400/30 text-cyan-200",
@@ -81,33 +83,49 @@ function CandidateCard({ candidate, rank, planId, chartGesture }: { candidate: T
   </article>;
 }
 
-function CandidateGroup({ title, candidates, color, ranked, planIds, bindChartGesture, defaultOpen = false }: {
+function CandidateGroup({ title, candidates, source, totalCount, color, ranked, planIds, bindChartGesture, defaultOpen = false }: {
   title: string;
-  candidates: TrendContinuationCandidate[];
+  /** Cards to render now; omit and pass `source` to load them when opened. */
+  candidates?: TrendContinuationCandidate[];
+  source?: LazySource;
+  totalCount?: number;
   color: string;
   ranked: Map<string, number>;
   planIds: Record<string, string>;
   bindChartGesture: (symbol: ChartSymbol) => ChartGestureProps;
   defaultOpen?: boolean;
 }) {
-  if (!candidates.length) return null;
-  return <details open={defaultOpen} className="group rounded-lg border border-white/10 bg-white/[0.012]">
-    <summary className="flex min-h-12 cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 [&::-webkit-details-marker]:hidden">
-      <div className={`text-sm font-bold uppercase tracking-[0.18em] ${color}`}>
-        {title} <span className="font-mono text-white/45">({candidates.length})</span>
-      </div>
-      <span className="shrink-0 text-xs font-semibold text-white/45 group-open:hidden">Expand</span>
-      <span className="hidden shrink-0 text-xs font-semibold text-white/45 group-open:inline">Collapse</span>
-    </summary>
-    <div className="space-y-3 border-t border-white/8 p-3 sm:p-4">
-      {candidates.map((candidate) => <CandidateCard key={candidate.assetId} candidate={candidate} rank={ranked.get(candidate.assetId) ?? 0} planId={planIds[`TREND_CONTINUATION:${candidate.status}:${candidate.assetId}`] ?? null} chartGesture={bindChartGesture({ ticker: candidate.ticker, exchange: "NSE" })} />)}
-    </div>
-  </details>;
+  const count = totalCount ?? candidates?.length ?? 0;
+  if (!count) return null;
+  return <LazyCandidateGroup<TrendContinuationCandidate>
+    defaultOpen={defaultOpen}
+    items={candidates}
+    source={source}
+    summary={<div className={`text-sm font-bold uppercase tracking-[0.18em] ${color}`}>
+      {title} <span className="font-mono text-white/45">({count})</span>
+    </div>}
+    render={(items, ranks) => items.map((candidate) => <CandidateCard key={candidate.assetId} candidate={candidate} rank={ranks[candidate.assetId] ?? ranked.get(candidate.assetId) ?? 0} planId={planIds[`TREND_CONTINUATION:${candidate.status}:${candidate.assetId}`] ?? null} chartGesture={bindChartGesture({ ticker: candidate.ticker, exchange: "NSE" })} />)}
+  />;
 }
 
-export default function TrendContinuationCandidates({ candidates, planIds }: { candidates: TrendContinuationCandidate[]; planIds: Record<string, string> }) {
+export default function TrendContinuationCandidates({ candidates, planIds, counts, ranks, market }: {
+  /** With `market`, holds only the groups open by default. */
+  candidates: TrendContinuationCandidate[];
+  planIds: Record<string, string>;
+  /** Exact per-status totals across the whole list. */
+  counts?: Record<string, number>;
+  /** 1-based positions in the full list for the cards in `candidates`. */
+  ranks?: Record<string, number>;
+  /** Enables on-demand loading of the collapsed groups for this market. */
+  market?: string;
+}) {
   const { chart, closeChart, bindChartGesture } = useTradingViewChart();
-  const ranked = new Map(candidates.map((candidate, index) => [candidate.assetId, index + 1]));
+  const ranked = new Map(candidates.map((candidate, index) => [candidate.assetId, ranks?.[candidate.assetId] ?? index + 1]));
+  const total = (status: TrendContinuationStatus, shown: number) => counts?.[status] ?? shown;
+  const group = (status: TrendContinuationStatus, shown: TrendContinuationCandidate[]) => market && LAZY_STATUSES.trend.has(status)
+    ? { source: { screen: "trend" as const, market, status }, totalCount: total(status, shown.length) }
+    : { candidates: shown, totalCount: total(status, shown.length) };
+  const candidateCount = counts ? Object.values(counts).reduce((sum, value) => sum + value, 0) : candidates.length;
   const ready = candidates.filter((candidate) => candidate.status === "TREND_CONTINUATION_READY");
   const watch = candidates.filter((candidate) => candidate.status === "CONTINUATION_WATCH");
   const impulse = candidates.filter((candidate) => candidate.status === "IMPULSE_DETECTED");
@@ -123,17 +141,17 @@ export default function TrendContinuationCandidates({ candidates, planIds }: { c
         </p>
       </div>
       <div className="text-right text-xs text-white/40">
-        <div><span className="font-mono font-bold text-white/75">{candidates.length}</span> ranked continuation signals</div>
+        <div><span className="font-mono font-bold text-white/75">{candidateCount}</span> ranked continuation signals</div>
         <div>Rescanned every 2 minutes in market hours</div>
       </div>
     </div>
 
     <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
       {[
-        ["Continuation ready", ready.length, "text-emerald-300"],
-        ["Continuation watch", watch.length, "text-amber-200"],
-        ["Impulse detected", impulse.length, "text-cyan-200"],
-        ["Extended risk", extended.length, "text-rose-200"],
+        ["Continuation ready", total("TREND_CONTINUATION_READY", ready.length), "text-emerald-300"],
+        ["Continuation watch", total("CONTINUATION_WATCH", watch.length), "text-amber-200"],
+        ["Impulse detected", total("IMPULSE_DETECTED", impulse.length), "text-cyan-200"],
+        ["Extended risk", total("EXTENDED_RISK", extended.length), "text-rose-200"],
       ].map(([summaryLabel, count, color]) => <div key={String(summaryLabel)} className="border-b border-white/10 px-1 pb-2">
         <div className={`font-mono text-xl font-bold ${color}`}>{count}</div>
         <div className="text-[10px] uppercase tracking-wide text-white/35">{summaryLabel}</div>
@@ -145,13 +163,13 @@ export default function TrendContinuationCandidates({ candidates, planIds }: { c
       <span className="mt-2 block text-white/45">Double-click a stock card, or long-press it on mobile, to open its interactive chart.</span>
     </div>
 
-    {!candidates.length
+    {!candidateCount
       ? <div className="rounded-lg border border-white/10 px-4 py-8 text-center text-sm text-white/45">No recent multi-session impulse currently passes the Trend Continuation floor.</div>
       : <div className="space-y-3">
-        <CandidateGroup title="Continuation ready" candidates={ready} ranked={ranked} planIds={planIds} color="text-emerald-300" defaultOpen bindChartGesture={bindChartGesture} />
-        <CandidateGroup title="Continuation watch" candidates={watch} ranked={ranked} planIds={planIds} color="text-amber-200" bindChartGesture={bindChartGesture} />
-        <CandidateGroup title="Developing staircase / impulse detected" candidates={impulse} ranked={ranked} planIds={planIds} color="text-cyan-200" bindChartGesture={bindChartGesture} />
-        <CandidateGroup title="Extended · do not chase" candidates={extended} ranked={ranked} planIds={planIds} color="text-rose-200" bindChartGesture={bindChartGesture} />
+        <CandidateGroup title="Continuation ready" {...group("TREND_CONTINUATION_READY", ready)} ranked={ranked} planIds={planIds} color="text-emerald-300" defaultOpen bindChartGesture={bindChartGesture} />
+        <CandidateGroup title="Continuation watch" {...group("CONTINUATION_WATCH", watch)} ranked={ranked} planIds={planIds} color="text-amber-200" bindChartGesture={bindChartGesture} />
+        <CandidateGroup title="Developing staircase / impulse detected" {...group("IMPULSE_DETECTED", impulse)} ranked={ranked} planIds={planIds} color="text-cyan-200" bindChartGesture={bindChartGesture} />
+        <CandidateGroup title="Extended · do not chase" {...group("EXTENDED_RISK", extended)} ranked={ranked} planIds={planIds} color="text-rose-200" bindChartGesture={bindChartGesture} />
       </div>}
     <TradingViewChartModal chart={chart} onClose={closeChart} />
   </div>;

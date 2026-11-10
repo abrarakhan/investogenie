@@ -3,8 +3,10 @@ import AppShell from "@/components/app/AppShell";
 import ArmedSwingCandidates from "@/components/screener/ArmedSwingCandidates";
 import MarketDataAutoRefresh from "@/components/app/MarketDataAutoRefresh";
 import { getSessionUser } from "@/lib/auth";
-import { displayArmedSwing } from "@/lib/displayScanCache";
+import { displayArmedSwing, displayScanComputedAt } from "@/lib/displayScanCache";
 import { trimArmedSwingForDisplay } from "@/lib/candidateDisplay";
+import { splitForLazyDisplay } from "@/lib/lazyCandidateGroups";
+import { LazyGroupsVersion } from "@/components/screener/LazyCandidateGroup";
 import { captureArmedSwingPlans } from "@/lib/armedSwingPlans";
 import { markLiveMarketTargets } from "@/lib/liveMarketTargets";
 import { normalizeMarket } from "@/lib/markets";
@@ -32,6 +34,10 @@ export default async function ArmedSwingPage({ params }: { params: Promise<{ mar
     markLiveMarketTargets(liveIds, "strong_swing"),
   ]);
 
+  // Exact counts cover every candidate; collapsed, never-buyable groups are fetched when opened.
+  const display = trimArmedSwingForDisplay(result.candidates);
+  const shown = splitForLazyDisplay(display.candidates, "armed").shown;
+
   return (
     <AppShell
       email={user.email}
@@ -45,7 +51,9 @@ export default async function ArmedSwingPage({ params }: { params: Promise<{ mar
         Armed enters earlier than Strong Swing, so it accepts more failed breakouts in exchange for a lower entry and a tighter structure stop.
         Projections are model estimates, not guarantees. Strong Swing&apos;s gates and rankings are unchanged.
       </div>
-      <ArmedSwingCandidates result={{ ...result, ...trimArmedSwingForDisplay(result.candidates) }} planIds={Object.fromEntries(planIds)} />
+      <LazyGroupsVersion value={displayScanComputedAt(result)}>
+        <ArmedSwingCandidates result={{ ...result, ...display, candidates: shown }} market={market} planIds={Object.fromEntries(planIds)} />
+      </LazyGroupsVersion>
     </AppShell>
   );
 }

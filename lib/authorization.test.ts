@@ -182,6 +182,7 @@ const ACTIONS: Record<string, Record<string, ActionPolicy>> = {
     saveScreen: "session", renameScreen: "session", deleteScreen: "session",
   },
   "lib/long-term-actions.ts": { getLongTermCandidates: "session" },
+  "lib/candidate-group-actions.ts": { loadCandidateGroup: "session" },
   "lib/credentials-actions.ts": {
     getUserCredentials: "session", updateCredentials: "session", clearCredential: "session",
     getUserNewsProviders: "session", saveNewsProvider: "session", removeNewsProvider: "session",
@@ -342,6 +343,18 @@ describe("server actions: role-specific behaviour", () => {
     const { getLongTermCandidates } = await import("@/lib/long-term-actions");
     session.user = null;
     await expect(getLongTermCandidates({ market: "IN" } as Parameters<typeof getLongTermCandidates>[0])).rejects.toThrow(/Not signed in/);
+  });
+
+  it("requires a session and a deferrable group for on-demand candidate cards", async () => {
+    const { loadCandidateGroup } = await import("@/lib/candidate-group-actions");
+    session.user = null;
+    expect(await loadCandidateGroup("strong", "IN", "WATCHLIST")).toMatchObject({ ok: false, error: "Not signed in", items: [] });
+    session.user = USER;
+    // Buyable groups always ship with the page and cannot be requested here.
+    expect(await loadCandidateGroup("strong", "IN", "EXECUTION_READY")).toMatchObject({ ok: false, error: "Unknown group" });
+    expect(await loadCandidateGroup("armed", "IN", "BUY_ZONE")).toMatchObject({ ok: false, error: "Unknown group" });
+    expect(await loadCandidateGroup("nope" as never, "IN", "WATCHLIST")).toMatchObject({ ok: false, error: "Unknown group" });
+    expect(await loadCandidateGroup("strong", "XX", "WATCHLIST")).toMatchObject({ ok: false, error: "Unknown group" });
   });
 
   it("authenticates CAS import before reading the upload", async () => {

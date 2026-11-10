@@ -9,6 +9,8 @@ import type {
 import { isMomentumExecutionReady } from "@/lib/momentumExecution";
 import { MOMENTUM_IGNITION_STATUS_LABEL } from "@/lib/candidateStatusCopy";
 import TradingViewChartModal, { useTradingViewChart, type ChartGestureProps, type ChartSymbol } from "@/components/charts/TradingViewChartModal";
+import LazyCandidateGroup, { type LazySource } from "@/components/screener/LazyCandidateGroup";
+import { LAZY_STATUSES } from "@/lib/lazyCandidateGroups";
 
 const STATUS_STYLE: Record<MomentumIgnitionCandidateStatus, string> = {
   MOMENTUM_READY: "border-emerald-400/35 bg-emerald-400/10 text-emerald-200",
@@ -146,6 +148,8 @@ function Fact({ label, value }: { label: string; value: string }) {
 function CandidateGroup({
   title,
   candidates,
+  source,
+  totalCount,
   color,
   market,
   defaultOpen = false,
@@ -153,32 +157,49 @@ function CandidateGroup({
   bindChartGesture,
 }: {
   title: string;
-  candidates: Array<{ candidate: MomentumIgnitionCandidate; rank: number }>;
+  /** Cards to render now; omit and pass `source` to load them when opened. */
+  candidates?: Array<{ candidate: MomentumIgnitionCandidate; rank: number }>;
+  source?: LazySource;
+  totalCount?: number;
   color: string;
   market: "IN" | "US";
   defaultOpen?: boolean;
   planIds: Record<string, string>;
   bindChartGesture: (symbol: ChartSymbol) => ChartGestureProps;
 }) {
-  if (!candidates.length) return null;
-  return <details open={defaultOpen} className="group rounded-lg border border-white/10 bg-white/[0.012]">
-    <summary className="flex min-h-12 cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 [&::-webkit-details-marker]:hidden">
-      <div className={`text-sm font-bold uppercase tracking-[0.18em] ${color}`}>
-        {title} <span className="font-mono text-white/45">({candidates.length})</span>
-      </div>
-      <span className="shrink-0 text-xs font-semibold text-white/45 group-open:hidden">Expand</span>
-      <span className="hidden shrink-0 text-xs font-semibold text-white/45 group-open:inline">Collapse</span>
-    </summary>
-    <div className="space-y-3 border-t border-white/8 p-3 sm:p-4">
-      {candidates.map(({ candidate, rank }) => <IgnitionCard key={candidate.assetId} candidate={candidate} rank={rank} market={market} planId={planIds[`MOMENTUM_IGNITION:${candidate.status}:${candidate.assetId}`] ?? null} chartGesture={bindChartGesture({ ticker: candidate.ticker, exchange: candidate.exchange })} />)}
-    </div>
-  </details>;
+  const count = totalCount ?? candidates?.length ?? 0;
+  if (!count) return null;
+  return <LazyCandidateGroup<MomentumIgnitionCandidate>
+    defaultOpen={defaultOpen}
+    items={candidates?.map(({ candidate }) => candidate)}
+    ranks={candidates ? Object.fromEntries(candidates.map(({ candidate, rank }) => [candidate.assetId, rank])) : undefined}
+    source={source}
+    summary={<div className={`text-sm font-bold uppercase tracking-[0.18em] ${color}`}>
+      {title} <span className="font-mono text-white/45">({count})</span>
+    </div>}
+    render={(items, ranks) => items.map((candidate) => <IgnitionCard key={candidate.assetId} candidate={candidate} rank={ranks[candidate.assetId] ?? 0} market={market} planId={planIds[`MOMENTUM_IGNITION:${candidate.status}:${candidate.assetId}`] ?? null} chartGesture={bindChartGesture({ ticker: candidate.ticker, exchange: candidate.exchange })} />)}
+  />;
 }
 
-export default function MomentumIgnitionCandidates({ result, planIds }: { result: MomentumIgnitionResult; planIds: Record<string, string> }) {
+export default function MomentumIgnitionCandidates({ result, planIds, counts, ranks, lazy = false }: {
+  /** With `lazy`, `result.candidates` holds only the groups open by default. */
+  result: MomentumIgnitionResult;
+  planIds: Record<string, string>;
+  /** Exact per-status totals across the whole result. */
+  counts?: Record<string, number>;
+  /** 1-based positions in the full result for the cards in `result.candidates`. */
+  ranks?: Record<string, number>;
+  /** Load collapsed groups from the server when opened. */
+  lazy?: boolean;
+}) {
   const { chart, closeChart, bindChartGesture } = useTradingViewChart();
   const marketLabel = result.market === "IN" ? "NSE" : "US";
-  const ranked = result.candidates.map((candidate, index) => ({ candidate, rank: index + 1 }));
+  const ranked = result.candidates.map((candidate, index) => ({ candidate, rank: ranks?.[candidate.assetId] ?? index + 1 }));
+  const total = (status: string, shown: number) => counts?.[status] ?? shown;
+  const deferred = (status: string, shown: Array<{ candidate: MomentumIgnitionCandidate; rank: number }>) => lazy && LAZY_STATUSES["momentum-v2"].has(status)
+    ? { source: { screen: "momentum-v2" as const, market: result.market, status }, totalCount: total(status, shown.length) }
+    : { candidates: shown, totalCount: total(status, shown.length) };
+  const candidateCount = counts ? Object.values(counts).reduce((sum, value) => sum + value, 0) : ranked.length;
   const momentumReady = ranked.filter(({ candidate }) => isMomentumExecutionReady(candidate.status));
   const executionBlocked = ranked.filter(({ candidate }) => candidate.status === "EXECUTION_BLOCKED");
   const firstThrust = ranked.filter(({ candidate }) => candidate.status === "FIRST_THRUST");
@@ -205,12 +226,12 @@ export default function MomentumIgnitionCandidates({ result, planIds }: { result
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-7">
         {[
           ["Momentum ready", momentumReady.length, "text-emerald-300"],
-          ["Execution blocked", executionBlocked.length, "text-rose-200"],
-          ["First thrust", firstThrust.length, "text-cyan-200"],
-          ["Pre-ignition", preIgnition.length, "text-amber-200"],
-          ["Retest setup", retest.length, "text-sky-200"],
-          ["Late risk", late.length, "text-orange-200"],
-          ["Failed", failed.length, "text-rose-200"],
+          ["Execution blocked", total("EXECUTION_BLOCKED", executionBlocked.length), "text-rose-200"],
+          ["First thrust", total("FIRST_THRUST", firstThrust.length), "text-cyan-200"],
+          ["Pre-ignition", total("PRE_IGNITION", preIgnition.length), "text-amber-200"],
+          ["Retest setup", total("RETEST_SETUP", retest.length), "text-sky-200"],
+          ["Late risk", total("LATE_PROFIT_BOOKING", late.length), "text-orange-200"],
+          ["Failed", total("FAILED_BREAKOUT", failed.length), "text-rose-200"],
         ].map(([label, value, color]) => <div key={String(label)} className="border-b border-white/10 px-1 pb-2">
           <div className={`font-mono text-xl font-bold ${color}`}>{value}</div>
           <div className="text-[10px] uppercase tracking-wide text-white/35">{label}</div>
@@ -222,16 +243,16 @@ export default function MomentumIgnitionCandidates({ result, planIds }: { result
         <span className="mt-2 block text-white/45">Double-click a stock card, or long-press it on mobile, to open its interactive chart.</span>
       </div>
 
-      {ranked.length === 0
+      {candidateCount === 0
         ? <div className="rounded-lg border border-white/10 px-4 py-8 text-center text-sm text-white/45">No {marketLabel} stock currently passes the Momentum Ignition discovery floor.</div>
         : <div className="space-y-3">
           <CandidateGroup title="Momentum ready" candidates={momentumReady} planIds={planIds} color="text-emerald-300" market={result.market} defaultOpen bindChartGesture={bindChartGesture} />
-          <CandidateGroup title="Execution blocked · do not buy" candidates={executionBlocked} planIds={planIds} color="text-rose-200" market={result.market} defaultOpen bindChartGesture={bindChartGesture} />
-          <CandidateGroup title="First thrust" candidates={firstThrust} planIds={planIds} color="text-cyan-200" market={result.market} bindChartGesture={bindChartGesture} />
-          <CandidateGroup title="Pre-ignition" candidates={preIgnition} planIds={planIds} color="text-amber-200" market={result.market} bindChartGesture={bindChartGesture} />
-          <CandidateGroup title="Retest setup" candidates={retest} planIds={planIds} color="text-sky-200" market={result.market} bindChartGesture={bindChartGesture} />
-          <CandidateGroup title="Late / profit-booking risk" candidates={late} planIds={planIds} color="text-orange-200" market={result.market} bindChartGesture={bindChartGesture} />
-          <CandidateGroup title="Failed breakout" candidates={failed} planIds={planIds} color="text-rose-200" market={result.market} bindChartGesture={bindChartGesture} />
+          <CandidateGroup title="Execution blocked · do not buy" {...deferred("EXECUTION_BLOCKED", executionBlocked)} planIds={planIds} color="text-rose-200" market={result.market} defaultOpen bindChartGesture={bindChartGesture} />
+          <CandidateGroup title="First thrust" {...deferred("FIRST_THRUST", firstThrust)} planIds={planIds} color="text-cyan-200" market={result.market} bindChartGesture={bindChartGesture} />
+          <CandidateGroup title="Pre-ignition" {...deferred("PRE_IGNITION", preIgnition)} planIds={planIds} color="text-amber-200" market={result.market} bindChartGesture={bindChartGesture} />
+          <CandidateGroup title="Retest setup" {...deferred("RETEST_SETUP", retest)} planIds={planIds} color="text-sky-200" market={result.market} bindChartGesture={bindChartGesture} />
+          <CandidateGroup title="Late / profit-booking risk" {...deferred("LATE_PROFIT_BOOKING", late)} planIds={planIds} color="text-orange-200" market={result.market} bindChartGesture={bindChartGesture} />
+          <CandidateGroup title="Failed breakout" {...deferred("FAILED_BREAKOUT", failed)} planIds={planIds} color="text-rose-200" market={result.market} bindChartGesture={bindChartGesture} />
         </div>}
       <TradingViewChartModal chart={chart} onClose={closeChart} />
     </section>

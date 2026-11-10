@@ -6,6 +6,8 @@ import type { StrongSwingStatus } from "@/lib/analytics/strongSwing";
 import { rankStrongSwingCandidates } from "@/lib/analytics/candidateRanking";
 import { STRONG_SWING_BLOCKED_BUY_LABEL, STRONG_SWING_STATUS_LABEL } from "@/lib/candidateStatusCopy";
 import TradingViewChartModal, { useTradingViewChart, type ChartGestureProps, type ChartSymbol } from "@/components/charts/TradingViewChartModal";
+import LazyCandidateGroup, { type LazySource } from "@/components/screener/LazyCandidateGroup";
+import { LAZY_STATUSES } from "@/lib/lazyCandidateGroups";
 
 const STATUS_STYLE: Record<StrongSwingStatus, string> = {
   EXECUTION_READY: "border-emerald-400/35 bg-emerald-400/10 text-emerald-300",
@@ -166,58 +168,67 @@ function CandidateCard({ candidate, planId, chartGesture }: { candidate: StrongS
 function CandidateGroup({
   title,
   candidates,
+  source,
+  limit,
+  limitNote,
   color,
   defaultOpen = false,
-  note,
   totalCount,
   planIds,
   bindChartGesture,
 }: {
   title: string;
-  candidates: StrongSwingCandidate[];
+  /** Cards to render now; omit and pass `source` to load them when opened. */
+  candidates?: StrongSwingCandidate[];
+  source?: LazySource;
+  limit?: number;
+  limitNote?: (shown: number, total: number) => string;
   color: string;
   defaultOpen?: boolean;
-  note?: string;
   totalCount?: number;
   planIds: Record<string, string>;
   bindChartGesture: (symbol: ChartSymbol) => ChartGestureProps;
 }) {
-  if (candidates.length === 0) return null;
+  const count = totalCount ?? candidates?.length ?? 0;
+  if (count === 0) return null;
+  const shownCount = limit === undefined ? count : Math.min(limit, count);
+  const note = limitNote && count > shownCount ? limitNote(shownCount, count) : undefined;
   return (
-    <details open={defaultOpen} className="group rounded-lg border border-white/10 bg-white/[0.012]">
-      <summary className="flex min-h-12 cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 [&::-webkit-details-marker]:hidden">
+    <LazyCandidateGroup<StrongSwingCandidate>
+      defaultOpen={defaultOpen}
+      items={candidates}
+      source={source}
+      summary={
         <div className="min-w-0">
           <div className={`text-sm font-bold uppercase tracking-[0.18em] ${color}`}>
-            {title} <span className="font-mono text-white/45">({totalCount ?? candidates.length})</span>
+            {title} <span className="font-mono text-white/45">({count})</span>
           </div>
           {note && <div className="mt-1 text-[11px] normal-case tracking-normal text-white/35">{note}</div>}
         </div>
-        <span className="shrink-0 text-xs font-semibold text-white/45 group-open:hidden">Expand</span>
-        <span className="hidden shrink-0 text-xs font-semibold text-white/45 group-open:inline">Collapse</span>
-      </summary>
-      <div className="space-y-3 border-t border-white/8 p-3 sm:p-4">
-        {candidates.map((candidate) => <CandidateCard key={candidate.assetId} candidate={candidate} planId={planIds[`STRONG_SWING:${candidate.status}:${candidate.assetId}`] ?? null} chartGesture={bindChartGesture({ ticker: candidate.ticker, exchange: candidate.exchange })} />)}
-      </div>
-    </details>
+      }
+      render={(items) => rankStrongSwingCandidates(items).slice(0, limit).map((candidate) => <CandidateCard key={candidate.assetId} candidate={candidate} planId={planIds[`STRONG_SWING:${candidate.status}:${candidate.assetId}`] ?? null} chartGesture={bindChartGesture({ ticker: candidate.ticker, exchange: candidate.exchange })} />)}
+    />
   );
 }
 
-export default function StrongSwingCandidates({ candidates, counts, planIds }: {
+export default function StrongSwingCandidates({ candidates, counts, planIds, market }: {
+  /** Cards for groups open by default; collapsed groups load on demand when `market` is set. */
   candidates: StrongSwingCandidate[];
   /** Exact per-status totals when the server trimmed `candidates` to the rendered cards. */
   counts?: Partial<Record<StrongSwingStatus, number>>;
   planIds: Record<string, string>;
+  /** Enables on-demand loading of the collapsed groups for this market. */
+  market?: string;
 }) {
   const { chart, closeChart, bindChartGesture } = useTradingViewChart();
   const ranked = rankStrongSwingCandidates(candidates);
-  const total = (status: StrongSwingStatus, shown: number) => counts?.[status] ?? shown;
-  const executionReady = ranked.filter((candidate) => candidate.status === "EXECUTION_READY");
-  const waitingForEntry = ranked.filter((candidate) => candidate.status === "WAIT_FOR_ENTRY");
-  const watchlist = ranked.filter((candidate) => candidate.status === "WATCHLIST");
-  const riskOff = ranked.filter((candidate) => candidate.status === "RISK_OFF");
-  const invalidated = ranked.filter((candidate) => candidate.status === "INVALIDATED");
-  const visibleWatchlist = watchlist.slice(0, 30);
-  const visibleInvalidated = invalidated.slice(0, 20);
+  const of = (status: StrongSwingStatus) => ranked.filter((candidate) => candidate.status === status);
+  const total = (status: StrongSwingStatus) => counts?.[status] ?? of(status).length;
+  // Collapsed groups come from the server on first open when this screen defers them.
+  const group = (status: StrongSwingStatus) => market && LAZY_STATUSES.strong.has(status)
+    ? { source: { screen: "strong" as const, market, status } }
+    : { candidates: of(status) };
+  const executionReady = of("EXECUTION_READY");
 
   return (
     <div className="space-y-8">
@@ -227,11 +238,11 @@ export default function StrongSwingCandidates({ candidates, counts, planIds }: {
       </div>
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-5 sm:gap-3">
         {[
-          ["Execution ready", total("EXECUTION_READY", executionReady.length), "text-emerald-300"],
-          ["Pullback candidates", total("WAIT_FOR_ENTRY", waitingForEntry.length), "text-cyan-200"],
-          ["Watchlist", total("WATCHLIST", watchlist.length), "text-amber-200"],
-          ["Risk off", total("RISK_OFF", riskOff.length), "text-orange-200"],
-          ["Invalidated", total("INVALIDATED", invalidated.length), "text-rose-300"],
+          ["Execution ready", total("EXECUTION_READY"), "text-emerald-300"],
+          ["Pullback candidates", total("WAIT_FOR_ENTRY"), "text-cyan-200"],
+          ["Watchlist", total("WATCHLIST"), "text-amber-200"],
+          ["Risk off", total("RISK_OFF"), "text-orange-200"],
+          ["Invalidated", total("INVALIDATED"), "text-rose-300"],
         ].map(([label, value, color]) => (
           <div key={String(label)} className="border-b border-white/10 px-1 pb-3">
             <div className={`font-mono text-2xl font-bold ${color}`}>{value}</div>
@@ -240,31 +251,33 @@ export default function StrongSwingCandidates({ candidates, counts, planIds }: {
         ))}
       </div>
 
-      {executionReady.length === 0 && (
+      {total("EXECUTION_READY") === 0 && (
         <div className="rounded-lg border border-amber-400/20 bg-amber-400/[0.04] px-4 py-5 text-sm text-amber-100/75">
           No stock currently passes every technical and execution-safety gate. This is intentional: missed entries, parabolic moves, excessive stop risk and circuit-prone behaviour are not actionable.
         </div>
       )}
 
-      <CandidateGroup title="Execution ready" candidates={executionReady} planIds={planIds} color="text-emerald-300" defaultOpen bindChartGesture={bindChartGesture} />
-      <CandidateGroup title="Pullback candidates" candidates={waitingForEntry} planIds={planIds} color="text-cyan-200" bindChartGesture={bindChartGesture} />
+      <CandidateGroup title="Execution ready" candidates={executionReady} totalCount={total("EXECUTION_READY")} planIds={planIds} color="text-emerald-300" defaultOpen bindChartGesture={bindChartGesture} />
+      <CandidateGroup title="Pullback candidates" {...group("WAIT_FOR_ENTRY")} totalCount={total("WAIT_FOR_ENTRY")} planIds={planIds} color="text-cyan-200" bindChartGesture={bindChartGesture} />
       <CandidateGroup
         title="Awaiting confirmation"
-        candidates={visibleWatchlist}
+        {...group("WATCHLIST")}
+        limit={30}
+        limitNote={(shown, count) => `Showing the strongest ${shown} of ${count}`}
         planIds={planIds}
-        totalCount={total("WATCHLIST", watchlist.length)}
+        totalCount={total("WATCHLIST")}
         color="text-amber-200"
-        note={total("WATCHLIST", watchlist.length) > visibleWatchlist.length ? `Showing the strongest ${visibleWatchlist.length} of ${total("WATCHLIST", watchlist.length)}` : undefined}
         bindChartGesture={bindChartGesture}
       />
-      <CandidateGroup title="Risk off" candidates={riskOff.slice(0, 30)} planIds={planIds} totalCount={total("RISK_OFF", riskOff.length)} color="text-orange-200" bindChartGesture={bindChartGesture} />
+      <CandidateGroup title="Risk off" {...group("RISK_OFF")} limit={30} planIds={planIds} totalCount={total("RISK_OFF")} color="text-orange-200" bindChartGesture={bindChartGesture} />
       <CandidateGroup
         title="Invalidated"
-        candidates={visibleInvalidated}
+        {...group("INVALIDATED")}
+        limit={20}
+        limitNote={(shown, count) => `Showing the highest-ranked ${shown} of ${count}`}
         planIds={planIds}
-        totalCount={total("INVALIDATED", invalidated.length)}
+        totalCount={total("INVALIDATED")}
         color="text-rose-300"
-        note={total("INVALIDATED", invalidated.length) > visibleInvalidated.length ? `Showing the highest-ranked ${visibleInvalidated.length} of ${total("INVALIDATED", invalidated.length)}` : undefined}
         bindChartGesture={bindChartGesture}
       />
       <TradingViewChartModal chart={chart} onClose={closeChart} />

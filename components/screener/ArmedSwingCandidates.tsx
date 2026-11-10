@@ -6,6 +6,8 @@ import type { ArmedSwingStatus } from "@/lib/analytics/armedSwing";
 import { ARMED_STATUS_LABEL as STATUS_LABEL, ARMED_WHEN_TO_ENTER as WHEN_TO_ENTER } from "@/lib/armedSwingCopy";
 import { createPendingBuyStop } from "@/app/terminal/[market]/trade-ledger/pendingOrderActions";
 import TradingViewChartModal, { useTradingViewChart, type ChartGestureProps, type ChartSymbol } from "@/components/charts/TradingViewChartModal";
+import LazyCandidateGroup, { type LazySource } from "@/components/screener/LazyCandidateGroup";
+import { LAZY_STATUSES } from "@/lib/lazyCandidateGroups";
 
 const STATUS_STYLE: Record<ArmedSwingStatus, string> = {
   BUY_ZONE: "border-emerald-400/35 bg-emerald-400/10 text-emerald-300",
@@ -149,35 +151,36 @@ function CandidateCard({ candidate, planId, chartGesture }: { candidate: ArmedSw
   );
 }
 
-function Group({ title, candidates, totalCount, planIds, color, bindChartGesture, defaultOpen = false, limit = 30 }: {
-  title: string; candidates: ArmedSwingCandidate[]; totalCount?: number; planIds: Record<string, string>; color: string; bindChartGesture: (symbol: ChartSymbol) => ChartGestureProps; defaultOpen?: boolean; limit?: number;
+function Group({ title, candidates, source, totalCount, planIds, color, bindChartGesture, defaultOpen = false, limit = 30 }: {
+  title: string; candidates?: ArmedSwingCandidate[]; source?: LazySource; totalCount?: number; planIds: Record<string, string>; color: string; bindChartGesture: (symbol: ChartSymbol) => ChartGestureProps; defaultOpen?: boolean; limit?: number;
 }) {
-  if (!candidates.length) return null;
-  const visible = candidates.slice(0, limit);
-  const count = totalCount ?? candidates.length;
+  const count = totalCount ?? candidates?.length ?? 0;
+  if (!count) return null;
+  const shown = Math.min(limit, count);
   return (
-    <details open={defaultOpen} className="group rounded-lg border border-white/10 bg-white/[0.012]">
-      <summary className="flex min-h-12 cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 [&::-webkit-details-marker]:hidden">
+    <LazyCandidateGroup<ArmedSwingCandidate>
+      defaultOpen={defaultOpen}
+      items={candidates}
+      source={source}
+      summary={
         <div className="min-w-0">
           <div className={`text-sm font-bold uppercase tracking-[0.18em] ${color}`}>
             {title} <span className="font-mono text-white/45">({count})</span>
           </div>
-          {count > visible.length && <div className="mt-1 text-[11px] normal-case tracking-normal text-white/35">Showing the strongest {visible.length}</div>}
+          {count > shown && <div className="mt-1 text-[11px] normal-case tracking-normal text-white/35">Showing the strongest {shown}</div>}
         </div>
-        <span className="shrink-0 text-xs font-semibold text-white/45 group-open:hidden">Expand</span>
-        <span className="hidden shrink-0 text-xs font-semibold text-white/45 group-open:inline">Collapse</span>
-      </summary>
-      <div className="space-y-3 border-t border-white/8 p-3 sm:p-4">
-        {visible.map((candidate) => <CandidateCard key={candidate.assetId} candidate={candidate} planId={planIds[candidate.assetId] ?? null} chartGesture={bindChartGesture({ ticker: candidate.ticker, exchange: candidate.exchange })} />)}
-      </div>
-    </details>
+      }
+      render={(items) => items.slice(0, limit).map((candidate) => <CandidateCard key={candidate.assetId} candidate={candidate} planId={planIds[candidate.assetId] ?? null} chartGesture={bindChartGesture({ ticker: candidate.ticker, exchange: candidate.exchange })} />)}
+    />
   );
 }
 
-export default function ArmedSwingCandidates({ result, planIds }: {
+export default function ArmedSwingCandidates({ result, planIds, market }: {
   /** `counts`/`assessedCount` are exact totals when the server trimmed `candidates` to the rendered cards. */
   result: ArmedSwingResult & { counts?: Partial<Record<ArmedSwingStatus, number>>; assessedCount?: number };
   planIds: Record<string, string>;
+  /** Enables on-demand loading of the collapsed groups for this market. */
+  market?: string;
 }) {
   const { chart, closeChart, bindChartGesture } = useTradingViewChart();
   const by = (status: ArmedSwingStatus) => result.candidates.filter((candidate) => candidate.status === status);
@@ -222,7 +225,11 @@ export default function ArmedSwingCandidates({ result, planIds }: {
         </div>
       )}
       {groups.map(([label, status, color, open]) => (
-        <Group key={status} title={label} candidates={by(status)} totalCount={total(status)} planIds={planIds} color={color} defaultOpen={open} bindChartGesture={bindChartGesture} />
+        <Group
+          key={status}
+          title={label}
+          {...(market && LAZY_STATUSES.armed.has(status) ? { source: { screen: "armed" as const, market, status } } : { candidates: by(status) })}
+          totalCount={total(status)} planIds={planIds} color={color} defaultOpen={open} bindChartGesture={bindChartGesture} />
       ))}
       <TradingViewChartModal chart={chart} onClose={closeChart} />
     </div>
