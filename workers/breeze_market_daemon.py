@@ -527,6 +527,81 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+class ReconnectWatch:
+    """Tracks WebSocket drops so the client's own reconnect gets a chance.
+
+    python-socketio reconnects automatically (1-5 s back-off) and the Breeze SDK
+    re-joins every subscribed token on reconnect. Exiting on the first missed
+    5-second check threw that away and forced a full restart, which re-downloads
+    SecurityMaster.zip. Only give up after `grace_seconds` without a connection.
+    """
+
+    # A drop the client is not retrying (server-side disconnect) is given up on quickly.
+    NOT_RETRYING_SECONDS = 10.0
+
+    def __init__(self, grace_seconds: float):
+        self.grace_seconds = grace_seconds
+        self.down_since: float | None = None
+
+    def observe(self, connected: bool, now: float, reconnecting: bool = True) -> str | None:
+        if connected:
+            if self.down_since is None:
+                return None
+            self.down_since = None
+            return "recovered"
+        if self.down_since is None:
+            self.down_since = now
+            return "dropped"
+        down_for = now - self.down_since
+        if down_for >= self.grace_seconds or (not reconnecting and down_for >= self.NOT_RETRYING_SECONDS):
+            return "expired"
+        return None
+
+    def downtime(self, now: float) -> float:
+        return 0.0 if self.down_since is None else now - self.down_since
+
+
+def safe_ws_disconnect(breeze: Any) -> None:
+    """The SDK's ws_disconnect emits on the socket and raises if it already dropped."""
+    try:
+        breeze.ws_disconnect()
+    except Exception as exc:
+        print(f"[breeze-market] websocket cleanup skipped: {exc}", file=sys.stderr, flush=True)
+
+
+def import_breeze_sdk(stop_event: threading.Event, attempts: int = 3, wait_seconds: float = 30.0, timeout_seconds: float = 60.0):
+    """Import the SDK, which downloads SecurityMaster.zip at import time.
+
+    The download has no timeout of its own, so a stalled ICICI server held the
+    worker until the kernel gave up (~2 min) and then crashed it. Bound each try
+    and retry a few times before failing.
+    """
+    import importlib
+    import socket as socket_module
+
+    for attempt in range(1, attempts + 1):
+        previous = socket_module.getdefaulttimeout()
+        socket_module.setdefaulttimeout(timeout_seconds)
+        try:
+            module = importlib.import_module("breeze_connect.breeze_connect")
+            return module.BreezeConnect, module
+        except Exception as exc:
+            for name in ("breeze_connect.breeze_connect", "breeze_connect"):
+                sys.modules.pop(name, None)
+            if attempt == attempts:
+                raise
+            print(
+                f"[breeze-market] SecurityMaster download failed (attempt {attempt}/{attempts}): {exc}; retrying in {wait_seconds:.0f} s",
+                file=sys.stderr,
+                flush=True,
+            )
+            if stop_event.wait(wait_seconds):
+                raise SystemExit(0)
+        finally:
+            socket_module.setdefaulttimeout(previous)
+    raise RuntimeError("unreachable")
+
+
 def main() -> int:
     args = parse_args()
     process_stop_event = threading.Event()
@@ -548,8 +623,7 @@ def main() -> int:
 
     # Import lazily: the SDK downloads its security master during import. This
     # keeps parser tests offline and turns provider failure into a worker error.
-    from breeze_connect import BreezeConnect
-    import breeze_connect.breeze_connect as breeze_module
+    BreezeConnect, breeze_module = import_breeze_sdk(process_stop_event)
 
     while True:
         breeze = BreezeConnect(api_key=credentials.api_key)
@@ -619,12 +693,24 @@ def main() -> int:
     last_calendar_refresh = time.monotonic()
     last_target_refresh = time.monotonic()
     target_refresh_seconds = max(60.0, float(env("BREEZE_TARGET_REFRESH_SECONDS", "120") or "120"))
+    reconnect = ReconnectWatch(max(10.0, float(env("BREEZE_RECONNECT_GRACE_SECONDS", "90") or "90")))
     try:
         while not stop_event.wait(5):
             handler = getattr(breeze, "sio_rate_refresh_handler", None)
             socket = getattr(handler, "sio", None)
-            if socket is not None and not socket.connected:
-                raise ConnectionError("Breeze WebSocket disconnected")
+            if socket is not None:
+                now = time.monotonic()
+                downtime = reconnect.downtime(now)
+                # python-socketio holds a background task while it is retrying.
+                event = reconnect.observe(bool(socket.connected), now, getattr(socket, "_reconnect_task", None) is not None)
+                if event == "dropped":
+                    print("[breeze-market] websocket dropped; waiting for automatic reconnect", file=sys.stderr, flush=True)
+                elif event == "recovered":
+                    print(f"[breeze-market] websocket reconnected after {downtime:.0f} s", flush=True)
+                elif event == "expired":
+                    raise ConnectionError(f"Breeze WebSocket disconnected for {downtime:.0f} s; restarting")
+                if reconnect.down_since is not None:
+                    continue
             if time.monotonic() - last_credential_check >= 30:
                 current = load_breeze_credentials()
                 if current is None or current.fingerprint != credentials.fingerprint:
@@ -675,7 +761,7 @@ def main() -> int:
                 last_target_refresh = time.monotonic()
     finally:
         try:
-            breeze.ws_disconnect()
+            safe_ws_disconnect(breeze)
         finally:
             batcher.close()
     return 0

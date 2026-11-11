@@ -7,7 +7,36 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 import datetime as dt
 
-from breeze_market_daemon import IST, decrypt_credential, is_india_market_session, parse_security_master, parse_tick_time, valid_ohlc
+from breeze_market_daemon import IST, ReconnectWatch, decrypt_credential, safe_ws_disconnect, is_india_market_session, parse_security_master, parse_tick_time, valid_ohlc
+
+
+class ReconnectWatchTests(unittest.TestCase):
+    def test_waits_for_the_client_to_reconnect_before_giving_up(self):
+        watch = ReconnectWatch(90)
+        self.assertIsNone(watch.observe(True, 0))
+        self.assertEqual(watch.observe(False, 5), "dropped")
+        self.assertIsNone(watch.observe(False, 60))
+        self.assertEqual(watch.downtime(60), 55)
+        self.assertEqual(watch.observe(True, 65), "recovered")
+        self.assertIsNone(watch.observe(True, 70))
+
+    def test_gives_up_after_the_grace_period(self):
+        watch = ReconnectWatch(90)
+        watch.observe(False, 0)
+        self.assertIsNone(watch.observe(False, 85))
+        self.assertEqual(watch.observe(False, 90), "expired")
+
+    def test_gives_up_quickly_when_the_client_is_not_retrying(self):
+        watch = ReconnectWatch(90)
+        watch.observe(False, 0, reconnecting=False)
+        self.assertIsNone(watch.observe(False, 5, reconnecting=False))
+        self.assertEqual(watch.observe(False, 10, reconnecting=False), "expired")
+
+    def test_cleanup_tolerates_an_already_dropped_socket(self):
+        class Dropped:
+            def ws_disconnect(self):
+                raise RuntimeError("/ is not a connected namespace.")
+        safe_ws_disconnect(Dropped())
 
 
 class BreezeMarketDaemonTests(unittest.TestCase):

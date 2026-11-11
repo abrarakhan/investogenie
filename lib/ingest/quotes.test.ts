@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildBSE, buildNSE, parseGoogleFinanceQuote } from "@/lib/ingest/quotes";
+import { assetsNeedingGoogleQuote, buildBSE, buildNSE, fetchIndiaLiveCandidates, parseGoogleFinanceQuote } from "@/lib/ingest/quotes";
 
 describe("parseGoogleFinanceQuote", () => {
   it("extracts the instrument-specific live price and percentage change", () => {
@@ -56,5 +56,29 @@ describe("Bhavcopy closing quotes", () => {
       price: 220.3,
       changePct: expect.closeTo(1.055045871559633),
     });
+  });
+});
+
+describe("India market-hours Google lookups", () => {
+  const asset = (n: number) => ({ assetId: `a${n}`, ticker: `T${n}`, exchange: "NSE" as const });
+
+  it("skips stocks that already have a same-session Breeze or recent Yahoo quote", () => {
+    const assets = [asset(1), asset(2), asset(3)];
+    expect(assetsNeedingGoogleQuote(assets, new Set(["a2"])).map((a) => a.assetId)).toEqual(["a1", "a3"]);
+  });
+
+  it("stops starting new batches at the deadline and keeps what it fetched", async () => {
+    let clock = 0;
+    const fetched: string[] = [];
+    const quotes = await fetchIndiaLiveCandidates(
+      Array.from({ length: 20 }, (_, i) => asset(i)),
+      15,
+      async (a) => { fetched.push(a.assetId); clock += 1; return { price: 100, changePct: 0, source: "GOOGLE_FINANCE_LIVE" }; },
+      () => clock,
+    );
+    // Batches of six: clock is 6 after the first and 12 after the second, so a third starts; the fourth does not.
+    expect(fetched).toHaveLength(18);
+    expect(quotes.size).toBe(18);
+    expect(fetched.slice(0, 3)).toEqual(["a0", "a1", "a2"]);
   });
 });

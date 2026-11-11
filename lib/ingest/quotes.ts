@@ -184,18 +184,38 @@ async function fetchGoogleFinanceQuote(asset: IndiaLiveAsset): Promise<RawQuote 
   return parseGoogleFinanceQuote(await response.text(), asset.ticker, asset.exchange);
 }
 
-async function fetchIndiaLiveCandidates(assets: IndiaLiveAsset[]): Promise<Map<string, RawQuote>> {
+/**
+ * Google Finance pages are fetched six at a time, in the given order, until the
+ * deadline; batches not started by then are skipped so the market-hours
+ * refresh finishes inside its 50 s request budget instead of timing out with
+ * nothing written. Order callers by importance.
+ */
+export async function fetchIndiaLiveCandidates(
+  assets: IndiaLiveAsset[],
+  deadline = Number.POSITIVE_INFINITY,
+  fetchQuote: (asset: IndiaLiveAsset) => Promise<RawQuote | null> = fetchGoogleFinanceQuote,
+  now: () => number = Date.now,
+): Promise<Map<string, RawQuote>> {
   const quotes = new Map<string, RawQuote>();
   const concurrency = 6;
   for (let start = 0; start < assets.length; start += concurrency) {
+    if (now() >= deadline) break;
     const batch = assets.slice(start, start + concurrency);
-    const results = await Promise.all(batch.map(fetchGoogleFinanceQuote));
+    const results = await Promise.all(batch.map(fetchQuote));
     results.forEach((quote, index) => {
       if (quote) quotes.set(batch[index].assetId, quote);
     });
   }
   return quotes;
 }
+
+/** Live-quote assets still needing a Google lookup: no same-session Breeze or recent Yahoo quote. */
+export function assetsNeedingGoogleQuote(assets: IndiaLiveAsset[], primaryLiveIds: Set<string>): IndiaLiveAsset[] {
+  return assets.filter((asset) => !primaryLiveIds.has(asset.assetId));
+}
+
+/** Stop starting Google Finance batches this long after the refresh began. */
+export const INDIA_LIVE_GOOGLE_BUDGET_MS = 30_000;
 
 function parseCsvLine(line: string): string[] {
   const out: string[] = [];
@@ -462,7 +482,7 @@ export async function refreshQuotes(databaseUrl: string, startISO = localToday()
           where s.country='IN' and s.exchange in ('NSE','BSE') and s.verdict <> 'NO_SETUP'
             and s.as_of >= $1::date
        ), selected as (
-         select t.asset_id,0 priority
+         select t.asset_id,1 priority
            from public.live_market_targets t
           -- Keep Friday/holiday-eve candidates in the market-hours refresh set.
           -- Eligibility is still recalculated from fresh data on every page load;
@@ -477,7 +497,7 @@ export async function refreshQuotes(databaseUrl: string, startISO = localToday()
            from public.forward_test_positions f
           where f.status='OPEN'
          union
-         select r.asset_id,1 priority
+         select r.asset_id,2 priority
            from ranked_signals r where r.exchange_rank <= 50
        )
        select "assetId",ticker,exchange
@@ -493,7 +513,25 @@ export async function refreshQuotes(databaseUrl: string, startISO = localToday()
        order by priority,ticker`,
       [latestSignalSessionDate("IN")],
     )).rows : [];
-    const indiaLive = await fetchIndiaLiveCandidates(liveAssets);
+    // Same-session Breeze and recent Yahoo rows always win, so only look up the
+    // rest on Google, open positions first, within the time budget.
+    const recentLive = indiaMarketOpen ? await client.query<{ assetId: string; source: string }>(
+      `select asset_id "assetId",source
+         from public.latest_quotes
+        where source = any($1::text[])
+          and as_of = (now() at time zone 'Asia/Kolkata')::date
+          and (source='BREEZE_LIVE' or updated_at >= now() - interval '30 minutes')`,
+      [["BREEZE_LIVE", "GOOGLE_FINANCE_LIVE", "YAHOO_FINANCE_LIVE"]],
+    ) : { rows: [] as { assetId: string; source: string }[] };
+    const recentPrimaryIds = new Set(
+      recentLive.rows
+        .filter((row) => row.source === "YAHOO_FINANCE_LIVE" || row.source === "BREEZE_LIVE")
+        .map((row) => row.assetId),
+    );
+    const indiaLive = await fetchIndiaLiveCandidates(
+      assetsNeedingGoogleQuote(liveAssets, recentPrimaryIds),
+      t0 + INDIA_LIVE_GOOGLE_BUDGET_MS,
+    );
 
     type QuoteRow = { assetId: string; price: number; changePct: number | null; currency: string; asOf: string | null; source: string };
     const rowsByAsset = new Map<string, QuoteRow>();
@@ -504,19 +542,6 @@ export async function refreshQuotes(databaseUrl: string, startISO = localToday()
     for (const [t, q] of nse.quotes) { const id = nseMap.get(t); if (id) put({ assetId: id, price: q.price, changePct: q.changePct, currency: "INR", asOf: nse.asOf, source: "NSE_BHAVCOPY" }); }
     for (const [t, q] of bse.quotes) { const id = bseMap.get(t); if (id) put({ assetId: id, price: q.price, changePct: q.changePct, currency: "INR", asOf: bse.asOf, source: "BSE_BHAVCOPY" }); }
     if (indiaMarketOpen) {
-      const recentLive = await client.query<{ assetId: string; source: string }>(
-        `select asset_id "assetId",source
-           from public.latest_quotes
-          where source = any($1::text[])
-            and as_of = (now() at time zone 'Asia/Kolkata')::date
-            and (source='BREEZE_LIVE' or updated_at >= now() - interval '30 minutes')`,
-        [["BREEZE_LIVE", "GOOGLE_FINANCE_LIVE", "YAHOO_FINANCE_LIVE"]],
-      );
-      const recentPrimaryIds = new Set(
-        recentLive.rows
-          .filter((row) => row.source === "YAHOO_FINANCE_LIVE" || row.source === "BREEZE_LIVE")
-          .map((row) => row.assetId),
-      );
       // A lower-priority source must never replace a same-session Breeze row.
       // If Breeze becomes stale the row remains visibly stale and execution
       // fails closed; replacing it with Yahoo/bhavcopy made classifications
