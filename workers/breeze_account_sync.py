@@ -288,7 +288,10 @@ def sync_account(conn, user_id: str, api_key: str, api_secret: str, session_toke
         collected: dict[str, list[dict[str, Any]]] = {kind: [] for kind in counts}
         successful: set[str] = set()
         failed: set[str] = set()
+        exhausted: set[str] = set()
         for kind, fetch in jobs:
+            if kind in exhausted:
+                continue
             try:
                 collected[kind].extend(fetch_rows(fetch))
                 successful.add(kind)
@@ -296,7 +299,9 @@ def sync_account(conn, user_id: str, api_key: str, api_secret: str, session_toke
                 errors.append(f"{kind}: {exc}")
                 failed.add(kind)
                 if is_quota_error(exc):
-                    break  # the day's API allowance is spent; further calls only fail
+                    # Breeze counts the allowance per kind of request: once one is spent,
+                    # more of the same only fail, but the others may still answer.
+                    exhausted.add(kind)
 
         if "HOLDING" in successful and collected["HOLDING"]:
             # Value holdings at Breeze's own market price and average cost. A failure here leaves
