@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import { isMarketOpenNow, isTradingDay, latestExpectedSessionDate, marketHolidayDates, refreshMarketHolidays } from "../lib/market-calendar.mjs";
 import { startEodScheduler } from "./eod-scheduler.mjs";
 import { startMlSnapshotScheduler } from "./ml-snapshot-scheduler.mjs";
-import { lastEnrollment, runForwardTestStage } from "./forward-test-scheduler.mjs";
+import { runForwardTestStage } from "./forward-test-scheduler.mjs";
 
 const mode = process.argv[2];
 if (mode !== "dev" && mode !== "start") {
@@ -1678,11 +1678,7 @@ async function callForwardTestRoute(query) {
 }
 async function runForwardTest(market) {
   if (forwardTestDisabled) return;
-  await runForwardTestStage({
-    market,
-    callRoute: callForwardTestRoute,
-    lastEnrolledAt: await lastEnrollment(process.env.DATABASE_URL, market),
-  });
+  await runForwardTestStage({ market, callRoute: callForwardTestRoute });
 }
 const stopEodScheduler = startEodScheduler({
   databaseUrl: process.env.DATABASE_URL,

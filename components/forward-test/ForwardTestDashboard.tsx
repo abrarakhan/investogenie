@@ -2,7 +2,12 @@ import type { ScorecardRow, PositionRow } from "@/lib/forwardTest";
 
 const pct = (v: number | null, d = 2) => (v === null ? "—" : `${v > 0 ? "+" : ""}${v.toFixed(d)}%`);
 const num = (v: number | null, d = 2) => (v === null ? "—" : v.toFixed(d));
-const label = (m: string) => (m === "PROBABILITY" ? "Probability" : m.replace("SWING:", ""));
+const ENGINE_NAMES: Record<string, string> = {
+  STRONG_SWING: "Strong Swing", MOMENTUM_IGNITION: "Momentum Ignition", MOMENTUM_IGNITION_V2: "Momentum Ignition V2",
+  TREND_CONTINUATION: "Trend Continuation", ARMED_SWING: "Armed Swing",
+};
+const label = (m: string) => (m === "PROBABILITY" ? "Probability"
+  : m.startsWith("ENGINE:") ? ENGINE_NAMES[m.slice(7)] ?? m.slice(7) : m.replace("SWING:", ""));
 
 const STATUS_STYLE: Record<string, string> = {
   PENDING: "bg-white/10 text-white/50",

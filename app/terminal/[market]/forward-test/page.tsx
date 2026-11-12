@@ -3,6 +3,8 @@ import { getSessionUser } from "@/lib/auth";
 import AppShell from "@/components/app/AppShell";
 import ForwardTestDashboard from "@/components/forward-test/ForwardTestDashboard";
 import RetrospectiveDashboard from "@/components/forward-test/RetrospectiveDashboard";
+import StrategyLeaderboard from "@/components/forward-test/StrategyLeaderboard";
+import { getStrategyLeaderboard } from "@/lib/strategyLeaderboard";
 import { getForwardTestScorecard, getForwardTestPositions } from "@/lib/forwardTest";
 import { getStrategyRetrospectiveScorecards } from "@/lib/strategyRetrospective";
 import { normalizeMarket } from "@/lib/markets";
@@ -20,10 +22,11 @@ export default async function ForwardTestPage({
   const user = await getSessionUser();
   if (!user) redirect("/login");
 
-  const [scorecard, positions, retrospective] = await Promise.all([
+  const [scorecard, positions, retrospective, leaderboard] = await Promise.all([
     getForwardTestScorecard(marketId),
     getForwardTestPositions(marketId),
     getStrategyRetrospectiveScorecards(marketId),
+    getStrategyLeaderboard(marketId, user.id),
   ]);
 
   return (
@@ -35,6 +38,7 @@ export default async function ForwardTestPage({
       subtitle="Compare true forward cohorts with backward-looking outcomes from recorded production signals."
     >
       <div className="space-y-8">
+        <StrategyLeaderboard rows={leaderboard} />
         <ForwardTestDashboard scorecard={scorecard} positions={positions} />
         <RetrospectiveDashboard rows={retrospective} />
       </div>

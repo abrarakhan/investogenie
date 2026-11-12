@@ -7,6 +7,15 @@ import { query, tx } from "@/lib/db";
 import { runScreener } from "@/lib/screener";
 import { getProbabilitySummary } from "@/lib/probability-runtime";
 import { MARKET_COUNTRY } from "@/lib/markets";
+import { DEFAULT_SETTINGS } from "@/lib/settings";
+import {
+  displayArmedSwing,
+  displayLegacyMomentum,
+  displayMomentumV2,
+  displayStrongSwing,
+  displayTrendContinuation,
+} from "@/lib/displayScanCache";
+import { selectEngineCalls } from "@/lib/forwardTestEngines";
 import type { MarketId } from "@/lib/types";
 
 const PER_METHOD = 2;
@@ -144,8 +153,53 @@ export async function enrollCohort(market: MarketId): Promise<EnrollSummary> {
     (byMethod.PROBABILITY ??= []).push(row.ticker);
   }
 
+  // --- Newer engines: their own entry/target/stop, as a resting buy order ----
+  const [strong, momentum, momentumV2, trend, armed] = await Promise.all([
+    displayStrongSwing(market, DEFAULT_SETTINGS),
+    displayLegacyMomentum(market, DEFAULT_SETTINGS),
+    displayMomentumV2(market, DEFAULT_SETTINGS),
+    displayTrendContinuation(market),
+    displayArmedSwing(market, DEFAULT_SETTINGS),
+  ]);
+  // One live call per method and stock: re-enrolling a stock that is still
+  // pending or open would count the same trade twice.
+  const activeRows = await query<{ method: string; asset_id: string }>(
+    `select method, asset_id from public.forward_test_positions
+      where market = $1 and status in ('PENDING','OPEN')`,
+    [market],
+  );
+  const active = new Set(activeRows.map((row) => `${row.method}|${row.asset_id}`));
+  const engineCalls = selectEngineCalls({
+    strong, momentum: momentum.candidates, momentumV2: momentumV2.candidates, trend, armed: armed.candidates,
+  }, PER_METHOD, active);
+  for (const call of engineCalls) {
+    inserts.push({
+      method: call.method,
+      market,
+      asset_id: call.assetId,
+      ticker: call.ticker,
+      horizon_days: call.horizonDays,
+      direction: "LONG",
+      entry_price: call.entry,
+      trigger_price: call.entry,
+      status: "PENDING",
+      projected_target: call.target,
+      projected_stop: call.stop,
+      projected_return_pct: ((call.target - call.entry) / call.entry) * 100,
+      projected_prob_up_pct: null,
+      projected_p5_pct: null,
+      projected_p95_pct: null,
+      projection: JSON.stringify({ engine: call.method, status: call.status }),
+    });
+    (byMethod[call.method] ??= []).push(call.ticker);
+  }
+  const fresh = inserts.filter((r) => !active.has(`${r.method}|${r.asset_id}`));
+  skipped += inserts.length - fresh.length;
+  for (const key of Object.keys(byMethod)) delete byMethod[key];
+  for (const r of fresh) (byMethod[String(r.method)] ??= []).push(String(r.ticker));
+
   await tx(async (c) => {
-    for (const r of inserts) {
+    for (const r of fresh) {
       const res = await c.query(
         `insert into public.forward_test_positions
            (method, market, asset_id, ticker, horizon_days, direction, entry_price,
