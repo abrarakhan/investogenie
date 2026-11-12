@@ -105,7 +105,11 @@ export default async function StrongSwingPage({
         <MomentumIgnitionCandidates result={{ ...momentumIgnition, candidates: v2Shown.shown }} counts={v2Shown.counts} ranks={v2Shown.ranks} lazy planIds={Object.fromEntries(planIds)} />
       </section>
       {market === "IN" && <section id="trend-continuation" className="mt-12 scroll-mt-6 border-t border-white/10 pt-8">
-        <TrendContinuationCandidates candidates={trendShown.shown} counts={trendShown.counts} ranks={trendShown.ranks} market={market} planIds={Object.fromEntries(planIds)} />
+        <TrendContinuationCandidates
+          candidates={trendShown.shown} counts={trendShown.counts} ranks={trendShown.ranks} market={market} planIds={Object.fromEntries(planIds)}
+          dayTwoWatch={trendContinuation.filter((candidate) => candidate.metrics.developing_staircase === true && !candidate.ready)}
+          regimePositive={trendContinuation.map((candidate) => candidate.metrics.market_regime_positive).find((value): value is boolean => typeof value === "boolean")}
+        />
       </section>}
       </LazyGroupsVersion>
     </AppShell>

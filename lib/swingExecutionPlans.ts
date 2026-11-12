@@ -176,7 +176,10 @@ export function trendContinuationExecutionPlanInputs(candidates: readonly TrendC
     atr: typeof candidate.metrics.atr14 === "number" ? candidate.metrics.atr14 : candidate.entry! - candidate.stop!,
     expectedDays: typeof candidate.metrics.expected_holding_days === "number" ? Math.round(candidate.metrics.expected_holding_days) : 5,
     signalAsOf: candidate.asOfMarketDate, score: candidate.score / 100,
-    snapshot: { model: "DAY_TWO_BREAKOUT", metrics: candidate.metrics, reasons: candidate.reasons },
+    snapshot: {
+      model: candidate.metrics.setup === "DAY_TWO_STAIRCASE" ? "DAY_TWO_STAIRCASE" : "DAY_TWO_BREAKOUT",
+      metrics: candidate.metrics, reasons: candidate.reasons,
+    },
   }));
 }
 

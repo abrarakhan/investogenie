@@ -7,6 +7,8 @@ export const ENGINE_METHODS = {
   MOMENTUM_IGNITION: "ENGINE:MOMENTUM_IGNITION",
   MOMENTUM_IGNITION_V2: "ENGINE:MOMENTUM_IGNITION_V2",
   TREND_CONTINUATION: "ENGINE:TREND_CONTINUATION",
+  TREND_DAY_TWO: "ENGINE:TREND_DAY_TWO",
+  TREND_DAY_TWO_WATCH: "ENGINE:TREND_DAY_TWO_WATCH",
   ARMED_SWING: "ENGINE:ARMED_SWING",
 } as const;
 
@@ -16,6 +18,10 @@ export const ENROLLABLE_STATUSES: Record<keyof typeof ENGINE_METHODS, readonly s
   MOMENTUM_IGNITION: ["ENTRY_READY", "BREAKOUT_TRIGGERED"],
   MOMENTUM_IGNITION_V2: ["MOMENTUM_READY", "RETEST_SETUP"],
   TREND_CONTINUATION: ["TREND_CONTINUATION_READY"],
+  // The second-day staircase: entries that pass every gate, and (paper only) the
+  // ones held back, so the gates themselves are tested against what happens next.
+  TREND_DAY_TWO: ["TREND_CONTINUATION_READY"],
+  TREND_DAY_TWO_WATCH: ["IMPULSE_DETECTED"],
   ARMED_SWING: ["ARMED", "BUY_ZONE", "TRIGGERED_UNCONFIRMED"],
 };
 
@@ -34,7 +40,10 @@ export interface EngineCandidates {
   strong: Array<{ assetId: string; ticker: string; status: string; strongEntry: number; strongTarget: number; strongStop: number; strongExpectedDays: number }>;
   momentum: Array<{ assetId: string; ticker: string; status: string; projectedEntry: number; projectedTarget: number; projectedStop: number; projectedDays: number }>;
   momentumV2: Array<{ assetId: string; ticker: string; status: string; projectedEntry: number; projectedTarget: number; projectedStop: number; projectedDays: number }>;
-  trend: Array<{ assetId: string; ticker: string; status: string; entry: number | null; target: number | null; stop: number | null }>;
+  trend: Array<{
+    assetId: string; ticker: string; status: string; entry: number | null; target: number | null; stop: number | null;
+    currentPrice?: number | null; metrics?: Record<string, unknown>;
+  }>;
   armed: Array<{ assetId: string; ticker: string; status: string; plan: { trigger: number; target: number; stop: number; expectedDays: number } }>;
 }
 
@@ -45,6 +54,8 @@ function horizon(days: number | null | undefined): number {
   if (!Number.isFinite(days) || !days || days <= 0) return DEFAULT_HORIZON_DAYS;
   return Math.min(MAX_HORIZON_DAYS, Math.max(1, Math.round(days)));
 }
+
+const isStaircase = (c: { metrics?: Record<string, unknown> }) => c.metrics?.developing_staircase === true;
 
 /** A long call is gradable only if stop < entry < target. */
 export function validLongLevels(entry: number | null, target: number | null, stop: number | null): boolean {
@@ -74,9 +85,18 @@ export function selectEngineCalls(
       assetId: c.assetId, ticker: c.ticker, status: c.status,
       entry: c.projectedEntry, target: c.projectedTarget, stop: c.projectedStop, horizonDays: horizon(c.projectedDays),
     }))],
-    ["TREND_CONTINUATION", candidates.trend.map((c) => ({
+    ["TREND_CONTINUATION", candidates.trend.filter((c) => !isStaircase(c)).map((c) => ({
       assetId: c.assetId, ticker: c.ticker, status: c.status,
       entry: c.entry ?? NaN, target: c.target ?? NaN, stop: c.stop ?? NaN, horizonDays: DEFAULT_HORIZON_DAYS,
+    }))],
+    ["TREND_DAY_TWO", candidates.trend.filter(isStaircase).map((c) => ({
+      assetId: c.assetId, ticker: c.ticker, status: c.status,
+      entry: c.entry ?? NaN, target: c.target ?? NaN, stop: c.stop ?? NaN, horizonDays: DEFAULT_HORIZON_DAYS,
+    }))],
+    // Held-back staircases have no entry of their own, so the paper call rests at the last price.
+    ["TREND_DAY_TWO_WATCH", candidates.trend.filter(isStaircase).map((c) => ({
+      assetId: c.assetId, ticker: c.ticker, status: c.status,
+      entry: c.currentPrice ?? NaN, target: c.target ?? NaN, stop: c.stop ?? NaN, horizonDays: DEFAULT_HORIZON_DAYS,
     }))],
     ["ARMED_SWING", candidates.armed.map((c) => ({
       assetId: c.assetId, ticker: c.ticker, status: c.status,

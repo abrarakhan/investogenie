@@ -2,7 +2,8 @@ import unittest
 from datetime import datetime, timedelta, timezone
 
 from pipelines.trend_continuation import (
-    Bar, assess_trend_continuation, execution_data_verified, india_session_minutes, session_volume_share,
+    Bar, MarketContext, assess_trend_continuation, build_market_contexts, execution_data_verified,
+    india_session_minutes, session_volume_share,
 )
 
 
@@ -21,12 +22,15 @@ class TrendContinuationTests(unittest.TestCase):
         self.assertIn(result["status"], ("IMPULSE_DETECTED", "CONTINUATION_WATCH", "TREND_CONTINUATION_READY", "EXTENDED_RISK"))
         self.assertGreaterEqual(result["metrics"]["move3_atr"], 1.5)
 
-    def test_orderly_pullback_can_become_ready(self):
+    def test_orderly_pullback_is_found_but_watch_only(self):
         history = [100 + index * 0.3 for index in range(21)] + [108, 110, 113, 111.5]
         volumes = [100_000] * 21 + [180_000, 190_000, 175_000, 160_000]
         result = assess_trend_continuation(bars(history, volumes))
-        self.assertEqual(result["status"], "TREND_CONTINUATION_READY")
-        self.assertTrue(result["ready"])
+        self.assertEqual(result["status"], "CONTINUATION_WATCH")
+        self.assertFalse(result["ready"])
+        self.assertIsNone(result["entry"])
+        self.assertTrue(result["metrics"]["pullback"])
+        self.assertTrue(result["metrics"]["pullback_setup"])
 
     def test_pullback_sold_into_the_close_is_not_an_entry(self):
         # Same pullback as above, but the session reverses and closes near its low.
@@ -228,6 +232,106 @@ class DayTwoBreakoutTests(unittest.TestCase):
         self.assertAlmostEqual(session_volume_share(35, 70), session_volume_share(187.5, 375))
         self.assertIsNone(india_session_minutes("2026-11-08", datetime(2026, 11, 8, 8, 45, tzinfo=timezone.utc)))
         self.assertIsNone(india_session_minutes("2026-11-08", datetime(2026, 11, 8, 10, 1, tzinfo=timezone.utc)))
+
+
+STRONG = MarketContext(regime_positive=True, strength_rank=0.9, avg_traded_value=2e8)
+
+
+def staircase_series(second_close=102.0, second_high=102.3):
+    base = [Bar(f"2026-08-{index:02d}", 95 + index * 0.08, 95.6 + index * 0.08,
+                94.6 + index * 0.08, 95 + index * 0.08, 100_000) for index in range(60)]
+    first = Bar("2026-10-28", 99.7, 100.9, 99.5, 100.7, 90_000)
+    second = Bar("2026-10-29", 100.7, second_high, 100.6, second_close, 120_000)
+    return base + [first, second]
+
+
+class DayTwoStaircaseEntryTests(unittest.TestCase):
+    def test_staircase_is_an_entry_in_a_rising_market_for_a_strong_liquid_stock(self):
+        result = assess_trend_continuation(staircase_series(), context=STRONG)
+        self.assertEqual(result["status"], "TREND_CONTINUATION_READY")
+        self.assertTrue(result["ready"])
+        self.assertEqual(result["metrics"]["setup"], "DAY_TWO_STAIRCASE")
+        self.assertEqual(result["entry"], 102.0)
+        self.assertLess(result["stop"], 99.5)  # below the first session's low
+        self.assertAlmostEqual(result["target"], 102.0 + 2 * (102.0 - result["stop"]))
+
+    def test_staircase_stays_watch_only_without_market_context(self):
+        result = assess_trend_continuation(staircase_series())
+        self.assertEqual(result["status"], "IMPULSE_DETECTED")
+        self.assertFalse(result["ready"])
+        self.assertIsNone(result["entry"])
+
+    def test_each_gate_blocks_the_entry(self):
+        for context, text in (
+            (MarketContext(False, 0.9, 2e8), "broad market"),
+            (MarketContext(True, 0.5, 2e8), "120-session strength"),
+            (MarketContext(True, None, 2e8), "120-session strength"),
+            (MarketContext(True, 0.9, 1e7), "traded value"),
+        ):
+            result = assess_trend_continuation(staircase_series(), context=context)
+            self.assertFalse(result["ready"], text)
+            self.assertTrue(any(text in reason for reason in result["reasons"]), text)
+
+    def test_staircase_waits_for_the_first_hour(self):
+        early = assess_trend_continuation(staircase_series(), session_minutes=45, context=STRONG)
+        self.assertFalse(early["ready"])
+        self.assertTrue(any("first hour" in reason for reason in early["reasons"]))
+
+    def test_falling_market_withholds_a_day_two_breakout(self):
+        confirm = Bar("2026-10-30", 104.0, 104.8, 103.0, 104.2, 120_000)
+        series = range_base() + [IGNITION, confirm]
+        self.assertTrue(assess_trend_continuation(series, context=STRONG)["ready"])
+        blocked = assess_trend_continuation(series, context=MarketContext(False, 0.9, 2e8))
+        self.assertEqual(blocked["status"], "CONTINUATION_WATCH")
+        self.assertFalse(blocked["ready"])
+
+
+class ReversalAndPullbackTests(unittest.TestCase):
+    def test_reversal_day_is_removed_from_the_list(self):
+        history = [100 + index * 0.1 for index in range(27)] + [108, 116, 126]
+        volumes = [100_000] * 27 + [250_000, 300_000, 350_000]
+        reversal = Bar("2026-10-31", 126.0, 126.5, 120.0, 120.5, 300_000)
+        self.assertEqual(assess_trend_continuation(bars(history, volumes))["status"], "EXTENDED_RISK")
+        result = assess_trend_continuation(bars(history, volumes) + [reversal])
+        self.assertEqual(result["status"], "NOT_QUALIFIED")
+        self.assertTrue(result["metrics"]["reversed"])
+
+    def test_pullback_entries_are_watch_only(self):
+        from pipelines import trend_continuation as module
+        history = [100 + index * 0.3 for index in range(21)] + [108, 110, 113, 111.5]
+        volumes = [100_000] * 21 + [180_000, 190_000, 175_000, 160_000]
+        series = bars(history, volumes)
+        self.assertTrue(module._assess_pullback_continuation(series)["ready"])
+        result = assess_trend_continuation(series, context=STRONG)
+        self.assertFalse(result["ready"])
+        self.assertIsNone(result["entry"])
+
+
+class MarketContextTests(unittest.TestCase):
+    @staticmethod
+    def trend(start, step, volume=1_000_000, sessions=130):
+        return [Bar(f"d{index:03d}", start + step * index, start + step * index + 1, start + step * index - 1,
+                    start + step * index, volume) for index in range(sessions)]
+
+    def test_regime_and_strength_rank(self):
+        history = {"up": self.trend(100, 0.5), "flat": self.trend(100, 0.05), "thin": self.trend(100, 0.9, volume=10)}
+        regime, contexts = build_market_contexts(history)
+        self.assertTrue(regime)
+        self.assertEqual(contexts["up"].strength_rank, 1.0)
+        self.assertEqual(contexts["flat"].strength_rank, 0.5)
+        self.assertIsNone(contexts["thin"].strength_rank)  # illiquid stocks are not ranked
+        self.assertLess(contexts["thin"].avg_traded_value, 5e7)
+
+    def test_falling_market_is_a_negative_regime_and_short_history_is_unknown(self):
+        regime, _ = build_market_contexts({"a": self.trend(200, -0.5), "b": self.trend(300, -0.8)})
+        self.assertFalse(regime)
+        regime, _ = build_market_contexts({"a": self.trend(200, 0.5, sessions=30)})
+        self.assertIsNone(regime)
+
+    def test_live_session_is_left_out_of_the_regime(self):
+        history = {"a": self.trend(100, 0.5), "b": self.trend(100, 0.4)}
+        crash = {key: value[:-1] + [Bar("live", 1, 1, 1, 1, 1_000_000)] for key, value in history.items()}
+        self.assertTrue(build_market_contexts(crash, live_date="live")[0])
 
 
 if __name__ == "__main__":

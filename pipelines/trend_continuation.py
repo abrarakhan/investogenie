@@ -14,6 +14,7 @@ not create an execution plan or broker order.
 from __future__ import annotations
 
 import argparse
+import bisect
 import json
 import math
 import os
@@ -25,10 +26,23 @@ from typing import Iterable
 import psycopg2
 from psycopg2.extras import execute_values
 
-FEATURE_VERSION = "trend_continuation_v6"
+FEATURE_VERSION = "trend_continuation_v7"
 IST = timezone(timedelta(hours=5, minutes=30))
 SESSION_MINUTES = 375  # 09:15-15:30 IST
 CONFIRMATION_MINUTES = 60  # day-two confirmation opens at 10:15 IST
+# Gates measured on NSE daily bars from 2025-01 to 2026-11 (entry at the signal
+# close, stop below the first session's low, 2R target, 10-session hold). A
+# two-session staircase alone averaged about 0% a trade. With these gates a
+# day-by-day replay of this code gave +0.31% a trade before costs over 1,027
+# trades (45% winners; -0.13% in 2025, +0.81% in 2026): about break-even after
+# costs, so treat it as a tracked hypothesis, not a proven edge. Market regime
+# was the largest single factor.
+MIN_STRENGTH_RANK = 0.70
+MIN_AVG_TRADED_VALUE = 5e7  # rupees per session, 20-session average
+REGIME_SESSIONS = 50
+STRENGTH_SESSIONS = 120
+STAIRCASE_MAX_RISK = 0.10
+STAIRCASE_HOLDING_DAYS = 10
 # Cumulative share of an NSE cash session's volume traded N minutes after the
 # open. Intraday volume is U-shaped, so a partial bar is compared with the
 # volume a normal session has done by the same time, not with a full day.
@@ -63,6 +77,14 @@ class Bar:
     low: float
     close: float
     volume: float
+
+
+@dataclass(frozen=True)
+class MarketContext:
+    """Cross-sectional facts one stock's bars cannot supply. None means unknown."""
+    regime_positive: bool | None = None  # liquid NSE stocks, equal-weighted, above their 50-session average
+    strength_rank: float | None = None  # percentile of 120-session return among liquid NSE stocks
+    avg_traded_value: float | None = None  # 20-session average, excluding the latest bar
 
 
 def _ema(values: list[float], period: int) -> float:
@@ -193,12 +215,13 @@ def _ignition(series: list[Bar], index: int) -> dict | None:
 
 def _developing_staircase(
     series: list[Bar], benchmark_closes: list[float] | None, session_minutes: float | None,
+    context: MarketContext | None = None,
 ) -> dict | None:
     """Surface the second rising session before the stricter ignition test passes.
 
-    This is deliberately observation-only. It closes the blind spot between a
-    quiet first push and a later three-session ignition without weakening the
-    confirmed entry rules.
+    The staircase alone is watch-only. It becomes a day-two continuation entry
+    only above the 20-session high, after the first hour, in a rising broad
+    market, for a liquid stock with top-30% 120-session strength.
     """
     if len(series) < 27 or (session_minutes is not None and session_minutes < 30):
         return None
@@ -246,10 +269,32 @@ def _developing_staircase(
     )
     if not passed:
         return None
+    stop = first.low - 0.10 * atr14
+    risk = current.close - stop
+    target = current.close + 2.0 * risk
+    geometry_valid = risk > 0 and risk / current.close <= STAIRCASE_MAX_RISK
+    blockers = []
+    if session_minutes is not None and session_minutes < CONFIRMATION_MINUTES:
+        blockers.append("Day-two entry is assessed after the first hour of trading (10:15 IST).")
+    if current.close <= breakout_level:
+        blockers.append(f"Waiting for a close above the 20-session high {breakout_level:.2f}.")
+    if context is None or context.regime_positive is not True:
+        blockers.append("Entry is withheld because the broad market is not above its 50-session average.")
+    if context is None or context.strength_rank is None or context.strength_rank < MIN_STRENGTH_RANK:
+        blockers.append("Entry is withheld because 120-session strength is not in the top 30% of liquid NSE stocks.")
+    if context is None or context.avg_traded_value is None or context.avg_traded_value < MIN_AVG_TRADED_VALUE:
+        blockers.append("Entry is withheld because average traded value is below Rs 5 crore a session.")
+    if not geometry_valid:
+        blockers.append("The stop below the first session's low is more than 10% away; entry geometry is not valid.")
+    ready = not blockers
     return {
-        "status": "IMPULSE_DETECTED", "ready": False,
+        "status": "TREND_CONTINUATION_READY" if ready else "IMPULSE_DETECTED", "ready": ready,
+        "entry": current.close if ready else None,
+        "stop": stop if geometry_valid else None, "target": target if geometry_valid else None,
         "metrics": {
             "developing_staircase": True, "early_breakout": False,
+            "setup": "DAY_TWO_STAIRCASE", "atr14": atr14,
+            "expected_holding_days": STAIRCASE_HOLDING_DAYS,
             "staircase_gain_atr": gain_atr, "staircase_volume_ratio": volume_ratio,
             "staircase_first_volume_ratio": first_volume_ratio,
             "breakout_level": breakout_level, "close_location": close_location,
@@ -262,7 +307,8 @@ def _developing_staircase(
             f"Two rising sessions have advanced {gain_atr:.2f} ATR and the latest close is above the first session's high.",
             f"The move is within 0.5 ATR of the 20-session high {breakout_level:.2f}, closes firmly, and volume is tracking at {volume_ratio:.2f}x normal.",
             "The staircase began above a rising pre-impulse EMA20 and is not yet structurally extended.",
-            "Developing staircase only: watch now, but wait for full ignition and confirmation before treating it as an entry.",
+            *(["Developing staircase only: watch now; the entry conditions below are not all met.", *blockers] if blockers
+              else ["Day-two continuation entry is valid with the stop below the first session's low."]),
         ],
         "score_parts": {
             "gain_atr": gain_atr, "volume_ratio": volume_ratio,
@@ -273,6 +319,7 @@ def _developing_staircase(
 
 def _assess_day_two_breakout(
     series: list[Bar], benchmark_closes: list[float] | None, session_minutes: float | None,
+    context: MarketContext | None = None,
 ) -> dict | None:
     """Catch an ignition on day one, confirm it during the first hour of day two."""
     live = session_minutes is not None
@@ -355,6 +402,9 @@ def _assess_day_two_breakout(
         elif not geometry_valid:
             status, ready = "CONTINUATION_WATCH", False
             reasons.append("The protective stop is more than 6% away; entry geometry is not valid.")
+        elif context is not None and context.regime_positive is False:
+            status, ready = "CONTINUATION_WATCH", False
+            reasons.append("Entry is withheld because the broad market is below its 50-session average.")
         else:
             status, ready = "TREND_CONTINUATION_READY", True
             reasons.append("Day-two breakout entry is valid with the stop below the breakout; this signal remains observation-only.")
@@ -375,19 +425,43 @@ def _assess_day_two_breakout(
     return None
 
 
+def _reversed_today(series: list[Bar]) -> bool:
+    """A down session that closes in the lower half of its range is undoing the move."""
+    current, previous = series[-1], series[-2]
+    day_range = current.high - current.low
+    close_location = (current.close - current.low) / day_range if day_range > 0 else 1.0
+    return current.close < previous.close and close_location < 0.5
+
+
 def assess_trend_continuation(
     bars: Iterable[Bar], benchmark_closes: list[float] | None = None, session_minutes: float | None = None,
+    context: MarketContext | None = None,
 ) -> dict:
     """Assess both entry paths. session_minutes is set while the last bar is a live session."""
     series = _project_live_volume(list(bars), session_minutes)
     result = _assess_pullback_continuation(series, benchmark_closes)
+    if result.get("ready"):
+        # Pullback entries lost money on average in the 2025-26 study (222 trades,
+        # 31% winners), in rising markets too, so the path is watch-only.
+        result.update(status="CONTINUATION_WATCH", ready=False, entry=None)
+        result["metrics"]["pullback_setup"] = True
+        result["reasons"][-1] = "Orderly pullback found. Pullback entries are watch-only: they lost money on average in historical testing."
     if result["status"] == "INVALID_DATA" or len(series) < 30:
         return result
-    early = _assess_day_two_breakout(series, benchmark_closes, session_minutes)
-    if early is None:
-        early = _developing_staircase(series, benchmark_closes, session_minutes)
+    # A staircase that passes every entry gate is decided first: the breakout path
+    # would otherwise file a breakout-day staircase under "assess tomorrow".
+    staircase = _developing_staircase(series, benchmark_closes, session_minutes, context)
+    early = staircase if staircase and staircase["ready"] else (
+        _assess_day_two_breakout(series, benchmark_closes, session_minutes, context) or staircase
+    )
     result.setdefault("metrics", {})["early_breakout"] = False
-    if early is None or (result.get("ready") and not early["ready"]):
+    if early is None and _reversed_today(series):
+        # The list is for moves that are still going; a reversal day is not one.
+        # (The day-two breakout path has its own hold-the-gain test.)
+        return {"status": "NOT_QUALIFIED", "ready": False, "score": 0,
+                "metrics": {"reversed": True, "early_breakout": False},
+                "reasons": ["Today is a down session closing in the lower half of its range; the move has reversed."]}
+    if early is None:
         return result
     parts = early.pop("score_parts")
     hold_quality = early.pop("hold_quality", 0.5)
@@ -544,6 +618,59 @@ def _assess_pullback_continuation(series: list[Bar], benchmark_closes: list[floa
     }
 
 
+def build_market_contexts(
+    history: dict[str, list[Bar]], live_date: str | None = None,
+) -> tuple[bool | None, dict[str, MarketContext]]:
+    """Broad-market regime and per-stock strength rank from the loaded bars.
+
+    The regime is an equal-weighted index of liquid stocks' completed daily
+    returns compared with its own 50-session average. live_date is the session
+    still trading, which is left out of the regime.
+    """
+    traded_value: dict[str, float] = {}
+    strength: dict[str, float] = {}
+    returns_by_date: dict[str, list[float]] = {}
+    for asset_id, bars in history.items():
+        if len(bars) < 21:
+            continue
+        value = sum(bar.close * bar.volume for bar in bars[-21:-1]) / 20.0
+        if not math.isfinite(value):
+            continue
+        traded_value[asset_id] = value
+        # A stock counts towards a session's market return only if it was liquid
+        # going into that session. Judging liquidity as of today instead would
+        # favour stocks that have since risen and overstate the market.
+        turnover = [bar.close * bar.volume for bar in bars]
+        rolling = sum(turnover[:20])
+        for index in range(20, len(bars)):
+            bar, previous = bars[index], bars[index - 1]
+            if (rolling / 20.0 >= MIN_AVG_TRADED_VALUE and bar.date != live_date
+                    and previous.close > 0 and math.isfinite(bar.close)):
+                returns_by_date.setdefault(bar.date, []).append(bar.close / previous.close - 1.0)
+            rolling += turnover[index] - turnover[index - 20]
+        if value < MIN_AVG_TRADED_VALUE:
+            continue
+        if len(bars) > STRENGTH_SESSIONS and bars[-STRENGTH_SESSIONS - 1].close > 0:
+            strength[asset_id] = bars[-1].close / bars[-STRENGTH_SESSIONS - 1].close - 1.0
+    # A date only a few stocks traded (a stale or partial session) is not the market.
+    broadest = max((len(values) for values in returns_by_date.values()), default=0)
+    level, index = 1.0, []
+    for date_value in sorted(returns_by_date):
+        values = returns_by_date[date_value]
+        if len(values) >= 0.5 * broadest:
+            level *= 1.0 + sum(values) / len(values)
+            index.append(level)
+    regime = index[-1] > sum(index[-REGIME_SESSIONS:]) / REGIME_SESSIONS if len(index) >= REGIME_SESSIONS else None
+    ordered = sorted(strength.values())
+    contexts = {}
+    for asset_id, value in traded_value.items():
+        rank = None
+        if asset_id in strength and ordered:
+            rank = bisect.bisect_right(ordered, strength[asset_id]) / len(ordered)
+        contexts[asset_id] = MarketContext(regime, rank, value)
+    return regime, contexts
+
+
 def _rows_to_bars(rows) -> list[Bar]:
     return [Bar(str(row[1]), *[float(value) if value is not None else math.nan for value in row[2:]]) for row in rows]
 
@@ -568,7 +695,7 @@ def main() -> None:
             cur.execute("""select asset_id::text,date,open,high,low,close,volume from (
                   select o.*,row_number() over(partition by asset_id order by date desc) rn
                   from public.daily_ohlcv o where asset_id = any(%s::uuid[])
-                ) ranked where rn <= 80 order by asset_id,date""", (asset_ids,))
+                ) ranked where rn <= %s order by asset_id,date""", (asset_ids, STRENGTH_SESSIONS + 5))
             history_rows = cur.fetchall()
             cur.execute("""select asset_id::text,source,updated_at from public.latest_quotes
                 where asset_id = any(%s::uuid[])""", (asset_ids,))
@@ -584,15 +711,25 @@ def main() -> None:
             history_by_asset.setdefault(row[0], []).append(row)
         quotes = {row[0]: (row[1], row[2]) for row in quote_rows}
         now = datetime.now(timezone.utc)
+        bars_by_asset = {asset_id: _rows_to_bars(rows) for asset_id, rows in history_by_asset.items()}
+        today = now.astimezone(IST).date().isoformat()
+        live_date = today if india_session_minutes(today, now) is not None else None
+        regime, contexts = build_market_contexts(bars_by_asset, live_date)
         payload = []
         assessed_dates = set()
         for asset_id, ticker, name in assets:
             asset_history = history_by_asset.get(asset_id, [])
             if asset_history:
                 assessed_dates.add(asset_history[-1][1])
-            asset_bars = _rows_to_bars(asset_history)
+            # The signal maths keeps its 80-session window; the extra history is only for strength.
+            asset_bars = bars_by_asset.get(asset_id, [])[-80:]
             session_minutes = india_session_minutes(asset_bars[-1].date, now) if asset_bars else None
-            result = assess_trend_continuation(asset_bars, benchmark, session_minutes)
+            context = contexts.get(asset_id, MarketContext(regime, None, None))
+            result = assess_trend_continuation(asset_bars, benchmark, session_minutes, context)
+            result.setdefault("metrics", {}).update(
+                market_regime_positive=context.regime_positive, strength_rank_120=context.strength_rank,
+                avg_traded_value_20=context.avg_traded_value,
+            )
             source, quote_time = quotes.get(asset_id, (None, None))
             execution_verified = execution_data_verified(source, quote_time, now)
             result.setdefault("metrics", {})["execution_data_verified"] = execution_verified
@@ -618,7 +755,7 @@ def main() -> None:
                     score=excluded.score,entry=excluded.entry,stop=excluded.stop,target=excluded.target,
                     metrics=excluded.metrics,reasons=excluded.reasons,computed_at=now()""", payload, page_size=500)
         conn.commit()
-        print(f"[trend-continuation] assessed={len(assets)} stored={len(payload)} version={FEATURE_VERSION}")
+        print(f"[trend-continuation] assessed={len(assets)} stored={len(payload)} regime_positive={regime} version={FEATURE_VERSION}")
     finally:
         conn.close()
 

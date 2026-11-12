@@ -42,7 +42,9 @@ function CandidateCard({ candidate, rank, planId, chartGesture }: { candidate: T
       <div className="flex items-center gap-2">
         <span className="font-mono text-lg font-bold text-white/75">{candidate.score}/100</span>
         <span className={`rounded-full border px-3 py-1 text-[10px] font-bold uppercase ${style[candidate.status]}`}>
-          {developingStaircase ? "Staircase developing" : TREND_CONTINUATION_STATUS_LABEL[candidate.status]}
+          {developingStaircase
+            ? candidate.status === "TREND_CONTINUATION_READY" ? "Day-two continuation ready" : "Staircase developing"
+            : TREND_CONTINUATION_STATUS_LABEL[candidate.status]}
         </span>
       </div>
     </div>
@@ -108,7 +110,11 @@ function CandidateGroup({ title, candidates, source, totalCount, color, ranked, 
   />;
 }
 
-export default function TrendContinuationCandidates({ candidates, planIds, counts, ranks, market }: {
+export default function TrendContinuationCandidates({ candidates, planIds, counts, ranks, market, dayTwoWatch = [], regimePositive }: {
+  /** Second-day staircases still held back from entry; always shown, open by default. */
+  dayTwoWatch?: TrendContinuationCandidate[];
+  /** Broad market above its 50-session average; undefined when unknown. */
+  regimePositive?: boolean;
   /** With `market`, holds only the groups open by default. */
   candidates: TrendContinuationCandidate[];
   planIds: Record<string, string>;
@@ -130,6 +136,7 @@ export default function TrendContinuationCandidates({ candidates, planIds, count
   const watch = candidates.filter((candidate) => candidate.status === "CONTINUATION_WATCH");
   const impulse = candidates.filter((candidate) => candidate.status === "IMPULSE_DETECTED");
   const extended = candidates.filter((candidate) => candidate.status === "EXTENDED_RISK");
+  const regime = regimePositive;
 
   return <div className="space-y-4">
     <div className="flex flex-wrap items-end justify-between gap-3 border-b border-white/10 pb-4">
@@ -137,7 +144,7 @@ export default function TrendContinuationCandidates({ candidates, planIds, count
         <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-violet-300">Python signal engine · protected manual execution</div>
         <h2 className="mt-1 text-2xl font-black">Trend Continuation</h2>
         <p className="mt-1 max-w-3xl text-sm leading-relaxed text-white/45">
-          Surfaces a firm two-session staircase early, then requires a heavy-volume completed launch and confirmation after the first hour of the following session (10:15 IST); orderly pullbacks after an older impulse remain a second entry path.
+          Finds stocks rising for a second session. A two-session staircase becomes an entry after 10:15 IST only above its 20-session high, in a rising broad market, for a liquid stock with top-30% six-month strength. Heavy-volume day-one breakouts are confirmed the same way on day two. Stocks that reverse are dropped, and pullbacks are watch-only.
         </p>
       </div>
       <div className="text-right text-xs text-white/40">
@@ -158,8 +165,14 @@ export default function TrendContinuationCandidates({ candidates, planIds, count
       </div>)}
     </div>
 
+    {regime === false && <div className="rounded-lg border border-amber-400/25 bg-amber-400/[0.06] px-4 py-3 text-xs leading-relaxed text-amber-100/80">
+      <span className="font-bold">Broad market is below its 50-session average.</span> New entries are withheld: in this condition continuation trades lost money on average. Second-day movers are still listed as watch-only.
+    </div>}
     <div className="rounded-lg border border-violet-400/15 bg-violet-400/[0.035] px-4 py-3 text-xs leading-relaxed text-violet-100/65">
-      A confirmed day-two breakout may unlock manual Buy &amp; Track after 10:15 IST only when fresh Breeze depth, spread, circuit room, results calendar, plan geometry and freshness checks pass. Day-one impulses and later pullbacks remain observation-only; auto-buy stays disabled.
+      A confirmed day-two entry may unlock manual Buy &amp; Track after 10:15 IST only when fresh Breeze depth, spread, circuit room, results calendar, plan geometry and freshness checks pass. Day-one impulses and pullbacks remain observation-only; auto-buy stays disabled.
+      <span className="mt-2 block text-white/55">
+        In a day-by-day replay of 2025–26 NSE data the day-two continuation entry averaged +0.3% a trade before costs with 45% winners — about break-even, so size it as an experiment. Its live results are tracked under Strategy Tests.
+      </span>
       <span className="mt-2 block text-white/45">Double-click a stock card, or long-press it on mobile, to open its interactive chart.</span>
     </div>
 
@@ -167,8 +180,9 @@ export default function TrendContinuationCandidates({ candidates, planIds, count
       ? <div className="rounded-lg border border-white/10 px-4 py-8 text-center text-sm text-white/45">No recent multi-session impulse currently passes the Trend Continuation floor.</div>
       : <div className="space-y-3">
         <CandidateGroup title="Continuation ready" {...group("TREND_CONTINUATION_READY", ready)} ranked={ranked} planIds={planIds} color="text-emerald-300" defaultOpen bindChartGesture={bindChartGesture} />
+        <CandidateGroup title="Second-day movers · watch-only" candidates={dayTwoWatch} ranked={ranked} planIds={planIds} color="text-cyan-200" defaultOpen bindChartGesture={bindChartGesture} />
         <CandidateGroup title="Continuation watch" {...group("CONTINUATION_WATCH", watch)} ranked={ranked} planIds={planIds} color="text-amber-200" bindChartGesture={bindChartGesture} />
-        <CandidateGroup title="Developing staircase / impulse detected" {...group("IMPULSE_DETECTED", impulse)} ranked={ranked} planIds={planIds} color="text-cyan-200" bindChartGesture={bindChartGesture} />
+        <CandidateGroup title="Impulse detected" {...group("IMPULSE_DETECTED", impulse)} ranked={ranked} planIds={planIds} color="text-cyan-200" bindChartGesture={bindChartGesture} />
         <CandidateGroup title="Extended · do not chase" {...group("EXTENDED_RISK", extended)} ranked={ranked} planIds={planIds} color="text-rose-200" bindChartGesture={bindChartGesture} />
       </div>}
     <TradingViewChartModal chart={chart} onClose={closeChart} />

@@ -6,6 +6,8 @@ const NAMES: Record<string, string> = {
   MOMENTUM_IGNITION: "Momentum Ignition",
   MOMENTUM_IGNITION_V2: "Momentum Ignition V2",
   TREND_CONTINUATION: "Trend Continuation",
+  TREND_DAY_TWO: "Day-two continuation",
+  TREND_DAY_TWO_WATCH: "Day-two continuation (held back)",
   ARMED_SWING: "Armed Swing",
   PROBABILITY: "Probability model",
   DEFAULT_SWING: "Default Swing",

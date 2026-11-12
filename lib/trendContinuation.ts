@@ -7,14 +7,14 @@ export interface TrendContinuationCandidate {
   assetId: string; ticker: string; name: string | null; status: TrendContinuationStatus;
   ready: boolean; observationOnly: boolean; score: number; entry: number | null;
   stop: number | null; target: number | null; asOfMarketDate: string;
-  computedAt: string; metrics: Record<string, number | boolean | number[] | null>; reasons: string[];
+  computedAt: string; metrics: Record<string, number | boolean | number[] | string | null>; reasons: string[];
   executionEligible: boolean; executionBlockers: string[]; currentPrice: number | null;
 }
 interface Row {
   asset_id: string; ticker: string; name: string | null; status: TrendContinuationStatus;
   ready: boolean; observation_only: boolean; score: number; entry: string | null; stop: string | null;
   target: string | null; asof_market_date: string; computed_at: string;
-  metrics: Record<string, number | boolean | number[] | null>; reasons: string[];
+  metrics: Record<string, number | boolean | number[] | string | null>; reasons: string[];
 }
 
 interface ExecutionRow {
@@ -23,6 +23,21 @@ interface ExecutionRow {
   next_date: string | null; last_past_date: string | null; last_success_at: string | null;
   authoritative_source: string | null; authoritative_as_of: string | null;
   authoritative_coverage_from: string | null; authoritative_coverage_through: string | null;
+}
+
+const STATUS_ORDER: Record<TrendContinuationStatus, number> = {
+  TREND_CONTINUATION_READY: 0, CONTINUATION_WATCH: 1, IMPULSE_DETECTED: 2, EXTENDED_RISK: 3,
+};
+
+/** Entries first, then second-day staircases, then by status and score; "too late" stocks last. */
+export function compareTrendCandidates(
+  a: Pick<TrendContinuationCandidate, "status" | "ready" | "score" | "metrics">,
+  b: Pick<TrendContinuationCandidate, "status" | "ready" | "score" | "metrics">,
+): number {
+  return Number(b.ready) - Number(a.ready)
+    || Number(b.metrics.developing_staircase === true) - Number(a.metrics.developing_staircase === true)
+    || STATUS_ORDER[a.status] - STATUS_ORDER[b.status]
+    || b.score - a.score;
 }
 
 export async function getTrendContinuationCandidates(market: "IN" | "US", limit = 40): Promise<TrendContinuationCandidate[]> {
@@ -72,7 +87,8 @@ export async function getTrendContinuationCandidates(market: "IN" | "US", limit 
     }) : { verified: false, detail: "Results calendar unavailable." };
     const sessionsToResults = execution?.next_date ? tradingSessionLag(market, sessionDate, execution.next_date) : null;
     const blockers: string[] = [];
-    if (row.status !== "TREND_CONTINUATION_READY" || !row.ready || row.metrics.early_breakout !== true) blockers.push("Only a confirmed day-two breakout can be bought.");
+    const dayTwoEntry = row.metrics.early_breakout === true || row.metrics.setup === "DAY_TWO_STAIRCASE";
+    if (row.status !== "TREND_CONTINUATION_READY" || !row.ready || !dayTwoEntry) blockers.push("Only a confirmed day-two entry can be bought.");
     if (!marketOpen) blockers.push("Entry is available only during NSE market hours.");
     if (execution?.source !== "BREEZE_LIVE" || quoteAgeMinutes < 0 || quoteAgeMinutes > ARMED_SWING_RULES.maxQuoteAgeMinutes) blockers.push("A fresh Breeze quote is required.");
     if (spreadPct === null || spreadPct > ARMED_SWING_RULES.maxSpreadPct) blockers.push("Bid/ask spread is missing or above 0.75%.");
@@ -88,6 +104,5 @@ export async function getTrendContinuationCandidates(market: "IN" | "US", limit 
       asOfMarketDate: row.asof_market_date, computedAt: row.computed_at, metrics: row.metrics, reasons: row.reasons,
       executionEligible: blockers.length === 0, executionBlockers: blockers, currentPrice: price,
     };
-  }).sort((a, b) => Number(b.metrics.developing_staircase === true) - Number(a.metrics.developing_staircase === true)
-    || b.score - a.score).slice(0, limit);
+  }).sort(compareTrendCandidates).slice(0, limit);
 }

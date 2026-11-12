@@ -44,4 +44,22 @@ describe("forward-test engine calls", () => {
       expect.objectContaining({ method: ENGINE_METHODS.ARMED_SWING, entry: 10, horizonDays: 30 }),
     ]);
   });
+
+  it("tracks the second-day staircase separately, entries and held-back alike", () => {
+    const stair = { developing_staircase: true };
+    const calls = selectEngineCalls({
+      ...empty,
+      trend: [
+        { assetId: "r", ticker: "READY", status: "TREND_CONTINUATION_READY", entry: 100, target: 112, stop: 94, metrics: stair },
+        { assetId: "w", ticker: "WATCH", status: "IMPULSE_DETECTED", entry: null, target: 56, stop: 47, currentPrice: 50, metrics: stair },
+        { assetId: "n", ticker: "NOLEVELS", status: "IMPULSE_DETECTED", entry: null, target: null, stop: null, currentPrice: 50, metrics: stair },
+        { assetId: "b", ticker: "BREAKOUT", status: "TREND_CONTINUATION_READY", entry: 20, target: 24, stop: 18, metrics: { early_breakout: true } },
+      ],
+    }, 5);
+    expect(calls.map((c) => [c.method, c.ticker, c.entry])).toEqual([
+      [ENGINE_METHODS.TREND_CONTINUATION, "BREAKOUT", 20],
+      [ENGINE_METHODS.TREND_DAY_TWO, "READY", 100],
+      [ENGINE_METHODS.TREND_DAY_TWO_WATCH, "WATCH", 50],
+    ]);
+  });
 });

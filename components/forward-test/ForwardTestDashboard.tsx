@@ -5,6 +5,7 @@ const num = (v: number | null, d = 2) => (v === null ? "—" : v.toFixed(d));
 const ENGINE_NAMES: Record<string, string> = {
   STRONG_SWING: "Strong Swing", MOMENTUM_IGNITION: "Momentum Ignition", MOMENTUM_IGNITION_V2: "Momentum Ignition V2",
   TREND_CONTINUATION: "Trend Continuation", ARMED_SWING: "Armed Swing",
+  TREND_DAY_TWO: "Day-two continuation", TREND_DAY_TWO_WATCH: "Day-two continuation (held back)",
 };
 const label = (m: string) => (m === "PROBABILITY" ? "Probability"
   : m.startsWith("ENGINE:") ? ENGINE_NAMES[m.slice(7)] ?? m.slice(7) : m.replace("SWING:", ""));
