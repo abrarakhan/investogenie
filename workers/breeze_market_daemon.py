@@ -215,6 +215,18 @@ def circuit_limits(tick: dict[str, Any]) -> tuple[float | None, float | None]:
             read("upperCktLm", "upperCktLM", "upper_circuit"))
 
 
+def order_flow(tick: dict[str, Any]) -> tuple[float | None, float | None, float | None]:
+    """Session VWAP and total resting buy and sell quantity from a Breeze tick."""
+    def positive(*keys: str) -> float | None:
+        for key in keys:
+            value = number(tick.get(key))
+            if value is not None and value > 0:
+                return value
+        return None
+    return (positive("avgPrice", "average_price"), positive("totalBuyQt", "total_buy_quantity"),
+            positive("totalSellQ", "total_sell_quantity"))
+
+
 def integer(value: Any) -> int | None:
     parsed = number(value)
     return int(parsed) if parsed is not None else None
@@ -447,6 +459,7 @@ class MarketBatcher:
             "bid_qty": integer(tick.get("bQty") or tick.get("best_bid_quantity")),
             "ask_qty": integer(tick.get("sQty") or tick.get("best_offer_quantity")),
             **dict(zip(("lower_circuit", "upper_circuit"), circuit_limits(tick))),
+            **dict(zip(("vwap", "buy_total", "sell_total"), order_flow(tick))),
         }
         with self.lock:
             self.pending[instrument.asset_id] = row
@@ -470,7 +483,8 @@ class MarketBatcher:
                     cur,
                     """
                     insert into public.latest_quotes
-                      (asset_id,price,change_pct,currency,as_of,source,updated_at,best_bid,best_ask,bid_quantity,ask_quantity,lower_circuit,upper_circuit)
+                      (asset_id,price,change_pct,currency,as_of,source,updated_at,best_bid,best_ask,bid_quantity,ask_quantity,lower_circuit,upper_circuit,
+                       vwap,total_buy_quantity,total_sell_quantity)
                     values %s
                     on conflict (asset_id) do update set
                       price=excluded.price,change_pct=excluded.change_pct,
@@ -485,10 +499,14 @@ class MarketBatcher:
                       upper_circuit=case
                         when excluded.upper_circuit is not null then excluded.upper_circuit
                         when public.latest_quotes.as_of::date=excluded.as_of::date then public.latest_quotes.upper_circuit
-                        else null end
+                        else null end,
+                      vwap=excluded.vwap,
+                      total_buy_quantity=excluded.total_buy_quantity,
+                      total_sell_quantity=excluded.total_sell_quantity
                     where public.latest_quotes.as_of is null or public.latest_quotes.as_of <= excluded.as_of
                     """,
-                    [(r["asset_id"], r["price"], r["change_pct"], "INR", r["timestamp"], "BREEZE_LIVE", dt.datetime.now(dt.timezone.utc),r["bid"],r["ask"],r["bid_qty"],r["ask_qty"],r["lower_circuit"],r["upper_circuit"]) for r in rows],
+                    [(r["asset_id"], r["price"], r["change_pct"], "INR", r["timestamp"], "BREEZE_LIVE", dt.datetime.now(dt.timezone.utc),r["bid"],r["ask"],r["bid_qty"],r["ask_qty"],r["lower_circuit"],r["upper_circuit"],
+                      r["vwap"],r["buy_total"],r["sell_total"]) for r in rows],
                     page_size=500,
                 )
                 execute_values(

@@ -7,7 +7,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 import datetime as dt
 
-from breeze_market_daemon import IST, ReconnectWatch, circuit_limits, decrypt_credential, safe_ws_disconnect, is_india_market_session, parse_security_master, parse_tick_time, valid_ohlc
+from breeze_market_daemon import IST, ReconnectWatch, circuit_limits, order_flow, decrypt_credential, safe_ws_disconnect, is_india_market_session, parse_security_master, parse_tick_time, valid_ohlc
 
 
 class ReconnectWatchTests(unittest.TestCase):
@@ -57,6 +57,10 @@ class BreezeMarketDaemonTests(unittest.TestCase):
     def test_circuit_limits_use_the_sdk_key_spelling(self):
         self.assertEqual(circuit_limits({"lowerCktLm": "229.50", "upperCktLm": 280.5}), (229.5, 280.5))
         self.assertEqual(circuit_limits({"lowerCktLM": 90, "upper_circuit": "110"}), (90.0, 110.0))
+
+    def test_order_flow_reads_vwap_and_resting_quantities(self):
+        self.assertEqual(order_flow({"avgPrice": "254.31", "totalBuyQt": 120000, "totalSellQ": "80,500"}), (254.31, 120000.0, 80500.0))
+        self.assertEqual(order_flow({"avgPrice": 0, "last": 10}), (None, None, None))
 
     def test_missing_or_zero_circuit_limits_are_unknown(self):
         self.assertEqual(circuit_limits({"last": 100}), (None, None))
