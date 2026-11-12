@@ -199,6 +199,22 @@ def number(value: Any) -> float | None:
         return None
 
 
+def circuit_limits(tick: dict[str, Any]) -> tuple[float | None, float | None]:
+    """The session's lower and upper price bands from a Breeze tick.
+
+    The SDK spells the keys lowerCktLm/upperCktLm. A missing or non-positive
+    value means the band is unknown, never a real limit of zero.
+    """
+    def read(*keys: str) -> float | None:
+        for key in keys:
+            value = number(tick.get(key))
+            if value is not None and value > 0:
+                return value
+        return None
+    return (read("lowerCktLm", "lowerCktLM", "lower_circuit"),
+            read("upperCktLm", "upperCktLM", "upper_circuit"))
+
+
 def integer(value: Any) -> int | None:
     parsed = number(value)
     return int(parsed) if parsed is not None else None
@@ -430,8 +446,7 @@ class MarketBatcher:
             "ask": number(tick.get("sPrice") or tick.get("best_offer_price")),
             "bid_qty": integer(tick.get("bQty") or tick.get("best_bid_quantity")),
             "ask_qty": integer(tick.get("sQty") or tick.get("best_offer_quantity")),
-            "lower_circuit": number(tick.get("lowerCktLM") or tick.get("lower_circuit")),
-            "upper_circuit": number(tick.get("upperCktLM") or tick.get("upper_circuit")),
+            **dict(zip(("lower_circuit", "upper_circuit"), circuit_limits(tick))),
         }
         with self.lock:
             self.pending[instrument.asset_id] = row

@@ -7,7 +7,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 import datetime as dt
 
-from breeze_market_daemon import IST, ReconnectWatch, decrypt_credential, safe_ws_disconnect, is_india_market_session, parse_security_master, parse_tick_time, valid_ohlc
+from breeze_market_daemon import IST, ReconnectWatch, circuit_limits, decrypt_credential, safe_ws_disconnect, is_india_market_session, parse_security_master, parse_tick_time, valid_ohlc
 
 
 class ReconnectWatchTests(unittest.TestCase):
@@ -53,6 +53,14 @@ class BreezeMarketDaemonTests(unittest.TestCase):
         with ZipFile(buffer) as archive:
             result = parse_security_master(archive, "NSE")
         self.assertEqual(result, {"RELIANCE": ("RELIND", "2885", "RELIANCE INDUSTRIES")})
+
+    def test_circuit_limits_use_the_sdk_key_spelling(self):
+        self.assertEqual(circuit_limits({"lowerCktLm": "229.50", "upperCktLm": 280.5}), (229.5, 280.5))
+        self.assertEqual(circuit_limits({"lowerCktLM": 90, "upper_circuit": "110"}), (90.0, 110.0))
+
+    def test_missing_or_zero_circuit_limits_are_unknown(self):
+        self.assertEqual(circuit_limits({"last": 100}), (None, None))
+        self.assertEqual(circuit_limits({"lowerCktLm": 0, "upperCktLm": ""}), (None, None))
 
     def test_tick_time_is_ist_aware(self):
         parsed = parse_tick_time("Wed Sep 09 12:34:56 2026")
