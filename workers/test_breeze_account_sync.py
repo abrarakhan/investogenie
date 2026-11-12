@@ -6,7 +6,12 @@ from breeze_account_sync import (
     enrich_holdings_with_prices,
     as_number,
     external_key,
+    BrokerError,
+    ORDER_HISTORY_WINDOW,
     fetch_rows,
+    is_quota_error,
+    replace_snapshot,
+    sync_jobs,
     history_windows,
     response_rows,
     summarize_errors,
@@ -35,6 +40,62 @@ class BreezeAccountSyncTest(unittest.TestCase):
             return response
 
         self.assertEqual(fetch_rows(fetch, attempts=2), [{"order_id": "1"}])
+
+    def test_broker_refusal_is_not_retried(self):
+        calls = []
+
+        def fetch():
+            calls.append(1)
+            return {"Success": None, "Error": "During market hours, you can check orders for any 5 days or up to 200 records."}
+
+        with self.assertRaises(BrokerError):
+            fetch_rows(fetch, attempts=3)
+        self.assertEqual(len(calls), 1)
+
+    def test_no_positions_is_a_successful_empty_snapshot(self):
+        self.assertEqual(response_rows({"Success": None, "Error": "No Positions available."}), [])
+
+    def test_daily_allowance_error_is_recognised(self):
+        self.assertTrue(is_quota_error("Limit exceed: API call per day: "))
+        self.assertFalse(is_quota_error("Session expired"))
+
+    def test_order_history_windows_fit_the_market_hours_limit(self):
+        end = INVESTOGENIE_ACTIVITY_START + dt.timedelta(days=24)
+        for from_date, to_date in history_windows(INVESTOGENIE_ACTIVITY_START, end, ORDER_HISTORY_WINDOW):
+            span = dt.datetime.fromisoformat(to_date.replace("Z", "+00:00")) - dt.datetime.fromisoformat(from_date.replace("Z", "+00:00"))
+            self.assertLess(span, dt.timedelta(days=5))
+
+    def test_routine_run_reads_only_recent_history(self):
+        class Broker:
+            def __getattr__(self, name):
+                return lambda *args, **kwargs: {"Success": []}
+
+        now = INVESTOGENIE_ACTIVITY_START + dt.timedelta(days=100)
+        recent = sync_jobs(Broker(), now, full_history=False)
+        full = sync_jobs(Broker(), now, full_history=True)
+        self.assertLessEqual(len(recent), 12)
+        self.assertGreater(len(full), 60)
+        self.assertEqual([kind for kind, _ in recent[:3]], ["FUNDS", "HOLDING", "POSITION"])
+
+    def test_merge_keeps_history_that_was_not_re_read(self):
+        statements = []
+
+        class Cursor:
+            def __enter__(self): return self
+            def __exit__(self, *args): return False
+            def execute(self, sql, params=None): statements.append((" ".join(sql.split()), params))
+            def mogrify(self, *args): return b""
+
+        class Conn:
+            encoding = "UTF8"
+            def cursor(self): return Cursor()
+
+        replace_snapshot(Conn(), "u", "ORDER", [], merge=True)
+        self.assertIn("external_key = any(%s)", statements[0][0])
+        self.assertEqual(statements[0][1], ("u", "ORDER", []))
+        statements.clear()
+        replace_snapshot(Conn(), "u", "ORDER", [])
+        self.assertNotIn("external_key", statements[0][0])
 
     def test_repeated_broker_errors_are_summarized_once(self):
         self.assertEqual(

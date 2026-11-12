@@ -23,13 +23,30 @@ from breeze_market_daemon import database_url, decrypt_credential, env
 
 INVESTOGENIE_ACTIVITY_START = dt.datetime(2026, 8, 1, tzinfo=dt.timezone.utc)
 BROKER_HISTORY_WINDOW = dt.timedelta(days=9)
+# During market hours Breeze answers order-history requests for at most 5 days.
+ORDER_HISTORY_WINDOW = dt.timedelta(days=4)
+# Routine runs re-read only recent days: older orders and trades are final. A full
+# read from INVESTOGENIE_ACTIVITY_START is repeated when none succeeded this recently.
+RECENT_HISTORY = dt.timedelta(days=7)
+FULL_HISTORY_EVERY = dt.timedelta(days=7)
+STALE_RUN = dt.timedelta(minutes=15)
 
 
-def history_windows(start: dt.datetime, end: dt.datetime) -> list[tuple[str, str]]:
+class BrokerError(RuntimeError):
+    """Breeze answered with an error. Asking again gives the same answer."""
+
+
+def is_quota_error(error: object) -> bool:
+    return "limit exceed" in str(error).lower()
+
+
+def history_windows(
+    start: dt.datetime, end: dt.datetime, window: dt.timedelta = BROKER_HISTORY_WINDOW,
+) -> list[tuple[str, str]]:
     windows: list[tuple[str, str]] = []
     cursor = start
     while cursor <= end:
-        window_end = min(cursor + BROKER_HISTORY_WINDOW, end)
+        window_end = min(cursor + window, end)
         windows.append((
             cursor.isoformat(timespec="milliseconds").replace("+00:00", "Z"),
             window_end.isoformat(timespec="milliseconds").replace("+00:00", "Z"),
@@ -59,9 +76,11 @@ def response_rows(response: Any) -> list[dict[str, Any]]:
         raise RuntimeError("Breeze returned a non-object response")
     error = response.get("Error") or response.get("error")
     if error:
-        if "no data found" in str(error).lower():
+        text = str(error).lower()
+        # An account with nothing to report answers with an error, not an empty list.
+        if "no data found" in text or "no positions available" in text:
             return []
-        raise RuntimeError(str(error))
+        raise BrokerError(str(error))
     success = response.get("Success", response.get("success"))
     if success is None:
         return []
@@ -77,6 +96,8 @@ def fetch_rows(fetch: Callable[[], Any], attempts: int = 3) -> list[dict[str, An
     for attempt in range(attempts):
         try:
             return response_rows(fetch())
+        except BrokerError:
+            raise  # a refusal is not transient; retrying only spends the daily API allowance
         except Exception as exc:
             last_error = exc
             if attempt + 1 < attempts:
@@ -165,7 +186,8 @@ def enrich_holdings_with_prices(
     return enriched
 
 
-def replace_snapshot(conn, user_id: str, kind: str, rows: list[dict[str, Any]]) -> None:
+def replace_snapshot(conn, user_id: str, kind: str, rows: list[dict[str, Any]], merge: bool = False) -> None:
+    """Store a snapshot. merge=True keeps rows that were not re-read (older history)."""
     captured_at = dt.datetime.now(dt.timezone.utc)
     payload = []
     seen: dict[str, int] = {}
@@ -188,10 +210,17 @@ def replace_snapshot(conn, user_id: str, kind: str, rows: list[dict[str, Any]]) 
             Json(row), captured_at,
         ))
     with conn.cursor() as cur:
-        cur.execute(
-            "delete from public.breeze_broker_snapshots where user_id=%s and snapshot_type=%s",
-            (user_id, kind),
-        )
+        if merge:
+            cur.execute(
+                """delete from public.breeze_broker_snapshots
+                    where user_id=%s and snapshot_type=%s and external_key = any(%s)""",
+                (user_id, kind, [item[2] for item in payload]),
+            )
+        else:
+            cur.execute(
+                "delete from public.breeze_broker_snapshots where user_id=%s and snapshot_type=%s",
+                (user_id, kind),
+            )
         if payload:
             execute_values(
                 cur,
@@ -206,10 +235,41 @@ def replace_snapshot(conn, user_id: str, kind: str, rows: list[dict[str, Any]]) 
             )
 
 
+def sync_jobs(breeze: Any, now: dt.datetime, full_history: bool) -> list[tuple[str, Callable[[], Any]]]:
+    """The broker calls for one run: balances every time, history for recent days or in full."""
+    start = INVESTOGENIE_ACTIVITY_START if full_history else max(INVESTOGENIE_ACTIVITY_START, now - RECENT_HISTORY)
+    jobs: list[tuple[str, Callable[[], Any]]] = [
+        ("FUNDS", breeze.get_funds),
+        ("HOLDING", breeze.get_demat_holdings),
+        ("POSITION", breeze.get_portfolio_positions),
+    ]
+    for exchange in ("NSE", "NFO"):
+        for from_date, to_date in history_windows(start, now, ORDER_HISTORY_WINDOW):
+            jobs.append(("ORDER", lambda exchange=exchange, from_date=from_date, to_date=to_date:
+                         breeze.get_order_list(exchange, from_date, to_date)))
+        for from_date, to_date in history_windows(start, now):
+            jobs.append(("TRADE", lambda exchange=exchange, from_date=from_date, to_date=to_date:
+                         breeze.get_trade_list(from_date, to_date, exchange)))
+    return jobs
+
+
 def sync_account(conn, user_id: str, api_key: str, api_secret: str, session_token: str) -> None:
     from breeze_connect import BreezeConnect
 
     with conn.cursor() as cur:
+        # A run that died never closed its record; do not leave it looking live.
+        cur.execute(
+            """update public.breeze_broker_syncs
+                  set status='FAILED',error='Interrupted before finishing',finished_at=now()
+                where user_id=%s and status='RUNNING' and started_at < now() - %s""",
+            (user_id, STALE_RUN),
+        )
+        cur.execute(
+            """select exists(select 1 from public.breeze_broker_syncs
+                where user_id=%s and full_history and started_at >= now() - %s)""",
+            (user_id, FULL_HISTORY_EVERY),
+        )
+        full_history = not cur.fetchone()[0]
         cur.execute(
             "insert into public.breeze_broker_syncs (user_id,status) values (%s,'RUNNING') returning id",
             (user_id,),
@@ -223,29 +283,20 @@ def sync_account(conn, user_id: str, api_key: str, api_secret: str, session_toke
     try:
         breeze.generate_session(api_secret=api_secret, session_token=session_token)
         now = dt.datetime.now(dt.timezone.utc)
-        start = INVESTOGENIE_ACTIVITY_START
-        jobs: list[tuple[str, Callable[[], Any]]] = [
-            ("FUNDS", breeze.get_funds),
-            ("HOLDING", breeze.get_demat_holdings),
-            ("POSITION", breeze.get_portfolio_positions),
-        ]
-        for exchange in ("NSE", "NFO"):
-            for from_date, to_date in history_windows(start, now):
-                jobs.extend([
-                    ("ORDER", lambda exchange=exchange, from_date=from_date, to_date=to_date:
-                     breeze.get_order_list(exchange, from_date, to_date)),
-                    ("TRADE", lambda exchange=exchange, from_date=from_date, to_date=to_date:
-                     breeze.get_trade_list(from_date, to_date, exchange)),
-                ])
+        jobs = sync_jobs(breeze, now, full_history)
 
         collected: dict[str, list[dict[str, Any]]] = {kind: [] for kind in counts}
         successful: set[str] = set()
+        failed: set[str] = set()
         for kind, fetch in jobs:
             try:
                 collected[kind].extend(fetch_rows(fetch))
                 successful.add(kind)
             except Exception as exc:
                 errors.append(f"{kind}: {exc}")
+                failed.add(kind)
+                if is_quota_error(exc):
+                    break  # the day's API allowance is spent; further calls only fail
 
         if "HOLDING" in successful and collected["HOLDING"]:
             # Value holdings at Breeze's own market price and average cost. A failure here leaves
@@ -264,24 +315,36 @@ def sync_account(conn, user_id: str, api_key: str, api_secret: str, session_toke
                 errors.extend(price_errors)
             collected["HOLDING"] = enrich_holdings_with_prices(collected["HOLDING"], portfolio_rows)
 
+        history_complete = full_history and not ({"ORDER", "TRADE"} & failed)
         for kind in successful:
-            replace_snapshot(conn, user_id, kind, collected[kind])
-            counts[kind] = len(collected[kind])
+            # History is replaced only by a complete full read. A recent-days read, or a
+            # full read with a failed window, adds to what is stored instead of erasing it.
+            merge = kind in ("ORDER", "TRADE") and not history_complete
+            replace_snapshot(conn, user_id, kind, collected[kind], merge=merge)
+        with conn.cursor() as cur:
+            cur.execute(
+                """select snapshot_type,count(*) from public.breeze_broker_snapshots
+                    where user_id=%s group by snapshot_type""",
+                (user_id,),
+            )
+            counts.update({kind: int(total) for kind, total in cur.fetchall()})
         status = "SUCCESS" if not errors else ("PARTIAL" if successful else "FAILED")
         with conn.cursor() as cur:
             cur.execute(
                 """
                 update public.breeze_broker_syncs set status=%s,holdings_count=%s,
-                  positions_count=%s,orders_count=%s,trades_count=%s,error=%s,finished_at=now()
+                  positions_count=%s,orders_count=%s,trades_count=%s,error=%s,
+                  full_history=%s,finished_at=now()
                 where id=%s
                 """,
                 (status, counts["HOLDING"], counts["POSITION"], counts["ORDER"],
-                 counts["TRADE"], summarize_errors(errors), sync_id),
+                 counts["TRADE"], summarize_errors(errors), history_complete, sync_id),
             )
         conn.commit()
         print(
             f"[breeze-account] {user_id} {status.lower()} holdings={counts['HOLDING']} "
-            f"positions={counts['POSITION']} orders={counts['ORDER']} trades={counts['TRADE']}",
+            f"positions={counts['POSITION']} orders={counts['ORDER']} trades={counts['TRADE']} "
+            f"calls={len(jobs)} history={'full' if full_history else 'recent'}",
             flush=True,
         )
     except Exception as exc:
