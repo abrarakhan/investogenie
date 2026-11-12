@@ -14,7 +14,7 @@ export function dueLateUsSession(at = new Date()) {
   return latestExpectedSessionDate("US", at, 22 * 60);
 }
 
-export function startEodScheduler({ databaseUrl, runIndia, runUS, runUSLate }) {
+export function startEodScheduler({ databaseUrl, runIndia, runUS, runUSLate, runForwardTest }) {
   let stopped = false;
   let busy = false;
   const completed = new Map();
@@ -29,8 +29,15 @@ export function startEodScheduler({ databaseUrl, runIndia, runUS, runUSLate }) {
         { market: "IN", job: "eod-in", label: "IN", run: runIndia, due: () => dueEodSession("IN") },
         { market: "US", job: "eod-us", label: "US", run: runUS, due: () => dueEodSession("US") },
         ...(runUSLate ? [{ market: "US", job: "eod-us-late", label: "US late", run: runUSLate, due: () => dueLateUsSession(), after: "eod-us" }] : []),
+        // Forward-test grading needs the session's bars, so it waits for that market's EOD job.
+        ...(runForwardTest ? ["IN", "US"].map((market) => ({
+          market, job: `forward-test-${market.toLowerCase()}`, label: `${market} forward test`,
+          action: "grading forward-test positions",
+          run: (session) => runForwardTest(market, session),
+          due: () => dueEodSession(market), after: `eod-${market.toLowerCase()}`,
+        })) : []),
       ];
-      for (const { market, job, label, run, due, after } of stages) {
+      for (const { market, job, label, run, due, after, action } of stages) {
         if (stopped) break;
         const session = due();
         const key = `${job}:${session}`;
@@ -47,7 +54,7 @@ export function startEodScheduler({ databaseUrl, runIndia, runUS, runUSLate }) {
         if (!lock.rows[0].locked) continue;
         const started = Date.now();
         try {
-          console.log(`[eod] ${label} updating quotes and OHLCV for completed session ${session}`);
+          console.log(`[eod] ${label} ${action ?? "updating quotes and OHLCV"} for completed session ${session}`);
           await run(session);
           await client.query("insert into public.cron_logs(job,status,detail,duration_ms) values($1,'ok',$2,$3)",
             [job, { session, clock: zonedMarketClock(market) }, Date.now() - started]);

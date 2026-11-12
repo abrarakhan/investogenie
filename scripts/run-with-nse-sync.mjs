@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { isMarketOpenNow, isTradingDay, latestExpectedSessionDate, marketHolidayDates, refreshMarketHolidays } from "../lib/market-calendar.mjs";
 import { startEodScheduler } from "./eod-scheduler.mjs";
 import { startMlSnapshotScheduler } from "./ml-snapshot-scheduler.mjs";
+import { lastEnrollment, runForwardTestStage } from "./forward-test-scheduler.mjs";
 
 const mode = process.argv[2];
 if (mode !== "dev" && mode !== "start") {
@@ -75,6 +76,7 @@ const fundamentalsSleep = process.env.FUNDAMENTALS_SYNC_SLEEP_SECONDS ?? "1.5";
 const fundamentalsLimit = process.env.FUNDAMENTALS_SYNC_LIMIT ?? "250";
 const fundamentalsDisabled = process.env.FUNDAMENTALS_SYNC_DISABLED === "1";
 const usQuoteDisabled = process.env.US_QUOTE_SYNC_DISABLED === "1";
+const forwardTestDisabled = process.env.FORWARD_TEST_DISABLED === "1";
 const usQuoteLimit = process.env.US_QUOTE_LIMIT ?? "1500";
 const usQuoteBatchSize = process.env.US_QUOTE_BATCH_SIZE ?? "100";
 const usGoogleFallbackLimit = process.env.US_GOOGLE_FALLBACK_LIMIT ?? "100";
@@ -1662,8 +1664,29 @@ async function refreshStrategyRetrospective(market) {
   if (!python) throw new Error("Python is required for strategy retrospective calculations");
   await runEodPython([strategyRetrospectivePipeline, "--market", market]);
 }
+async function callForwardTestRoute(query) {
+  await waitForApp();
+  if (!process.env.CRON_SECRET) throw new Error("CRON_SECRET is not configured");
+  const response = await fetch(`http://127.0.0.1:3000/api/cron/forward-test?${query}`, {
+    headers: { authorization: `Bearer ${process.env.CRON_SECRET}` },
+    signal: AbortSignal.timeout(10 * 60_000),
+  });
+  const body = await response.text();
+  if (!response.ok) throw new Error(`forward test ${query} failed (${response.status}): ${body.slice(0, 400)}`);
+  console.log(`[forward-test] ${query} completed: ${body.slice(0, 400)}`);
+  return body;
+}
+async function runForwardTest(market) {
+  if (forwardTestDisabled) return;
+  await runForwardTestStage({
+    market,
+    callRoute: callForwardTestRoute,
+    lastEnrolledAt: await lastEnrollment(process.env.DATABASE_URL, market),
+  });
+}
 const stopEodScheduler = startEodScheduler({
   databaseUrl: process.env.DATABASE_URL,
+  runForwardTest,
   runIndia: async () => {
     if (syncDisabled) throw new Error("NSE_SYNC_DISABLED disables India EOD updates");
     if (!await runBhavcopyNseSync("exchange-close")) throw new Error("India EOD update failed");
