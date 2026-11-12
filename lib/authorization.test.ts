@@ -75,6 +75,7 @@ const ROUTES: Record<string, RoutePolicy> = {
   "app/api/backfill/status/route.ts": "admin",
   "app/api/breeze/callback/route.ts": "public", // authenticated by the signed connect-state cookie
   "app/api/breeze/connect/route.ts": "session",
+  "app/api/breeze/order-action/route.ts": "session", // acts only on the caller's own broker orders
   "app/api/breeze/order-preview/route.ts": "session", // read-only, from the caller's own Breeze session
   "app/api/breeze/refresh-quotes/route.ts": "session", // non-admins are skipped: see below
   "app/api/browser-notifications/route.ts": "session",

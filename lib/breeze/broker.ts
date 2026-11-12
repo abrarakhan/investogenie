@@ -22,6 +22,18 @@ export interface BreezeReconciliation {
     reason: string | null;
     capturedAt: string;
   }>;
+  /** Open NSE cash orders as of the last reconciliation; the broker is re-read before any change. */
+  openOrders: Array<{
+    orderId: string;
+    name: string;
+    action: string | null;
+    status: string;
+    orderType: string | null;
+    quantity: number | null;
+    pendingQuantity: number | null;
+    price: number | null;
+    capturedAt: string;
+  }>;
   /** Live order updates pushed by the broker over the last two days, newest first. */
   liveOrderUpdates: Array<{
     id: string;
@@ -68,7 +80,7 @@ export async function getBreezeReconciliation(userId: string): Promise<BreezeRec
     scopeStart,
     configured: false, status: null, capturedAt: null, error: null,
     holdingsCount: 0, positionsCount: 0, ordersCount: 0,
-    mismatches: [], rejectedOrders: [], liveOrderUpdates: [],
+    mismatches: [], rejectedOrders: [], liveOrderUpdates: [], openOrders: [],
   };
   try {
     const credential = await queryOne<{ configured: boolean; session_updated_at: Date | string | null }>(
@@ -159,6 +171,24 @@ export async function getBreezeReconciliation(userId: string): Promise<BreezeRec
         order by captured_at desc limit 10`,
       [userId, scopeStart],
     );
+    const open = superseded ? [] : await query<{
+      order_id: string; name: string | null; action: string | null; status: string; order_type: string | null;
+      quantity: string | null; pending_quantity: string | null; price: string | null; captured_at: Date | string;
+    }>(
+      `select s.order_id,coalesce(a.ticker,s.stock_code) name,s.action,s.status,
+              s.raw_data->>'order_type' order_type,s.quantity,
+              nullif(s.raw_data->>'pending_quantity','')::numeric pending_quantity,
+              nullif(s.raw_data->>'price','')::numeric price,s.captured_at
+         from public.breeze_broker_snapshots s
+         left join public.breeze_instrument_map m
+           on m.exchange_code=s.exchange_code and upper(m.stock_code)=upper(s.stock_code)
+         left join public.assets a on a.id=m.asset_id
+        where s.user_id=$1 and s.snapshot_type='ORDER' and s.exchange_code='NSE' and s.order_id is not null
+          and lower(s.status) in ('ordered','requested','queued','partially executed')
+          and s.captured_at >= now() - interval '1 day'
+        order by s.captured_at desc,s.order_id limit 20`,
+      [userId],
+    );
     // Shown newest first; a table that predates this feature simply has no rows.
     const live = await query<{
       id: string; name: string | null; action: string | null; status: string;
@@ -176,6 +206,17 @@ export async function getBreezeReconciliation(userId: string): Promise<BreezeRec
       throw error;
     });
     return {
+      openOrders: open.map((row) => ({
+        orderId: row.order_id,
+        name: row.name ?? "Order",
+        action: row.action,
+        status: row.status,
+        orderType: row.order_type,
+        quantity: row.quantity === null ? null : Number(row.quantity),
+        pendingQuantity: row.pending_quantity === null ? null : Number(row.pending_quantity),
+        price: row.price === null ? null : Number(row.price),
+        capturedAt: new Date(row.captured_at).toISOString(),
+      })),
       liveOrderUpdates: live.map((row) => ({
         id: row.id,
         name: row.name ?? "Order",

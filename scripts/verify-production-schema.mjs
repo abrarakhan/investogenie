@@ -50,6 +50,7 @@ const requiredRelations = [
   "public.strategy_retrospective_scorecards",
   "public.intraday_bars",
   "public.breeze_order_events",
+  "public.breeze_order_actions",
 ];
 const requiredColumns = [
   ["corporate_event_sync_state", "authoritative_source"],
