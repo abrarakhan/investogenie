@@ -48,6 +48,8 @@ const requiredRelations = [
   "public.asset_symbol_changes",
   "public.strategy_retrospective_results",
   "public.strategy_retrospective_scorecards",
+  "public.intraday_bars",
+  "public.breeze_order_events",
 ];
 const requiredColumns = [
   ["corporate_event_sync_state", "authoritative_source"],

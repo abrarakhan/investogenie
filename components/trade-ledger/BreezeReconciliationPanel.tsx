@@ -33,6 +33,17 @@ export default function BreezeReconciliationPanel({ data }: { data: BreezeReconc
         </div>)}
       </div>
     </div>}
+    {data.liveOrderUpdates.length > 0 && <div className="mt-4">
+      <h3 className="text-sm font-semibold text-white/80">Live order updates</h3>
+      <p className="mt-1 text-[11px] text-white/35">Pushed by the broker as they happen. The reconciliation above remains the record of the account.</p>
+      <div className="mt-2 divide-y divide-white/8 rounded-lg border border-white/8">
+        {data.liveOrderUpdates.map((update) => <div key={update.id} className="grid grid-cols-[1fr_auto] gap-2 px-3 py-2 text-xs sm:grid-cols-[1.4fr_1fr_auto]">
+          <span><strong>{update.name}</strong>{update.action ? ` · ${update.action}` : ""}{update.quantity !== null ? ` · ${update.executedQuantity !== null && update.executedQuantity !== update.quantity ? `${update.executedQuantity.toLocaleString("en-IN")} of ` : ""}${update.quantity.toLocaleString("en-IN")}` : ""}</span>
+          <span className={/reject/i.test(update.status) ? "text-rose-300" : /execut/i.test(update.status) ? "text-emerald-300" : "text-white/60"}>{update.status}</span>
+          <span className="hidden text-white/35 sm:block">{new Intl.DateTimeFormat("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Asia/Kolkata" }).format(new Date(update.receivedAt))} IST</span>
+        </div>)}
+      </div>
+    </div>}
     {data.rejectedOrders.length > 0 && <div className="mt-4">
       <h3 className="text-sm font-semibold text-rose-200">Recent rejected orders</h3>
       <div className="mt-2 space-y-2">{data.rejectedOrders.map((order) => <div key={`${order.orderId}-${order.capturedAt}`} className="rounded-lg border border-rose-500/20 bg-rose-500/[0.05] p-3 text-xs">

@@ -22,6 +22,16 @@ export interface BreezeReconciliation {
     reason: string | null;
     capturedAt: string;
   }>;
+  /** Live order updates pushed by the broker over the last two days, newest first. */
+  liveOrderUpdates: Array<{
+    id: string;
+    name: string;
+    action: string | null;
+    status: string;
+    quantity: number | null;
+    executedQuantity: number | null;
+    receivedAt: string;
+  }>;
 }
 
 type SyncRow = {
@@ -58,7 +68,7 @@ export async function getBreezeReconciliation(userId: string): Promise<BreezeRec
     scopeStart,
     configured: false, status: null, capturedAt: null, error: null,
     holdingsCount: 0, positionsCount: 0, ordersCount: 0,
-    mismatches: [], rejectedOrders: [],
+    mismatches: [], rejectedOrders: [], liveOrderUpdates: [],
   };
   try {
     const credential = await queryOne<{ configured: boolean; session_updated_at: Date | string | null }>(
@@ -149,7 +159,32 @@ export async function getBreezeReconciliation(userId: string): Promise<BreezeRec
         order by captured_at desc limit 10`,
       [userId, scopeStart],
     );
+    // Shown newest first; a table that predates this feature simply has no rows.
+    const live = await query<{
+      id: string; name: string | null; action: string | null; status: string;
+      quantity: string | null; executed_quantity: string | null; received_at: Date | string;
+    }>(
+      `select e.id::text,coalesce(a.ticker,e.stock_code) name,e.action,e.status,
+              e.quantity,e.executed_quantity,e.received_at
+         from public.breeze_order_events e
+         left join public.assets a on a.id=e.asset_id
+        where e.user_id=$1 and e.received_at >= now() - interval '2 days'
+        order by e.received_at desc,e.id desc limit 8`,
+      [userId],
+    ).catch((error: { code?: string }) => {
+      if (error.code === "42P01") return [];
+      throw error;
+    });
     return {
+      liveOrderUpdates: live.map((row) => ({
+        id: row.id,
+        name: row.name ?? "Order",
+        action: row.action,
+        status: row.status,
+        quantity: row.quantity === null ? null : Number(row.quantity),
+        executedQuantity: row.executed_quantity === null ? null : Number(row.executed_quantity),
+        receivedAt: new Date(row.received_at).toISOString(),
+      })),
       configured: Boolean(credential?.configured),
       scopeStart,
       status: superseded ? "RUNNING" : sync?.status ?? null,

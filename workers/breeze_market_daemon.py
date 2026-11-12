@@ -440,6 +440,60 @@ def parse_tick_time(value: Any) -> dt.datetime | None:
         return None
 
 
+# Order states worth interrupting the user for. Requested/Queued/Ordered are routine.
+ORDER_NOTICE_TITLES = {
+    "executed": "order executed",
+    "partially executed": "order partly executed",
+    "rejected": "order rejected",
+    "cancelled": "order cancelled",
+    "expired": "order expired",
+    "partially executed and cancelled": "order partly executed, rest cancelled",
+    "partially executed and expired": "order partly executed, rest expired",
+}
+# Account identifiers in the broker's message that the log has no use for.
+ORDER_PRIVATE_KEYS = {"userId", "orderMatchAccount", "key", "sourceNumber", "group"}
+
+
+def order_event(tick: dict[str, Any]) -> dict[str, Any] | None:
+    """A broker order update from the notification stream, or None for anything else."""
+    reference = str(tick.get("orderReference") or "").strip()
+    status = str(tick.get("orderStatus") or "").strip()
+    if not reference or not status or tick.get("symbol"):
+        return None
+    return {
+        "reference": reference,
+        "status": status,
+        "exchange": str(tick.get("orderExchangeCode") or "").strip().upper() or None,
+        "stock_code": str(tick.get("stockCode") or "").strip().upper() or None,
+        "action": str(tick.get("orderFlow") or "").strip() or None,
+        "quantity": number(tick.get("orderQuantity") or tick.get("orderTotalQuantity")),
+        "executed": number(tick.get("orderExecutedQuantity") or tick.get("executedQuantity")),
+        "average_price": number(tick.get("averageExecutedRate")),
+        "limit_price": number(tick.get("orderLimitRate") or tick.get("limitRate")),
+        "raw": {key: value for key, value in tick.items() if key not in ORDER_PRIVATE_KEYS},
+    }
+
+
+def order_notice(event: dict[str, Any], ticker: str | None) -> tuple[str, str, str] | None:
+    """Title, body and de-duplication signature for an update the user should see."""
+    title = ORDER_NOTICE_TITLES.get(event["status"].lower())
+    if title is None:
+        return None
+    count = lambda value: f"{value:g}"  # noqa: E731
+    name = ticker or event["stock_code"] or "an order"
+    action = (event["action"] or "Order").capitalize()
+    quantity, executed = event["quantity"], event["executed"]
+    if "partially" in event["status"].lower() and executed is not None and quantity is not None:
+        detail = f"{action} {name}: {count(executed)} of {count(quantity)} filled"
+    elif quantity is not None:
+        detail = f"{action} {count(quantity)} {name}"
+    else:
+        detail = f"{action} {name}"
+    body = f"{detail} — {event['status'].lower()}. Open Trade Ledger to review it."
+    signature = f"ORDER|{event['reference']}|{event['status']}|{'' if executed is None else count(executed)}"
+    return f"InvestoGenie: {title}", body, signature
+
+
 class MinuteBarBuilder:
     """Fold live ticks into one-minute candles without any extra broker calls.
 
@@ -528,6 +582,8 @@ class MarketBatcher:
         self.minute_bars = None if env("BREEZE_MINUTE_BARS_DISABLED") == "1" else MinuteBarBuilder()
         self.pending_bars: list[tuple] = []
         self.bar_failures = 0
+        self.owner_user_id: str | None = None
+        self.pending_orders: list[dict[str, Any]] = []
         self.conn = psycopg2.connect(dsn)
         self.thread = threading.Thread(target=self._loop, name="breeze-db-flusher", daemon=True)
         self.thread.start()
@@ -577,6 +633,69 @@ class MarketBatcher:
             # until the service hits its task limit and the feed's reader dies.
             self.wake.set()
 
+    def enqueue_order(self, event: dict[str, Any]) -> None:
+        """Queue a broker order update; like ticks, it is written by the flusher thread."""
+        with self.lock:
+            if len(self.pending_orders) < 1_000:
+                self.pending_orders.append(event)
+        self.wake.set()
+
+    def _flush_orders(self) -> int:
+        """Log queued order updates and raise a notification for the ones that matter."""
+        with self.lock:
+            events, self.pending_orders = self.pending_orders, []
+        if not events or not self.owner_user_id:
+            return 0
+        stored = 0
+        try:
+            with self.conn.cursor() as cur:
+                for event in events:
+                    cur.execute(
+                        """
+                        select a.id::text, a.ticker
+                          from public.breeze_instrument_map m join public.assets a on a.id=m.asset_id
+                         where m.exchange_code=%s and upper(m.stock_code)=%s limit 1
+                        """,
+                        (event["exchange"] or "NSE", event["stock_code"] or ""),
+                    )
+                    asset_id, ticker = cur.fetchone() or (None, None)
+                    cur.execute(
+                        """
+                        insert into public.breeze_order_events
+                          (user_id,order_reference,status,exchange_code,stock_code,asset_id,action,
+                           quantity,executed_quantity,average_price,limit_price,raw_data)
+                        values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                        on conflict do nothing
+                        """,
+                        (self.owner_user_id, event["reference"], event["status"], event["exchange"], event["stock_code"],
+                         asset_id, event["action"], event["quantity"], event["executed"], event["average_price"],
+                         event["limit_price"], json.dumps(event["raw"], default=str)),
+                    )
+                    if cur.rowcount == 0:
+                        continue  # the broker repeated an update already logged
+                    stored += 1
+                    notice = order_notice(event, ticker)
+                    if notice is None:
+                        continue
+                    cur.execute(
+                        """
+                        insert into public.browser_notification_events
+                          (user_id,market,kind,asset_id,title,body,route,signature,market_date)
+                        values (%s,'IN','ORDER_UPDATE',%s,%s,%s,'/terminal/in/trade-ledger',%s,
+                                (now() at time zone 'Asia/Kolkata')::date)
+                        on conflict (user_id,signature,market_date) do nothing
+                        """,
+                        (self.owner_user_id, asset_id, notice[0], notice[1], notice[2]),
+                    )
+            self.conn.commit()
+        except Exception as exc:
+            self.conn.rollback()
+            print(f"[breeze-market] order update write failed ({len(events)} dropped): {exc}", file=sys.stderr, flush=True)
+            return 0
+        if stored:
+            print(f"[breeze-market] logged {stored} order update(s)", flush=True)
+        return stored
+
     def flush(self) -> int:
         with self.flush_lock:
             return self._flush_locked()
@@ -587,6 +706,7 @@ class MarketBatcher:
             self.pending.clear()
         if not rows:
             self._flush_minute_bars()
+            self._flush_orders()
             return 0
         try:
             with self.conn.cursor() as cur:
@@ -646,6 +766,7 @@ class MarketBatcher:
             raise
         print(f"[breeze-market] flushed {len(rows)} cash quotes", flush=True)
         self._flush_minute_bars()
+        self._flush_orders()
         return len(rows)
 
     def _flush_minute_bars(self, final: bool = False) -> int:
@@ -871,6 +992,11 @@ def main() -> int:
         for tick in ticks:
             if not isinstance(tick, dict):
                 continue
+            if "orderReference" in tick:
+                event = order_event(tick)
+                if event:
+                    batcher.enqueue_order(event)
+                continue
             instrument = by_stream_token.get(str(tick.get("symbol") or "").upper())
             if instrument:
                 batcher.enqueue(instrument, tick)
@@ -892,6 +1018,23 @@ def main() -> int:
             subscribed += len(batch)
         time.sleep(subscribe_sleep)
     print(f"[breeze-market] subscribed {subscribed}/{len(instruments)} instruments", flush=True)
+
+    # Order updates for the owner's account arrive on a second socket and reach the
+    # same callback. Optional: the periodic account reconciliation remains the record.
+    if env("BREEZE_ORDER_NOTIFICATIONS_DISABLED") != "1" and env("CREDENTIAL_ENCRYPTION_KEY"):
+        try:
+            with psycopg2.connect(database_url()) as conn, conn.cursor() as cur:
+                cur.execute("select id::text from public.users where is_system_owner limit 1")
+                owner = cur.fetchone()
+            if owner:
+                batcher.owner_user_id = owner[0]
+                result = breeze.subscribe_feeds(get_order_notification=True)
+                if isinstance(result, str) and result.lower().startswith("exception"):
+                    print(f"[breeze-market] order updates unavailable: {result}", file=sys.stderr, flush=True)
+                else:
+                    print("[breeze-market] subscribed to order updates", flush=True)
+        except Exception as exc:
+            print(f"[breeze-market] order updates unavailable: {exc}", file=sys.stderr, flush=True)
 
     last_credential_check = time.monotonic()
     last_calendar_refresh = time.monotonic()

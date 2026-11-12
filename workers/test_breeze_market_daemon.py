@@ -7,7 +7,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 import datetime as dt
 
-from breeze_market_daemon import IST, MarketBatcher, MinuteBarBuilder, merge_minute_bars, ReconnectWatch, circuit_limits, feed_stalled, order_flow, decrypt_credential, safe_ws_disconnect, is_india_market_session, parse_security_master, parse_tick_time, valid_ohlc
+from breeze_market_daemon import IST, MarketBatcher, MinuteBarBuilder, merge_minute_bars, order_event, order_notice, ReconnectWatch, circuit_limits, feed_stalled, order_flow, decrypt_credential, safe_ws_disconnect, is_india_market_session, parse_security_master, parse_tick_time, valid_ohlc
 
 
 class ReconnectWatchTests(unittest.TestCase):
@@ -203,6 +203,46 @@ class MinuteBarTests(unittest.TestCase):
             ("a", minute, 10.5, 12.0, 10.2, 11.8, 40),
         ])
         self.assertEqual(merged, [("a", minute, 10.0, 12.0, 9.5, 11.8, 140), ("b", minute, 20.0, 20.0, 20.0, 20.0, None)])
+
+
+class OrderUpdateTests(unittest.TestCase):
+    TICK = {
+        "sourceNumber": "1", "userId": "ABC123", "orderMatchAccount": "8500001234", "key": "k",
+        "orderExchangeCode": "NSE", "stockCode": "relind", "orderFlow": "Buy", "orderStatus": "Executed",
+        "orderReference": "20261113N100000042", "orderQuantity": "10", "orderExecutedQuantity": "10",
+        "averageExecutedRate": "1450.5", "orderLimitRate": "1451",
+    }
+
+    def test_reads_an_order_update_and_drops_account_identifiers(self):
+        event = order_event(self.TICK)
+        self.assertEqual((event["reference"], event["status"], event["exchange"], event["stock_code"]),
+                         ("20261113N100000042", "Executed", "NSE", "RELIND"))
+        self.assertEqual((event["quantity"], event["executed"], event["average_price"]), (10.0, 10.0, 1450.5))
+        self.assertNotIn("userId", event["raw"])
+        self.assertNotIn("orderMatchAccount", event["raw"])
+
+    def test_a_price_tick_or_an_incomplete_message_is_not_an_order_update(self):
+        self.assertIsNone(order_event({"symbol": "4.1!2885", "last": 100}))
+        self.assertIsNone(order_event({"orderReference": "X1"}))
+        self.assertIsNone(order_event({"orderStatus": "Executed"}))
+
+    def test_notifies_for_a_fill_using_the_app_ticker(self):
+        title, body, signature = order_notice(order_event(self.TICK), "RELIANCE")
+        self.assertEqual(title, "InvestoGenie: order executed")
+        self.assertEqual(body, "Buy 10 RELIANCE — executed. Open Trade Ledger to review it.")
+        self.assertEqual(signature, "ORDER|20261113N100000042|Executed|10")
+
+    def test_a_partial_fill_reports_progress_and_each_step_notifies_once(self):
+        partial = order_event({**self.TICK, "orderStatus": "Partially Executed", "orderExecutedQuantity": "4"})
+        _, body, first = order_notice(partial, None)
+        self.assertEqual(body, "Buy RELIND: 4 of 10 filled — partially executed. Open Trade Ledger to review it.")
+        later = order_event({**self.TICK, "orderStatus": "Partially Executed", "orderExecutedQuantity": "7"})
+        self.assertNotEqual(first, order_notice(later, None)[2])
+
+    def test_routine_states_do_not_notify(self):
+        for status in ("Requested", "Queued", "Ordered"):
+            self.assertIsNone(order_notice(order_event({**self.TICK, "orderStatus": status}), "RELIANCE"))
+        self.assertIsNotNone(order_notice(order_event({**self.TICK, "orderStatus": "Rejected"}), "RELIANCE"))
 
 
 if __name__ == "__main__":
