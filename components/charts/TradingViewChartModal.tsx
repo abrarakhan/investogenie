@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type HTMLAttributes, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
 import CandleChartPro from "@/components/market-overview/CandleChartPro";
 import type { OverviewCandle } from "@/lib/marketOverview";
+import IntradayChart from "@/components/charts/IntradayChart";
+import type { IntradaySeries } from "@/lib/intradayAggregate";
 
 export interface ChartSymbol {
   ticker: string;
@@ -79,6 +81,12 @@ export default function TradingViewChartModal({ chart, onClose }: { chart: Chart
   const candle = currentData?.candle ?? null;
   const error = currentData?.error ?? null;
   const loading = Boolean(chart) && currentData === null;
+  const [view, setView] = useState<"DAILY" | "INTRADAY">("DAILY");
+  const [sessions, setSessions] = useState(1);
+  const [intradayData, setIntradayData] = useState<{ key: string; series: IntradaySeries | null; error: string | null } | null>(null);
+  const intradayKey = `${requestKey}:${sessions}`;
+  const intraday = intradayData?.key === intradayKey ? intradayData : null;
+  const showIntraday = market === "IN" && view === "INTRADAY";
   const externalUrl = useMemo(() => chart ? tradingViewUrl(chart) : "https://www.tradingview.com/", [chart]);
 
   useEffect(() => {
@@ -115,24 +123,59 @@ export default function TradingViewChartModal({ chart, onClose }: { chart: Chart
     return () => controller.abort();
   }, [chart, market, requestKey]);
 
+  useEffect(() => {
+    if (!chart || !showIntraday) return;
+    const controller = new AbortController();
+    const params = new URLSearchParams({ ticker: chart.ticker, exchange: chart.exchange, sessions: String(sessions) });
+    fetch(`/api/market-overview/intraday?${params.toString()}`, { signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) throw new Error(`Chart request failed (${response.status})`);
+        return response.json() as Promise<{ series?: IntradaySeries | null; error?: string }>;
+      })
+      .then((payload) => {
+        if (payload.error) throw new Error(payload.error);
+        setIntradayData({ key: intradayKey, series: payload.series ?? null, error: null });
+      })
+      .catch((reason: unknown) => {
+        if (reason instanceof DOMException && reason.name === "AbortError") return;
+        setIntradayData({ key: intradayKey, series: null, error: reason instanceof Error ? reason.message : "Could not load this chart." });
+      });
+    return () => controller.abort();
+  }, [chart, showIntraday, sessions, intradayKey]);
+
   if (!chart) return null;
+  const tab = (active: boolean) => `inline-flex min-h-10 items-center rounded-lg border px-3 text-xs font-semibold ${active ? "border-cyan-400/40 bg-cyan-400/10 text-cyan-100" : "border-white/15 text-white/55 hover:bg-white/10"}`;
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 p-2 backdrop-blur-sm sm:p-6" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
       <section role="dialog" aria-modal="true" aria-label={`${chart.ticker} candlestick chart`} className="flex max-h-[92dvh] w-full max-w-6xl flex-col overflow-hidden rounded-xl border border-white/15 bg-[#080b12] shadow-2xl">
         <header className="flex min-h-14 items-center justify-between gap-3 border-b border-white/10 px-4">
           <div>
             <div className="font-bold">{chart.ticker}</div>
-            <div className="text-[10px] uppercase tracking-wider text-white/40">{chart.exchange} · InvestoGenie daily OHLCV</div>
+            <div className="text-[10px] uppercase tracking-wider text-white/40">{chart.exchange} · InvestoGenie {showIntraday ? "1-minute candles" : "daily OHLCV"}</div>
           </div>
           <div className="flex items-center gap-2">
+            {market === "IN" && (
+              <>
+                <button type="button" onClick={() => setView("DAILY")} className={tab(!showIntraday)}>Daily</button>
+                <button type="button" onClick={() => setView("INTRADAY")} className={tab(showIntraday)}>Intraday</button>
+              </>
+            )}
             <a href={externalUrl} target="_blank" rel="noreferrer" className="inline-flex min-h-10 items-center rounded-lg border border-cyan-400/25 px-3 text-xs font-semibold text-cyan-200 hover:bg-cyan-400/10">Open in TradingView</a>
             <button type="button" onClick={onClose} className="inline-flex min-h-10 items-center rounded-lg border border-white/15 px-4 text-sm font-semibold text-white/75 hover:bg-white/10">Close</button>
           </div>
         </header>
         <div className="min-h-[470px] overflow-auto p-2 sm:p-4">
-          {loading && <div className="flex min-h-[430px] items-center justify-center text-sm text-white/45">Loading {chart.ticker} candles…</div>}
-          {error && <div className="flex min-h-[430px] flex-col items-center justify-center gap-3 px-6 text-center text-sm text-amber-100/75"><p>{error}</p><a href={externalUrl} target="_blank" rel="noreferrer" className="rounded-lg border border-cyan-400/25 px-4 py-2 font-semibold text-cyan-200">Open in TradingView</a></div>}
-          {candle && <CandleChartPro candle={candle} accent="#22d3ee" currency={market === "IN" ? "INR" : "USD"} />}
+          {showIntraday && !intraday && <div className="flex min-h-[430px] items-center justify-center text-sm text-white/45">Loading {chart.ticker} 1-minute candles…</div>}
+          {showIntraday && intraday?.error && <div className="flex min-h-[430px] items-center justify-center px-6 text-center text-sm text-amber-100/75">{intraday.error}</div>}
+          {showIntraday && intraday && !intraday.error && !intraday.series && (
+            <div className="flex min-h-[430px] items-center justify-center px-6 text-center text-sm leading-relaxed text-white/50">
+              No 1-minute candles are stored for {chart.ticker}. They are kept for about a week, and only for stocks on the live price feed.
+            </div>
+          )}
+          {showIntraday && intraday?.series && <IntradayChart series={intraday.series} sessions={sessions} onSessionsChange={setSessions} />}
+          {!showIntraday && loading && <div className="flex min-h-[430px] items-center justify-center text-sm text-white/45">Loading {chart.ticker} candles…</div>}
+          {!showIntraday && error && <div className="flex min-h-[430px] flex-col items-center justify-center gap-3 px-6 text-center text-sm text-amber-100/75"><p>{error}</p><a href={externalUrl} target="_blank" rel="noreferrer" className="rounded-lg border border-cyan-400/25 px-4 py-2 font-semibold text-cyan-200">Open in TradingView</a></div>}
+          {!showIntraday && candle && <CandleChartPro candle={candle} accent="#22d3ee" currency={market === "IN" ? "INR" : "USD"} />}
         </div>
       </section>
     </div>

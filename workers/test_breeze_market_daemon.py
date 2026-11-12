@@ -7,7 +7,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 import datetime as dt
 
-from breeze_market_daemon import IST, MarketBatcher, ReconnectWatch, circuit_limits, feed_stalled, order_flow, decrypt_credential, safe_ws_disconnect, is_india_market_session, parse_security_master, parse_tick_time, valid_ohlc
+from breeze_market_daemon import IST, MarketBatcher, MinuteBarBuilder, merge_minute_bars, ReconnectWatch, circuit_limits, feed_stalled, order_flow, decrypt_credential, safe_ws_disconnect, is_india_market_session, parse_security_master, parse_tick_time, valid_ohlc
 
 
 class ReconnectWatchTests(unittest.TestCase):
@@ -88,6 +88,7 @@ class BreezeMarketDaemonTests(unittest.TestCase):
         batcher = MarketBatcher.__new__(MarketBatcher)
         batcher.pending = {}; batcher.lock = threading.Lock(); batcher.wake = threading.Event()
         batcher.max_batch = 1; batcher.last_tick_at = 0.0; batcher.unreadable_times = 0
+        batcher.minute_bars = MinuteBarBuilder()
         batcher.flush = lambda: self.fail("a tick thread must not write to the database")
         original = module.is_india_market_session
         module.is_india_market_session = lambda *args, **kwargs: True
@@ -99,6 +100,7 @@ class BreezeMarketDaemonTests(unittest.TestCase):
         self.assertTrue(batcher.wake.is_set())
         self.assertEqual(len(batcher.pending), 1)
         self.assertGreater(batcher.last_tick_at, 0.0)
+        self.assertEqual(len(batcher.minute_bars.drain()), 1)  # the same tick also feeds the minute bar
 
     def test_circuit_limits_use_the_sdk_key_spelling(self):
         self.assertEqual(circuit_limits({"lowerCktLm": "229.50", "upperCktLm": 280.5}), (229.5, 280.5))
@@ -149,6 +151,58 @@ class BreezeMarketDaemonTests(unittest.TestCase):
         stored = f"{iv.hex()}:{tag.hex()}:{ciphertext.hex()}"
 
         self.assertEqual(decrypt_credential(stored, master_key), plaintext)
+
+
+class MinuteBarTests(unittest.TestCase):
+    DAY = dt.date(2026, 11, 13)  # a regular Friday session
+
+    def at(self, hour, minute, second=0):
+        return dt.datetime.combine(self.DAY, dt.time(hour, minute, second), IST)
+
+    def test_folds_ticks_into_minutes_with_volume_from_the_running_total(self):
+        bars = MinuteBarBuilder()
+        bars.add("a", self.at(9, 15, 5), 100.0, 1_000)
+        bars.add("a", self.at(9, 15, 40), 102.0, 1_500)
+        bars.add("a", self.at(9, 15, 55), 99.0, 1_800)
+        bars.add("a", self.at(9, 16, 2), 101.0, 2_100)
+        self.assertEqual(bars.drain(self.at(9, 16, 30)), [("a", self.at(9, 15), 100.0, 102.0, 99.0, 99.0, 1_800)])
+        # The 09:16 bar is still forming, so it is held back until its minute ends.
+        self.assertEqual(bars.drain(self.at(9, 16, 59)), [])
+        self.assertEqual(bars.drain(self.at(9, 17, 0)), [("a", self.at(9, 16), 101.0, 101.0, 101.0, 101.0, 300)])
+
+    def test_volume_is_unknown_when_the_worker_starts_mid_session(self):
+        bars = MinuteBarBuilder()
+        bars.add("a", self.at(11, 0, 10), 50.0, 900_000)
+        bars.add("a", self.at(11, 1, 10), 51.0, 900_400)
+        first, second = bars.drain()
+        self.assertIsNone(first[6])
+        self.assertEqual(second[6], 400)
+
+    def test_a_new_session_does_not_inherit_yesterdays_total(self):
+        bars = MinuteBarBuilder()
+        bars.add("a", self.at(15, 29, 0), 50.0, 5_000_000)
+        bars.drain()
+        next_day = dt.datetime.combine(dt.date(2026, 11, 16), dt.time(9, 15, 3), IST)
+        bars.add("a", next_day, 52.0, 7_000)
+        self.assertEqual(bars.drain()[0][6], 7_000)
+
+    def test_ignores_a_late_tick_and_never_reports_negative_volume(self):
+        bars = MinuteBarBuilder()
+        bars.add("a", self.at(9, 15, 0), 100.0, 1_000)
+        bars.add("a", self.at(9, 16, 0), 101.0, 900)   # the feed's total went backwards
+        bars.add("a", self.at(9, 15, 59), 500.0, 950)  # late tick for the finished minute
+        first, second = bars.drain()
+        self.assertEqual(first[3], 100.0)
+        self.assertEqual(second[6], 0)
+
+    def test_merges_two_pieces_of_the_same_minute_into_one_row(self):
+        minute = self.at(10, 0)
+        merged = merge_minute_bars([
+            ("a", minute, 10.0, 11.0, 9.5, 10.5, 100),
+            ("b", minute, 20.0, 20.0, 20.0, 20.0, None),
+            ("a", minute, 10.5, 12.0, 10.2, 11.8, 40),
+        ])
+        self.assertEqual(merged, [("a", minute, 10.0, 12.0, 9.5, 11.8, 140), ("b", minute, 20.0, 20.0, 20.0, 20.0, None)])
 
 
 if __name__ == "__main__":

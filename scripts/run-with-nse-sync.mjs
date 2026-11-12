@@ -21,6 +21,7 @@ const nextCli = resolve(root, "node_modules/next/dist/bin/next");
 const pipeline = resolve(root, "pipelines/nse_yfinance_sync.py");
 const indiaQuotePipeline = resolve(root, "pipelines/india_quotes_sync.py");
 const breezeHistoryPipeline = resolve(root, "pipelines/breeze_ohlcv_sync.py");
+const breezeIntradayPipeline = resolve(root, "pipelines/breeze_intraday_sync.py");
 const breezeMarketWorker = resolve(root, "workers/breeze_market_daemon.py");
 const breezeAccountWorker = resolve(root, "workers/breeze_account_sync.py");
 const breezeAutoBuyWorker = resolve(root, "workers/breeze_auto_buy.py");
@@ -154,6 +155,7 @@ let indiaLiveQuoteChild = null;
 let usLiveQuoteChild = null;
 let breezeChild = null;
 let breezeRestartTimer = null;
+let breezeIntradayChild = null;
 let breezeAccountChild = null;
 let breezeAccountTimer = null;
 let breezeAutoBuyChild = null;
@@ -1085,6 +1087,26 @@ function runYahooNseSync(trigger) {
   });
 }
 
+// After the close, replace the session's provisional one-minute bars with Breeze's
+// own candles. Runs beside the Bhavcopy fallback rather than ahead of it: it takes
+// several minutes of paced requests and nothing in the EOD chain waits on it.
+function runBreezeIntradaySync(trigger) {
+  if (!python || process.env.BREEZE_INTRADAY_DISABLED === "1" || !existsSync(breezeIntradayPipeline)) return;
+  if (breezeIntradayChild) {
+    console.log(`[breeze-intraday] skipping ${trigger}; a prior run is still going`);
+    return;
+  }
+  console.log(`[breeze-intraday] starting ${trigger} one-minute candle load`);
+  breezeIntradayChild = spawn(python, [breezeIntradayPipeline], { cwd: root, env: process.env, stdio: "inherit" });
+  breezeIntradayChild.once("error", (error) => {
+    console.error(`[breeze-intraday] unable to start: ${error.message}`);
+  });
+  breezeIntradayChild.once("close", (code, signal) => {
+    breezeIntradayChild = null;
+    if (code !== 0 || signal) console.warn(`[breeze-intraday] ${trigger} did not finish (${signal ?? `exit ${code}`})`);
+  });
+}
+
 function runBreezeHistoryFirst(trigger) {
   if (!python || process.env.BREEZE_HISTORY_DISABLED === "1") {
     console.log(`[breeze-history] ${trigger} primary unavailable; continuing to Bhavcopy fallback`);
@@ -1139,6 +1161,7 @@ async function runBhavcopyNseSyncWithRetry(trigger, maxRetries = 2) {
       };
 
       await runBreezeHistoryFirst(trigger);
+      runBreezeIntradaySync(trigger);
       console.log(
         `[nse-sync] ${trigger} India OHLCV fallback: Bhavcopy fills instruments not resolved by Breeze; Yahoo/Google remain queued repair fallback`,
       );
@@ -1572,6 +1595,7 @@ function shutdown(signal) {
   if (usLiveQuoteChild) usLiveQuoteChild.kill(signal);
   if (breezeChild) breezeChild.kill(signal);
   if (breezeAccountChild) breezeAccountChild.kill(signal);
+  if (breezeIntradayChild) breezeIntradayChild.kill(signal);
   if (breezeAutoBuyChild) breezeAutoBuyChild.kill(signal);
   if (corporateResultsChild) corporateResultsChild.kill(signal);
   if (mlSnapshotChild) mlSnapshotChild.kill(signal);

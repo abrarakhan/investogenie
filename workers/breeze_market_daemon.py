@@ -440,6 +440,80 @@ def parse_tick_time(value: Any) -> dt.datetime | None:
         return None
 
 
+class MinuteBarBuilder:
+    """Fold live ticks into one-minute candles without any extra broker calls.
+
+    A tick carries the last traded price and the session's cumulative volume, so a
+    bar's volume is the rise in that total across the minute. The volume is left
+    unknown when the total before the bar was never seen (the worker started
+    mid-session); the after-close sync replaces these provisional bars anyway.
+    Not thread-safe: the caller holds its own lock.
+    """
+
+    def __init__(self) -> None:
+        self.current: dict[str, dict[str, Any]] = {}
+        self.last_total: dict[str, tuple[dt.date, int]] = {}
+        self.completed: list[tuple] = []
+
+    def _finish(self, asset_id: str, bar: dict[str, Any]) -> None:
+        volume = None
+        if bar["base"] is not None and bar["total"] is not None:
+            volume = max(0, bar["total"] - bar["base"])
+        if bar["total"] is not None:
+            self.last_total[asset_id] = (bar["minute"].date(), bar["total"])
+        self.completed.append((asset_id, bar["minute"], bar["open"], bar["high"], bar["low"], bar["close"], volume))
+
+    def add(self, asset_id: str, timestamp: dt.datetime, price: float, total_volume: int | None) -> None:
+        minute = timestamp.astimezone(IST).replace(second=0, microsecond=0)
+        bar = self.current.get(asset_id)
+        if bar is not None and minute < bar["minute"]:
+            return  # a late tick for a minute that has already moved on
+        if bar is not None and minute == bar["minute"]:
+            bar["high"] = max(bar["high"], price)
+            bar["low"] = min(bar["low"], price)
+            bar["close"] = price
+            if total_volume is not None:
+                bar["total"] = total_volume if bar["total"] is None else max(bar["total"], total_volume)
+            return
+        if bar is not None:
+            self._finish(asset_id, bar)
+        known = self.last_total.get(asset_id)
+        if known is not None and known[0] == minute.date():
+            base: int | None = known[1]
+        else:
+            bounds = india_market_bounds(minute.date())
+            # Everything traded before the opening minute ends belongs to the opening bar.
+            base = 0 if bounds is not None and minute.time().replace(tzinfo=None) <= bounds[0] else None
+        self.current[asset_id] = {
+            "minute": minute, "open": price, "high": price, "low": price, "close": price,
+            "base": base, "total": total_volume,
+        }
+
+    def drain(self, now: dt.datetime | None = None) -> list[tuple]:
+        """Completed bars; with `now`, also bars whose minute is over. Without it, everything."""
+        cutoff = None if now is None else now.astimezone(IST).replace(second=0, microsecond=0)
+        for asset_id in [key for key, bar in self.current.items() if cutoff is None or bar["minute"] < cutoff]:
+            self._finish(asset_id, self.current.pop(asset_id))
+        done, self.completed = self.completed, []
+        return done
+
+
+def merge_minute_bars(bars: list[tuple]) -> list[tuple]:
+    """One row per stock and minute, so a single statement never updates a row twice."""
+    merged: dict[tuple, list] = {}
+    for asset_id, minute, open_price, high, low, close, volume in bars:
+        row = merged.get((asset_id, minute))
+        if row is None:
+            merged[(asset_id, minute)] = [asset_id, minute, open_price, high, low, close, volume]
+            continue
+        row[3] = max(row[3], high)
+        row[4] = min(row[4], low)
+        row[5] = close
+        if volume is not None:
+            row[6] = volume if row[6] is None else row[6] + volume
+    return [tuple(row) for row in merged.values()]
+
+
 class MarketBatcher:
     def __init__(self, dsn: str, flush_seconds: float, max_batch: int):
         self.flush_seconds = flush_seconds
@@ -451,6 +525,9 @@ class MarketBatcher:
         self.wake = threading.Event()
         self.last_tick_at = time.monotonic()
         self.unreadable_times = 0
+        self.minute_bars = None if env("BREEZE_MINUTE_BARS_DISABLED") == "1" else MinuteBarBuilder()
+        self.pending_bars: list[tuple] = []
+        self.bar_failures = 0
         self.conn = psycopg2.connect(dsn)
         self.thread = threading.Thread(target=self._loop, name="breeze-db-flusher", daemon=True)
         self.thread.start()
@@ -491,6 +568,8 @@ class MarketBatcher:
         }
         with self.lock:
             self.pending[instrument.asset_id] = row
+            if self.minute_bars is not None:
+                self.minute_bars.add(instrument.asset_id, timestamp, price, row["volume"])
             should_flush = len(self.pending) >= self.max_batch
         if should_flush:
             # Never write from here. The socket client runs every message on its own
@@ -507,6 +586,7 @@ class MarketBatcher:
             rows = list(self.pending.values())
             self.pending.clear()
         if not rows:
+            self._flush_minute_bars()
             return 0
         try:
             with self.conn.cursor() as cur:
@@ -565,7 +645,51 @@ class MarketBatcher:
                     self.pending.setdefault(row["asset_id"], row)
             raise
         print(f"[breeze-market] flushed {len(rows)} cash quotes", flush=True)
+        self._flush_minute_bars()
         return len(rows)
+
+    def _flush_minute_bars(self, final: bool = False) -> int:
+        """Store finished one-minute bars in their own transaction: a failure here
+        must never cost a quote write."""
+        if self.minute_bars is None:
+            return 0
+        with self.lock:
+            fresh = self.minute_bars.drain(None if final else dt.datetime.now(IST))
+        bars = merge_minute_bars(self.pending_bars + fresh)
+        self.pending_bars = []
+        if not bars:
+            return 0
+        try:
+            with self.conn.cursor() as cur:
+                execute_values(
+                    cur,
+                    """
+                    insert into public.intraday_bars
+                      (asset_id,bar_time,open,high,low,close,volume,source)
+                    values %s
+                    on conflict (asset_id,bar_time) do update set
+                      high=greatest(public.intraday_bars.high,excluded.high),
+                      low=least(public.intraday_bars.low,excluded.low),
+                      close=excluded.close,
+                      volume=case when excluded.volume is null then public.intraday_bars.volume
+                                  else coalesce(public.intraday_bars.volume,0)+excluded.volume end
+                    where public.intraday_bars.source <> 'BREEZE_HISTORICAL'
+                    """,
+                    [(*bar, "BREEZE_LIVE_TICKS") for bar in bars],
+                    page_size=500,
+                )
+            self.conn.commit()
+            self.bar_failures = 0
+        except Exception as exc:
+            self.conn.rollback()
+            self.bar_failures += 1
+            if len(bars) < 50_000:
+                self.pending_bars = bars  # retried with the next flush
+            if self.bar_failures in (1, 20, 500):
+                print(f"[breeze-market] one-minute bar write failed ({self.bar_failures} in a row): {exc}",
+                      file=sys.stderr, flush=True)
+            return 0
+        return len(bars)
 
     def _loop(self) -> None:
         while not self.stop_event.is_set():
@@ -583,6 +707,8 @@ class MarketBatcher:
         self.wake.set()
         self.thread.join(timeout=self.flush_seconds + 2)
         self.flush()
+        with self.flush_lock:
+            self._flush_minute_bars(final=True)
         self.conn.close()
 
 
