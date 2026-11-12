@@ -110,11 +110,13 @@ function CandidateGroup({ title, candidates, source, totalCount, color, ranked, 
   />;
 }
 
-export default function TrendContinuationCandidates({ candidates, planIds, counts, ranks, market, dayTwoWatch = [], regimePositive }: {
+export default function TrendContinuationCandidates({ candidates, planIds, counts, ranks, market, dayTwoWatch = [], regimePositive, scanTotals }: {
   /** Second-day staircases still held back from entry; always shown, open by default. */
   dayTwoWatch?: TrendContinuationCandidate[];
   /** Broad market above its 50-session average; undefined when unknown. */
   regimePositive?: boolean;
+  /** Per-status totals across the whole scan; the list itself is capped. */
+  scanTotals?: Record<string, number>;
   /** With `market`, holds only the groups open by default. */
   candidates: TrendContinuationCandidate[];
   planIds: Record<string, string>;
@@ -137,6 +139,9 @@ export default function TrendContinuationCandidates({ candidates, planIds, count
   const impulse = candidates.filter((candidate) => candidate.status === "IMPULSE_DETECTED");
   const extended = candidates.filter((candidate) => candidate.status === "EXTENDED_RISK");
   const regime = regimePositive;
+  // Tiles count the whole scan; the groups below list only the top-ranked stocks.
+  const scanCount = (status: TrendContinuationStatus, shown: number) => scanTotals?.[status] ?? total(status, shown);
+  const scanTotal = scanTotals ? Object.values(scanTotals).reduce((sum, item) => sum + item, 0) : candidateCount;
 
   return <div className="space-y-4">
     <div className="flex flex-wrap items-end justify-between gap-3 border-b border-white/10 pb-4">
@@ -148,17 +153,17 @@ export default function TrendContinuationCandidates({ candidates, planIds, count
         </p>
       </div>
       <div className="text-right text-xs text-white/40">
-        <div><span className="font-mono font-bold text-white/75">{candidateCount}</span> ranked continuation signals</div>
+        <div><span className="font-mono font-bold text-white/75">{candidateCount}</span> ranked continuation signals{scanTotal > candidateCount ? <> of <span className="font-mono font-bold text-white/75">{scanTotal}</span> in the scan</> : null}</div>
         <div>Rescanned every 2 minutes in market hours</div>
       </div>
     </div>
 
     <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
       {[
-        ["Continuation ready", total("TREND_CONTINUATION_READY", ready.length), "text-emerald-300"],
-        ["Continuation watch", total("CONTINUATION_WATCH", watch.length), "text-amber-200"],
-        ["Impulse detected", total("IMPULSE_DETECTED", impulse.length), "text-cyan-200"],
-        ["Extended risk", total("EXTENDED_RISK", extended.length), "text-rose-200"],
+        ["Continuation ready", scanCount("TREND_CONTINUATION_READY", ready.length), "text-emerald-300"],
+        ["Continuation watch", scanCount("CONTINUATION_WATCH", watch.length), "text-amber-200"],
+        ["Impulse detected", scanCount("IMPULSE_DETECTED", impulse.length), "text-cyan-200"],
+        ["Extended risk", scanCount("EXTENDED_RISK", extended.length), "text-rose-200"],
       ].map(([summaryLabel, count, color]) => <div key={String(summaryLabel)} className="border-b border-white/10 px-1 pb-2">
         <div className={`font-mono text-xl font-bold ${color}`}>{count}</div>
         <div className="text-[10px] uppercase tracking-wide text-white/35">{summaryLabel}</div>

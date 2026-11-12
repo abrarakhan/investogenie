@@ -14,6 +14,7 @@ import { LazyGroupsVersion } from "@/components/screener/LazyCandidateGroup";
 import MarketDataAutoRefresh from "@/components/app/MarketDataAutoRefresh";
 import { markLiveMarketTargets } from "@/lib/liveMarketTargets";
 import { zonedMarketClock } from "@/lib/market-calendar.mjs";
+import { getTrendContinuationStatusTotals } from "@/lib/trendContinuation";
 import { captureExecutionPlans, momentumExecutionPlanInputs, strongSwingExecutionPlanInputs, trendContinuationExecutionPlanInputs, type ExecutionPlanInput } from "@/lib/swingExecutionPlans";
 import ReadySignalHistory from "@/components/screener/ReadySignalHistory";
 import { getTodayReadySignalHistory } from "@/lib/candidateSignalHistory";
@@ -32,12 +33,13 @@ export default async function StrongSwingPage({
   if (!user) redirect("/login");
 
   const settings = await getUserSwingSettings();
-  const [candidates, legacyMomentumIgnition, momentumIgnition, trendContinuation, readyHistory] = await Promise.all([
+  const [candidates, legacyMomentumIgnition, momentumIgnition, trendContinuation, readyHistory, trendTotals] = await Promise.all([
     displayStrongSwing(market, settings),
     displayLegacyMomentum(market, settings),
     displayMomentumV2(market, settings),
     displayTrendContinuation(market),
     getTodayReadySignalHistory(user.id, market),
+    getTrendContinuationStatusTotals(market).catch(() => undefined),
   ]);
   const executionPlans: ExecutionPlanInput[] = [
     ...strongSwingExecutionPlanInputs(candidates, settings.trailAtrMult),
@@ -108,6 +110,7 @@ export default async function StrongSwingPage({
         <TrendContinuationCandidates
           candidates={trendShown.shown} counts={trendShown.counts} ranks={trendShown.ranks} market={market} planIds={Object.fromEntries(planIds)}
           dayTwoWatch={trendContinuation.filter((candidate) => candidate.metrics.developing_staircase === true && !candidate.ready)}
+          scanTotals={trendTotals}
           regimePositive={trendContinuation.map((candidate) => candidate.metrics.market_regime_positive).find((value): value is boolean => typeof value === "boolean")}
         />
       </section>}

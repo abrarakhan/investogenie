@@ -25,6 +25,17 @@ interface ExecutionRow {
   authoritative_coverage_from: string | null; authoritative_coverage_through: string | null;
 }
 
+/** How many stocks the latest scan holds in each status, before the list is capped. */
+export async function getTrendContinuationStatusTotals(market: "IN" | "US"): Promise<Record<string, number>> {
+  if (market !== "IN") return {};
+  const rows = await query<{ status: string; total: string }>(
+    `select status, count(distinct asset_id)::text total from public.trend_continuation_signals
+      where market=$1
+        and asof_market_date=(select max(asof_market_date) from public.trend_continuation_signals where market=$1)
+      group by status`, [market]);
+  return Object.fromEntries(rows.map((row) => [row.status, Number(row.total)]));
+}
+
 const STATUS_ORDER: Record<TrendContinuationStatus, number> = {
   TREND_CONTINUATION_READY: 0, CONTINUATION_WATCH: 1, IMPULSE_DETECTED: 2, EXTENDED_RISK: 3,
 };
