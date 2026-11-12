@@ -1,6 +1,7 @@
 import { addSwingTrade, confirmSwingTradeGtt, recordSwingTradeSale, updateSwingTrade, updateSwingTradeSale } from "@/app/terminal/[market]/trade-ledger/actions";
 import AssetPicker from "@/components/dashboard/AssetPicker";
 import DeleteTradeButton from "@/components/trade-ledger/DeleteTradeButton";
+import OrderCostPreview from "@/components/trade-ledger/OrderCostPreview";
 import PendingSubmit from "@/components/trade-ledger/PendingSubmit";
 import { summarizeSwingTradeLedger, type SwingLedgerTrade, type SwingTradeState } from "@/lib/swingTradeLedger";
 
@@ -90,6 +91,7 @@ export default function SwingTradeLedger({ market, trades, defaults }: {
           <input type="hidden" name="projectedStop" value={defaults.stop ?? ""} />
           <input type="hidden" name="expectedHoldingDays" value={defaults.days ?? ""} />
           <input type="hidden" name="projectedTrailingStop" value={defaults.trail ?? ""} />
+          {market === "IN" && <OrderCostPreview />}
           <p className="text-xs leading-5 text-white/40 sm:col-span-2 lg:col-span-3">
             Strategy, target, stop, trailing stop, and projected holding period are captured automatically from the latest swing candidate data.
           </p>

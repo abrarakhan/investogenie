@@ -479,7 +479,7 @@ def order_notice(event: dict[str, Any], ticker: str | None) -> tuple[str, str, s
     title = ORDER_NOTICE_TITLES.get(event["status"].lower())
     if title is None:
         return None
-    count = lambda value: f"{value:g}"  # noqa: E731
+    count = lambda value: str(int(value)) if float(value).is_integer() else f"{value:.2f}"  # noqa: E731
     name = ticker or event["stock_code"] or "an order"
     action = (event["action"] or "Order").capitalize()
     quantity, executed = event["quantity"], event["executed"]

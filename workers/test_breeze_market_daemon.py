@@ -239,6 +239,10 @@ class OrderUpdateTests(unittest.TestCase):
         later = order_event({**self.TICK, "orderStatus": "Partially Executed", "orderExecutedQuantity": "7"})
         self.assertNotEqual(first, order_notice(later, None)[2])
 
+    def test_large_quantities_are_written_out_in_full(self):
+        big = order_event({**self.TICK, "orderQuantity": "1250000", "orderExecutedQuantity": "1250000"})
+        self.assertIn("Buy 1250000 RELIANCE", order_notice(big, "RELIANCE")[1])
+
     def test_routine_states_do_not_notify(self):
         for status in ("Requested", "Queued", "Ordered"):
             self.assertIsNone(order_notice(order_event({**self.TICK, "orderStatus": status}), "RELIANCE"))

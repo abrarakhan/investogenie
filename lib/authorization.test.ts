@@ -75,6 +75,7 @@ const ROUTES: Record<string, RoutePolicy> = {
   "app/api/backfill/status/route.ts": "admin",
   "app/api/breeze/callback/route.ts": "public", // authenticated by the signed connect-state cookie
   "app/api/breeze/connect/route.ts": "session",
+  "app/api/breeze/order-preview/route.ts": "session", // read-only, from the caller's own Breeze session
   "app/api/breeze/refresh-quotes/route.ts": "session", // non-admins are skipped: see below
   "app/api/browser-notifications/route.ts": "session",
   "app/api/cron/backfill-bse/route.ts": "cron",
@@ -93,6 +94,7 @@ const ROUTES: Record<string, RoutePolicy> = {
   "app/api/gmail/callback/route.ts": "session",
   "app/api/gmail/connect/route.ts": "session",
   "app/api/market-overview/candles/route.ts": "session",
+  "app/api/market-overview/intraday/route.ts": "session",
   "app/api/market-overview/series/route.ts": "session",
   "app/api/screener/backtest/route.ts": "session",
   "app/api/screener/route.ts": "session",
