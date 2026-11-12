@@ -349,6 +349,13 @@ def load_cash_instruments(conn, archive: ZipFile, exchanges: list[str], limit: i
                ) then 2 when exists(
                  select 1 from public.universe_members u where u.asset_id=a.id and u.universe='NIFTY_500'
                ) then 3 else 4 end,
+               -- More stocks are flagged in a day than the feed can carry. Keep the ones
+               -- a scan is flagging now ahead of ones it flagged earlier and dropped;
+               -- alphabetical order used to decide which candidates lost their live price.
+               case when exists(
+                 select 1 from public.live_market_targets t
+                  where t.asset_id=a.id and t.last_seen_at >= now() - interval '15 minutes'
+               ) then 0 else 1 end,
                a.exchange,a.ticker
             """,
             (exchanges,),
@@ -412,14 +419,25 @@ def load_cash_instruments(conn, archive: ZipFile, exchanges: list[str], limit: i
     return instruments
 
 
-def parse_tick_time(value: Any) -> dt.datetime:
-    if value:
-        for pattern in ("%a %b %d %H:%M:%S %Y", "%Y-%m-%d %H:%M:%S"):
-            try:
-                return dt.datetime.strptime(str(value), pattern).replace(tzinfo=IST)
-            except ValueError:
-                pass
-    return dt.datetime.now(IST)
+def parse_tick_time(value: Any) -> dt.datetime | None:
+    """When the exchange last traded the stock, in IST.
+
+    The SDK formats the feed's epoch time in the server's own time zone, so that
+    form is read as local time and converted; the other form is already IST. A
+    time that is present but unreadable returns None: stamping it "now" would
+    pass an old price off as live. Only a tick with no time at all is stamped now.
+    """
+    if not value:
+        return dt.datetime.now(IST)
+    text = str(value)
+    try:
+        return dt.datetime.strptime(text, "%a %b %d %H:%M:%S %Y").astimezone(IST)
+    except ValueError:
+        pass
+    try:
+        return dt.datetime.strptime(text, "%Y-%m-%d %H:%M:%S").replace(tzinfo=IST)
+    except ValueError:
+        return None
 
 
 class MarketBatcher:
@@ -430,15 +448,25 @@ class MarketBatcher:
         self.lock = threading.Lock()
         self.flush_lock = threading.Lock()
         self.stop_event = threading.Event()
+        self.wake = threading.Event()
+        self.last_tick_at = time.monotonic()
+        self.unreadable_times = 0
         self.conn = psycopg2.connect(dsn)
         self.thread = threading.Thread(target=self._loop, name="breeze-db-flusher", daemon=True)
         self.thread.start()
 
     def enqueue(self, instrument: CashInstrument, tick: dict[str, Any]) -> None:
+        self.last_tick_at = time.monotonic()
         price = number(tick.get("last") or tick.get("ltp") or tick.get("close"))
         if price is None or price <= 0:
             return
         timestamp = parse_tick_time(tick.get("ltt") or tick.get("datetime"))
+        if timestamp is None:
+            self.unreadable_times += 1
+            if self.unreadable_times in (1, 100, 10_000):
+                print(f"[breeze-market] dropped a tick with an unreadable time ({self.unreadable_times} so far): "
+                      f"{tick.get('ltt') or tick.get('datetime')!r}", file=sys.stderr, flush=True)
+            return
         if not is_india_market_session(timestamp):
             return
         open_price, high, low = valid_ohlc(price, tick.get("open"), tick.get("high"), tick.get("low"))
@@ -465,7 +493,10 @@ class MarketBatcher:
             self.pending[instrument.asset_id] = row
             should_flush = len(self.pending) >= self.max_batch
         if should_flush:
-            self.flush()
+            # Never write from here. The socket client runs every message on its own
+            # thread; if those threads queue behind a slow database write they pile up
+            # until the service hits its task limit and the feed's reader dies.
+            self.wake.set()
 
     def flush(self) -> int:
         with self.flush_lock:
@@ -537,7 +568,11 @@ class MarketBatcher:
         return len(rows)
 
     def _loop(self) -> None:
-        while not self.stop_event.wait(self.flush_seconds):
+        while not self.stop_event.is_set():
+            self.wake.wait(self.flush_seconds)
+            self.wake.clear()
+            if self.stop_event.is_set():
+                break
             try:
                 self.flush()
             except Exception as exc:
@@ -545,6 +580,7 @@ class MarketBatcher:
 
     def close(self) -> None:
         self.stop_event.set()
+        self.wake.set()
         self.thread.join(timeout=self.flush_seconds + 2)
         self.flush()
         self.conn.close()
@@ -558,6 +594,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--subscription-batch-size", type=int, default=int(env("BREEZE_SUBSCRIBE_BATCH_SIZE", "100") or "100"))
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
+
+
+def feed_stalled(seconds_since_tick: float, connected: bool, market_open: bool, limit: float) -> bool:
+    """A connected socket that delivers nothing during the session has died quietly.
+
+    The socket client can lose its reader thread while still reporting
+    "connected", so the drop detection never fires and prices simply stop.
+    """
+    return connected and market_open and seconds_since_tick >= limit
 
 
 class ReconnectWatch:
@@ -726,6 +771,9 @@ def main() -> int:
     last_calendar_refresh = time.monotonic()
     last_target_refresh = time.monotonic()
     target_refresh_seconds = max(60.0, float(env("BREEZE_TARGET_REFRESH_SECONDS", "120") or "120"))
+    stall_seconds = max(60.0, float(env("BREEZE_FEED_STALL_SECONDS", "180") or "180"))
+    batcher.last_tick_at = time.monotonic()
+    session_open = False
     reconnect = ReconnectWatch(max(10.0, float(env("BREEZE_RECONNECT_GRACE_SECONDS", "90") or "90")))
     try:
         while not stop_event.wait(5):
@@ -743,7 +791,18 @@ def main() -> int:
                 elif event == "expired":
                     raise ConnectionError(f"Breeze WebSocket disconnected for {downtime:.0f} s; restarting")
                 if reconnect.down_since is not None:
+                    batcher.last_tick_at = now  # the silence is explained; restart the stall clock on recovery
                     continue
+                if event == "recovered":
+                    batcher.last_tick_at = now
+                current_ist = dt.datetime.now(IST)
+                market_open = is_india_market_session(current_ist, current_ist)
+                if market_open and not session_open:
+                    batcher.last_tick_at = now  # silence before the open is not a stall
+                session_open = market_open
+                silent_for = now - batcher.last_tick_at
+                if feed_stalled(silent_for, bool(socket.connected), market_open, stall_seconds):
+                    raise ConnectionError(f"Breeze feed delivered no ticks for {silent_for:.0f} s while connected; restarting")
             if time.monotonic() - last_credential_check >= 30:
                 current = load_breeze_credentials()
                 if current is None or current.fingerprint != credentials.fingerprint:

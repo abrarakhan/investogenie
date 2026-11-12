@@ -7,7 +7,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 import datetime as dt
 
-from breeze_market_daemon import IST, ReconnectWatch, circuit_limits, order_flow, decrypt_credential, safe_ws_disconnect, is_india_market_session, parse_security_master, parse_tick_time, valid_ohlc
+from breeze_market_daemon import IST, MarketBatcher, ReconnectWatch, circuit_limits, feed_stalled, order_flow, decrypt_credential, safe_ws_disconnect, is_india_market_session, parse_security_master, parse_tick_time, valid_ohlc
 
 
 class ReconnectWatchTests(unittest.TestCase):
@@ -53,6 +53,52 @@ class BreezeMarketDaemonTests(unittest.TestCase):
         with ZipFile(buffer) as archive:
             result = parse_security_master(archive, "NSE")
         self.assertEqual(result, {"RELIANCE": ("RELIND", "2885", "RELIANCE INDUSTRIES")})
+
+    def test_tick_time_does_not_depend_on_the_server_time_zone(self):
+        import os, time
+        previous = os.environ.get("TZ")
+        try:
+            # The SDK prints the feed's time in the server's zone: 07:04:56 UTC is 12:34:56 IST.
+            os.environ["TZ"] = "UTC"; time.tzset()
+            parsed = parse_tick_time("Wed Sep  9 07:04:56 2026")
+            self.assertEqual((parsed.hour, parsed.minute, parsed.utcoffset()), (12, 34, IST.utcoffset(None)))
+            os.environ["TZ"] = "Asia/Kolkata"; time.tzset()
+            self.assertEqual(parse_tick_time("Wed Sep 09 12:34:56 2026").hour, 12)
+        finally:
+            if previous is None:
+                os.environ.pop("TZ", None)
+            else:
+                os.environ["TZ"] = previous
+            time.tzset()
+
+    def test_unreadable_tick_time_is_rejected_not_stamped_now(self):
+        self.assertIsNone(parse_tick_time("12/09/2026 12:34"))
+        self.assertIsNotNone(parse_tick_time(None))
+        self.assertEqual(parse_tick_time("2026-09-09 12:34:56").hour, 12)
+
+    def test_feed_stall_needs_a_connected_socket_and_an_open_market(self):
+        self.assertTrue(feed_stalled(200, connected=True, market_open=True, limit=180))
+        self.assertFalse(feed_stalled(100, connected=True, market_open=True, limit=180))
+        self.assertFalse(feed_stalled(900, connected=True, market_open=False, limit=180))
+        self.assertFalse(feed_stalled(900, connected=False, market_open=True, limit=180))
+
+    def test_a_full_batch_wakes_the_flusher_without_writing_on_the_tick_thread(self):
+        import threading
+        import breeze_market_daemon as module
+        batcher = MarketBatcher.__new__(MarketBatcher)
+        batcher.pending = {}; batcher.lock = threading.Lock(); batcher.wake = threading.Event()
+        batcher.max_batch = 1; batcher.last_tick_at = 0.0; batcher.unreadable_times = 0
+        batcher.flush = lambda: self.fail("a tick thread must not write to the database")
+        original = module.is_india_market_session
+        module.is_india_market_session = lambda *args, **kwargs: True
+        try:
+            instrument = type("Instrument", (), {"asset_id": "a", "ticker": "T", "exchange": "NSE"})()
+            batcher.enqueue(instrument, {"last": 100, "open": 99, "high": 101, "low": 98})
+        finally:
+            module.is_india_market_session = original
+        self.assertTrue(batcher.wake.is_set())
+        self.assertEqual(len(batcher.pending), 1)
+        self.assertGreater(batcher.last_tick_at, 0.0)
 
     def test_circuit_limits_use_the_sdk_key_spelling(self):
         self.assertEqual(circuit_limits({"lowerCktLm": "229.50", "upperCktLm": 280.5}), (229.5, 280.5))
