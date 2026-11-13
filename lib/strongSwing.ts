@@ -1,7 +1,7 @@
 import { query } from "@/lib/db";
 import { runScreener, type ScreenRow } from "@/lib/screener";
 import { deriveLevels, type SwingSetup } from "@/lib/analytics/swingClassifier";
-import { assessStrongSwingFromBars, type CompletedBarStrongSwingAssessment } from "@/lib/analytics/strongSwing";
+import { assessStrongSwingFromBars, STRONG_SWING_MODEL_VERSION, type CompletedBarStrongSwingAssessment } from "@/lib/analytics/strongSwing";
 import { rankStrongSwingCandidates } from "@/lib/analytics/candidateRanking";
 import type { SwingSettings } from "@/lib/settings";
 import type { MarketId, OHLCV } from "@/lib/types";
@@ -86,6 +86,8 @@ async function captureStrongSwingSnapshot(
     latestDate: candidate.latestDate,
     gates: candidate.gates,
     metrics: {
+      // Read by the auto-buy worker, which refuses rows from any other calculation.
+      modelVersion: STRONG_SWING_MODEL_VERSION,
       fiveDayReturnPct: candidate.fiveDayReturnPct,
       tenDayReturnPct: candidate.tenDayReturnPct,
       distanceAboveSma20Pct: candidate.distanceAboveSma20Pct,

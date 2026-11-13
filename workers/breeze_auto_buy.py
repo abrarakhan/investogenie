@@ -19,6 +19,11 @@ from breeze_account_sync import as_number, response_rows
 from breeze_market_daemon import IST, database_url, decrypt_credential, env, is_india_market_session
 
 
+# Must equal STRONG_SWING_MODEL_VERSION in lib/analytics/strongSwing.ts. A capture written by
+# any other calculation (the minutes around a deploy) is never bought from.
+STRONG_SWING_MODEL_VERSION = "strong-swing-v2-completed-bars"
+
+
 def round_limit(value: Decimal) -> Decimal:
     return (value / Decimal("0.05")).quantize(Decimal("1"), rounding=ROUND_UP) * Decimal("0.05")
 
@@ -52,8 +57,10 @@ def candidates(conn, user_id: str, strong: bool, adaptive: bool):
                 join public.breeze_instrument_map m on m.asset_id=s.asset_id
                where s.market='IN' and s.status='EXECUTION_READY'
                  and s.captured_at >= now()-interval '20 minutes'
+                 and s.metrics->>'modelVersion' = %s
+                 and s.projected_stop > 0 and s.projected_stop < s.confirmation_entry
                order by s.rank limit 1
-            """)
+            """, (STRONG_SWING_MODEL_VERSION,))
             rows.extend(cur.fetchall())
         if adaptive:
             cur.execute("""
