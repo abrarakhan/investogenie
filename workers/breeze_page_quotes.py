@@ -39,13 +39,30 @@ def materially_changed(previous, current, tolerance=1e-9):
     return False
 
 
-def main():
-    from breeze_connect import BreezeConnect
+# The live worker rewrites a subscribed stock's quote every few seconds. Asking
+# Breeze again for those spends the daily request allowance and trips its
+# per-minute limit, so only stocks the feed is not carrying are fetched here.
+FEED_FRESH_SECONDS = 90
 
+
+def same_session(previous_as_of, stamp):
+    """Whether the stored quote belongs to the same market day as a new tick.
+
+    latest_quotes.as_of is a DATE; a datetime is accepted too so the comparison
+    cannot break on the column's type again.
+    """
+    if previous_as_of is None:
+        return False
+    day = previous_as_of.date() if isinstance(previous_as_of, dt.datetime) else previous_as_of
+    return day == stamp.date()
+
+
+def main():
     user_id = sys.argv[1]
     ids = json.loads(sys.argv[2])[:50]
     updated = 0
     changed = 0
+    live = 0
     errors = []
     with psycopg2.connect(database_url()) as conn:
         with conn.cursor() as cur:
@@ -54,8 +71,24 @@ def main():
             if not credential or not all(credential):
                 raise RuntimeError("Connect Breeze in Settings first")
             key, secret, token = [decrypt_credential(value, env("CREDENTIAL_ENCRYPTION_KEY") or "") for value in credential]
-            cur.execute("select m.asset_id::text,m.stock_code,m.exchange_code from public.breeze_instrument_map m join public.assets a on a.id=m.asset_id where a.country='IN' and m.asset_id=any(%s::uuid[])", (ids,))
-            assets = cur.fetchall()
+            cur.execute(
+                """select m.asset_id::text,m.stock_code,m.exchange_code,
+                          coalesce(q.source='BREEZE_LIVE'
+                                   and q.updated_at > now() - make_interval(secs => %s), false)
+                     from public.breeze_instrument_map m
+                     join public.assets a on a.id=m.asset_id
+                     left join public.latest_quotes q on q.asset_id=m.asset_id
+                    where a.country='IN' and m.asset_id=any(%s::uuid[])""",
+                (FEED_FRESH_SECONDS, ids),
+            )
+            mapped = cur.fetchall()
+        assets = [row[:3] for row in mapped if not row[3]]
+        live = len(mapped) - len(assets)
+        if not assets:
+            print(json.dumps({"updated": 0, "changed": 0, "live": live, "unmapped": len(ids)-len(mapped), "errors": []}))
+            return
+        # Imported late: the SDK downloads the security master on import.
+        from breeze_connect import BreezeConnect
         breeze = BreezeConnect(api_key=key)
         breeze.generate_session(api_secret=secret, session_token=token)
         for asset_id, code, exchange in assets:
@@ -76,7 +109,7 @@ def main():
                     previous = cur.fetchone()
                     effective_lower = execution["lower_circuit"]
                     effective_upper = execution["upper_circuit"]
-                    if previous is not None and previous[6].date() == stamp.date():
+                    if previous is not None and same_session(previous[6], stamp):
                         if effective_lower is None:
                             effective_lower = previous[4]
                         if effective_upper is None:
@@ -117,7 +150,7 @@ def main():
                 conn.rollback()
                 errors.append(f"{code}: {exc}")
             time.sleep(0.7)
-    print(json.dumps({"updated": updated, "changed": changed, "unmapped": len(ids)-len(assets), "errors": errors}))
+    print(json.dumps({"updated": updated, "changed": changed, "live": live, "unmapped": len(ids)-len(mapped), "errors": errors}))
 
 
 if __name__ == "__main__":

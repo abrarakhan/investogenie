@@ -1,6 +1,9 @@
 import unittest
 
-from breeze_page_quotes import execution_fields, materially_changed
+import datetime as dt
+
+from breeze_market_daemon import IST
+from breeze_page_quotes import execution_fields, materially_changed, same_session
 
 
 class BreezePageQuoteTests(unittest.TestCase):
@@ -46,6 +49,13 @@ class BreezePageQuoteTests(unittest.TestCase):
         self.assertTrue(materially_changed(None, (100, None)))
         self.assertTrue(materially_changed((100, None), (100, 1)))
         self.assertFalse(materially_changed((100, None), (100, None)))
+
+    def test_same_session_reads_the_stored_date_column(self):
+        tick = dt.datetime(2026, 11, 13, 10, 7, 33, tzinfo=IST)
+        self.assertTrue(same_session(dt.date(2026, 11, 13), tick))
+        self.assertFalse(same_session(dt.date(2026, 11, 12), tick))
+        self.assertTrue(same_session(dt.datetime(2026, 11, 13, 9, 15, tzinfo=IST), tick))
+        self.assertFalse(same_session(None, tick))
 
 
 if __name__ == "__main__":

@@ -36,8 +36,9 @@ export default function MarketDataAutoRefresh({ market, assetIds = [] }: { marke
           || (result.reason !== "off_hours" && (result.errors?.length || result.unmapped)));
         setWarning(incomplete ? "Some Breeze quotes could not be refreshed. Last known prices remain visible." : null);
         // A REST refresh can touch freshness without changing anything shown.
-        // Recompute the analytics pages only for a material quote/depth change.
-        if (results.some(({ result }) => result.changed > 0)) router.refresh();
+        // Recompute the analytics pages for a material quote/depth change, or
+        // when the live feed is already carrying these stocks' prices.
+        if (results.some(({ result }) => result.changed > 0 || result.live > 0)) router.refresh();
       } catch {
         if (!cancelled) setWarning("Breeze refresh unavailable; last known prices remain visible.");
       }
