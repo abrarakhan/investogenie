@@ -57,6 +57,30 @@ function horizon(days: number | null | undefined): number {
 
 const isStaircase = (c: { metrics?: Record<string, unknown> }) => c.metrics?.developing_staircase === true;
 
+/**
+ * The first `limit` rows with distinct keys, in the order given. A stock can
+ * appear twice in a ranked pool (a repeated strategy tag, two listings of one
+ * scan row); without this it took both slots and the second insert was dropped
+ * by the database, so fewer distinct stocks were tested than intended.
+ */
+export function takeDistinct<T>(rows: readonly T[], limit: number, key: (row: T) => string): T[] {
+  const seen = new Set<string>();
+  const out: T[] = [];
+  for (const row of rows) {
+    if (out.length >= limit) break;
+    const id = key(row);
+    if (seen.has(id)) continue;
+    seen.add(id);
+    out.push(row);
+  }
+  return out;
+}
+
+/** One row per method and stock, keeping the first: what the unique index would keep. */
+export function distinctCalls<T extends Record<string, unknown>>(rows: readonly T[]): T[] {
+  return takeDistinct(rows, rows.length, (row) => `${row.method}|${row.asset_id}`);
+}
+
 /** A long call is gradable only if stop < entry < target. */
 export function validLongLevels(entry: number | null, target: number | null, stop: number | null): boolean {
   return [entry, target, stop].every((value) => typeof value === "number" && Number.isFinite(value) && value > 0)
@@ -109,11 +133,13 @@ export function selectEngineCalls(
     const method = ENGINE_METHODS[engine];
     const allowed = ENROLLABLE_STATUSES[engine];
     let taken = 0;
+    const seen = new Set<string>();
     for (const call of pool) {
       if (taken >= perMethod) break;
       if (!allowed.includes(call.status)) continue;
       if (!validLongLevels(call.entry, call.target, call.stop)) continue;
-      if (active.has(`${method}|${call.assetId}`)) continue;
+      if (active.has(`${method}|${call.assetId}`) || seen.has(call.assetId)) continue;
+      seen.add(call.assetId);
       calls.push({ method, ...call });
       taken++;
     }

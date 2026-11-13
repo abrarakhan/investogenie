@@ -5,7 +5,8 @@ import type { MarketId } from "@/lib/types";
 
 // Forward testing driver.
 //   ?action=enroll&market=IN   -> freeze a new cohort (2 per method)
-//   ?action=evaluate           -> grade every OPEN position against new bars
+//   ?action=evaluate&market=IN -> grade that market's live positions against new bars
+//   ?action=evaluate           -> grade every live position (manual runs)
 //
 // Enrollment is a weekly-ish cadence; evaluation should run daily, after the
 // OHLC sync, so touches are graded against fresh bars.
@@ -28,7 +29,8 @@ export async function GET(request: NextRequest) {
   try {
     const result = action === "enroll"
       ? await enrollCohort(market)
-      : await evaluateOpenPositions();
+      // Scoped to the stage's market; with no market given, every open position is graded.
+      : await evaluateOpenPositions(marketParam === "IN" || marketParam === "US" ? marketParam : undefined);
     await logCronRun(databaseUrl, {
       job: "forward-test",
       status: "ok",

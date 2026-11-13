@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ENGINE_METHODS, selectEngineCalls, validLongLevels, type EngineCandidates } from "@/lib/forwardTestEngines";
+import { ENGINE_METHODS, distinctCalls, selectEngineCalls, takeDistinct, validLongLevels, type EngineCandidates } from "@/lib/forwardTestEngines";
 
 const empty: EngineCandidates = { strong: [], momentum: [], momentumV2: [], trend: [], armed: [] };
 const mom = (ticker: string, status: string, entry = 100, target = 110, stop = 95) => ({
@@ -21,6 +21,28 @@ describe("forward-test engine calls", () => {
     }, 2);
     expect(calls.map((c) => c.ticker)).toEqual(["B", "C"]);
     expect(calls[0]).toMatchObject({ method: ENGINE_METHODS.MOMENTUM_IGNITION, entry: 100, target: 110, stop: 95, horizonDays: 4 });
+  });
+
+  it("never gives one stock two of a method's slots", () => {
+    const calls = selectEngineCalls({
+      ...empty,
+      momentum: [mom("A", "ENTRY_READY"), mom("A", "ENTRY_READY"), mom("B", "ENTRY_READY"), mom("C", "ENTRY_READY")],
+    }, 2);
+    expect(calls.map((c) => c.ticker)).toEqual(["A", "B"]);
+  });
+
+  it("fills a ranked list's slots with distinct stocks, in order", () => {
+    const ranked = [{ assetId: "p", ticker: "PROZONER" }, { assetId: "p", ticker: "PROZONER" }, { assetId: "q", ticker: "Q" }, { assetId: "r", ticker: "R" }];
+    expect(takeDistinct(ranked, 2, (row) => row.assetId).map((row) => row.ticker)).toEqual(["PROZONER", "Q"]);
+    expect(takeDistinct(ranked, 0, (row) => row.assetId)).toEqual([]);
+  });
+
+  it("keeps one call per method and stock, so the summary matches what is stored", () => {
+    const rows = [
+      { method: "SWING:SIMONS", asset_id: "p" }, { method: "SWING:SIMONS", asset_id: "p" },
+      { method: "SWING:DARVAS", asset_id: "p" }, { method: "SWING:SIMONS", asset_id: "q" },
+    ];
+    expect(distinctCalls(rows)).toEqual([rows[0], rows[2], rows[3]]);
   });
 
   it("skips invalid levels and stocks that already have a live call", () => {

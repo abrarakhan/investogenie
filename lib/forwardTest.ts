@@ -15,7 +15,7 @@ import {
   displayStrongSwing,
   displayTrendContinuation,
 } from "@/lib/displayScanCache";
-import { selectEngineCalls } from "@/lib/forwardTestEngines";
+import { distinctCalls, selectEngineCalls, takeDistinct } from "@/lib/forwardTestEngines";
 import type { MarketId } from "@/lib/types";
 
 const PER_METHOD = 2;
@@ -75,7 +75,7 @@ export async function enrollCohort(market: MarketId): Promise<EnrollSummary> {
     // A strategy match is its own setup: the default classifier's verdict does not gate it.
     if (!row.strategyTags.length) continue;
     if (!isTradableCommon(row)) { skipped++; continue; }
-    for (const tag of row.strategyTags) {
+    for (const tag of new Set(row.strategyTags)) {
       const bucket = byStrategy.get(tag) ?? [];
       bucket.push(row);
       byStrategy.set(tag, bucket);
@@ -89,7 +89,7 @@ export async function enrollCohort(market: MarketId): Promise<EnrollSummary> {
       const sb = b.strategyLevels[strategy]?.score ?? b.score;
       return sb - sa;
     });
-    for (const row of ranked.slice(0, PER_METHOD)) {
+    for (const row of takeDistinct(ranked, PER_METHOD, (candidate) => candidate.assetId)) {
       const lv = row.strategyLevels[strategy];
       // Anchor to the strategy's ENTRY TRIGGER, not spot. target/stop are
       // derived from the trigger, so pricing entry at spot left them on a
@@ -126,7 +126,7 @@ export async function enrollCohort(market: MarketId): Promise<EnrollSummary> {
 
   // --- Probability engine ---------------------------------------------------
   const prob = await getProbabilitySummary(market);
-  for (const row of prob.rows.slice(0, PER_METHOD)) {
+  for (const row of takeDistinct(prob.rows, PER_METHOD, (candidate) => candidate.assetId)) {
     if (!row.lastPrice || row.lastPrice <= 0) { skipped++; continue; }
     inserts.push({
       method: "PROBABILITY",
@@ -193,7 +193,8 @@ export async function enrollCohort(market: MarketId): Promise<EnrollSummary> {
     });
     (byMethod[call.method] ??= []).push(call.ticker);
   }
-  const fresh = inserts.filter((r) => !active.has(`${r.method}|${r.asset_id}`));
+  // The summary must list exactly what is written, so no method may hold a stock twice.
+  const fresh = distinctCalls(inserts.filter((r) => !active.has(`${r.method}|${r.asset_id}`)));
   skipped += inserts.length - fresh.length;
   for (const key of Object.keys(byMethod)) delete byMethod[key];
   for (const r of fresh) (byMethod[String(r.method)] ??= []).push(String(r.ticker));
@@ -252,12 +253,16 @@ export interface EvaluateSummary {
  *   - a position with no levels (the probability engine) runs to horizon and
  *     closes at that bar's close.
  */
-export async function evaluateOpenPositions(): Promise<EvaluateSummary> {
+export async function evaluateOpenPositions(market?: MarketId): Promise<EvaluateSummary> {
+  // A market's EOD stage grades only that market: the other one's bars for the
+  // day may not be final yet. With no market (a manual run) everything is graded.
   const positions = await query<OpenPosition>(
     `select id, asset_id, direction, horizon_days, enrolled_on, entry_price,
             projected_target, projected_stop, projected_p5_pct, projected_p95_pct
        , status, trigger_price, fill_window_days, filled_on
-       from public.forward_test_positions where status in ('PENDING','OPEN')`,
+       from public.forward_test_positions
+      where status in ('PENDING','OPEN') and ($1::text is null or market = $1)`,
+    [market ?? null],
   );
   const byStatus: Record<string, number> = {};
   let closed = 0;

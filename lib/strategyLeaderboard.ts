@@ -19,6 +19,8 @@ export interface ForwardStats extends EvidenceStats {
   live: number;
   /** Distinct stocks behind the closed calls: a low count means one name may be carrying the result. */
   stocks: number;
+  /** Distinct enrolment dates behind the closed calls: calls made on one day share that day's market. */
+  sessions: number;
 }
 export interface BacktestStats extends EvidenceStats { horizonSessions: number }
 
@@ -32,11 +34,25 @@ export interface LeaderboardRow {
   /** The evidence used to rank the row, most trustworthy first. */
   primary: { source: "forward" | "backtest" | "ledger"; avgReturnPct: number; trades: number; label: string } | null;
   verdict: Verdict;
+  /**
+   * False while the sample is too small to rely on: the verdict is then only an
+   * early indication. Returns are gross of charges and slippage either way.
+   */
+  established: boolean;
 }
 
 export const MIN_TRADES = 5;
 const PROFIT_THRESHOLD_PCT = 0.5;
 const LOSS_THRESHOLD_PCT = -1;
+
+// A verdict counts as established only on a larger sample; for forward tests the
+// calls must also come from enough separate days to not be one market move.
+export const ESTABLISHED_TRADES = 30;
+export const ESTABLISHED_SESSIONS = 10;
+
+export function isEstablished(trades: number, sessions: number | null): boolean {
+  return trades >= ESTABLISHED_TRADES && (sessions === null || sessions >= ESTABLISHED_SESSIONS);
+}
 
 export function strategyKey(method: string): string {
   return method.replace(/^(SWING|ENGINE):/, "");
@@ -71,6 +87,7 @@ export function buildLeaderboard(
     return {
       strategy, forward: fwd, backtest: bt, ledger: own, primary,
       verdict: primary ? verdictFor(primary.avgReturnPct, primary.trades) : "NOT_ENOUGH_DATA",
+      established: primary ? isEstablished(primary.trades, primary.source === "forward" ? fwd!.sessions : null) : false,
     };
   });
   return rows.sort((a, b) => {
@@ -95,7 +112,8 @@ export async function getStrategyLeaderboard(market: MarketId, userId: string): 
               count(*) filter (where status = 'TARGET_HIT') target_hits,
               count(*) filter (where status = 'STOP_HIT') stop_hits,
               count(*) filter (where status in ('PENDING','OPEN')) live,
-              count(distinct asset_id) filter (where status in ('TARGET_HIT','STOP_HIT','EXPIRED')) stocks
+              count(distinct asset_id) filter (where status in ('TARGET_HIT','STOP_HIT','EXPIRED')) stocks,
+              count(distinct enrolled_on) filter (where status in ('TARGET_HIT','STOP_HIT','EXPIRED')) sessions
          from public.forward_test_positions where market = $1 group by method`,
       [market],
     ),
@@ -121,7 +139,7 @@ export async function getStrategyLeaderboard(market: MarketId, userId: string): 
   for (const r of forwardRows) {
     forward.set(strategyKey(String(r.method)), {
       trades: n(r.trades), avgReturnPct: n(r.avg_ret ?? 0), medianReturnPct: nOrNull(r.med_ret),
-      winRatePct: n(r.win ?? 0), targetHits: n(r.target_hits), stopHits: n(r.stop_hits), live: n(r.live), stocks: n(r.stocks),
+      winRatePct: n(r.win ?? 0), targetHits: n(r.target_hits), stopHits: n(r.stop_hits), live: n(r.live), stocks: n(r.stocks), sessions: n(r.sessions),
     });
   }
   const backtest = new Map<string, BacktestStats[]>();

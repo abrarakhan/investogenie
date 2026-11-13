@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { buildLeaderboard, strategyKey, verdictFor, type BacktestStats, type EvidenceStats, type ForwardStats } from "@/lib/strategyLeaderboard";
+import { buildLeaderboard, isEstablished, strategyKey, verdictFor, type BacktestStats, type EvidenceStats, type ForwardStats } from "@/lib/strategyLeaderboard";
 
 
-const fwd = (avg: number, trades: number): ForwardStats => ({ trades, avgReturnPct: avg, medianReturnPct: avg, winRatePct: 50, targetHits: 0, stopHits: 0, live: 0, stocks: trades });
+const fwd = (avg: number, trades: number, sessions = trades): ForwardStats => ({ trades, avgReturnPct: avg, medianReturnPct: avg, winRatePct: 50, targetHits: 0, stopHits: 0, live: 0, stocks: trades, sessions });
 const bt = (avg: number, trades: number, horizonSessions = 5): BacktestStats => ({ trades, avgReturnPct: avg, medianReturnPct: avg, winRatePct: 50, horizonSessions });
 const own = (avg: number, trades: number): EvidenceStats => ({ trades, avgReturnPct: avg, medianReturnPct: avg, winRatePct: 50 });
 
@@ -35,5 +35,23 @@ describe("strategy leaderboard", () => {
     ]);
     expect(rows[1].primary?.label).toBe("Backtest, 5 sessions");
     expect(rows[1].backtest.map((b) => b.horizonSessions)).toEqual([5, 10]);
+  });
+
+  it("treats a verdict as established only on a larger sample from enough separate days", () => {
+    expect(isEstablished(29, 29)).toBe(false);
+    expect(isEstablished(30, 9)).toBe(false);
+    expect(isEstablished(30, 10)).toBe(true);
+    expect(isEstablished(30, null)).toBe(true);
+    const rows = buildLeaderboard(
+      new Map([["A", fwd(3, 6)], ["B", fwd(2, 40, 4)], ["C", fwd(1, 40, 12)]]),
+      new Map([["D", [bt(1.5, 51)]]]),
+      new Map(),
+    );
+    expect(rows.map((r) => [r.strategy, r.verdict, r.established])).toEqual([
+      ["A", "PROFITABLE", false],
+      ["B", "PROFITABLE", false],
+      ["D", "PROFITABLE", true],
+      ["C", "PROFITABLE", true],
+    ]);
   });
 });
