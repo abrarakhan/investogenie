@@ -6,6 +6,10 @@ import { averageTrueRange, isStructuralBreakout } from "@/lib/analytics/swingCla
  * entry, stop, target, trailing or classification maths changes: stored plans
  * carrying another version are refused at purchase time.
  *
+ * v3: production calculation moved to pipelines/strategy_math/strong_swing.py.
+ * This TypeScript implementation remains only as a migration-test oracle; no
+ * web, mobile, alert or execution loader calls it.
+ *
  * v2: ATR, structural breakout and the invalidation trail are computed from the
  * engine's own completed daily bars (v1 inherited them from the hourly base
  * scan, whose series can end in today's unfinished candle); a breakout on
@@ -14,7 +18,7 @@ import { averageTrueRange, isStructuralBreakout } from "@/lib/analytics/swingCla
  * bar is judged against the stop known before it; and the stored plan carries
  * the real ATR.
  */
-export const STRONG_SWING_MODEL_VERSION = "strong-swing-v2-completed-bars";
+export const STRONG_SWING_MODEL_VERSION = "strong-swing-v3-python";
 export const STRONG_SWING_TRAILING_POLICY_VERSION = "strong-swing-ledger-trailing-v2-post-entry-next-bar";
 const ATR_PERIOD = 14;
 const CONFIRMATION_ATR_BUFFER = 0.25;

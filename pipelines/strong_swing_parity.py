@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Recompute Strong Swing levels in Python and compare them with what the app recorded.
+"""Independently recompute Python Strong Swing levels and compare recorded output.
 
-The app calculates Strong Swing in TypeScript. This is a separate, read-only
-implementation of the same arithmetic over completed daily bars, used to check
+The live app calls ``strategy_math/strong_swing.py``. This separate, read-only
+Python implementation checks the same arithmetic over completed daily bars, used to verify
 that a recorded snapshot's ATR, breakout flag, entry, stop, target and trail
 follow from the bars up to its own latest bar date, and that a snapshot taken
 while the market was open does not rest on that day's unfinished candle.
@@ -29,6 +29,8 @@ from statistics import mean, stdev
 
 import psycopg2
 
+from strategy_math.strong_swing import MODEL_VERSION, assess as assess_python_engine
+
 ATR_PERIOD = 14
 CONFIRMATION_ATR_BUFFER = 0.25
 TIME_ZONES = {"IN": "Asia/Kolkata", "US": "America/New_York"}
@@ -42,6 +44,15 @@ class Bar:
     low: float
     close: float
     volume: float = 0.0
+    open: float | None = None
+    open_interest: float | None = None
+
+    def engine_json(self) -> dict:
+        return {
+            "date": self.date.isoformat(), "open": self.close if self.open is None else self.open, "high": self.high,
+            "low": self.low, "close": self.close, "volume": self.volume,
+            "openInterest": self.open_interest,
+        }
 
 
 def round2(value: float) -> float:
@@ -140,6 +151,7 @@ HARD_RISK_GATES = {
     "extension_5d", "extension_10d", "atr_risk", "stop_width", "circuit_behaviour", "freshness",
     "price", "liquidity", "live_quote", "live_spread", "live_circuit", "market_shock",
 }
+TIME_VARYING_GATES = {"live_quote", "live_spread", "live_circuit"}
 
 
 def bar_gates(bars: list[Bar], market: str = "IN", stop_mult: float = 1.5) -> dict[str, bool]:
@@ -268,15 +280,15 @@ def main() -> int:
                 return 1
             captured_at, capture_date, before_close = found
             cur.execute(
-                """select asset_id::text,ticker,status,confirmation_entry,projected_stop,projected_target,
+                """select asset_id::text,ticker,status,current_price,confirmation_entry,projected_stop,projected_target,
                           projected_trail,latest_bar_date,metrics,gates
                      from public.strong_swing_snapshots where market=%s and captured_at=%s""",
                 (args.market, captured_at),
             )
             rows = cur.fetchall()
             cur.execute(
-                """select asset_id::text,date,high,low,close,volume from (
-                     select o.asset_id,o.date,o.high,o.low,o.close,o.volume,
+                """select asset_id::text,date,open,high,low,close,volume,open_interest from (
+                     select o.asset_id,o.date,o.open,o.high,o.low,o.close,o.volume,o.open_interest,
                             row_number() over(partition by o.asset_id order by o.date desc) rn
                        from public.daily_ohlcv o
                        join public.strong_swing_snapshots s
@@ -286,15 +298,45 @@ def main() -> int:
                 (args.market, captured_at),
             )
             bars: dict[str, list[Bar]] = {}
-            for asset_id, day, high, low, close, volume in cur.fetchall():
-                bars.setdefault(asset_id, []).append(Bar(day, float(high), float(low), float(close), float(volume or 0)))
+            for asset_id, day, open_, high, low, close, volume, open_interest in cur.fetchall():
+                bars.setdefault(asset_id, []).append(Bar(
+                    day, float(high), float(low), float(close), float(volume or 0), float(open_),
+                    None if open_interest is None else float(open_interest),
+                ))
+            benchmark_tickers = ["NIFTY", "NIFTYBEES"] if args.market == "IN" else ["SPY"]
+            cur.execute(
+                """select a.id from public.assets a
+                    where a.country=%s and a.ticker=any(%s::text[])
+                    order by (select count(*) >= 200 and max(o.date) >= current_date - 7
+                                from public.daily_ohlcv o
+                               where o.asset_id=a.id and o.date >= current_date - 400) desc nulls last,
+                             array_position(%s::text[],a.ticker),
+                             (select count(*) from public.daily_ohlcv o where o.asset_id=a.id) desc
+                    limit 1""",
+                (args.market, benchmark_tickers, benchmark_tickers),
+            )
+            benchmark_id = cur.fetchone()
+            benchmark: list[Bar] = []
+            if benchmark_id:
+                cur.execute(
+                    """select date,open,high,low,close,volume,open_interest
+                         from public.daily_ohlcv where asset_id=%s
+                        order by date desc limit 260""",
+                    (benchmark_id[0],),
+                )
+                benchmark = [Bar(
+                    day, float(high), float(low), float(close), float(volume or 0), float(open_),
+                    None if open_interest is None else float(open_interest),
+                ) for day, open_, high, low, close, volume, open_interest in reversed(cur.fetchall())]
 
     counts: dict[str, int] = {}
     unfinished = skipped = clean = 0
     worst: list[tuple[float, str]] = []
     gate_counts: dict[str, int] = {}
+    engine_mismatches = 0
+    time_varying_gate_changes = 0
     examples: list[str] = []
-    for asset_id, ticker, status, entry, stop, target, trail, latest_bar, metrics, gates in rows:
+    for asset_id, ticker, status, current_price, entry, stop, target, trail, latest_bar, metrics, gates in rows:
         series = bars.get(asset_id, [])
         if len(series) < 23:
             skipped += 1
@@ -305,6 +347,34 @@ def main() -> int:
         gates = gates if isinstance(gates, list) else json.loads(gates or "[]")
         structure = next((gate.get("passed") for gate in gates if gate.get("key") == "structure"), None)
         expected = plan(series, args.stop_mult, args.target_rr)
+        engine = assess_python_engine({
+            "market": args.market, "verdict": "NO_SETUP", "currentPrice": float(current_price),
+            "stopAtrMult": args.stop_mult, "targetRR": args.target_rr, "trailAtrMult": args.stop_mult,
+            "bars": [bar.engine_json() for bar in series],
+            "benchmarkBars": [bar.engine_json() for bar in benchmark if bar.date <= latest_bar],
+            "requireLiveExecutionData": False,
+        })
+        engine_core = {
+            "atr": engine["atr"], "atr_pct": engine["atrPct"], "breakout": engine["isBreakout"], "entry": engine["strongEntry"],
+            "stop": engine["strongStop"], "target": engine["strongTarget"], "trail": engine["strongTrail"],
+            "invalidation_trail": engine["effectiveTrailingStop"],
+        }
+        engine_wrong = differences(engine_core, expected, atr_tolerance_pct=0.0001)
+        if engine.get("modelVersion") != MODEL_VERSION or engine_wrong:
+            engine_mismatches += 1
+            if len(examples) < args.show:
+                examples.append(f"{ticker}: Python engine differs from independent parity on {', '.join(engine_wrong) or 'model version'}")
+        recorded_gate_results = {gate.get("key"): bool(gate.get("passed")) for gate in gates}
+        engine_gate_results = {gate.get("key"): bool(gate.get("passed")) for gate in engine["gates"]}
+        changed = sorted(key for key in set(recorded_gate_results) | set(engine_gate_results)
+                         if recorded_gate_results.get(key) != engine_gate_results.get(key))
+        stable_changed = [key for key in changed if key not in TIME_VARYING_GATES]
+        if changed and not stable_changed:
+            time_varying_gate_changes += 1
+        if stable_changed or (not changed and engine["status"] != status):
+            engine_mismatches += 1
+            if len(examples) < args.show:
+                examples.append(f"{ticker}: Python status/stable gates differ (status {status} -> {engine['status']}; gates {', '.join(stable_changed) or 'none'})")
         recorded = {
             "entry": float(entry), "stop": float(stop), "target": float(target), "trail": float(trail),
             "atr_pct": float(metrics["atrPct"]) if metrics.get("atrPct") is not None else None,
@@ -342,9 +412,11 @@ def main() -> int:
     for line in examples[: args.show]:
         print(f"  {line}")
     print(f"  taken during the session with a bar from that day: {unfinished}")
+    print(f"  Python {MODEL_VERSION} vs independent calculation: {engine_mismatches} differ")
+    print(f"  historical live-quote gates excluded from forward comparison: {time_varying_gate_changes}")
     for _gap, line in sorted(worst, key=lambda item: -abs(item[0]))[: args.show]:
         print(f"  {line}")
-    return 0 if clean == checked and unfinished == 0 else 3
+    return 0 if clean == checked and unfinished == 0 and engine_mismatches == 0 else 3
 
 
 if __name__ == "__main__":

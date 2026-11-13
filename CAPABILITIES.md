@@ -9,8 +9,8 @@ _Code and production baseline reviewed 26 October 2026 through runtime revision 
 | Market overview | India/US quotes, breadth and charts | `app/markets/`, `components/market-overview/` |
 | Stock Screener | Whitelisted AND filters, presets, universes, saved screens, CSV/Excel exports and natural-language filters | `lib/screener/`, `lib/screener-actions.ts` |
 | Swing Candidates | Buy-side setups with strategy tags and frozen levels; India NSE top 20 | `lib/screener.ts`, market screener page |
-| Strong Swing | Confirmation, liquidity, market and execution gates with deterministic ranking | `lib/strongSwing.ts`, `lib/analytics/strongSwing.ts` |
-| Momentum Ignition | Legacy and V2 discovery with completed-session bases, separately verified live-session input and explicit execution blocking; V2 includes Momentum Ready, First Thrust, Pre-Ignition, Retest, Late Risk and Failed states | `lib/momentumIgnition*.ts` |
+| Strong Swing | Python-authoritative confirmation, liquidity, market and execution gates, trade levels and deterministic ranking | `pipelines/strategy_math/strong_swing.py`, `lib/strongSwing.ts` |
+| Momentum Ignition | Python-authoritative legacy and V2 discovery with completed-session bases, separately verified live-session input and explicit execution blocking; V2 includes Momentum Ready, First Thrust, Pre-Ignition, Retest, Late Risk and Failed states | `pipelines/strategy_math/momentum.py`, `lib/momentumIgnition*.ts` |
 | Trend Continuation | Python-owned multi-session impulse, pre-impulse trend, continuation-watch, ready and extended-risk states; counter-trend rebounds cannot become ready; confirmed day-two breakouts may create an immutable manual plan after live execution and results gates; day one, pullbacks and auto-buy remain blocked | `pipelines/trend_continuation.py`, `lib/trendContinuation.ts` |
 | Armed Strong Swing | Earlier stage-2 breakout plans, live volume pace, structural stops and results blackout | `lib/armedSwing.ts`, `lib/analytics/armedSwing.ts` |
 | News & AI Swing | Source-linked event overlay on existing technical candidates | `lib/news/`, `lib/newsSwing.ts` |

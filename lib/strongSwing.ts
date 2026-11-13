@@ -1,8 +1,7 @@
 import { query } from "@/lib/db";
 import { runScreener, type ScreenRow } from "@/lib/screener";
-import { deriveLevels, type SwingSetup } from "@/lib/analytics/swingClassifier";
-import { assessStrongSwingFromBars, STRONG_SWING_MODEL_VERSION, type CompletedBarStrongSwingAssessment } from "@/lib/analytics/strongSwing";
-import { rankStrongSwingCandidates } from "@/lib/analytics/candidateRanking";
+import { STRONG_SWING_MODEL_VERSION, type CompletedBarStrongSwingAssessment } from "@/lib/analytics/strongSwing";
+import { runPythonStrategyBatch } from "@/lib/pythonStrategyMath";
 import type { SwingSettings } from "@/lib/settings";
 import type { MarketId, OHLCV } from "@/lib/types";
 import { isMarketOpenNow, refreshMarketHolidays, zonedMarketClock } from "@/lib/market-calendar.mjs";
@@ -37,6 +36,7 @@ export interface StrongSwingSnapshotCapture {
 
 export interface StrongSwingCandidate
   extends Omit<ScreenRow, "atr" | "isBreakout" | "trailingStop">, CompletedBarStrongSwingAssessment {
+  pythonRank?: number;
   baseSwingRank: number;
   strongSwingRank: number;
   strongEntry: number;
@@ -56,12 +56,14 @@ const toBar = (row: BarRow): OHLCV => ({
   openInterest: row.open_interest === null ? null : Number(row.open_interest),
 });
 
-const meanVelocity = (bars: OHLCV[]): number => {
-  const closes = bars.slice(-21).map((bar) => bar.close);
-  if (closes.length < 2) return 0;
-  let total = 0;
-  for (let i = 1; i < closes.length; i++) total += Math.abs(closes[i] - closes[i - 1]);
-  return total / (closes.length - 1);
+type PythonStrongAssessment = CompletedBarStrongSwingAssessment & {
+  strongEntry: number;
+  strongTarget: number;
+  strongStop: number;
+  strongTrail: number;
+  strongExpectedDays: number;
+  modelVersion: string;
+  pythonRank: number;
 };
 
 async function captureStrongSwingSnapshot(
@@ -243,57 +245,62 @@ export async function getStrongSwingCandidates(
 
   const candidates: StrongSwingCandidate[] = [];
   let flatRange = 0;
-  for (const row of base) {
+  const work = base.flatMap((row) => {
     const bars = barsByAsset.get(row.assetId) ?? [];
+    if (bars.length < 21) return [];
     const context = contextByAsset.get(row.assetId);
-    if (bars.length < 21) continue;
-    const assessment = assessStrongSwingFromBars({
+    return [{ row, bars, input: {
       market,
       verdict: row.verdict,
       currentPrice: row.lastQuote,
       stopAtrMult: settings.stopAtrMult,
+      targetRR: settings.targetRR,
+      trailAtrMult: settings.trailAtrMult,
       bars,
+      ticker: row.ticker,
+      baseScore: row.score,
+      rankScore: row.rankScore,
       benchmarkBars,
       requireLiveExecutionData: market === "IN" && marketOpen,
-      microstructure: context?.quote_source === "BREEZE_LIVE" ? { bestBid: context.best_bid === null ? null : Number(context.best_bid), bestAsk: context.best_ask === null ? null : Number(context.best_ask), lowerCircuit: context.lower_circuit === null ? null : Number(context.lower_circuit), quoteFresh: Boolean(context.quote_updated_at) && Date.now() - Date.parse(context.quote_updated_at!) <= 5 * 60 * 1000 } : undefined,
-    });
+      microstructure: context?.quote_source === "BREEZE_LIVE" ? {
+        bestBid: context.best_bid === null ? null : Number(context.best_bid),
+        bestAsk: context.best_ask === null ? null : Number(context.best_ask),
+        lowerCircuit: context.lower_circuit === null ? null : Number(context.lower_circuit),
+        quoteFresh: Boolean(context.quote_updated_at) && Date.now() - Date.parse(context.quote_updated_at!) <= 5 * 60 * 1000,
+      } : undefined,
+    } }];
+  });
+  const assessments = await runPythonStrategyBatch<(typeof work)[number]["input"], PythonStrongAssessment>(
+    "strong_swing",
+    work.map((item) => item.input),
+  );
+  for (let index = 0; index < work.length; index++) {
+    const { row } = work[index];
+    const assessment = assessments[index];
+    if (assessment.modelVersion !== "strong-swing-v3-python") {
+      throw new Error(`Unexpected Python Strong Swing model ${assessment.modelVersion}`);
+    }
     // No price range in 14 sessions means the stock did not really trade. Its stop would equal
     // its entry, so there is no plan to make; leave it out instead of listing it.
     if (!(assessment.atr > 0)) {
       flatRange++;
       continue;
     }
-    const recent = bars.slice(-22);
-    // Strong Swing freezes the confirmed breakout entry. Repricing entry to a
-    // later quote turns a missed trade into a fresh recommendation and widens
-    // its ATR stop after parabolic moves.
-    const { atr } = assessment;
-    const setup: SwingSetup = {
-      currentPrice: assessment.confirmationEntry,
-      atr,
-      longTrigger: assessment.confirmationEntry,
-      shortTrigger: 0,
-      hh22: Math.max(...recent.map((bar) => bar.high)),
-      ll22: Math.min(...recent.map((bar) => bar.low)),
-      dailyVelocity: meanVelocity(bars),
-    };
-    const levels = deriveLevels(setup, "LONG", settings);
     candidates.push({
       ...row,
       ...assessment,
       baseSwingRank: baseRankByAsset.get(row.assetId) ?? 0,
       strongSwingRank: 0,
-      strongEntry: assessment.confirmationEntry,
-      strongTarget: levels.target,
-      strongStop: levels.stopLoss,
-      // The trail starts at the protective stop; only highs after entry advance it.
-      strongTrail: levels.stopLoss,
-      strongExpectedDays: levels.expectedDays,
+      strongEntry: assessment.strongEntry,
+      strongTarget: assessment.strongTarget,
+      strongStop: assessment.strongStop,
+      strongTrail: assessment.strongTrail,
+      strongExpectedDays: assessment.strongExpectedDays,
     });
   }
 
   if (flatRange) console.warn(`[strong-swing] ${market}: left out ${flatRange} stock(s) with no price range in 14 sessions`);
-  const ranked = rankStrongSwingCandidates(candidates).map((candidate, index) => ({
+  const ranked = [...candidates].sort((left, right) => (left.pythonRank ?? Number.MAX_SAFE_INTEGER) - (right.pythonRank ?? Number.MAX_SAFE_INTEGER)).map((candidate, index) => ({
     ...candidate,
     strongSwingRank: index + 1,
   }));

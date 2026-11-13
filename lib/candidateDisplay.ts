@@ -1,8 +1,7 @@
 // Trim server-produced candidate lists to the cards a page actually renders.
-// Ranking, statuses, gates and plans are unchanged: the page still computes and
-// records everything server-side; only the browser payload shrinks. Counts are
-// carried separately so group totals stay exact.
-import { rankStrongSwingCandidates, type StrongSwingRankable } from "@/lib/analytics/candidateRanking";
+// Ranking, statuses, gates and plans are unchanged: Python has already ordered
+// the server result, and this helper only shrinks the browser payload. Counts
+// are carried separately so group totals stay exact.
 import type { StrongSwingStatus } from "@/lib/analytics/strongSwing";
 import type { ArmedSwingStatus } from "@/lib/analytics/armedSwing";
 
@@ -15,11 +14,10 @@ export const STRONG_SWING_DISPLAY_LIMITS: Partial<Record<StrongSwingStatus, numb
 
 export type StatusCounts<S extends string> = Partial<Record<S, number>>;
 
-export function trimStrongSwingForDisplay<T extends StrongSwingRankable & { status: StrongSwingStatus }>(candidates: readonly T[]) {
-  const ranked = rankStrongSwingCandidates(candidates);
+export function trimStrongSwingForDisplay<T extends { status: StrongSwingStatus }>(candidates: readonly T[]) {
   const counts: StatusCounts<StrongSwingStatus> = {};
   const shown: T[] = [];
-  for (const candidate of ranked) {
+  for (const candidate of candidates) {
     const seen = counts[candidate.status] ?? 0;
     counts[candidate.status] = seen + 1;
     const limit = STRONG_SWING_DISPLAY_LIMITS[candidate.status];

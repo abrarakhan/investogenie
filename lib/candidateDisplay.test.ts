@@ -6,23 +6,25 @@ type S = "EXECUTION_READY" | "WAIT_FOR_ENTRY" | "WATCHLIST" | "RISK_OFF" | "INVA
 const strong = (status: S, i: number) => ({ ticker: `${status}${String(i).padStart(3, "0")}`, status, strengthScore: (i * 37) % 100, score: i % 7 });
 
 describe("trimStrongSwingForDisplay", () => {
-  const all = [
+  const unsorted = [
     ...Array.from({ length: 4 }, (_, i) => strong("EXECUTION_READY", i)),
     ...Array.from({ length: 45 }, (_, i) => strong("WAIT_FOR_ENTRY", i)),
     ...Array.from({ length: 300 }, (_, i) => strong("WATCHLIST", i)),
     ...Array.from({ length: 80 }, (_, i) => strong("RISK_OFF", i)),
     ...Array.from({ length: 345 }, (_, i) => strong("INVALIDATED", i)),
   ].reverse();
+  // Production receives this order from Python. The former TypeScript ranker
+  // remains a test oracle while the migration is being verified.
+  const all = rankStrongSwingCandidates(unsorted);
 
   it("keeps exactly the cards the page renders, in the page's order, with exact totals", () => {
     const { candidates, counts } = trimStrongSwingForDisplay(all);
     expect(counts).toEqual({ EXECUTION_READY: 4, WAIT_FOR_ENTRY: 45, WATCHLIST: 300, RISK_OFF: 80, INVALIDATED: 345 });
     // What StrongSwingCandidates shows from the full list…
-    const ranked = rankStrongSwingCandidates(all);
-    const of = (status: S) => ranked.filter((c) => c.status === status);
+    const of = (status: S) => all.filter((c) => c.status === status);
     const expected = [...of("EXECUTION_READY"), ...of("WAIT_FOR_ENTRY"), ...of("WATCHLIST").slice(0, 30), ...of("RISK_OFF").slice(0, 30), ...of("INVALIDATED").slice(0, 20)];
-    // …is identical to what it shows (after its own re-rank) from the trimmed list.
-    expect(rankStrongSwingCandidates(candidates).map((c) => c.ticker)).toEqual(expected.map((c) => c.ticker));
+    // …is identical to the already-ranked Python result after trimming.
+    expect(candidates.map((c) => c.ticker)).toEqual(expected.map((c) => c.ticker));
     expect(candidates).toHaveLength(4 + 45 + 30 + 30 + 20);
   });
 });

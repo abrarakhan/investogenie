@@ -1,6 +1,6 @@
-import { assessMomentumIgnition, type MomentumIgnitionAssessment } from "@/lib/analytics/momentumIgnition";
-import { assessMomentumIgnitionV2, type MomentumIgnitionV2Status } from "@/lib/analytics/momentumIgnitionV2";
-import { reconcileMomentumExecutionStatus } from "@/lib/momentumExecution";
+import type { MomentumIgnitionAssessment } from "@/lib/analytics/momentumIgnition";
+import type { MomentumIgnitionV2Assessment, MomentumIgnitionV2Status } from "@/lib/analytics/momentumIgnitionV2";
+import { runPythonStrategyBatch } from "@/lib/pythonStrategyMath";
 import type { SwingSettings } from "@/lib/settings";
 import type { OHLCV } from "@/lib/types";
 import { isMarketOpenNow, latestSignalSessionDate, marketSessionProgress, refreshMarketHolidays } from "@/lib/market-calendar.mjs";
@@ -12,6 +12,7 @@ import {
 } from "@/lib/momentumIgnitionData";
 
 export interface MomentumIgnitionCandidate extends MomentumIgnitionAssessment {
+  pythonRank?: number;
   assetId: string;
   ticker: string;
   name: string | null;
@@ -112,9 +113,9 @@ export async function getMomentumIgnitionCandidates(
   const liveByAsset = new Map(liveRows.map((row) => [row.asset_id, row]));
   const benchmarkBars = benchmarkRows.map(toBar).reverse();
   const candidates: MomentumIgnitionCandidate[] = [];
-  for (const row of preliminary) {
+  const work = preliminary.flatMap((row) => {
     const completedBars = barsByAsset.get(row.asset_id) ?? [];
-    if (completedBars.length < 10) continue;
+    if (completedBars.length < 10) return [];
     const quoteAgeMs = Date.now() - Date.parse(row.quote_updated_at);
     const liveRow = liveByAsset.get(row.asset_id);
     const liveDataVerified = !marketOpen || Boolean(
@@ -129,7 +130,9 @@ export async function getMomentumIgnitionCandidates(
     const bars = liveDataVerified && marketOpen && liveRow
       ? [...completedBars, toBar(liveRow)]
       : completedBars;
-    const assessmentInput = {
+    return [{ row, input: {
+      ticker: row.ticker,
+      baseScore: Number(row.base_score ?? 0),
       currentPrice: Number(row.current_price),
       bars,
       benchmarkBars,
@@ -139,37 +142,28 @@ export async function getMomentumIgnitionCandidates(
       liquidityFloor: config.liquidityFloor,
       liquidityRequirementLabel: config.liquidityRequirementLabel,
       priceFloor: config.priceFloor,
-    };
-    const assessment = assessMomentumIgnition(assessmentInput);
+      marketOpen,
+      liveDataVerified,
+      stopAtrMult: settings.stopAtrMult,
+      targetRR: settings.targetRR,
+      trailAtrMult: settings.trailAtrMult,
+    } }];
+  });
+  type PythonMomentum = {
+    legacy: MomentumIgnitionAssessment;
+    v2: MomentumIgnitionV2Assessment;
+    legacyPlan: Pick<MomentumIgnitionCandidate, "status" | "executionVetoReason" | "projectedEntry" | "projectedStop" | "projectedTarget" | "projectedTrail" | "projectedDays">;
+    legacyRank: number;
+  };
+  const results = await runPythonStrategyBatch<(typeof work)[number]["input"], PythonMomentum>("momentum", work.map((item) => item.input));
+  for (let index = 0; index < work.length; index++) {
+    const { row } = work[index];
+    const { legacy: assessment, v2: timingAssessment, legacyPlan } = results[index];
     if (!assessment.qualifies) continue;
-    const timingAssessment = assessMomentumIgnitionV2(assessmentInput);
-    // A live price must never be combined with the previous session's candle
-    // to authorize an entry. Keep discovery visible, but fail closed.
-    if (marketOpen && assessment.status === "ENTRY_READY" && !liveDataVerified) {
-      assessment.status = "BREAKOUT_TRIGGERED";
-    }
-    const consensus = reconcileMomentumExecutionStatus(assessment.status, timingAssessment.status);
-    assessment.status = consensus.status;
-    const risk = assessment.atr14 * settings.stopAtrMult;
-    const projectedEntry = assessment.status === "ENTRY_READY"
-      ? Number(row.current_price)
-      : assessment.entryTrigger;
-    const recentCloses = bars.slice(-Math.min(11, bars.length)).map((bar) => bar.close);
-    if (
-      assessment.status === "ENTRY_READY"
-      && recentCloses.length
-      && Math.abs(recentCloses.at(-1)! - projectedEntry) > 0.0001
-    ) {
-      recentCloses.push(projectedEntry);
-      if (recentCloses.length > 11) recentCloses.shift();
-    }
-    const velocity = recentCloses.slice(1).reduce(
-      (sum, close, index) => sum + Math.abs(close - recentCloses[index]),
-      0,
-    ) / Math.max(1, recentCloses.length - 1);
-    const targetDistance = risk * settings.targetRR;
     candidates.push({
       ...assessment,
+      ...legacyPlan,
+      pythonRank: results[index].legacyRank,
       assetId: row.asset_id,
       ticker: row.ticker,
       name: row.name,
@@ -183,29 +177,11 @@ export async function getMomentumIgnitionCandidates(
       baseVerdict: row.base_verdict ?? "NO_SETUP",
       strongStatus: row.strong_status,
       strongCapturedAt: row.strong_captured_at,
-      projectedEntry,
-      projectedStop: projectedEntry - risk,
-      projectedTarget: projectedEntry + risk * settings.targetRR,
-      projectedTrail: projectedEntry - assessment.atr14 * settings.trailAtrMult,
-      projectedDays: Math.min(20, Math.max(1, Math.round(targetDistance / Math.max(velocity, 0.01)))),
       timingStatus: timingAssessment.status,
-      executionVetoReason: consensus.vetoReason,
     });
   }
 
-  const statusRank = {
-    ENTRY_READY: 0,
-    BREAKOUT_TRIGGERED: 1,
-    WAIT_FOR_PULLBACK: 2,
-    EARLY_WATCH: 3,
-    NOT_QUALIFIED: 4,
-  } as const;
-  candidates.sort((left, right) =>
-    statusRank[left.status] - statusRank[right.status]
-      || right.score - left.score
-      || right.baseScore - left.baseScore
-      || left.ticker.localeCompare(right.ticker),
-  );
+  candidates.sort((left, right) => (left.pythonRank ?? Number.MAX_SAFE_INTEGER) - (right.pythonRank ?? Number.MAX_SAFE_INTEGER));
   return {
     market,
     universeScanned,

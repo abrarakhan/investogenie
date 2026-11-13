@@ -54,6 +54,12 @@ class BreezeAutoBuySafetyTests(unittest.TestCase):
         self.assertIsNotNone(found)
         self.assertEqual(found.group(1), STRONG_SWING_MODEL_VERSION)
 
+    def test_calculation_version_matches_the_python_engine(self):
+        source = (Path(__file__).resolve().parents[1] / "pipelines/strategy_math/strong_swing.py").read_text()
+        found = re.search(r'MODEL_VERSION = "([^"]+)"', source)
+        self.assertIsNotNone(found)
+        self.assertEqual(found.group(1), STRONG_SWING_MODEL_VERSION)
+
     def test_limit_price_rounds_up_to_nse_tick(self):
         self.assertEqual(round_limit(Decimal("101.011")), Decimal("101.05"))
 

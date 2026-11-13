@@ -7,6 +7,9 @@ export type MomentumIgnitionStatus =
   | "WAIT_FOR_PULLBACK"
   | "NOT_QUALIFIED";
 
+// Migration-test oracle only. Production loaders call
+// pipelines/strategy_math/momentum.py through the Python batch boundary.
+
 export interface MomentumIgnitionGate {
   key: string;
   label: string;

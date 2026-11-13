@@ -1,8 +1,8 @@
 import {
-  assessMomentumIgnitionV2,
   type MomentumIgnitionV2Assessment,
   type MomentumIgnitionV2Status,
 } from "@/lib/analytics/momentumIgnitionV2";
+import { runPythonStrategyBatch } from "@/lib/pythonStrategyMath";
 import type { SwingSettings } from "@/lib/settings";
 import type { OHLCV } from "@/lib/types";
 import { isMarketOpenNow, latestSignalSessionDate, marketSessionProgress, refreshMarketHolidays } from "@/lib/market-calendar.mjs";
@@ -16,6 +16,7 @@ import {
 export type MomentumIgnitionCandidateStatus = MomentumIgnitionV2Status | "EXECUTION_BLOCKED";
 
 export interface MomentumIgnitionCandidate extends Omit<MomentumIgnitionV2Assessment, "status"> {
+  pythonRank?: number;
   status: MomentumIgnitionCandidateStatus;
   modelStatus: MomentumIgnitionV2Status;
   executionBlockReason: string | null;
@@ -140,9 +141,9 @@ export async function getMomentumIgnitionCandidates(
   const liveByAsset = new Map(liveRows.map((row) => [row.asset_id, row]));
   const benchmarkBars = benchmarkRows.map(toBar).reverse();
   const candidates: MomentumIgnitionCandidate[] = [];
-  for (const row of preliminary) {
+  const work = preliminary.flatMap((row) => {
     const completedBars = barsByAsset.get(row.asset_id) ?? [];
-    if (completedBars.length < 10) continue;
+    if (completedBars.length < 10) return [];
     const quoteAgeMs = Date.now() - Date.parse(row.quote_updated_at);
     const authoritativeQuote = market !== "IN" || row.quote_source === "BREEZE_LIVE";
     const liveRow = liveByAsset.get(row.asset_id);
@@ -158,7 +159,9 @@ export async function getMomentumIgnitionCandidates(
     const bars = liveDataVerified && marketOpen && liveRow
       ? [...completedBars, toBar(liveRow)]
       : completedBars;
-    const assessment = assessMomentumIgnitionV2({
+    return [{ row, liveDataVerified, input: {
+      ticker: row.ticker,
+      baseScore: Number(row.base_score ?? 0),
       currentPrice: Number(row.current_price),
       bars,
       benchmarkBars,
@@ -168,36 +171,27 @@ export async function getMomentumIgnitionCandidates(
       liquidityFloor: config.liquidityFloor,
       liquidityRequirementLabel: config.liquidityRequirementLabel,
       priceFloor: config.priceFloor,
-    });
+      marketOpen,
+      liveDataVerified,
+      stopAtrMult: settings.stopAtrMult,
+      targetRR: settings.targetRR,
+      trailAtrMult: settings.trailAtrMult,
+    } }];
+  });
+  type PythonMomentum = {
+    v2: MomentumIgnitionV2Assessment;
+    v2Plan: Pick<MomentumIgnitionCandidate, "status" | "modelStatus" | "executionBlockReason" | "projectedEntry" | "projectedStop" | "projectedTarget" | "projectedTrail" | "projectedDays">;
+    v2Rank: number;
+  };
+  const results = await runPythonStrategyBatch<(typeof work)[number]["input"], PythonMomentum>("momentum", work.map((item) => item.input));
+  for (let index = 0; index < work.length; index++) {
+    const { row, liveDataVerified } = work[index];
+    const { v2: assessment, v2Plan } = results[index];
     if (!assessment.qualifies) continue;
-    const projectedEntry = assessment.status === "MOMENTUM_READY"
-      ? Number(row.current_price)
-      : assessment.entryTrigger;
-    const latest = bars.at(-1)!;
-    const invalidation = assessment.status === "RETEST_SETUP"
-      ? Math.min(latest.low, assessment.breakoutLevel)
-      : assessment.breakoutLevel - assessment.atr14 * 0.25;
-    const projectedStop = Math.max(projectedEntry * 0.97, invalidation);
-    const projectedTarget = projectedEntry * (1 + assessment.shortHorizonTargetPct / 100);
-    const executionBlockReason = marketOpen && !liveDataVerified
-      && Number(row.current_price) >= assessment.entryTrigger
-      ? "Fresh authoritative intraday OHLCV and cumulative volume are unavailable."
-      : assessment.status === "MOMENTUM_READY"
-        ? momentumExecutionBlockReason({
-        entry: projectedEntry,
-        target: projectedTarget,
-        stop: projectedStop,
-        trail: projectedStop,
-        })
-        : null;
-    const status: MomentumIgnitionCandidateStatus = executionBlockReason
-      ? "EXECUTION_BLOCKED"
-      : assessment.status;
     candidates.push({
       ...assessment,
-      status,
-      modelStatus: assessment.status,
-      executionBlockReason,
+      ...v2Plan,
+      pythonRank: results[index].v2Rank,
       liveDataVerified,
       assetId: row.asset_id,
       ticker: row.ticker,
@@ -212,30 +206,10 @@ export async function getMomentumIgnitionCandidates(
       baseVerdict: row.base_verdict ?? "NO_SETUP",
       strongStatus: row.strong_status,
       strongCapturedAt: row.strong_captured_at,
-      projectedEntry,
-      projectedStop,
-      projectedTarget,
-      projectedTrail: projectedStop,
-      projectedDays: assessment.shortHorizonDays,
     });
   }
 
-  const statusRank = {
-    MOMENTUM_READY: 0,
-    EXECUTION_BLOCKED: 1,
-    FIRST_THRUST: 2,
-    RETEST_SETUP: 3,
-    PRE_IGNITION: 4,
-    LATE_PROFIT_BOOKING: 5,
-    FAILED_BREAKOUT: 6,
-    NOT_QUALIFIED: 7,
-  } as const;
-  candidates.sort((left, right) =>
-    statusRank[left.status] - statusRank[right.status]
-      || right.score - left.score
-      || right.baseScore - left.baseScore
-      || left.ticker.localeCompare(right.ticker),
-  );
+  candidates.sort((left, right) => (left.pythonRank ?? Number.MAX_SAFE_INTEGER) - (right.pythonRank ?? Number.MAX_SAFE_INTEGER));
   return {
     market,
     universeScanned,

@@ -10,6 +10,9 @@ export type MomentumIgnitionV2Status =
   | "FAILED_BREAKOUT"
   | "NOT_QUALIFIED";
 
+// Migration-test oracle only. Production loaders call
+// pipelines/strategy_math/momentum.py through the Python batch boundary.
+
 export interface MomentumIgnitionV2Assessment extends Omit<MomentumIgnitionAssessment, "status" | "score" | "qualifies"> {
   legacyStatus: MomentumIgnitionAssessment["status"];
   status: MomentumIgnitionV2Status;

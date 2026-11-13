@@ -1,9 +1,11 @@
 import { query } from "@/lib/db";
-import { ARMED_SWING_RULES, resultsCalendarCoverage } from "@/lib/analytics/armedSwing";
-import { isMarketOpenNow, refreshMarketHolidays, tradingDayOffset, tradingSessionLag, zonedMarketClock } from "@/lib/market-calendar.mjs";
+import { isMarketOpenNow, marketHolidayDates, refreshMarketHolidays, zonedMarketClock } from "@/lib/market-calendar.mjs";
+import { runPythonStrategyBatch } from "@/lib/pythonStrategyMath";
+import SPECIAL_SESSIONS from "@/config/market-special-sessions.json" with { type: "json" };
 
 export type TrendContinuationStatus = "IMPULSE_DETECTED" | "CONTINUATION_WATCH" | "TREND_CONTINUATION_READY" | "EXTENDED_RISK";
 export interface TrendContinuationCandidate {
+  pythonRank?: number;
   assetId: string; ticker: string; name: string | null; status: TrendContinuationStatus;
   ready: boolean; observationOnly: boolean; score: number; entry: number | null;
   stop: number | null; target: number | null; asOfMarketDate: string;
@@ -75,45 +77,28 @@ export async function getTrendContinuationCandidates(market: "IN" | "US", limit 
     [ids, sessionDate],
   ) : [];
   const executionByAsset = new Map(executionRows.map((row) => [row.asset_id, row]));
-  const requiredCoverageFrom = tradingDayOffset(market, sessionDate, 1);
-  const requiredCoverageThrough = tradingDayOffset(market, sessionDate, ARMED_SWING_RULES.resultsBlackoutSessions);
-  return rows.map((row) => {
-    const execution = executionByAsset.get(row.asset_id);
-    const number = (value: string | null | undefined) => value === null || value === undefined ? null : Number(value);
-    const price = number(execution?.price);
-    const bid = number(execution?.best_bid);
-    const ask = number(execution?.best_ask);
-    const lower = number(execution?.lower_circuit);
-    const upper = number(execution?.upper_circuit);
+  const now = new Date().toISOString();
+  const inputs = rows.map((row) => ({
+    candidate: row,
+    execution: executionByAsset.get(row.asset_id) ?? null,
+    now,
+    sessionDate,
+    marketOpen,
+    holidays: marketHolidayDates(market),
+    specialTradingDates: Object.keys(SPECIAL_SESSIONS.IN),
+  }));
+  const assessments = await runPythonStrategyBatch<(typeof inputs)[number], Pick<TrendContinuationCandidate,
+    "executionEligible" | "executionBlockers" | "observationOnly" | "currentPrice"> & { pythonRank: number }>("trend_execution", inputs);
+  return rows.map((row, index) => {
+    const assessment = assessments[index];
     const entry = row.entry === null ? null : Number(row.entry);
-    const quoteAgeMinutes = execution?.updated_at ? (Date.now() - Date.parse(execution.updated_at)) / 60_000 : Number.POSITIVE_INFINITY;
-    const spreadPct = bid !== null && ask !== null && bid > 0 && ask >= bid ? ((ask - bid) / ((ask + bid) / 2)) * 100 : null;
-    const lowerRoomPct = price !== null && lower !== null && lower > 0 ? ((price / lower) - 1) * 100 : null;
-    const coverage = execution ? resultsCalendarCoverage({
-      today: sessionDate, lastSuccessAt: execution.last_success_at, nextDate: execution.next_date,
-      lastPastDate: execution.last_past_date, authoritativeSource: execution.authoritative_source,
-      authoritativeAsOf: execution.authoritative_as_of, authoritativeCoverageFrom: execution.authoritative_coverage_from,
-      authoritativeCoverageThrough: execution.authoritative_coverage_through,
-      requiredCoverageFrom, requiredCoverageThrough,
-    }) : { verified: false, detail: "Results calendar unavailable." };
-    const sessionsToResults = execution?.next_date ? tradingSessionLag(market, sessionDate, execution.next_date) : null;
-    const blockers: string[] = [];
-    const dayTwoEntry = row.metrics.early_breakout === true || row.metrics.setup === "DAY_TWO_STAIRCASE";
-    if (row.status !== "TREND_CONTINUATION_READY" || !row.ready || !dayTwoEntry) blockers.push("Only a confirmed day-two entry can be bought.");
-    if (!marketOpen) blockers.push("Entry is available only during NSE market hours.");
-    if (execution?.source !== "BREEZE_LIVE" || quoteAgeMinutes < 0 || quoteAgeMinutes > ARMED_SWING_RULES.maxQuoteAgeMinutes) blockers.push("A fresh Breeze quote is required.");
-    if (spreadPct === null || spreadPct > ARMED_SWING_RULES.maxSpreadPct) blockers.push("Bid/ask spread is missing or above 0.75%.");
-    if (lowerRoomPct === null || lowerRoomPct <= ARMED_SWING_RULES.minLowerCircuitRoomPct || upper === null || entry === null || entry > upper) blockers.push("Circuit-band execution room is not verified.");
-    if (price === null || entry === null || row.target === null || price < entry * 0.999 || price >= Number(row.target)) blockers.push("Live price is outside the frozen entry-to-target range.");
-    if (!coverage.verified) blockers.push(coverage.detail);
-    if (sessionsToResults !== null && sessionsToResults <= ARMED_SWING_RULES.resultsBlackoutSessions) blockers.push(`Results are due within ${ARMED_SWING_RULES.resultsBlackoutSessions} sessions.`);
-    if (Date.now() - Date.parse(row.computed_at) > 5 * 60_000) blockers.push("The continuation calculation is stale; wait for the next scan.");
     return {
       assetId: row.asset_id, ticker: row.ticker, name: row.name, status: row.status,
-      ready: row.ready, observationOnly: blockers.length > 0, score: row.score,
+      ready: row.ready, observationOnly: assessment.observationOnly, score: row.score,
       entry, stop: row.stop === null ? null : Number(row.stop), target: row.target === null ? null : Number(row.target),
       asOfMarketDate: row.asof_market_date, computedAt: row.computed_at, metrics: row.metrics, reasons: row.reasons,
-      executionEligible: blockers.length === 0, executionBlockers: blockers, currentPrice: price,
+      executionEligible: assessment.executionEligible, executionBlockers: assessment.executionBlockers,
+      currentPrice: assessment.currentPrice, pythonRank: assessment.pythonRank,
     };
-  }).sort(compareTrendCandidates).slice(0, limit);
+  }).sort((left, right) => (left.pythonRank ?? Number.MAX_SAFE_INTEGER) - (right.pythonRank ?? Number.MAX_SAFE_INTEGER)).slice(0, limit);
 }

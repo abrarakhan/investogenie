@@ -2,7 +2,7 @@ import type { ArmedSwingCandidate } from "@/lib/armedSwing";
 import { displayArmedSwing, displayLegacyMomentum, displayMomentumV2, displayStrongSwing, displayTrendContinuation } from "@/lib/displayScanCache";
 import { ARMED_STATUS_LABEL, ARMED_WHEN_TO_ENTER } from "@/lib/armedSwingCopy";
 import type { ArmedSwingStatus } from "@/lib/analytics/armedSwing";
-import { rankStrongSwingCandidates, rankSwingCandidates, swingDisplayScore } from "@/lib/analytics/candidateRanking";
+import { rankSwingCandidates, swingDisplayScore } from "@/lib/analytics/candidateRanking";
 import {
   MOMENTUM_IGNITION_LEGACY_STATUS_LABEL, MOMENTUM_IGNITION_STATUS_LABEL, STRONG_SWING_BLOCKED_BUY_LABEL,
   STRONG_SWING_STATUS_LABEL, TREND_CONTINUATION_STATUS_LABEL, swingBuildupLabel, swingVerdictLabel,
@@ -535,7 +535,7 @@ async function strongSwing(market: MobileMarket, params: URLSearchParams, userId
 
   const models = STRONG_MODELS.filter((model) => model !== "TREND_CONTINUATION" || market === "IN");
   const model = pick(params.get("model"), models, "STRONG_SWING");
-  const ranked = rankStrongSwingCandidates(strong);
+  const ranked = strong;
   const counts = {
     STRONG_SWING: [ranked.length, ranked.filter((item) => item.status === "EXECUTION_READY").length],
     MOMENTUM_IGNITION: [legacy.candidates.length, legacy.candidates.filter((item) => isMomentumExecutionReady(item.status)).length],

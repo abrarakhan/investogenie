@@ -3,7 +3,6 @@
 import Link from "next/link";
 import type { StrongSwingCandidate } from "@/lib/strongSwing";
 import type { StrongSwingStatus } from "@/lib/analytics/strongSwing";
-import { rankStrongSwingCandidates } from "@/lib/analytics/candidateRanking";
 import { STRONG_SWING_BLOCKED_BUY_LABEL, STRONG_SWING_STATUS_LABEL } from "@/lib/candidateStatusCopy";
 import TradingViewChartModal, { useTradingViewChart, type ChartGestureProps, type ChartSymbol } from "@/components/charts/TradingViewChartModal";
 import LazyCandidateGroup, { type LazySource } from "@/components/screener/LazyCandidateGroup";
@@ -206,7 +205,7 @@ function CandidateGroup({
           {note && <div className="mt-1 text-[11px] normal-case tracking-normal text-white/35">{note}</div>}
         </div>
       }
-      render={(items) => rankStrongSwingCandidates(items).slice(0, limit).map((candidate) => <CandidateCard key={candidate.assetId} candidate={candidate} planId={planIds[`STRONG_SWING:${candidate.status}:${candidate.assetId}`] ?? null} chartGesture={bindChartGesture({ ticker: candidate.ticker, exchange: candidate.exchange })} />)}
+      render={(items) => items.slice(0, limit).map((candidate) => <CandidateCard key={candidate.assetId} candidate={candidate} planId={planIds[`STRONG_SWING:${candidate.status}:${candidate.assetId}`] ?? null} chartGesture={bindChartGesture({ ticker: candidate.ticker, exchange: candidate.exchange })} />)}
     />
   );
 }
@@ -221,7 +220,7 @@ export default function StrongSwingCandidates({ candidates, counts, planIds, mar
   market?: string;
 }) {
   const { chart, closeChart, bindChartGesture } = useTradingViewChart();
-  const ranked = rankStrongSwingCandidates(candidates);
+  const ranked = candidates;
   const of = (status: StrongSwingStatus) => ranked.filter((candidate) => candidate.status === status);
   const total = (status: StrongSwingStatus) => counts?.[status] ?? of(status).length;
   // Collapsed groups come from the server on first open when this screen defers them.
