@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { query, queryOne } from "@/lib/db";
-import { isMomentumExecutionReady } from "@/lib/momentumExecution";
+import { isMomentumExecutionReady, MOMENTUM_EXECUTION_MODEL_VERSION } from "@/lib/momentumExecution";
 import type { StrongSwingCandidate } from "@/lib/strongSwing";
 import type { TrendContinuationCandidate } from "@/lib/trendContinuation";
 
@@ -122,6 +122,13 @@ export function validateExecutionPlanPurchase(plan: StoredExecutionPlan | null, 
     : plan.strategyKey === "TREND_CONTINUATION" ? plan.status === "TREND_CONTINUATION_READY"
     : plan.status === "ENTRY_READY" || plan.status === "MOMENTUM_READY";
   if (!actionable) return "The stored plan is not execution ready";
+  if (plan.strategyKey === "MOMENTUM_IGNITION") {
+    const snapshot = plan.snapshot && typeof plan.snapshot === "object"
+      ? plan.snapshot as Record<string, unknown> : null;
+    if (snapshot?.executionModelVersion !== MOMENTUM_EXECUTION_MODEL_VERSION) {
+      return "The Momentum execution model changed; reload the candidate page for a current plan";
+    }
+  }
   if (plan.sessionDate !== input.today || input.boughtOn !== plan.sessionDate) return "The execution plan is not from today's market session";
   if (input.nowMs - Date.parse(plan.capturedAt) > EXECUTION_PLAN_MAX_AGE_MINUTES * 60_000) return "The execution plan is stale; reload the candidate page";
   if (input.buyPrice < plan.entry * 0.999) return `The purchase must be at or above the ${plan.entry.toFixed(2)} confirmed entry`;
@@ -163,7 +170,8 @@ export function momentumExecutionPlanInputs(
     assetId: candidate.assetId, strategyKey: "MOMENTUM_IGNITION" as const, status: candidate.status,
     entry: candidate.projectedEntry, target: candidate.projectedTarget, stop: candidate.projectedStop,
     trail: candidate.projectedTrail, atr: candidate.atr14, expectedDays: candidate.projectedDays,
-    signalAsOf: candidate.latestDate, score: candidate.score / 100, snapshot: { model, gates: candidate.gates },
+    signalAsOf: candidate.latestDate, score: candidate.score / 100,
+    snapshot: { model, executionModelVersion: MOMENTUM_EXECUTION_MODEL_VERSION, gates: candidate.gates },
   }));
 }
 

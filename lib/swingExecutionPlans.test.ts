@@ -8,6 +8,7 @@ import {
   type StoredExecutionPlan,
 } from "@/lib/swingExecutionPlans";
 import type { TrendContinuationCandidate } from "@/lib/trendContinuation";
+import { MOMENTUM_EXECUTION_MODEL_VERSION } from "@/lib/momentumExecution";
 
 const plan = (overrides: Partial<StoredExecutionPlan> = {}): StoredExecutionPlan => ({
   id: "00000000-0000-0000-0000-000000000001", assetId: "asset-1", market: "IN",
@@ -48,6 +49,16 @@ describe("protected swing execution plans", () => {
     expect(validateExecutionPlanPurchase(continuation, { ...purchase, strategyKey: "TREND_CONTINUATION" })).toBeNull();
     expect(validateExecutionPlanPurchase({ ...continuation, status: "CONTINUATION_WATCH" }, { ...purchase, strategyKey: "TREND_CONTINUATION" }))
       .toMatch(/not execution ready/);
+  });
+
+  it("invalidates Momentum plans captured by older entry logic", () => {
+    const momentumPurchase = { ...purchase, strategyKey: "MOMENTUM_IGNITION" as const };
+    const current = plan({
+      strategyKey: "MOMENTUM_IGNITION", status: "MOMENTUM_READY",
+      snapshot: { executionModelVersion: MOMENTUM_EXECUTION_MODEL_VERSION },
+    });
+    expect(validateExecutionPlanPurchase(current, momentumPurchase)).toBeNull();
+    expect(validateExecutionPlanPurchase({ ...current, snapshot: {} }, momentumPurchase)).toMatch(/model changed/);
   });
 
   it("builds a plan only for an execution-eligible day-two continuation", () => {

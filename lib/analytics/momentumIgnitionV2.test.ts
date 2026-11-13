@@ -28,9 +28,23 @@ function benchmark(count = 240): OHLCV[] {
   }));
 }
 
+function compressedBase(): OHLCV[] {
+  const history = bars();
+  const start = history.length - 12;
+  const base = history[start - 1].close;
+  for (let index = start; index < history.length; index++) {
+    const close = base + ((index - start) % 3) * 0.03;
+    history[index] = {
+      ...history[index], open: close - 0.08, high: close + 0.32,
+      low: close - 0.32, close, volume: 600_000,
+    };
+  }
+  return history;
+}
+
 describe("Momentum Ignition V2", () => {
   it("uses a one-session plan for a clean first thrust", () => {
-    const history = bars();
+    const history = compressedBase();
     const preview = assessMomentumIgnitionV2({
       currentPrice: history.at(-1)!.close,
       bars: history,
@@ -49,6 +63,53 @@ describe("Momentum Ignition V2", () => {
     expect(["FIRST_THRUST", "MOMENTUM_READY"]).toContain(result.status);
     expect(result.shortHorizonDays).toBe(1);
     expect(result.shortHorizonTargetPct).toBeLessThanOrEqual(5);
+  });
+
+  it("keeps a genuine day-two continuation eligible", () => {
+    const history = compressedBase();
+    const preview = assessMomentumIgnitionV2({
+      currentPrice: history.at(-2)!.close,
+      bars: history.slice(0, -1),
+      benchmarkBars: benchmark().slice(0, -1),
+    });
+    const dayOne = preview.entryTrigger + preview.atr14 * 0.12;
+    history[history.length - 2] = {
+      ...history.at(-2)!, open: dayOne - 0.45, high: dayOne + 0.18,
+      low: dayOne - 0.7, close: dayOne, volume: 2_400_000,
+    };
+    const dayTwo = dayOne + preview.atr14 * 0.18;
+    history[history.length - 1] = {
+      ...history.at(-1)!, open: dayOne + preview.atr14 * 0.05, high: dayTwo + preview.atr14 * 0.02,
+      low: dayOne + preview.atr14 * 0.03, close: dayTwo, volume: 2_200_000,
+    };
+    const result = assessMomentumIgnitionV2({ currentPrice: dayTwo, bars: history, benchmarkBars: benchmark() });
+    expect(result.breakoutAgeSessions).toBe(1);
+    expect(result.status).toBe("MOMENTUM_READY");
+  });
+
+  it("does not re-arm a mature staircase when it prints another rolling high", () => {
+    const history = compressedBase();
+    const preview = assessMomentumIgnitionV2({
+      currentPrice: history.at(-8)!.close,
+      bars: history.slice(0, -7),
+      benchmarkBars: benchmark().slice(0, -7),
+    });
+    const anchor = preview.entryTrigger + preview.atr14 * 0.12;
+    for (let offset = 0; offset < 7; offset++) {
+      const index = history.length - 7 + offset;
+      const close = anchor + preview.atr14 * (0.25 + offset * 0.42);
+      history[index] = {
+        ...history[index], open: close - preview.atr14 * 0.25,
+        high: close + preview.atr14 * 0.12, low: close - preview.atr14 * 0.32,
+        close, volume: 2_000_000 + offset * 100_000,
+      };
+    }
+    const current = history.at(-1)!.close;
+    const result = assessMomentumIgnitionV2({ currentPrice: current, bars: history, benchmarkBars: benchmark() });
+    expect(result.breakoutAgeSessions).toBeGreaterThan(2);
+    expect(result.status).toBe("LATE_PROFIT_BOOKING");
+    expect(result.timingReasons.join(" ")).toContain("original breakout");
+    expect(result.status).not.toBe("MOMENTUM_READY");
   });
 
   it("labels a breakout with nearby historical resistance as late", () => {

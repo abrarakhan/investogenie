@@ -16,6 +16,8 @@ export interface MomentumIgnitionV2Assessment extends Omit<MomentumIgnitionAsses
   qualifies: boolean;
   score: number;
   breakoutAgeSessions: number | null;
+  episodeGainAtr: number | null;
+  distanceEma10Atr: number;
   breakoutTests10: number;
   return5Pct: number;
   retreatFromHighPct: number;
@@ -39,6 +41,27 @@ function priorBreakoutEvents(bars: OHLCV[], atr14: number): Array<{ index: numbe
     if (bars[index].high >= level && bars[index - 1].close < level) events.push({ index, level });
   }
   return events;
+}
+
+function activeBreakoutEpisode(
+  bars: OHLCV[],
+  events: Array<{ index: number; level: number }>,
+  atr14: number,
+): { index: number; level: number } | undefined {
+  let active = events.at(0);
+  for (const event of events.slice(1)) {
+    if (!active) { active = event; continue; }
+    const failedBeforeNextBreak = bars
+      .slice(active.index + 1, event.index)
+      .some((bar) => bar.close < active!.level - atr14 * 0.25);
+    if (failedBeforeNextBreak) active = event;
+  }
+  return active;
+}
+
+function ema(values: number[], period: number): number {
+  const multiplier = 2 / (period + 1);
+  return values.slice(1).reduce((value, next) => next * multiplier + value * (1 - multiplier), values[0] ?? 0);
 }
 
 function nearestOverheadResistance(bars: OHLCV[], currentPrice: number): number | null {
@@ -74,8 +97,16 @@ export function assessMomentumIgnitionV2(input: MomentumIgnitionInput): Momentum
   const latest = bars.at(-1) as OHLCV;
   const previous = bars.at(-2) as OHLCV;
   const events = priorBreakoutEvents(bars, legacy.atr14);
-  const latestEvent = events.at(-1);
-  const breakoutAgeSessions = latestEvent ? bars.length - 1 - latestEvent.index : null;
+  // A staircase can print several rolling 20-day highs without becoming a new
+  // trade. Keep the first intact break as the episode anchor; only a genuine
+  // failure below that level allows a later break to start a new episode.
+  const episode = activeBreakoutEpisode(bars, events, legacy.atr14);
+  const breakoutAgeSessions = episode ? bars.length - 1 - episode.index : null;
+  const episodeGainAtr = episode && legacy.atr14 > 0
+    ? (input.currentPrice - episode.level) / legacy.atr14
+    : null;
+  const ema10 = ema(bars.map((bar) => bar.close), 10);
+  const distanceEma10Atr = legacy.atr14 > 0 ? (input.currentPrice - ema10) / legacy.atr14 : Number.POSITIVE_INFINITY;
   const breakoutTests10 = breakoutTestClusters(bars, legacy.breakoutLevel, legacy.atr14);
   const fiveStart = bars.at(-Math.min(6, bars.length)) as OHLCV;
   const return5Pct = pct(fiveStart.close, input.currentPrice);
@@ -88,18 +119,30 @@ export function assessMomentumIgnitionV2(input: MomentumIgnitionInput): Momentum
 
   const gatePassed = (key: string) => legacy.gates.find((item) => item.key === key)?.passed ?? false;
   const breakoutTriggered = input.currentPrice >= legacy.entryTrigger;
-  const freshThrust = breakoutTriggered && previous.close < legacy.entryTrigger && (breakoutAgeSessions ?? 0) <= 1;
-  const recentBreakout = latestEvent !== undefined && (breakoutAgeSessions ?? 99) <= 3;
-  const retestLevel = latestEvent?.level ?? legacy.breakoutLevel;
+  const freshThrust = episode !== undefined
+    && breakoutAgeSessions === 0
+    && previous.close < episode.level
+    && input.currentPrice >= episode.level;
+  const recentBreakout = episode !== undefined && (breakoutAgeSessions ?? 99) <= 3;
+  const retestLevel = episode?.level ?? legacy.breakoutLevel;
   const retestHeld = recentBreakout
     && latest.low <= retestLevel + legacy.atr14 * 0.25
     && input.currentPrice >= retestLevel;
+  const dayTwoContinuation = episode !== undefined
+    && (breakoutAgeSessions === 1 || breakoutAgeSessions === 2)
+    && previous.close >= episode.level
+    && latest.low >= episode.level - legacy.atr14 * 0.25
+    && input.currentPrice >= previous.close;
   const enoughHeadroom = resistanceHeadroomPct === null || resistanceHeadroomPct >= 5;
   const earlyRun = return5Pct <= 12;
   const acceleration = (ignitionAccelerationPct ?? Number.NEGATIVE_INFINITY) > 0;
   const strongClose = legacy.closeLocation >= 0.8 && retreatFromHighPct <= 1.25;
   const volumeConfirmed = legacy.projectedVolumeRatio >= 1.5;
   const extensionSafe = legacy.entryExtensionAtr <= 0.3;
+  const episodeExtensionSafe = episodeGainAtr !== null && episodeGainAtr <= 2;
+  const trendExtensionSafe = distanceEma10Atr <= 1.75;
+  const episodeTimingSafe = (breakoutAgeSessions ?? 99) <= 2;
+  const noChase = extensionSafe && episodeExtensionSafe && trendExtensionSafe && episodeTimingSafe;
   const repeatSafe = breakoutTests10 <= 1;
   const safetyPassed = gatePassed("freshness") && gatePassed("liquidity") && gatePassed("circuit")
     && gatePassed("volatility") && input.currentPrice >= (input.priceFloor ?? 20);
@@ -107,10 +150,11 @@ export function assessMomentumIgnitionV2(input: MomentumIgnitionInput): Momentum
   const preIgnition = !breakoutTriggered && legacy.distanceToBreakoutPct >= 0
     && legacy.distanceToBreakoutPct <= 3 && structurePassed && safetyPassed;
   const failedBreakout = recentBreakout && input.currentPrice < retestLevel - legacy.atr14 * 0.25;
-  const late = breakoutTriggered && (!earlyRun || !enoughHeadroom || !acceleration || !strongClose || !repeatSafe);
+  const late = episode !== undefined && input.currentPrice >= episode.level
+    && (!earlyRun || !enoughHeadroom || !acceleration || !strongClose || !repeatSafe || !noChase);
 
   const rawScore =
-    (freshThrust || retestHeld ? 25 : preIgnition ? 15 : 0)
+    (freshThrust || retestHeld || dayTwoContinuation ? 25 : preIgnition ? 15 : 0)
     + (enoughHeadroom ? 20 : 0)
     + (volumeConfirmed ? 15 : 0)
     + (strongClose ? 15 : 0)
@@ -127,10 +171,10 @@ export function assessMomentumIgnitionV2(input: MomentumIgnitionInput): Momentum
   let status: MomentumIgnitionV2Status = "NOT_QUALIFIED";
   if (safetyPassed && structurePassed && failedBreakout) status = "FAILED_BREAKOUT";
   else if (safetyPassed && structurePassed && late) status = "LATE_PROFIT_BOOKING";
-  else if (safetyPassed && structurePassed && retestHeld && acceleration && enoughHeadroom && earlyRun) {
-    status = volumeConfirmed && strongClose ? "MOMENTUM_READY" : "RETEST_SETUP";
+  else if (safetyPassed && structurePassed && (retestHeld || dayTwoContinuation) && acceleration && enoughHeadroom && earlyRun) {
+    status = volumeConfirmed && strongClose && noChase ? "MOMENTUM_READY" : "RETEST_SETUP";
   } else if (safetyPassed && structurePassed && freshThrust && acceleration && enoughHeadroom && earlyRun && repeatSafe) {
-    status = volumeConfirmed && strongClose && extensionSafe ? "MOMENTUM_READY" : "FIRST_THRUST";
+    status = volumeConfirmed && strongClose && noChase ? "MOMENTUM_READY" : "FIRST_THRUST";
   } else if (preIgnition) status = "PRE_IGNITION";
 
   const timingReasons: string[] = [];
@@ -139,6 +183,10 @@ export function assessMomentumIgnitionV2(input: MomentumIgnitionInput): Momentum
   if (!earlyRun) timingReasons.push(`The stock has already risen ${return5Pct.toFixed(1)}% over five sessions.`);
   if (!strongClose) timingReasons.push(`Price is ${retreatFromHighPct.toFixed(1)}% below the session high or outside the top 20% of its range.`);
   if (!repeatSafe) timingReasons.push(`${breakoutTests10} recent tests near the breakout increase profit-booking risk.`);
+  if (!episodeTimingSafe && breakoutAgeSessions !== null) timingReasons.push(`The original breakout is already ${breakoutAgeSessions} sessions old.`);
+  if (!episodeExtensionSafe && episodeGainAtr !== null) timingReasons.push(`Price is ${episodeGainAtr.toFixed(2)} ATR above the original breakout level.`);
+  if (!trendExtensionSafe) timingReasons.push(`Price is ${distanceEma10Atr.toFixed(2)} ATR above EMA10.`);
+  if (!extensionSafe) timingReasons.push(`Price is ${legacy.entryExtensionAtr.toFixed(2)} ATR beyond the current trigger.`);
   if (timingReasons.length === 0) {
     timingReasons.push(status === "RETEST_SETUP" ? "The first retest is holding; renewed volume and a strong close are still required."
       : status === "PRE_IGNITION" ? "The stock is approaching its first breakout trigger."
@@ -157,6 +205,8 @@ export function assessMomentumIgnitionV2(input: MomentumIgnitionInput): Momentum
     qualifies: status !== "NOT_QUALIFIED",
     score,
     breakoutAgeSessions,
+    episodeGainAtr,
+    distanceEma10Atr,
     breakoutTests10,
     return5Pct,
     retreatFromHighPct,
