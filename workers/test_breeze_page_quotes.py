@@ -3,10 +3,19 @@ import unittest
 import datetime as dt
 
 from breeze_market_daemon import IST
-from breeze_page_quotes import execution_fields, materially_changed, same_session
+from breeze_page_quotes import calls_allowed, execution_fields, materially_changed, same_session
 
 
 class BreezePageQuoteTests(unittest.TestCase):
+    def test_page_refreshes_stop_at_the_daily_call_budget(self):
+        self.assertEqual(calls_allowed(0, False, 1500), 1500)
+        self.assertEqual(calls_allowed(1490, False, 1500), 10)
+        self.assertEqual(calls_allowed(1500, False, 1500), 0)
+        self.assertEqual(calls_allowed(1700, False, 1500), 0)
+
+    def test_no_calls_once_breeze_has_refused_more_today(self):
+        self.assertEqual(calls_allowed(10, True, 1500), 0)
+
     def test_extracts_rest_execution_depth_and_circuit_bands(self):
         self.assertEqual(execution_fields({
             "best_bid_price": "687.60",

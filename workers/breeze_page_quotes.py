@@ -6,7 +6,7 @@ import time
 
 import psycopg2
 from breeze_market_daemon import database_url, decrypt_credential, env, integer, number, IST
-from breeze_account_sync import response_rows
+from breeze_account_sync import is_quota_error, response_rows
 
 
 def execution_fields(row):
@@ -45,6 +45,63 @@ def materially_changed(previous, current, tolerance=1e-9):
 FEED_FRESH_SECONDS = 90
 
 
+# Breeze allows a fixed number of REST calls a day, shared with the account sync and the
+# after-close candle load. Page refreshes may spend this many of them and no more.
+USAGE_JOB = "breeze-page-quotes"
+DEFAULT_DAILY_CALLS = 1500
+
+
+def daily_call_limit() -> int:
+    try:
+        return max(0, int(env("BREEZE_PAGE_QUOTE_DAILY_CALLS") or DEFAULT_DAILY_CALLS))
+    except ValueError:
+        return DEFAULT_DAILY_CALLS
+
+
+def calls_allowed(used: int, spent: bool, limit: int) -> int:
+    """How many more quote requests this run may send today."""
+    return 0 if spent else max(0, limit - used)
+
+
+def usage_today(conn) -> tuple[int, bool]:
+    """Quote requests already sent today (IST), and whether Breeze has refused more."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """select coalesce(sum((detail->>'calls')::int),0),
+                      coalesce(bool_or((detail->>'spent')::boolean),false)
+                 from public.cron_logs
+                where job=%s
+                  and created_at >= date_trunc('day', now() at time zone 'Asia/Kolkata') at time zone 'Asia/Kolkata'""",
+            (USAGE_JOB,),
+        )
+        used, spent = cur.fetchone()
+    return int(used), bool(spent)
+
+
+def record_usage(conn, calls: int, spent: bool) -> None:
+    if not calls and not spent:
+        return
+    # One running row a day, so the job log is not filled with a row per page refresh.
+    with conn.cursor() as cur:
+        cur.execute(
+            """update public.cron_logs
+                  set detail=jsonb_build_object(
+                        'calls', coalesce((detail->>'calls')::int,0) + %s,
+                        'spent', coalesce((detail->>'spent')::boolean,false) or %s)
+                where id=(select id from public.cron_logs
+                           where job=%s
+                             and created_at >= date_trunc('day', now() at time zone 'Asia/Kolkata') at time zone 'Asia/Kolkata'
+                           order by id limit 1)""",
+            (calls, spent, USAGE_JOB),
+        )
+        if cur.rowcount == 0:
+            cur.execute(
+                "insert into public.cron_logs(job,status,detail) values(%s,'ok',%s::jsonb)",
+                (USAGE_JOB, json.dumps({"calls": calls, "spent": spent})),
+            )
+    conn.commit()
+
+
 def same_session(previous_as_of, stamp):
     """Whether the stored quote belongs to the same market day as a new tick.
 
@@ -63,6 +120,9 @@ def main():
     updated = 0
     changed = 0
     live = 0
+    calls = 0
+    spent = False
+    budget = None
     errors = []
     with psycopg2.connect(database_url()) as conn:
         with conn.cursor() as cur:
@@ -87,13 +147,30 @@ def main():
         if not assets:
             print(json.dumps({"updated": 0, "changed": 0, "live": live, "unmapped": len(ids)-len(mapped), "errors": []}))
             return
+        used, already_spent = usage_today(conn)
+        conn.commit()
+        allowed = calls_allowed(used, already_spent, daily_call_limit())
+        if allowed < len(assets):
+            budget = "spent"
+            assets = assets[:allowed]
+        if not assets:
+            print(json.dumps({"updated": 0, "changed": 0, "live": live, "unmapped": len(ids)-len(mapped),
+                              "errors": [], "budget": budget}))
+            return
         # Imported late: the SDK downloads the security master on import.
         from breeze_connect import BreezeConnect
         breeze = BreezeConnect(api_key=key)
         breeze.generate_session(api_secret=secret, session_token=token)
         for asset_id, code, exchange in assets:
             try:
-                rows = response_rows(breeze.get_quotes(stock_code=code, exchange_code=exchange, product_type="cash"))
+                calls += 1
+                response = breeze.get_quotes(stock_code=code, exchange_code=exchange, product_type="cash")
+                if isinstance(response, dict) and is_quota_error(response.get("Error")):
+                    # Asking again today gives the same answer; stop and stay stopped.
+                    spent = True
+                    budget = "spent"
+                    break
+                rows = response_rows(response)
                 row = next((r for r in rows if r.get("exchange_code") == exchange and float(r.get("ltp") or 0) > 0), None)
                 if not row:
                     raise RuntimeError("No valid cash quote returned")
@@ -148,9 +225,15 @@ def main():
                 conn.commit()
             except Exception as exc:
                 conn.rollback()
+                if is_quota_error(exc):
+                    spent = True
+                    budget = "spent"
+                    break
                 errors.append(f"{code}: {exc}")
             time.sleep(0.7)
-    print(json.dumps({"updated": updated, "changed": changed, "live": live, "unmapped": len(ids)-len(mapped), "errors": errors}))
+        record_usage(conn, calls, spent)
+    print(json.dumps({"updated": updated, "changed": changed, "live": live, "unmapped": len(ids)-len(mapped),
+                      "errors": errors, "budget": budget}))
 
 
 if __name__ == "__main__":

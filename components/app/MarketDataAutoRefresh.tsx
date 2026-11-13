@@ -34,7 +34,10 @@ export default function MarketDataAutoRefresh({ market, assetIds = [] }: { marke
         if (cancelled) return;
         const incomplete = results.some(({ response, result }) => !response.ok
           || (result.reason !== "off_hours" && (result.errors?.length || result.unmapped)));
-        setWarning(incomplete ? "Some Breeze quotes could not be refreshed. Last known prices remain visible." : null);
+        const budgetSpent = results.some(({ result }) => result.budget === "spent");
+        setWarning(incomplete ? "Some Breeze quotes could not be refreshed. Last known prices remain visible."
+          : budgetSpent ? "Today's Breeze quote allowance is used up. Stocks on the live feed keep updating; others show their last price."
+            : null);
         // A REST refresh can touch freshness without changing anything shown.
         // Recompute the analytics pages for a material quote/depth change, or
         // when the live feed is already carrying these stocks' prices.
