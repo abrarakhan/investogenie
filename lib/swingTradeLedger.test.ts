@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { calculateRecommendedGttStop, calculateSwingTradeProgress, calculateXirr, ledgerDateText, summarizeSwingTradeLedger, tradingDaysBetween } from "@/lib/swingTradeLedger";
+import { POST_ENTRY_TRAIL_FROM, usesPostEntryNextBarTrail, calculateRecommendedGttStop, calculateSwingTradeProgress, calculateXirr, ledgerDateText, summarizeSwingTradeLedger, tradingDaysBetween } from "@/lib/swingTradeLedger";
 
 describe("swing trade ledger progress", () => {
   it("ratchets protection to break-even after the trade reaches 0.75R", () => {
@@ -50,6 +50,17 @@ describe("swing trade ledger progress", () => {
       postEntryNextBarPolicy: true,
     });
     expect(strict).toEqual({ recommendedStop: 94, breakEvenActivated: false });
+  });
+
+  it("applies the next-bar trail to every strategy's trades bought from the cutover on", () => {
+    expect(usesPostEntryNextBarTrail(POST_ENTRY_TRAIL_FROM, false)).toBe(true);
+    expect(usesPostEntryNextBarTrail("2026-12-01", false)).toBe(true);
+  });
+
+  it("leaves trades opened before the cutover on the stop they were already shown", () => {
+    expect(usesPostEntryNextBarTrail("2026-11-13", false)).toBe(false);
+    expect(usesPostEntryNextBarTrail(null, false)).toBe(false);
+    expect(usesPostEntryNextBarTrail("2026-11-13", true)).toBe(true);
   });
 
   it("keeps PostgreSQL date values on their local calendar day", () => {

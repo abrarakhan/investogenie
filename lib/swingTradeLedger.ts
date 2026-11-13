@@ -64,7 +64,7 @@ export function calculateRecommendedGttStop(input: {
   trailingDistance: number | null;
   highestHigh: number | null;
   currentPrice: number | null;
-  /** Strong Swing v2: only completed-session highs strictly after the fill session. */
+  /** Next-bar policy: only completed-session highs strictly after the fill session. */
   postEntryCompletedHigh?: number | null;
   postEntryNextBarPolicy?: boolean;
 }): { recommendedStop: number; breakEvenActivated: boolean } {
@@ -335,6 +335,17 @@ export interface SwingLedgerTrade {
 type LedgerValue = unknown;
 type LedgerRow = Record<string, LedgerValue>;
 
+/**
+ * Trades bought from this date on, in any strategy, advance their trail only from completed
+ * sessions after the entry day. Trades opened earlier keep the stop they were already shown:
+ * switching them would lower a recommended stop on a live position.
+ */
+export const POST_ENTRY_TRAIL_FROM = "2026-11-14";
+
+export function usesPostEntryNextBarTrail(boughtOn: string | null, strongSwingPlanVersioned: boolean): boolean {
+  return strongSwingPlanVersioned || (boughtOn !== null && boughtOn >= POST_ENTRY_TRAIL_FROM);
+}
+
 function usesStrongSwingPostEntryTrail(row: LedgerRow): boolean {
   if (String(row.strategy_key) !== "STRONG_SWING") return false;
   const raw = row.projection_snapshot;
@@ -548,7 +559,7 @@ export async function getSwingTradeLedger(userId: string, market: "IN" | "US"): 
     const quoteUpdatedAt = row.quote_updated_at ? new Date(row.quote_updated_at as Date | string).getTime() : 0;
     const quoteFresh = status === "CLOSED" || !marketOpen || quoteUpdatedAt >= Date.now() - 7 * 60 * 1000;
     const currentPrice = quoteFresh ? nullableNumber(row.current_price) : null;
-    const postEntryNextBarPolicy = usesStrongSwingPostEntryTrail(row);
+    const postEntryNextBarPolicy = usesPostEntryNextBarTrail(ledgerDateText(row.bought_on), usesStrongSwingPostEntryTrail(row));
     const gttProtection = calculateRecommendedGttStop({
       buyPrice,
       projectedStop: Number(row.projected_stop),

@@ -1228,7 +1228,8 @@ const strongSwingArticle: HelpArticle = {
         A new Strong Swing trade starts with its frozen protective stop. Its trailing line advances
         only from completed-session highs after the recorded entry day, and each advance applies
         from the following session. Entry-day highs and the current live price cannot raise their
-        own stop.
+        own stop. The same rule applies to trades of every strategy bought from
+        14 November 2026 on; trades opened earlier keep the stop they were already shown.
       </P>
     </>
   ),
