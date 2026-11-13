@@ -525,7 +525,7 @@ async function strongSwing(market: MobileMarket, params: URLSearchParams, userId
     market === "IN" ? displayTrendContinuation(market) : Promise.resolve([]),
   ]);
   const planIds = await captureExecutionPlans(userId, market, zonedMarketClock(market).date, [
-    ...strongSwingExecutionPlanInputs(strong, settings.trailAtrMult),
+    ...strongSwingExecutionPlanInputs(strong),
     ...momentumExecutionPlanInputs(legacy.candidates, "LEGACY"),
     ...momentumExecutionPlanInputs(v2.candidates, "V2"),
     ...trendContinuationExecutionPlanInputs(trend),

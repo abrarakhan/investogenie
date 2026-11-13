@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { query, queryOne } from "@/lib/db";
 import { isMomentumExecutionReady, MOMENTUM_EXECUTION_MODEL_VERSION } from "@/lib/momentumExecution";
 import type { StrongSwingCandidate } from "@/lib/strongSwing";
+import { STRONG_SWING_MODEL_VERSION, STRONG_SWING_TRAILING_POLICY_VERSION } from "@/lib/analytics/strongSwing";
 import type { TrendContinuationCandidate } from "@/lib/trendContinuation";
 
 export type ProtectedSwingStrategy = "STRONG_SWING" | "MOMENTUM_IGNITION" | "TREND_CONTINUATION";
@@ -122,6 +123,13 @@ export function validateExecutionPlanPurchase(plan: StoredExecutionPlan | null, 
     : plan.strategyKey === "TREND_CONTINUATION" ? plan.status === "TREND_CONTINUATION_READY"
     : plan.status === "ENTRY_READY" || plan.status === "MOMENTUM_READY";
   if (!actionable) return "The stored plan is not execution ready";
+  if (plan.strategyKey === "STRONG_SWING") {
+    const snapshot = plan.snapshot && typeof plan.snapshot === "object"
+      ? plan.snapshot as Record<string, unknown> : null;
+    if (snapshot?.executionModelVersion !== STRONG_SWING_MODEL_VERSION) {
+      return "The Strong Swing calculation changed; reload the candidate page for a current plan";
+    }
+  }
   if (plan.strategyKey === "MOMENTUM_IGNITION") {
     const snapshot = plan.snapshot && typeof plan.snapshot === "object"
       ? plan.snapshot as Record<string, unknown> : null;
@@ -147,14 +155,21 @@ export function protectedExecutionEditViolation(strategyKey: string | null, entr
  * mobile API so both record the identical server-held plan a purchase is validated against.
  */
 export function strongSwingExecutionPlanInputs(
-  candidates: readonly StrongSwingCandidate[], trailAtrMult: number,
+  candidates: readonly StrongSwingCandidate[],
 ): ExecutionPlanInput[] {
   return candidates.filter((candidate) => candidate.status === "EXECUTION_READY").map((candidate) => ({
     assetId: candidate.assetId, strategyKey: "STRONG_SWING" as const, status: candidate.status,
     entry: candidate.strongEntry, target: candidate.strongTarget, stop: candidate.strongStop,
-    trail: candidate.strongTrail, atr: (candidate.strongEntry - candidate.strongTrail) / trailAtrMult,
+    // The completed-bar ATR itself. Backing it out of entry − trail understated it whenever the
+    // chandelier's 22-session high sat above the entry.
+    trail: candidate.strongTrail, atr: candidate.atr,
     expectedDays: candidate.strongExpectedDays,
-    signalAsOf: candidate.latestDate, score: candidate.strengthScore / 100, snapshot: { gates: candidate.gates },
+    signalAsOf: candidate.latestDate, score: candidate.strengthScore / 100,
+    snapshot: {
+      executionModelVersion: STRONG_SWING_MODEL_VERSION,
+      ledgerTrailingPolicyVersion: STRONG_SWING_TRAILING_POLICY_VERSION,
+      gates: candidate.gates,
+    },
   }));
 }
 

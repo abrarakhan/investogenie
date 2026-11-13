@@ -1,4 +1,23 @@
 import type { OHLCV } from "@/lib/types";
+import { averageTrueRange, isStructuralBreakout } from "@/lib/analytics/swingClassifier";
+
+/**
+ * Identifies the calculation behind a Strong Swing plan. Bump it whenever the
+ * entry, stop, target, trailing or classification maths changes: stored plans
+ * carrying another version are refused at purchase time.
+ *
+ * v2: ATR, structural breakout and the invalidation trail are computed from the
+ * engine's own completed daily bars (v1 inherited them from the hourly base
+ * scan, whose series can end in today's unfinished candle); a breakout on
+ * either of the two confirmation bars satisfies the structure gate; the trail
+ * starts at the protective stop and is advanced only by highs after entry; a
+ * bar is judged against the stop known before it; and the stored plan carries
+ * the real ATR.
+ */
+export const STRONG_SWING_MODEL_VERSION = "strong-swing-v2-completed-bars";
+export const STRONG_SWING_TRAILING_POLICY_VERSION = "strong-swing-ledger-trailing-v2-post-entry-next-bar";
+const ATR_PERIOD = 14;
+const CONFIRMATION_ATR_BUFFER = 0.25;
 
 export type StrongSwingStatus =
   | "EXECUTION_READY"
@@ -109,6 +128,88 @@ function isCircuitLikeSession(previous: OHLCV, current: OHLCV): boolean {
   return change > 0 ? closeLocation >= 0.98 : closeLocation <= 0.02;
 }
 
+/** Highest high of the 20 sessions ending two bars back: the level both tested closes must clear. */
+export function strongSwingBreakoutLevel(bars: OHLCV[]): number {
+  const window = bars.slice(-22, -2);
+  return window.length ? Math.max(...window.map((bar) => bar.high)) : bars[bars.length - 1].close;
+}
+
+export type CompletedBarStrongSwingInput =
+  Omit<StrongSwingInput, "isBreakout" | "trigger" | "atr" | "trailingStop">;
+
+export interface CompletedBarStrongSwingAssessment extends StrongSwingAssessment {
+  /** 14-session ATR of the completed bars. */
+  atr: number;
+  /** The classifier's breakout test passed on one of the two confirmation bars. */
+  isBreakout: boolean;
+  /** Which confirmation bar broke out; the latest wins when both did. */
+  breakoutBar: "latest" | "previous" | null;
+  /**
+   * The trail a new position starts with: its protective stop. Highs made before the entry
+   * never lift it (a 22-session high above the entry used to put the trail above the entry
+   * itself); after a purchase the ledger advances it from highs observed since entry.
+   */
+  trailingStop: number;
+  /**
+   * Reference stop built only from data before the latest bar. It is captured for parity
+   * and audit, but cannot invalidate an unfilled candidate. The ledger owns stop activation
+   * after a real, server-validated purchase.
+   */
+  effectiveTrailingStop: number;
+}
+
+const round2 = (value: number): number => Math.round(value * 100) / 100;
+
+/** The plan's protective stop for an entry at `entry`: the arithmetic deriveLevels applies. */
+const protectiveStop = (entry: number, atr: number, stopAtrMult: number): number =>
+  round2(Math.max(0, round2(entry) - stopAtrMult * atr));
+
+/**
+ * Assess a candidate from its completed daily bars alone.
+ *
+ * The base Swing scan decides only which stocks are looked at. ATR, the
+ * structural breakout flag and the invalidation trail are derived here from
+ * `bars`, so every level and gate rests on one series. The caller must pass
+ * bars that exclude any unfinished session.
+ */
+export function assessStrongSwingFromBars(input: CompletedBarStrongSwingInput): CompletedBarStrongSwingAssessment {
+  const { bars } = input;
+  if (bars.length < 21) throw new Error("Strong Swing requires at least 21 bars.");
+  const atr = averageTrueRange(bars, ATR_PERIOD);
+  const priorBars = bars.slice(0, -1);
+  // Confirmation needs two closes above the entry. The breakout is usually the first of them,
+  // and the second only has to hold, so a breakout on either bar is the structural setup.
+  // Requiring it of the latest bar alone rejected every day-one breakout that held on day two
+  // without making another new high.
+  const breakoutBar = isStructuralBreakout(bars) ? "latest" as const
+    : isStructuralBreakout(priorBars) ? "previous" as const : null;
+  const isBreakout = breakoutBar !== null;
+  const breakoutLevel = strongSwingBreakoutLevel(bars);
+  const confirmationEntry = breakoutLevel + CONFIRMATION_ATR_BUFFER * atr;
+  const stopAtrMult = input.stopAtrMult ?? 1.5;
+  const trailingStop = protectiveStop(confirmationEntry, atr, stopAtrMult);
+  // Next-bar rule: the latest bar is tested against the stop as it stood when that bar opened.
+  // The breakout level already ends two bars back; the ATR is taken without the latest bar, so
+  // a wide falling session cannot widen the very stop its close is measured against.
+  const priorAtr = averageTrueRange(priorBars, ATR_PERIOD);
+  const priorEntry = breakoutLevel + CONFIRMATION_ATR_BUFFER * priorAtr;
+  const effectiveTrailingStop = protectiveStop(priorEntry, priorAtr, stopAtrMult);
+  // Candidate assessment is deliberately unentered. A historical close/high crossing this
+  // level is not proof that the user held a position: only a server-validated ledger fill can
+  // activate its protective stop. Technical failed-breakout invalidation still applies below.
+  const assessment = assessStrongSwing({
+    ...input, isBreakout, trigger: confirmationEntry, atr,
+    trailingStop: null,
+  });
+  const gates = assessment.gates.map((item) => item.key !== "structure" ? item : {
+    ...item,
+    detail: breakoutBar === "latest" ? "Latest completed bar closed above its 20-session high or upper band."
+      : breakoutBar === "previous" ? "Previous completed bar broke out; the latest bar is the hold."
+        : `Neither of the last two completed bars broke out (base scan: ${input.verdict}).`,
+  });
+  return { ...assessment, gates, atr, isBreakout, breakoutBar, trailingStop, effectiveTrailingStop };
+}
+
 /**
  * Apply execution-quality gates on top of the existing swing classifier.
  * This is deliberately stricter than Swing Candidates: it produces a state,
@@ -140,11 +241,8 @@ export function assessStrongSwing(input: StrongSwingInput): StrongSwingAssessmen
   // The window ends two bars back so that both of the closes being tested are outside it —
   // a level computed from a window containing the previous bar could not be cleared by that
   // bar's close, since a close never exceeds its own high.
-  const breakoutWindow = bars.slice(-22, -2);
-  const breakoutLevel = breakoutWindow.length
-    ? Math.max(...breakoutWindow.map((bar) => bar.high))
-    : latest.close;
-  const confirmationEntry = breakoutLevel + 0.25 * atr;
+  const breakoutLevel = strongSwingBreakoutLevel(bars);
+  const confirmationEntry = breakoutLevel + CONFIRMATION_ATR_BUFFER * atr;
   const fiveBarsAgo = bars.length >= 6 ? bars[bars.length - 6] : null;
   const tenBarsAgo = bars.length >= 11 ? bars[bars.length - 11] : null;
   const fiveDayReturnPct = fiveBarsAgo ? pctChange(fiveBarsAgo.close, latest.close) : null;

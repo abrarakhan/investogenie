@@ -23,14 +23,15 @@ The intended ML layer estimates the probability that an already eligible Strong 
 
 Python is the only calculation runtime for feature construction, labeling, training, calibration, evaluation and inference. Next.js schedules Python jobs and reads persisted results; web and mobile clients only render them. A calculation must not be independently reimplemented in TypeScript.
 
-## Frozen v1 policies
+## Frozen production policies
 
 | Contract | Version/value |
 | --- | --- |
-| Feature version | `strong-swing-features-v1` |
+| Feature version | `strong-swing-features-v2` |
 | Label version | `strong-swing-first-touch-v1` |
 | Entry fill policy | `strong-swing-entry-v1` |
 | Trailing policy | `strong-swing-trailing-v1` |
+| Live-ledger trailing policy | `strong-swing-ledger-trailing-v2-post-entry-next-bar` |
 | Inclusion policy | `strong-swing-entry-eligible-v1` |
 | India calendar | `NSE-calendar-v1` |
 | Canonical India decision time | 18:45 Asia/Kolkata, 30-minute grace |

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { assessStrongSwing } from "@/lib/analytics/strongSwing";
+import { assessStrongSwing, assessStrongSwingFromBars, strongSwingBreakoutLevel } from "@/lib/analytics/strongSwing";
+import { averageTrueRange, classifySwingSetup, deriveLevels, isStructuralBreakout } from "@/lib/analytics/swingClassifier";
 import type { OHLCV } from "@/lib/types";
 
 function risingBars(count = 240, withOi = false, slope = 0.5): OHLCV[] {
@@ -399,5 +400,172 @@ describe("assessStrongSwing", () => {
     // neither is null and the gapped series is not silently handed a longer benchmark window.
     expect(dense.relativeStrength20Pct).not.toBeNull();
     expect(sparse.relativeStrength20Pct).not.toBeNull();
+  });
+});
+
+/**
+ * A choppy base (closes cycling 98, 100, 102) followed by the given closes. The base is wide
+ * enough that a close holding just under a breakout day sits inside the upper band, which a
+ * flat base never allows. Mirrored by choppy_breakout_bars() in the Python parity tests.
+ */
+function choppyBreakoutBars(tail: number[], count = 240): OHLCV[] {
+  const closes = [...Array.from({ length: count - tail.length }, (_, index) => 98 + (index % 3) * 2), ...tail];
+  return closes.map((close, index) => ({
+    date: new Date(Date.UTC(2025, 0, 1 + index)).toISOString().slice(0, 10),
+    open: close - 0.4, high: close + 0.2, low: close - 0.6, close,
+    volume: 1_000_000, openInterest: null,
+  }));
+}
+
+describe("assessStrongSwingFromBars", () => {
+  const assess = (bars: OHLCV[], currentPrice?: number) => assessStrongSwingFromBars({
+    market: "IN", verdict: "LONG_BREAKOUT", currentPrice, stopAtrMult: 1.5,
+    bars, benchmarkBars: benchmark(),
+  });
+
+  it("derives ATR, breakout and trail from the bars it is given", () => {
+    const bars = breakoutBars();
+    const result = assess(bars);
+    const atr = averageTrueRange(bars, 14);
+    expect(result.atr).toBeCloseTo(atr, 10);
+    expect(result.atrPct).toBeCloseTo((atr / bars.at(-1)!.close) * 100, 10);
+    expect(result.confirmationEntry).toBeCloseTo(strongSwingBreakoutLevel(bars) + 0.25 * atr, 10);
+    expect(result.stopRiskPct).toBeCloseTo(((atr * 1.5) / result.confirmationEntry) * 100, 10);
+    expect(result.isBreakout).toBe(isStructuralBreakout(bars) || isStructuralBreakout(bars.slice(0, -1)));
+  });
+
+  it("accepts a day-one breakout that holds on day two without a new high", () => {
+    const held = choppyBreakoutBars([104.5, 104.0]);
+    expect(isStructuralBreakout(held.slice(0, -1))).toBe(true);
+    expect(isStructuralBreakout(held)).toBe(false);
+    const result = assess(held);
+    expect(result.breakoutBar).toBe("previous");
+    expect(result.gates.find((gate) => gate.key === "structure")!.passed).toBe(true);
+    expect(result.gates.find((gate) => gate.key === "follow_through")!.passed).toBe(true);
+    expect(assess(held.slice(0, -1)).breakoutBar).toBe("latest");
+  });
+
+  it("does not count a breakout older than the two confirmation bars", () => {
+    const result = assess(choppyBreakoutBars([104.5, 104.0, 103.8]));
+    expect(result.breakoutBar).toBeNull();
+    expect(result.gates.find((gate) => gate.key === "structure")!.passed).toBe(false);
+  });
+
+  it("starts the trail at the protective stop, never above the entry", () => {
+    const bars = breakoutBars();
+    const last = bars.at(-1)!;
+    // A spike far above the entry inside the 22-session window: it used to lift the initial
+    // chandelier above the entry itself.
+    const spiked = [...bars.slice(0, -1), { ...last, high: last.close + 30 }];
+    for (const series of [bars, spiked, risingBars(), choppyBreakoutBars([104.5, 104.0])]) {
+      const result = assess(series);
+      expect(result.trailingStop).toBeLessThan(result.confirmationEntry);
+      expect(result.trailingStop).toBeCloseTo(Math.round(result.confirmationEntry * 100) / 100 - 1.5 * result.atr, 1);
+    }
+  });
+
+  it("does not activate a stop for an unfilled candidate", () => {
+    // A base drifting well under its 20-session high: below where a stop would sit, but no
+    // position could exist, so there is nothing to stop out.
+    const bars = choppyBreakoutBars([98, 97.5]);
+    const result = assess(bars);
+    expect(bars.at(-1)!.close).toBeLessThanOrEqual(result.effectiveTrailingStop);
+    expect(result.status).not.toBe("INVALIDATED");
+  });
+
+  it("does not let a falling bar loosen the stop it is judged against", () => {
+    const bars = choppyBreakoutBars([104.5, 104.0]);
+    const calm = assess(bars);
+    const last = bars.at(-1)!;
+    // A wide collapse: its range inflates the ATR, which would push a same-bar stop below the close.
+    const close = calm.effectiveTrailingStop - 0.05;
+    const collapse = [...bars.slice(0, -1), { ...last, high: last.close + 1, low: close - 12, close }];
+    const result = assess(collapse);
+    expect(result.atr).toBeGreaterThan(calm.atr);
+    expect(result.effectiveTrailingStop).toBe(calm.effectiveTrailingStop);
+    expect(close).toBeGreaterThan(result.trailingStop);
+    expect(close).toBeLessThanOrEqual(result.effectiveTrailingStop);
+    // The reference stop stays strict for parity, but an unfilled candidate has no active stop.
+    expect(result.status).not.toBe("INVALIDATED");
+  });
+
+  it("uses the same trail the displayed plan is built with", () => {
+    for (const bars of [breakoutBars(), risingBars(), breakoutBars(240, { clears: false })]) {
+      const result = assess(bars);
+      const recent = bars.slice(-22);
+      const levels = deriveLevels({
+        currentPrice: result.confirmationEntry, atr: result.atr, longTrigger: result.confirmationEntry,
+        shortTrigger: 0, hh22: Math.max(...recent.map((bar) => bar.high)),
+        ll22: Math.min(...recent.map((bar) => bar.low)), dailyVelocity: 1,
+      }, "LONG", { stopAtrMult: 1.5, targetRR: 2, trailAtrMult: 3 });
+      expect(result.trailingStop).toBe(levels.stopLoss);
+      expect(levels.stopLoss).toBeLessThan(levels.entry);
+      expect(levels.target).toBeGreaterThan(levels.entry);
+    }
+  });
+
+  it("agrees with the classifier's breakout flag on the same series", () => {
+    const series = [breakoutBars(), breakoutBars(240, { clears: false }), risingBars(), risingBars(60), risingBars(240, false, -0.1)];
+    for (const bars of series) {
+      expect(isStructuralBreakout(bars)).toBe(classifySwingSetup(bars).isBreakout);
+    }
+    expect(isStructuralBreakout(breakoutBars())).toBe(true);
+    expect(isStructuralBreakout(breakoutBars(240, { clears: false }))).toBe(false);
+  });
+
+  it("is unchanged by an unfinished candle the caller left out", () => {
+    const completed = breakoutBars();
+    const last = completed.at(-1)!;
+    // A wild partial session after the completed bars: it would move ATR, the 22-session high
+    // and the breakout flag if it were allowed in.
+    const partial: OHLCV = { ...last, date: "2026-01-01", open: last.close, high: last.close * 1.3, low: last.close * 0.8, close: last.close * 0.85, volume: 10 };
+    const withPartial = assess([...completed, partial]);
+    const clean = assess(completed);
+    expect(withPartial.atr).not.toBeCloseTo(clean.atr, 2);
+    expect(assess(completed)).toEqual(clean);
+    expect(clean.latestDate).toBe(last.date);
+  });
+
+  it("invalidates a collapse only through the technical failed-breakout rule", () => {
+    const bars = breakoutBars();
+    const healthy = assess(bars);
+    expect(healthy.status).not.toBe("INVALIDATED");
+    const last = bars.at(-1)!;
+    const collapsed = [...bars.slice(0, -1), { ...last, close: 60, low: 59, high: last.high }];
+    const broken = assess(collapsed, 500);
+    expect(collapsed.at(-1)!.close).toBeLessThanOrEqual(broken.effectiveTrailingStop);
+    expect(broken.status).toBe("INVALIDATED");
+    const directWithoutStop = assessStrongSwing({
+      market: "IN", verdict: "LONG_BREAKOUT", isBreakout: broken.isBreakout,
+      trigger: 0, atr: broken.atr, trailingStop: null, currentPrice: 500,
+      stopAtrMult: 1.5, bars: collapsed, benchmarkBars: benchmark(),
+    });
+    expect(directWithoutStop.status).toBe("INVALIDATED");
+  });
+
+  it("produces the values the independent Python check expects for the same series", () => {
+    // Mirrored in pipelines/test_strong_swing_parity.py; change both together.
+    const result = assess(breakoutBars());
+    expect(result.atr).toBeCloseTo(1.6285714285714263, 9);
+    expect(result.confirmationEntry).toBeCloseTo(101.00714285714287, 9);
+    expect(result.trailingStop).toBe(98.57);
+    expect(result.effectiveTrailingStop).toBe(98.55);
+    expect(result.isBreakout).toBe(true);
+    const flat = assess(breakoutBars(240, { clears: false }));
+    expect(flat.atr).toBeCloseTo(0.8285714285714262, 9);
+    expect(flat.trailingStop).toBe(99.57);
+    expect(flat.isBreakout).toBe(false);
+  });
+
+  it("matches the gate engine when handed its own derived inputs", () => {
+    const bars = breakoutBars();
+    const derived = assess(bars, bars.at(-1)!.close);
+    const direct = assessStrongSwing({
+      market: "IN", verdict: "LONG_BREAKOUT", isBreakout: derived.isBreakout, trigger: 0, atr: derived.atr,
+      trailingStop: null, currentPrice: bars.at(-1)!.close, stopAtrMult: 1.5,
+      bars, benchmarkBars: benchmark(),
+    });
+    expect(derived.status).toBe(direct.status);
+    expect(derived.gates.map((gate) => [gate.key, gate.passed])).toEqual(direct.gates.map((gate) => [gate.key, gate.passed]));
   });
 });

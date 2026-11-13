@@ -14,7 +14,7 @@ from psycopg2.extras import Json
 from features import FeatureBar, build_feature_vector, liquidity_bucket
 
 
-FEATURE_VERSION = "strong-swing-features-v1"
+FEATURE_VERSION = "strong-swing-features-v2"
 INCLUSION_POLICY_VERSION = "strong-swing-entry-eligible-v1"
 UNIVERSE_VERSION = "strong-swing-candidate-universe-v1"
 INCLUDED_STATUSES = {"EXECUTION_READY", "WAIT_FOR_ENTRY"}

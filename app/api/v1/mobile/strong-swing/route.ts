@@ -25,7 +25,7 @@ export async function GET(request: NextRequest) {
   // id and the server reads every level from it, exactly as on the web.
   const planIds = await captureExecutionPlans(
     user.id, market, zonedMarketClock(market).date,
-    strongSwingExecutionPlanInputs(candidates, settings.trailAtrMult), settings.trailAtrMult,
+    strongSwingExecutionPlanInputs(candidates), settings.trailAtrMult,
   );
   return NextResponse.json({
     market,

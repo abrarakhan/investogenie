@@ -42,7 +42,7 @@ export default async function StrongSwingPage({
     getTrendContinuationStatusTotals(market).catch(() => undefined),
   ]);
   const executionPlans: ExecutionPlanInput[] = [
-    ...strongSwingExecutionPlanInputs(candidates, settings.trailAtrMult),
+    ...strongSwingExecutionPlanInputs(candidates),
     ...momentumExecutionPlanInputs(legacyMomentumIgnition.candidates, "LEGACY"),
     ...momentumExecutionPlanInputs(momentumIgnition.candidates, "V2"),
     ...trendContinuationExecutionPlanInputs(trendContinuation),

@@ -33,7 +33,7 @@ export function startMlSnapshotScheduler({ databaseUrl, runIndia }) {
         await runIndia(session);
         await client.query(
           "insert into public.cron_logs(job,status,detail,duration_ms) values($1,'ok',$2,$3)",
-          [job, { session, featureVersion: "strong-swing-features-v1" }, Date.now() - started],
+          [job, { session, featureVersion: "strong-swing-features-v2" }, Date.now() - started],
         );
         completedSession = session;
       } catch (error) {

@@ -1,7 +1,7 @@
 import { query } from "@/lib/db";
 import { runScreener, type ScreenRow } from "@/lib/screener";
 import { deriveLevels, type SwingSetup } from "@/lib/analytics/swingClassifier";
-import { assessStrongSwing, type StrongSwingAssessment } from "@/lib/analytics/strongSwing";
+import { assessStrongSwingFromBars, type CompletedBarStrongSwingAssessment } from "@/lib/analytics/strongSwing";
 import { rankStrongSwingCandidates } from "@/lib/analytics/candidateRanking";
 import type { SwingSettings } from "@/lib/settings";
 import type { MarketId, OHLCV } from "@/lib/types";
@@ -19,10 +19,8 @@ interface BarRow {
   open_interest: string | number | null;
 }
 
-interface SignalContext {
+interface QuoteContext {
   asset_id: string;
-  long_trigger: string | number;
-  atr: string | number;
   best_bid: string | number | null; best_ask: string | number | null;
   lower_circuit: string | number | null; quote_updated_at: string | null; quote_source: string | null;
 }
@@ -37,7 +35,8 @@ export interface StrongSwingSnapshotCapture {
   calendarVersion?: string;
 }
 
-export interface StrongSwingCandidate extends ScreenRow, StrongSwingAssessment {
+export interface StrongSwingCandidate
+  extends Omit<ScreenRow, "atr" | "isBreakout" | "trailingStop">, CompletedBarStrongSwingAssessment {
   baseSwingRank: number;
   strongSwingRank: number;
   strongEntry: number;
@@ -91,6 +90,9 @@ async function captureStrongSwingSnapshot(
       tenDayReturnPct: candidate.tenDayReturnPct,
       distanceAboveSma20Pct: candidate.distanceAboveSma20Pct,
       atrPct: candidate.atrPct,
+      atr: candidate.atr,
+      breakoutBar: candidate.breakoutBar,
+      invalidationTrail: candidate.effectiveTrailingStop,
       stopRiskPct: candidate.stopRiskPct,
       entryExtensionAtr: candidate.entryExtensionAtr,
       circuitLikeSessions20: candidate.circuitLikeSessions20,
@@ -200,8 +202,11 @@ export async function getStrongSwingCandidates(
         where rn <= 260 order by asset_id,date`,
       [ids, marketOpen, marketDate],
     ),
-    query<SignalContext>(
-      `select s.asset_id,s.long_trigger,s.atr,q.best_bid,q.best_ask,q.lower_circuit,q.updated_at::text quote_updated_at,q.source quote_source from public.swing_signals s left join public.latest_quotes q on q.asset_id=s.asset_id where s.asset_id = any($1::uuid[])`,
+    // Live execution data only. The base scan's ATR, trigger, breakout flag and trail are
+    // not read: its series can end in today's unfinished candle, and mixing them with
+    // completed-bar gates produced levels that disagreed with their own inputs.
+    query<QuoteContext>(
+      `select q.asset_id,q.best_bid,q.best_ask,q.lower_circuit,q.updated_at::text quote_updated_at,q.source quote_source from public.latest_quotes q where q.asset_id = any($1::uuid[])`,
       [ids],
     ),
     query<BarRow>(
@@ -238,27 +243,22 @@ export async function getStrongSwingCandidates(
   for (const row of base) {
     const bars = barsByAsset.get(row.assetId) ?? [];
     const context = contextByAsset.get(row.assetId);
-    if (bars.length < 21 || !context) continue;
-    const trigger = Number(context.long_trigger);
-    const atr = Number(context.atr);
-    const assessment = assessStrongSwing({
+    if (bars.length < 21) continue;
+    const assessment = assessStrongSwingFromBars({
       market,
       verdict: row.verdict,
-      isBreakout: row.isBreakout,
-      trigger,
-      atr,
-      trailingStop: row.trailingStop,
       currentPrice: row.lastQuote,
       stopAtrMult: settings.stopAtrMult,
       bars,
       benchmarkBars,
       requireLiveExecutionData: market === "IN" && marketOpen,
-      microstructure: context.quote_source === "BREEZE_LIVE" ? { bestBid: context.best_bid === null ? null : Number(context.best_bid), bestAsk: context.best_ask === null ? null : Number(context.best_ask), lowerCircuit: context.lower_circuit === null ? null : Number(context.lower_circuit), quoteFresh: Boolean(context.quote_updated_at) && Date.now() - Date.parse(context.quote_updated_at!) <= 5 * 60 * 1000 } : undefined,
+      microstructure: context?.quote_source === "BREEZE_LIVE" ? { bestBid: context.best_bid === null ? null : Number(context.best_bid), bestAsk: context.best_ask === null ? null : Number(context.best_ask), lowerCircuit: context.lower_circuit === null ? null : Number(context.lower_circuit), quoteFresh: Boolean(context.quote_updated_at) && Date.now() - Date.parse(context.quote_updated_at!) <= 5 * 60 * 1000 } : undefined,
     });
     const recent = bars.slice(-22);
     // Strong Swing freezes the confirmed breakout entry. Repricing entry to a
     // later quote turns a missed trade into a fresh recommendation and widens
     // its ATR stop after parabolic moves.
+    const { atr } = assessment;
     const setup: SwingSetup = {
       currentPrice: assessment.confirmationEntry,
       atr,
@@ -277,7 +277,8 @@ export async function getStrongSwingCandidates(
       strongEntry: assessment.confirmationEntry,
       strongTarget: levels.target,
       strongStop: levels.stopLoss,
-      strongTrail: levels.trailingStop,
+      // The trail starts at the protective stop; only highs after entry advance it.
+      strongTrail: levels.stopLoss,
       strongExpectedDays: levels.expectedDays,
     });
   }

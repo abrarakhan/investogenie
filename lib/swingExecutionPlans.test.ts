@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   isExecutablePlanGeometry,
+  strongSwingExecutionPlanInputs,
   protectedExecutionEditViolation,
   trendContinuationExecutionPlanInputs,
   validateExecutionPlanPurchase,
@@ -9,13 +10,14 @@ import {
 } from "@/lib/swingExecutionPlans";
 import type { TrendContinuationCandidate } from "@/lib/trendContinuation";
 import { MOMENTUM_EXECUTION_MODEL_VERSION } from "@/lib/momentumExecution";
+import { STRONG_SWING_MODEL_VERSION, STRONG_SWING_TRAILING_POLICY_VERSION } from "@/lib/analytics/strongSwing";
 
 const plan = (overrides: Partial<StoredExecutionPlan> = {}): StoredExecutionPlan => ({
   id: "00000000-0000-0000-0000-000000000001", assetId: "asset-1", market: "IN",
   strategyKey: "STRONG_SWING", status: "EXECUTION_READY", sessionDate: "2026-10-13",
   capturedAt: "2026-10-13T05:00:00.000Z", entry: 100, target: 112, stop: 95, trail: 96,
   atr: 2, trailingDistance: 6, expectedDays: 10, signalAsOf: "2026-10-12", score: 0.9,
-  snapshot: {}, ...overrides,
+  snapshot: { executionModelVersion: STRONG_SWING_MODEL_VERSION }, ...overrides,
 });
 
 describe("protected swing execution plans", () => {
@@ -49,6 +51,33 @@ describe("protected swing execution plans", () => {
     expect(validateExecutionPlanPurchase(continuation, { ...purchase, strategyKey: "TREND_CONTINUATION" })).toBeNull();
     expect(validateExecutionPlanPurchase({ ...continuation, status: "CONTINUATION_WATCH" }, { ...purchase, strategyKey: "TREND_CONTINUATION" }))
       .toMatch(/not execution ready/);
+  });
+
+  it("invalidates Strong Swing plans captured by an older calculation", () => {
+    expect(validateExecutionPlanPurchase(plan({ snapshot: {} }), purchase)).toMatch(/calculation changed/);
+    expect(validateExecutionPlanPurchase(plan({ snapshot: { gates: [] } }), purchase)).toMatch(/calculation changed/);
+    expect(validateExecutionPlanPurchase(plan({ snapshot: { executionModelVersion: "strong-swing-v1" } }), purchase))
+      .toMatch(/calculation changed/);
+  });
+
+  it("stores the candidate's real ATR, not one backed out of the trail", () => {
+    // The 22-session high sits above the entry, so entry − trail is 3 here while 3 × ATR is 6.
+    const candidate = {
+      assetId: "asset-1", status: "EXECUTION_READY", strongEntry: 100, strongTarget: 112, strongStop: 97,
+      strongTrail: 97, strongExpectedDays: 10, atr: 2, latestDate: "2026-10-12", strengthScore: 90, gates: [],
+    } as unknown as Parameters<typeof strongSwingExecutionPlanInputs>[0][number];
+    const [stored] = strongSwingExecutionPlanInputs([candidate]);
+    expect(stored.atr).toBe(2);
+    // The trail starts at the protective stop, so the plan passes the safety check that
+    // refuses a long trade whose stop sits at or above its entry.
+    expect(stored.trail).toBe(stored.stop);
+    expect(isExecutablePlanGeometry(stored)).toBe(true);
+    expect(isExecutablePlanGeometry({ ...stored, trail: 107.31 })).toBe(false);
+    expect(stored.snapshot).toMatchObject({
+      executionModelVersion: STRONG_SWING_MODEL_VERSION,
+      ledgerTrailingPolicyVersion: STRONG_SWING_TRAILING_POLICY_VERSION,
+    });
+    expect(strongSwingExecutionPlanInputs([{ ...candidate, status: "WAIT_FOR_ENTRY" }])).toEqual([]);
   });
 
   it("invalidates Momentum plans captured by older entry logic", () => {

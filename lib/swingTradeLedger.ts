@@ -2,8 +2,9 @@ import { query } from "@/lib/db";
 import { scoreNewsSwing, type NewsDirection, type NewsScope } from "@/lib/analytics/newsSwing";
 import { assessTradeRisk, type TradeRiskAssessment, type TradeRiskState } from "@/lib/analytics/tradeRisk";
 import { reviseSwingTradePlan, type TradePlanRevision } from "@/lib/analytics/tradePlanRevision";
-import { isMarketOpenNow, isTradingDay, refreshMarketHolidays } from "@/lib/market-calendar.mjs";
+import { isMarketOpenNow, isTradingDay, refreshMarketHolidays, zonedMarketClock } from "@/lib/market-calendar.mjs";
 import { calculateRecoveryTargets } from "@/lib/tradeRecoveryTargets";
+import { STRONG_SWING_TRAILING_POLICY_VERSION } from "@/lib/analytics/strongSwing";
 
 export type SwingTradeState =
   | "ON_TRACK"
@@ -63,8 +64,13 @@ export function calculateRecommendedGttStop(input: {
   trailingDistance: number | null;
   highestHigh: number | null;
   currentPrice: number | null;
+  /** Strong Swing v2: only completed-session highs strictly after the fill session. */
+  postEntryCompletedHigh?: number | null;
+  postEntryNextBarPolicy?: boolean;
 }): { recommendedStop: number; breakEvenActivated: boolean } {
-  const observedHigh = Math.max(input.buyPrice, input.highestHigh ?? input.buyPrice, input.currentPrice ?? input.buyPrice);
+  const observedHigh = input.postEntryNextBarPolicy
+    ? Math.max(input.buyPrice, input.postEntryCompletedHigh ?? input.buyPrice)
+    : Math.max(input.buyPrice, input.highestHigh ?? input.buyPrice, input.currentPrice ?? input.buyPrice);
   const initialRisk = Math.max(0, input.buyPrice - input.projectedStop);
   const breakEvenActivated = initialRisk > 0 && observedHigh >= input.buyPrice + (0.75 * initialRisk);
   const chandelierStop = input.trailingDistance === null
@@ -328,6 +334,27 @@ export interface SwingLedgerTrade {
 
 type LedgerValue = unknown;
 type LedgerRow = Record<string, LedgerValue>;
+
+function usesStrongSwingPostEntryTrail(row: LedgerRow): boolean {
+  if (String(row.strategy_key) !== "STRONG_SWING") return false;
+  const raw = row.projection_snapshot;
+  let snapshot: Record<string, unknown> | null = null;
+  if (raw && typeof raw === "object") snapshot = raw as Record<string, unknown>;
+  else if (typeof raw === "string") {
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      if (parsed && typeof parsed === "object") snapshot = parsed as Record<string, unknown>;
+    } catch {
+      return false;
+    }
+  }
+  const plan = snapshot?.plan && typeof snapshot.plan === "object"
+    ? snapshot.plan as Record<string, unknown> : null;
+  const planSnapshot = plan?.snapshot && typeof plan.snapshot === "object"
+    ? plan.snapshot as Record<string, unknown> : null;
+  return planSnapshot?.ledgerTrailingPolicyVersion === STRONG_SWING_TRAILING_POLICY_VERSION;
+}
+
 export const ledgerDateText = (value: LedgerValue) => {
   if (!value) return null;
   if (value instanceof Date) {
@@ -368,6 +395,7 @@ function parseExits(value: LedgerValue, unitCost: number): SwingTradeExit[] {
 export async function getSwingTradeLedger(userId: string, market: "IN" | "US"): Promise<SwingLedgerTrade[]> {
   if (market === "IN") await refreshMarketHolidays("IN");
   const marketOpen = isMarketOpenNow(market);
+  const marketDate = zonedMarketClock(market).date;
   const rows = await query<LedgerRow>(
     `select l.*, a.ticker, a.name asset_name, a.exchange, a.sector asset_sector,
             q.price current_price, q.as_of quote_as_of, q.updated_at quote_updated_at,
@@ -376,7 +404,7 @@ export async function getSwingTradeLedger(userId: string, market: "IN" | "US"): 
             coalesce(sales.sold_quantity,0) sold_quantity,
             coalesce(sales.realized_proceeds,0) realized_proceeds,
             coalesce(sales.exits,'[]'::jsonb) exits,
-            path.highest_high,path.lowest_low
+            path.highest_high,path.lowest_low,path.post_entry_completed_high
        from public.swing_trade_ledger l
        join public.assets a on a.id = l.asset_id
        left join public.latest_quotes q on q.asset_id = l.asset_id
@@ -393,7 +421,8 @@ export async function getSwingTradeLedger(userId: string, market: "IN" | "US"): 
            ) closes
        ) stock_path on true
        left join lateral (
-         select max(d.high) highest_high, min(d.low) lowest_low
+         select max(d.high) highest_high, min(d.low) lowest_low,
+                max(d.high) filter (where d.date > l.bought_on and d.date < $3::date) post_entry_completed_high
            from public.daily_ohlcv d
           where d.asset_id = l.asset_id
             and d.date >= l.bought_on
@@ -417,7 +446,7 @@ export async function getSwingTradeLedger(userId: string, market: "IN" | "US"): 
        ) sales on true
       where l.user_id = $1 and l.market = $2
       order by (l.status = 'OPEN') desc, l.bought_on desc, l.created_at desc`,
-    [userId, market],
+    [userId, market, marketDate],
   );
 
   type ImpactRow = {
@@ -519,6 +548,7 @@ export async function getSwingTradeLedger(userId: string, market: "IN" | "US"): 
     const quoteUpdatedAt = row.quote_updated_at ? new Date(row.quote_updated_at as Date | string).getTime() : 0;
     const quoteFresh = status === "CLOSED" || !marketOpen || quoteUpdatedAt >= Date.now() - 7 * 60 * 1000;
     const currentPrice = quoteFresh ? nullableNumber(row.current_price) : null;
+    const postEntryNextBarPolicy = usesStrongSwingPostEntryTrail(row);
     const gttProtection = calculateRecommendedGttStop({
       buyPrice,
       projectedStop: Number(row.projected_stop),
@@ -526,6 +556,8 @@ export async function getSwingTradeLedger(userId: string, market: "IN" | "US"): 
       trailingDistance: nullableNumber(row.trailing_distance),
       highestHigh: nullableNumber(row.highest_high),
       currentPrice,
+      postEntryCompletedHigh: nullableNumber(row.post_entry_completed_high),
+      postEntryNextBarPolicy,
     });
     const recommendedGttStop = gttProtection.recommendedStop;
     const recordedGttStop = nullableNumber(row.current_gtt_stop) ?? Number(row.projected_stop);

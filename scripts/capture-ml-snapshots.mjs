@@ -19,7 +19,7 @@ if (!process.env.DATABASE_URL) {
 
 const runId = randomUUID();
 const decisionTime = market === "IN" ? "18:45:00" : "17:15:00";
-const featureVersion = "strong-swing-features-v1";
+const featureVersion = "strong-swing-features-v2";
 const calendarVersion = market === "IN" ? "NSE-calendar-v1" : "NYSE-calendar-v1";
 
 const candidates = await getStrongSwingCandidates(market, DEFAULT_SETTINGS, {

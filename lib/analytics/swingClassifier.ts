@@ -211,7 +211,7 @@ function bandwidthSeries(closes: number[], period: number, k: number): number[] 
 }
 
 /** Average True Range over `period` bars (Wilder-style simple average of TR). */
-function averageTrueRange(bars: OHLCV[], period: number): number {
+export function averageTrueRange(bars: OHLCV[], period: number): number {
   if (bars.length < 2) return 0;
   const trs: number[] = [];
   for (let i = 1; i < bars.length; i++) {
@@ -225,6 +225,22 @@ function averageTrueRange(bars: OHLCV[], period: number): number {
 }
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
+
+/**
+ * The classifier's structural breakout test on the last bar handed in: a close
+ * above the prior Donchian high or above the upper Bollinger band. It is the
+ * same test classifySwingSetup applies, exposed so an engine that must judge
+ * completed bars only can run it on its own series instead of inheriting a
+ * flag computed on a series that may end in an unfinished candle.
+ */
+export function isStructuralBreakout(bars: OHLCV[], config: SwingConfig = DEFAULT_SWING_CONFIG): boolean {
+  if (bars.length < Math.max(config.bbPeriod, config.donchianPeriod + 1)) return false;
+  const last = bars[bars.length - 1];
+  const bbWindow = bars.slice(-config.bbPeriod).map((bar) => bar.close);
+  const upper = mean(bbWindow) + config.bbStdDev * stdDev(bbWindow);
+  const donchianHigh = Math.max(...bars.slice(-config.donchianPeriod - 1, -1).map((bar) => bar.high));
+  return last.close > donchianHigh || last.close > upper;
+}
 
 /**
  * Classify the most recent bar of an instrument as a swing setup.

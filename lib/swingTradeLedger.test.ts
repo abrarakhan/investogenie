@@ -24,6 +24,34 @@ describe("swing trade ledger progress", () => {
     })).toEqual({ recommendedStop: 56.54, breakEvenActivated: false });
   });
 
+  it("advances a versioned Strong Swing trail only from completed sessions after entry", () => {
+    const strict = calculateRecommendedGttStop({
+      buyPrice: 100,
+      projectedStop: 94,
+      projectedTrailingStop: 94,
+      trailingDistance: 9,
+      highestHigh: 120,
+      currentPrice: 121,
+      postEntryCompletedHigh: 112,
+      postEntryNextBarPolicy: true,
+    });
+    expect(strict).toEqual({ recommendedStop: 103, breakEvenActivated: true });
+  });
+
+  it("does not use the entry-day high or live price in the versioned Strong Swing trail", () => {
+    const strict = calculateRecommendedGttStop({
+      buyPrice: 100,
+      projectedStop: 94,
+      projectedTrailingStop: 94,
+      trailingDistance: 9,
+      highestHigh: 120,
+      currentPrice: 121,
+      postEntryCompletedHigh: null,
+      postEntryNextBarPolicy: true,
+    });
+    expect(strict).toEqual({ recommendedStop: 94, breakEvenActivated: false });
+  });
+
   it("keeps PostgreSQL date values on their local calendar day", () => {
     expect(ledgerDateText(new Date(2026, 8, 11))).toBe("2026-09-11");
   });

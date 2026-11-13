@@ -1196,7 +1196,7 @@ const strongSwingArticle: HelpArticle = {
       <H2>Technical confirmation</H2>
       <SpecTable
         rows={[
-          { k: "Structural setup", v: "The base engine flagged a breakout." },
+          { k: "Structural setup", v: "Either of the two completed confirmation bars broke above its 20-session high or upper band." },
           { k: "Primary trend", v: "Price above the 50- and 200-day averages; 20 > 50 and the 50-day rising." },
           { k: "Relative strength", v: "Outperforming the benchmark over 20 sessions. The benchmark is the first of Nifty / NIFTYBEES with 200+ current daily bars." },
           { k: "Decisive breakout", v: "At least 0.25 ATR above the 20-session high." },
@@ -1222,8 +1222,14 @@ const strongSwingArticle: HelpArticle = {
         <LI><strong>Pullback candidate</strong> — technically confirmed but above the buy zone or more than 15% above its 20-day average. Not buyable. A later pullback does not reactivate it automatically: Execution ready still needs a current breakout with two confirming closes.</LI>
         <LI><strong>Awaiting confirmation</strong> — some technical gates still fail.</LI>
         <LI><strong>Risk off</strong> — an extension, volatility, stop-width, liquidity, circuit or live-data check failed.</LI>
-        <LI><strong>Invalidated</strong> — closed below the trailing stop, or a full ATR back below the breakout level.</LI>
+        <LI><strong>Invalidated</strong> — the unfilled setup failed a full ATR below its breakout level. Stops activate only after a purchase is recorded in the ledger.</LI>
       </UL>
+      <P>
+        A new Strong Swing trade starts with its frozen protective stop. Its trailing line advances
+        only from completed-session highs after the recorded entry day, and each advance applies
+        from the following session. Entry-day highs and the current live price cannot raise their
+        own stop.
+      </P>
     </>
   ),
 };
