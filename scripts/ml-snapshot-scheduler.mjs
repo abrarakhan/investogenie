@@ -1,7 +1,31 @@
 import { Client } from "pg";
 import { latestExpectedSessionDate } from "../lib/market-calendar.mjs";
 
-export function startMlSnapshotScheduler({ databaseUrl, runIndia }) {
+// Recompute the capture just written with the independent Python implementation. A difference
+// does not undo the capture; it is recorded as a failed job of its own so it shows up with
+// every other failed scheduled job.
+export async function verifyCapture(client, session, verifyIndia, log = console) {
+  if (!verifyIndia) return null;
+  const job = "strong-swing-parity-in";
+  const started = Date.now();
+  try {
+    await verifyIndia(session);
+    await client.query(
+      "insert into public.cron_logs(job,status,detail,duration_ms) values($1,'ok',$2,$3)",
+      [job, { session }, Date.now() - started],
+    );
+    return true;
+  } catch (error) {
+    await client.query(
+      "insert into public.cron_logs(job,status,detail,error,duration_ms) values($1,'error',$2,$3,$4)",
+      [job, { session }, String(error), Date.now() - started],
+    );
+    log.error(`[strong-swing-parity] ${session} capture does not match the Python recomputation: ${error}`);
+    return false;
+  }
+}
+
+export function startMlSnapshotScheduler({ databaseUrl, runIndia, verifyIndia }) {
   let stopped = false;
   let busy = false;
   let completedSession = null;
@@ -36,6 +60,9 @@ export function startMlSnapshotScheduler({ databaseUrl, runIndia }) {
           [job, { session, featureVersion: "strong-swing-features-v2" }, Date.now() - started],
         );
         completedSession = session;
+        await verifyCapture(client, session, verifyIndia).catch((error) => {
+          console.error(`[strong-swing-parity] could not record the check: ${error}`);
+        });
       } catch (error) {
         retryAfter = Date.now() + 15 * 60_000;
         await client.query(

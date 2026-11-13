@@ -2,7 +2,8 @@ import unittest
 from datetime import date, timedelta
 
 from pipelines.strong_swing_parity import (
-    Bar, average_true_range, breakout_level, confirmation_breakout, differences, plan, round2, structural_breakout,
+    Bar, average_true_range, bar_gates, breakout_failed, breakout_level, confirmation_breakout, differences,
+    expected_status, gate_differences, plan, round2, structural_breakout,
 )
 
 
@@ -81,6 +82,48 @@ class StrongSwingParityTests(unittest.TestCase):
         inflated = {**recorded, "atr_pct": expected["atr_pct"] * 1.2, "stop": expected["stop"] - 1}
         self.assertEqual(differences(inflated, expected), ["stop", "atr"])
         self.assertEqual(differences({**recorded, "breakout": not expected["breakout"]}, expected), ["breakout"])
+
+    def test_bar_gates_follow_the_bars(self):
+        gates = bar_gates(breakout_bars())
+        # Both closes sit at 112 against a 101.01 entry: held, decisive, but far above the 20-day average.
+        self.assertTrue(gates["follow_through"])
+        self.assertTrue(gates["clearance"])
+        self.assertTrue(gates["close_quality"])
+        self.assertTrue(gates["price"])
+        self.assertTrue(gates["trend"])
+        self.assertTrue(gates["sma20_extension"])
+        self.assertTrue(gates["atr_risk"])
+        self.assertTrue(gates["extension_5d"])
+        # The fixture carries no volume, so participation and liquidity cannot pass.
+        self.assertFalse(gates["volume"])
+        self.assertFalse(gates["liquidity"])
+        self.assertFalse(bar_gates(breakout_bars(clears=False))["follow_through"])
+
+    def test_a_recorded_gate_the_bars_contradict_is_reported(self):
+        bars = breakout_bars()
+        recorded = [{"key": key, "passed": passed} for key, passed in bar_gates(bars).items()]
+        self.assertEqual(gate_differences(recorded, bars, "IN", 1.5), [])
+        recorded[0]["passed"] = not recorded[0]["passed"]
+        self.assertEqual(gate_differences(recorded, bars, "IN", 1.5), [recorded[0]["key"]])
+
+    def test_status_follows_from_the_gates(self):
+        def gates(**failed):
+            keys = [("structure", "technical"), ("follow_through", "technical"), ("entry_zone", "execution"),
+                    ("sma20_extension", "execution"), ("atr_risk", "execution"), ("market_regime", "execution")]
+            return [{"key": key, "category": category, "blocking": key != "market_regime",
+                     "passed": not failed.get(key, False)} for key, category in keys]
+        self.assertEqual(expected_status(gates(), False), "EXECUTION_READY")
+        self.assertEqual(expected_status(gates(market_regime=True), False), "EXECUTION_READY")
+        self.assertEqual(expected_status(gates(follow_through=True), False), "WATCHLIST")
+        self.assertEqual(expected_status(gates(entry_zone=True), False), "WAIT_FOR_ENTRY")
+        self.assertEqual(expected_status(gates(sma20_extension=True), False), "WAIT_FOR_ENTRY")
+        self.assertEqual(expected_status(gates(sma20_extension=True, follow_through=True), False), "RISK_OFF")
+        self.assertEqual(expected_status(gates(atr_risk=True), False), "RISK_OFF")
+        self.assertEqual(expected_status(gates(), True), "INVALIDATED")
+
+    def test_a_breakout_a_full_atr_back_below_its_level_has_failed(self):
+        self.assertFalse(breakout_failed(breakout_bars()))
+        self.assertTrue(breakout_failed(choppy_breakout_bars([112, 90])))
 
 
 if __name__ == "__main__":

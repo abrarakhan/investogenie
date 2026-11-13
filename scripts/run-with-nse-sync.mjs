@@ -31,6 +31,7 @@ const usHistoryPipeline = resolve(root, "pipelines/us_history_sync.py");
 const macroPipeline = resolve(root, "pipelines/macro_sync.py");
 const amfiSchemeMasterScript = resolve(root, "scripts/sync-amfi-scheme-master.mjs");
 const mlSnapshotScript = resolve(root, "scripts/capture-ml-snapshots.mjs");
+const strongSwingParityPipeline = resolve(root, "pipelines/strong_swing_parity.py");
 const screenerFeaturePipeline = resolve(root, "pipelines/screener_technical_features.py");
 const trendContinuationPipeline = resolve(root, "pipelines/trend_continuation.py");
 const strategyRetrospectivePipeline = resolve(root, "pipelines/strategy_retrospective.py");
@@ -1747,6 +1748,18 @@ const stopMlSnapshotScheduler = startMlSnapshotScheduler({
       if (mlSnapshotChild === child) mlSnapshotChild = null;
       if (code === 0 && !signal) resolveRun();
       else rejectRun(new Error(`ML snapshot job exited ${signal ?? code}`));
+    });
+  }),
+  // Read-only: recompute the scheduled capture in Python and fail on any difference.
+  verifyIndia: () => new Promise((resolveRun, rejectRun) => {
+    if (!python || !existsSync(strongSwingParityPipeline)) { rejectRun(new Error("parity checker is unavailable")); return; }
+    const child = spawn(python, [strongSwingParityPipeline, "--market", "IN", "--source", "scheduled"], {
+      cwd: root, env: process.env, stdio: "inherit", timeout: 5 * 60_000,
+    });
+    child.once("error", rejectRun);
+    child.once("close", (code, signal) => {
+      if (code === 0 && !signal) resolveRun();
+      else rejectRun(new Error(code === 3 ? "recorded values differ from the bars" : `checker exited ${signal ?? code}`));
     });
   }),
 });
