@@ -489,6 +489,10 @@ def order_notice(event: dict[str, Any], ticker: str | None) -> tuple[str, str, s
         detail = f"{action} {count(quantity)} {name}"
     else:
         detail = f"{action} {name}"
+    # The stream quotes rupees (checked against live fills). Only a fill has a price worth showing.
+    average = event.get("average_price")
+    if executed and average and average > 0:
+        detail += f" at ₹{average:,.2f}" + (" average" if quantity and executed < quantity else "")
     body = f"{detail} — {event['status'].lower()}. Open Trade Ledger to review it."
     signature = f"ORDER|{event['reference']}|{event['status']}|{'' if executed is None else count(executed)}"
     return f"InvestoGenie: {title}", body, signature

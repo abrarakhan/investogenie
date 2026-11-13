@@ -229,19 +229,28 @@ class OrderUpdateTests(unittest.TestCase):
     def test_notifies_for_a_fill_using_the_app_ticker(self):
         title, body, signature = order_notice(order_event(self.TICK), "RELIANCE")
         self.assertEqual(title, "InvestoGenie: order executed")
-        self.assertEqual(body, "Buy 10 RELIANCE — executed. Open Trade Ledger to review it.")
+        self.assertEqual(body, "Buy 10 RELIANCE at ₹1,450.50 — executed. Open Trade Ledger to review it.")
         self.assertEqual(signature, "ORDER|20261113N100000042|Executed|10")
 
     def test_a_partial_fill_reports_progress_and_each_step_notifies_once(self):
         partial = order_event({**self.TICK, "orderStatus": "Partially Executed", "orderExecutedQuantity": "4"})
         _, body, first = order_notice(partial, None)
-        self.assertEqual(body, "Buy RELIND: 4 of 10 filled — partially executed. Open Trade Ledger to review it.")
+        self.assertEqual(body, "Buy RELIND: 4 of 10 filled at ₹1,450.50 average — partially executed. Open Trade Ledger to review it.")
         later = order_event({**self.TICK, "orderStatus": "Partially Executed", "orderExecutedQuantity": "7"})
         self.assertNotEqual(first, order_notice(later, None)[2])
 
     def test_large_quantities_are_written_out_in_full(self):
         big = order_event({**self.TICK, "orderQuantity": "1250000", "orderExecutedQuantity": "1250000"})
         self.assertIn("Buy 1250000 RELIANCE", order_notice(big, "RELIANCE")[1])
+
+    def test_an_order_with_no_fill_shows_no_price(self):
+        for status in ("Rejected", "Cancelled", "Expired"):
+            unfilled = order_event({**self.TICK, "orderStatus": status, "orderExecutedQuantity": "0", "averageExecutedRate": "0.00"})
+            self.assertEqual(order_notice(unfilled, "RELIANCE")[1], f"Buy 10 RELIANCE — {status.lower()}. Open Trade Ledger to review it.")
+
+    def test_the_price_does_not_change_the_signature(self):
+        repriced = order_event({**self.TICK, "averageExecutedRate": "1450.55"})
+        self.assertEqual(order_notice(repriced, "RELIANCE")[2], order_notice(order_event(self.TICK), "RELIANCE")[2])
 
     def test_routine_states_do_not_notify(self):
         for status in ("Requested", "Queued", "Ordered"):
