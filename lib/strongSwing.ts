@@ -242,6 +242,7 @@ export async function getStrongSwingCandidates(
   }
 
   const candidates: StrongSwingCandidate[] = [];
+  let flatRange = 0;
   for (const row of base) {
     const bars = barsByAsset.get(row.assetId) ?? [];
     const context = contextByAsset.get(row.assetId);
@@ -256,6 +257,12 @@ export async function getStrongSwingCandidates(
       requireLiveExecutionData: market === "IN" && marketOpen,
       microstructure: context?.quote_source === "BREEZE_LIVE" ? { bestBid: context.best_bid === null ? null : Number(context.best_bid), bestAsk: context.best_ask === null ? null : Number(context.best_ask), lowerCircuit: context.lower_circuit === null ? null : Number(context.lower_circuit), quoteFresh: Boolean(context.quote_updated_at) && Date.now() - Date.parse(context.quote_updated_at!) <= 5 * 60 * 1000 } : undefined,
     });
+    // No price range in 14 sessions means the stock did not really trade. Its stop would equal
+    // its entry, so there is no plan to make; leave it out instead of listing it.
+    if (!(assessment.atr > 0)) {
+      flatRange++;
+      continue;
+    }
     const recent = bars.slice(-22);
     // Strong Swing freezes the confirmed breakout entry. Repricing entry to a
     // later quote turns a missed trade into a fresh recommendation and widens
@@ -285,6 +292,7 @@ export async function getStrongSwingCandidates(
     });
   }
 
+  if (flatRange) console.warn(`[strong-swing] ${market}: left out ${flatRange} stock(s) with no price range in 14 sessions`);
   const ranked = rankStrongSwingCandidates(candidates).map((candidate, index) => ({
     ...candidate,
     strongSwingRank: index + 1,
