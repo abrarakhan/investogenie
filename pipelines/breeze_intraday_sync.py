@@ -5,6 +5,10 @@ During the session the live worker builds provisional bars from the ticks it
 happens to receive. After the close this fetches the authoritative candles, one
 request per stock, and prunes sessions older than the retention window. Stocks
 already completed for the day are skipped, so a re-run only fills what is missing.
+
+The live list changes during a session, so a stock can be dropped from it after
+a few minutes and keep only a fragment of the day. Those stocks are loaded too,
+after the current list, so the fragment is replaced by the whole session.
 """
 
 from __future__ import annotations
@@ -24,6 +28,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "workers"))
 
 from breeze_market_daemon import (  # noqa: E402
+    CashInstrument,
     IST,
     database_url,
     india_market_bounds,
@@ -82,6 +87,37 @@ def minute_bar(row: dict[str, Any], asset_id: str, opened: dt.datetime, closed: 
     return asset_id, minute, open_price, high, low, close, None if volume is None else max(0, int(volume)), SOURCE
 
 
+def with_dropped(instruments: list, provisional: list[tuple]) -> list:
+    """The current list, then every stock that holds provisional bars but has left the list."""
+    listed = {str(item.asset_id) for item in instruments}
+    extra = []
+    for asset_id, ticker, exchange, breeze_code, token in provisional:
+        if str(asset_id) in listed:
+            continue
+        listed.add(str(asset_id))
+        extra.append(CashInstrument(str(asset_id), ticker, exchange, breeze_code, token, ""))
+    return [*instruments, *extra]
+
+
+def provisional_stocks(conn, opened: dt.datetime, closed: dt.datetime) -> list[tuple]:
+    """Stocks with live-built bars in the session, with the Breeze contract they were streamed on."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            select m.asset_id::text,a.ticker,m.exchange_code,m.stock_code,m.token
+              from public.breeze_instrument_map m
+              join public.assets a on a.id=m.asset_id
+             where m.exchange_code in ('NSE','BSE')
+               and exists(select 1 from public.intraday_bars b
+                           where b.asset_id=m.asset_id and b.bar_time >= %s and b.bar_time < %s
+                             and b.source <> %s)
+             order by m.exchange_code,a.ticker
+            """,
+            (opened, closed, SOURCE),
+        )
+        return cur.fetchall()
+
+
 def allowance_spent(response: Any) -> bool:
     return isinstance(response, dict) and "limit exceed" in str(response.get("Error") or "").lower()
 
@@ -132,7 +168,9 @@ def main() -> int:
         return 2
 
     with psycopg2.connect(database_url()) as conn:
-        instruments = load_cash_instruments(conn, breeze_module.zip, ["NSE", "BSE"], max(1, args.limit))
+        listed = load_cash_instruments(conn, breeze_module.zip, ["NSE", "BSE"], max(1, args.limit))
+        instruments = with_dropped(listed, provisional_stocks(conn, opened, closed))
+        dropped = len(instruments) - len(listed)
         with conn.cursor() as cur:
             # A stock is complete once it has an authoritative bar from the session's last half hour.
             cur.execute(
@@ -203,6 +241,7 @@ def main() -> int:
 
     print(
         f"[breeze-intraday] {day}: {len(complete)} already complete, {resolved} of {len(todo)} loaded, "
+        f"{dropped} of them dropped from the live list mid-session, "
         f"{stored} bars stored, {pruned} old bars pruned" + (f"; stopped early: {stopped}" if stopped else ""),
         flush=True,
     )

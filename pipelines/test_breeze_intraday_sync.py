@@ -6,8 +6,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "workers"))
 
-from breeze_intraday_sync import SOURCE, allowance_spent, minute_bar, parse_bar_time, session_window  # noqa: E402
-from breeze_market_daemon import IST  # noqa: E402
+from breeze_intraday_sync import SOURCE, allowance_spent, minute_bar, parse_bar_time, session_window, with_dropped  # noqa: E402
+from breeze_market_daemon import CashInstrument, IST  # noqa: E402
 
 DAY = dt.date(2026, 11, 13)  # a regular Friday session
 OPENED = dt.datetime.combine(DAY, dt.time(9, 15), IST)
@@ -42,6 +42,17 @@ class BreezeIntradaySyncTests(unittest.TestCase):
     def test_keeps_a_bar_whose_volume_is_missing(self):
         row = {"datetime": "2026-11-13 10:00:00", "open": 10, "high": 11, "low": 9, "close": 10}
         self.assertIsNone(minute_bar(row, "a", OPENED, CLOSED)[6])
+
+    def test_stocks_dropped_from_the_live_list_are_loaded_after_it(self):
+        listed = [CashInstrument("a1", "AAA", "NSE", "AAA", "1", "A")]
+        provisional = [
+            ("a1", "AAA", "NSE", "AAA", "1"),       # still listed: not repeated
+            ("r1", "RELIANCE", "NSE", "RELIND", "2885"),
+            ("r1", "RELIANCE", "NSE", "RELIND", "2885"),
+        ]
+        out = with_dropped(listed, provisional)
+        self.assertEqual([item.asset_id for item in out], ["a1", "r1"])
+        self.assertEqual((out[1].exchange, out[1].breeze_code), ("NSE", "RELIND"))
 
     def test_recognises_a_spent_allowance(self):
         self.assertTrue(allowance_spent({"Success": None, "Status": 5, "Error": "Limit exceed: API call per day:"}))
