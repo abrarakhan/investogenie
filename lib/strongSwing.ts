@@ -67,7 +67,8 @@ type PythonStrongAssessment = CompletedBarStrongSwingAssessment & {
   pythonRank: number;
 };
 
-async function captureStrongSwingSnapshot(
+/** Exported so a test can drive the real upsert against a database, not a copy of its SQL. */
+export async function captureStrongSwingSnapshot(
   market: MarketId,
   candidates: StrongSwingCandidate[],
   capture: StrongSwingSnapshotCapture,
@@ -134,6 +135,10 @@ async function captureStrongSwingSnapshot(
   if (scheduled && Object.values(provenance).some((value) => value === null)) {
     throw new Error("Scheduled Strong Swing snapshots require complete provenance");
   }
+  // A rerun of the same canonical capture — the normal shape of a retry — recalculates against
+  // whatever benchmark is current. Leaving the recorded benchmark at the first attempt's value
+  // would hand the forward audit a series that did not produce the gates stored beside it, so
+  // both clauses carry the benchmark identity through the update.
   const conflictClause = scheduled
     ? `on conflict (market,market_date,decision_time,asset_id,source,feature_version)
          where source='scheduled' do update set
@@ -143,14 +148,18 @@ async function captureStrongSwingSnapshot(
            projected_stop=excluded.projected_stop,projected_trail=excluded.projected_trail,
            expected_days=excluded.expected_days,latest_bar_date=excluded.latest_bar_date,
            gates=excluded.gates,metrics=excluded.metrics,data_cutoff=excluded.data_cutoff,
-           scheduler_run_id=excluded.scheduler_run_id,calendar_version=excluded.calendar_version`
+           scheduler_run_id=excluded.scheduler_run_id,calendar_version=excluded.calendar_version,
+           benchmark_asset_id=excluded.benchmark_asset_id,
+           benchmark_latest_bar_date=excluded.benchmark_latest_bar_date`
     : `on conflict (captured_at,market,asset_id) do update set
          rank=excluded.rank,status=excluded.status,strength_score=excluded.strength_score,
          base_score=excluded.base_score,current_price=excluded.current_price,
          confirmation_entry=excluded.confirmation_entry,projected_target=excluded.projected_target,
          projected_stop=excluded.projected_stop,projected_trail=excluded.projected_trail,
          expected_days=excluded.expected_days,latest_bar_date=excluded.latest_bar_date,
-         gates=excluded.gates,metrics=excluded.metrics`;
+         gates=excluded.gates,metrics=excluded.metrics,
+         benchmark_asset_id=excluded.benchmark_asset_id,
+         benchmark_latest_bar_date=excluded.benchmark_latest_bar_date`;
   await query(
     `with stamp as (
        select case when $3::text='scheduled' then now()
