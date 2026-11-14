@@ -1,0 +1,16 @@
+[Unit]
+Description=InvestoGenie PostgreSQL backup
+After=postgresql.service
+Requires=postgresql.service
+
+[Service]
+Type=oneshot
+# Runs as root: the script writes outside the app tree and drops to the postgres role itself.
+ExecStart=/opt/investogenie/app/deploy/oracle/backup-postgres.sh
+# A dump of this database takes minutes, not seconds; the default would kill it mid-write.
+TimeoutStartSec=3600
+Nice=10
+IOSchedulingClass=idle
+ProtectHome=true
+NoNewPrivileges=true
+PrivateTmp=true

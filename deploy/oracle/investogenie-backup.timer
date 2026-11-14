@@ -1,0 +1,14 @@
+[Unit]
+Description=Daily InvestoGenie PostgreSQL backup
+
+[Timer]
+# 01:30 host time (IST): clear of India market hours, of the 07:00 digest and of the
+# 07:00/17:00 corporate-results refresh, so the dump is not competing with ingestion.
+OnCalendar=01:30
+RandomizedDelaySec=15m
+# A host that was off or rebooting at 01:30 backs up on the next boot instead of skipping
+# the day silently.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

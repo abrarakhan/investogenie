@@ -40,6 +40,24 @@ credentials require the original credential-encryption key.
    retained for compatibility).
 6. Verify HTTPS, Data Health, scheduler logs, and a fresh PostgreSQL backup.
 
+## Database backups
+
+`investogenie-backup.timer` runs `deploy/oracle/backup-postgres.sh` daily at 01:30 host time,
+installed and enabled by the release script. Each run writes a custom-format dump to
+`/var/backups/investogenie`, refuses a dump that is implausibly small or that `pg_restore`
+cannot list, and only then prunes dumps older than `KEEP_DAYS` (7), so a failing run cannot
+age out the last good one. Check it with:
+
+```bash
+systemctl list-timers investogenie-backup.timer
+sudo ls -lh /var/backups/investogenie
+```
+
+Before this timer existed the script created the backup directory as root and then dumped as
+the `postgres` role, which failed on every run; a host deployed before that fix has no dump at
+all until the timer has fired once. Take one immediately with
+`sudo systemctl start investogenie-backup.service`.
+
 The release script installs locked build dependencies, rejects high-severity production dependency
 findings, builds the app, discovers and applies replay-safe migrations from `0033_breeze_credentials.sql` onward (currently through `0077_market_volume_curves.sql`),
 verifies required broker, news, mobile, allocation, ML, corporate-calendar, Armed/pending/execution-plan, screener and candidate-observation relations and calendar/Gmail columns, prunes development

@@ -59,11 +59,17 @@ install -m 0644 "${APP_DIR}/deploy/oracle/investogenie.service" \
   /etc/systemd/system/investogenie.service
 install -m 0644 "${APP_DIR}/deploy/oracle/investogenie-breeze.service" \
   /etc/systemd/system/investogenie-breeze.service
+install -m 0644 "${APP_DIR}/deploy/oracle/investogenie-backup.service" \
+  /etc/systemd/system/investogenie-backup.service
+install -m 0644 "${APP_DIR}/deploy/oracle/investogenie-backup.timer" \
+  /etc/systemd/system/investogenie-backup.timer
 systemctl daemon-reload
 
 systemctl restart investogenie
 systemctl enable --now investogenie-breeze.service
 systemctl restart investogenie-breeze.service
+# Nothing backed up this database until the timer existed; keep it enabled on every release.
+systemctl enable --now investogenie-backup.timer
 sleep 5
 curl --fail --silent --show-error http://127.0.0.1:3000/login >/dev/null
 systemctl --no-pager --full status investogenie
