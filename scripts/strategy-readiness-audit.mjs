@@ -1,4 +1,13 @@
 import pg from "pg";
+import { readinessMarkets } from "./strategy-readiness-policy.mjs";
+
+let markets;
+try {
+  markets = readinessMarkets(process.argv.slice(2));
+} catch (error) {
+  console.error(`Usage: npm run audit:strategy-readiness -- --market IN|US|ALL\n${error.message}`);
+  process.exit(2);
+}
 
 if (process.env.NODE_ENV !== "production" && process.env.DOTENV_CONFIG_PATH === undefined) {
   try { process.loadEnvFile(".env.local"); } catch { /* optional */ }
@@ -10,7 +19,7 @@ const pool = new pg.Pool({
 });
 let failed = false;
 try {
-  for (const market of ["IN", "US"]) {
+  for (const market of markets) {
     const captures = await pool.query(
       `select captured_at,count(*) rows,
               count(*) filter(where status='EXECUTION_READY') ready,
