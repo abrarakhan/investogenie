@@ -653,3 +653,51 @@ describe("Strong Swing v4 rules", () => {
     expect(gateOf(result, "trend").passed).toBe(false);
   });
 });
+
+describe("assessStrongSwing benchmark verification", () => {
+  // Previously a benchmark that was absent, behind the market, or too short for its 50-SMA
+  // produced RISK_OFF (or fell through to WATCHLIST via the relative-strength gate), telling
+  // the user the market was dangerous when it simply could not be measured.
+  const setup = (benchmarkBars: OHLCV[]) => {
+    const { bars, entry } = cleanConfirmedBars();
+    return assessStrongSwing({
+      market: "IN", verdict: "LONG_BREAKOUT", isBreakout: true,
+      trigger: entry, atr: 2, trailingStop: null, currentPrice: entry + 0.2,
+      stopAtrMult: 1.5, bars, benchmarkBars,
+    });
+  };
+
+  it("reports a missing benchmark as unverified, not risk off", () => {
+    const result = setup([]);
+    expect(result.status).toBe("UNVERIFIED");
+  });
+
+  it("reports a stale benchmark as unverified, not risk off", () => {
+    const result = setup(benchmark().slice(0, -8));
+    expect(result.status).toBe("UNVERIFIED");
+  });
+
+  it("reports a benchmark too short for its 50-SMA as unverified", () => {
+    // Fresh, but only 30 bars: the regime question has no answer rather than a negative one.
+    const short = benchmark().slice(-30);
+    const result = setup(short);
+    expect(result.status).toBe("UNVERIFIED");
+  });
+
+  it("never reaches execution ready without a usable benchmark", () => {
+    for (const bench of [[], benchmark().slice(0, -8), benchmark().slice(-30)]) {
+      expect(setup(bench as OHLCV[]).status).not.toBe("EXECUTION_READY");
+    }
+  });
+
+  it("still reports a genuine two-session shock as risk off", () => {
+    // A usable benchmark that really did fall: that is a market call, and must stay RISK_OFF.
+    const shocked = benchmark();
+    const last = shocked[shocked.length - 1];
+    const third = shocked[shocked.length - 3];
+    shocked[shocked.length - 1] = { ...last, close: third.close * 0.9, high: third.close * 0.9, low: third.close * 0.9 };
+    const result = setup(shocked);
+    expect(result.gates.find((gate) => gate.key === "market_shock")?.passed).toBe(false);
+    expect(result.status).toBe("RISK_OFF");
+  });
+});

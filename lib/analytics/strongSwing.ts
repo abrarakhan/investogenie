@@ -6,6 +6,9 @@ import { averageTrueRange, isStructuralBreakout } from "@/lib/analytics/swingCla
  * entry, stop, target, trailing or classification maths changes: stored plans
  * carrying another version are refused at purchase time.
  *
+ * v5: missing, stale or insufficient benchmark data is UNVERIFIED, while a current benchmark
+ * that genuinely breaches a market-risk gate remains RISK_OFF.
+ *
  * v4: volume, close quality and clearance are judged on the bar that broke out (the previous
  * bar when the latest is the hold); the trend also needs the 50-day above the 200-day; a live
  * price below the entry waits instead of staying ready; company results inside three sessions
@@ -23,7 +26,7 @@ import { averageTrueRange, isStructuralBreakout } from "@/lib/analytics/swingCla
  * bar is judged against the stop known before it; and the stored plan carries
  * the real ATR.
  */
-export const STRONG_SWING_MODEL_VERSION = "strong-swing-v4-breakout-bar";
+export const STRONG_SWING_MODEL_VERSION = "strong-swing-v5-benchmark-verification";
 export const STRONG_SWING_TRAILING_POLICY_VERSION = "strong-swing-ledger-trailing-v2-post-entry-next-bar";
 const ATR_PERIOD = 14;
 const CONFIRMATION_ATR_BUFFER = 0.25;
@@ -32,6 +35,8 @@ const ENTRY_TOLERANCE = 0.999;
 
 export type StrongSwingStatus =
   | "EXECUTION_READY"
+  /** Benchmark data missing, stale or too short to judge: cannot verify, so cannot buy. */
+  | "UNVERIFIED"
   | "WAIT_FOR_ENTRY"
   | "WATCHLIST"
   | "RISK_OFF"
@@ -340,6 +345,9 @@ export function assessStrongSwing(input: StrongSwingInput): StrongSwingAssessmen
     referenceDate,
     [...bars.map((bar) => bar.date), ...benchmarkBars.map((bar) => bar.date)],
   ) <= 1;
+  // Usable means present, current, and long enough for the 50-session regime.
+  const benchmarkUsable = benchmarkBars.length > 0 && dataFresh
+    && benchmarkSma50 !== null && benchmarkSma50Prior !== null;
   const priceFloor = input.market === "IN" ? 20 : 2;
   const tradedValueFloor = input.market === "IN" ? 10_000_000 : 1_000_000;
   const hasTrendHistory = sma50 !== null && sma200 !== null && sma50Prior !== null && sma20 !== null;
@@ -378,6 +386,17 @@ export function assessStrongSwing(input: StrongSwingInput): StrongSwingAssessmen
 
   const gates = [
     gate("structure", "Structural setup", input.isBreakout, input.isBreakout ? "Existing engine detected a breakout." : `Base verdict: ${input.verdict}.`),
+    // Recorded as a gate, not inferred, so an audit can tell a negative market regime apart
+    // from missing, stale or too-short benchmark data.
+    gate("benchmark_data", "Benchmark data", benchmarkUsable,
+      benchmarkBars.length === 0
+        ? "Benchmark data is unavailable."
+        : benchmarkSma50 === null || benchmarkSma50Prior === null
+          ? `Benchmark has only ${benchmarkBars.length} bars; the 50-session regime needs more history.`
+          : !dataFresh
+            ? "Benchmark is behind the market by more than one trading session."
+            : "Benchmark is present, current and long enough to judge the regime.",
+      "execution"),
     gate("freshness", "Fresh EOD data", dataFresh,
       benchmarkBars.length === 0
         ? "Benchmark data unavailable — cannot verify freshness."
@@ -448,9 +467,17 @@ export function assessStrongSwing(input: StrongSwingInput): StrongSwingAssessmen
   // whether the close sat a full ATR below itself, so it never fired and every invalidation
   // came from the trailing stop alone.
   const breakoutFailed = input.isBreakout && atr > 0 && latest.close < breakoutLevel - atr;
+  // A benchmark that is absent, behind the market, or too short for its 50-SMA cannot answer
+  // the questions the benchmark gates ask. Reporting that as RISK_OFF told the user the market
+  // was dangerous when the truth was that it could not be measured, and the resulting
+  // relative-strength failure fell through to WATCHLIST, hiding the gap as "not ready yet".
+  // Both now resolve to UNVERIFIED, which still blocks execution.
   const hardRiskKeys = new Set([
     "extension_5d", "extension_10d", "sma20_extension", "atr_risk",
-    "stop_width", "circuit_behaviour", "freshness", "price", "liquidity", "live_quote", "live_spread", "live_circuit", "market_shock", "results_blackout",
+    "stop_width", "circuit_behaviour", "price", "liquidity", "live_quote", "live_spread", "live_circuit", "results_blackout",
+    // Freshness is a hard risk only while the benchmark is otherwise usable; when it is not,
+    // the failure is missing data, not a market call.
+    ...(benchmarkUsable ? ["freshness", "market_shock"] : []),
   ]);
   // Stretch above the 20-day average only says price has run ahead of its mean.
   // It still blocks buying, but a confirmed breakout failing only this is a
@@ -470,10 +497,12 @@ export function assessStrongSwing(input: StrongSwingInput): StrongSwingAssessmen
   // inside the zone and every gate, extension included, passes on that bar.
   const status: StrongSwingStatus = trailingBreached || breakoutFailed
     ? "INVALIDATED"
+    // A genuine breach on data that IS present still outranks an unverifiable benchmark.
     : hardRiskFailed ? "RISK_OFF"
-      : technicalPassed && (entryZoneFailed || extensionFailed) ? "WAIT_FOR_ENTRY"
-        : extensionFailed ? "RISK_OFF"
-          : gates.filter((item) => item.blocking).every((item) => item.passed) ? "EXECUTION_READY" : "WATCHLIST";
+      : gates.some((item) => item.key === "benchmark_data" && !item.passed) ? "UNVERIFIED"
+        : technicalPassed && (entryZoneFailed || extensionFailed) ? "WAIT_FOR_ENTRY"
+          : extensionFailed ? "RISK_OFF"
+            : gates.filter((item) => item.blocking).every((item) => item.passed) ? "EXECUTION_READY" : "WATCHLIST";
 
   return {
     status,

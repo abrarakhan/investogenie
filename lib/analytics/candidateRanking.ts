@@ -65,7 +65,7 @@ export function rankSwingCandidates<T extends SwingRankable>(
 
 export interface StrongSwingRankable {
   ticker: string;
-  status: "EXECUTION_READY" | "WAIT_FOR_ENTRY" | "WATCHLIST" | "RISK_OFF" | "INVALIDATED";
+  status: "EXECUTION_READY" | "WAIT_FOR_ENTRY" | "WATCHLIST" | "UNVERIFIED" | "RISK_OFF" | "INVALIDATED";
   strengthScore: number;
   score: number;
   rankScore?: number | null;
@@ -76,8 +76,10 @@ export function rankStrongSwingCandidates<T extends StrongSwingRankable>(candida
     EXECUTION_READY: 0,
     WAIT_FOR_ENTRY: 1,
     WATCHLIST: 2,
-    RISK_OFF: 3,
-    INVALIDATED: 4,
+    // Unverifiable ranks above a real risk-off: nothing is known to be wrong with the stock.
+    UNVERIFIED: 3,
+    RISK_OFF: 4,
+    INVALIDATED: 5,
   } as const;
   return [...candidates].sort((a, b) =>
     statusRank[a.status] - statusRank[b.status]

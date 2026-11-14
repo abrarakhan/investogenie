@@ -33,6 +33,9 @@ export const STRONG_SWING_STATUS_LABEL: Record<StrongSwingStatus, string> = {
   EXECUTION_READY: "Execution ready",
   WAIT_FOR_ENTRY: "Pullback candidate",
   WATCHLIST: "Awaiting confirmation",
+  // Distinct from "Risk off" on purpose: the market was not judged dangerous, it could not be
+  // judged at all because the benchmark was missing, stale or too short.
+  UNVERIFIED: "Unverified data",
   RISK_OFF: "Risk off",
   INVALIDATED: "Invalidated",
 };
@@ -40,6 +43,7 @@ export const STRONG_SWING_STATUS_LABEL: Record<StrongSwingStatus, string> = {
 export const STRONG_SWING_BLOCKED_BUY_LABEL: Record<Exclude<StrongSwingStatus, "EXECUTION_READY">, string> = {
   WAIT_FOR_ENTRY: "Buy blocked: extended, do not chase",
   WATCHLIST: "Buy unavailable",
+  UNVERIFIED: "Buy blocked: benchmark data unavailable",
   RISK_OFF: "Buy blocked: risk off",
   INVALIDATED: "Buy blocked: invalidated",
 };

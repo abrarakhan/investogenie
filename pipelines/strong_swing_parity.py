@@ -12,6 +12,11 @@ checks that the recorded status follows from the recorded gates. The benchmark
 gates (freshness, relative strength, regime, shock), the participation gate and
 the live broker gates are taken as recorded: they need data this check does not load.
 
+It replays the engine itself against the benchmark the capture recorded, so a capture is
+judged on the series that produced it. The gate-by-gate replay is compared only against
+captures of the current model: an engine that adds or removes a gate necessarily differs
+from older captures on that key, which is a version difference, not a parity failure.
+
 Run it against any capture: an old one to measure how far the earlier
 calculation drifted (backward), or the newest one after a release (forward).
 It writes nothing.
@@ -32,6 +37,9 @@ import psycopg2
 from strategy_math.strong_swing import MODEL_VERSION, assess as assess_python_engine
 
 ATR_PERIOD = 14
+# Mirrors lib/benchmarkSql.ts: the app's benchmark preference order and its history floor.
+BENCHMARK_TICKERS = {"IN": ["NIFTY", "NIFTYBEES"], "US": ["SPY"]}
+BENCHMARK_MIN_HISTORY = 200
 CONFIRMATION_ATR_BUFFER = 0.25
 TIME_ZONES = {"IN": "Asia/Kolkata", "US": "America/New_York"}
 SESSION_CLOSE = {"IN": "15:30", "US": "16:00"}
@@ -205,7 +213,14 @@ def expected_status(gates: list[dict], failed: bool) -> str:
     """The status assessStrongSwing derives from a set of gate results."""
     passed = {gate.get("key"): bool(gate.get("passed")) for gate in gates}
     advisory = {gate.get("key") for gate in gates if not gate.get("blocking", True)}
-    hard_risk = any(not ok for key, ok in passed.items() if key in HARD_RISK_GATES and key not in advisory)
+    # A benchmark that is absent, stale or too short cannot answer the benchmark gates. The
+    # engines report that as UNVERIFIED rather than RISK_OFF, so that a data outage is not
+    # presented as a market call, and the gates it makes unanswerable stop counting as hard
+    # risk. Captures from before the benchmark_data gate existed default to usable, which
+    # reproduces the engine's older behaviour for them.
+    benchmark_ok = passed.get("benchmark_data", True)
+    hard_gates = HARD_RISK_GATES if benchmark_ok else HARD_RISK_GATES - {"freshness", "market_shock"}
+    hard_risk = any(not ok for key, ok in passed.items() if key in hard_gates and key not in advisory)
     extension = not passed.get("sma20_extension", True)
     entry_zone = not passed.get("entry_zone", True)
     blocking = [gate for gate in gates if gate.get("blocking", True)]
@@ -214,6 +229,8 @@ def expected_status(gates: list[dict], failed: bool) -> str:
         return "INVALIDATED"
     if hard_risk:
         return "RISK_OFF"
+    if not benchmark_ok:
+        return "UNVERIFIED"
     if technical and (entry_zone or extension):
         return "WAIT_FOR_ENTRY"
     if extension:
@@ -252,6 +269,52 @@ def differences(recorded: dict, expected: dict, tolerance: float = 0.011, atr_to
     if recorded_trail is not None and abs(recorded_trail - expected["invalidation_trail"]) > tolerance:
         out.append("invalidation_trail")
     return out
+
+
+BENCHMARK_RECORDED = "recorded with the capture"
+BENCHMARK_RESELECTED = "re-selected as of the capture's latest bar"
+
+
+def benchmark_replay_plan(
+    recorded_asset_id: str | None,
+    recorded_cutoff: date | None,
+    capture_latest_bar: date | None,
+) -> tuple[str | None, date | None, str]:
+    """Which benchmark series to replay a capture against, and up to which bar.
+
+    A capture that recorded the benchmark it was judged against (migration 0078 onward) is
+    replayed against exactly that asset, cut at exactly that bar. Only an older capture needs
+    the benchmark re-selected, and then it is anchored to the capture's own newest stock bar
+    rather than to today: selecting by `current_date` could hand an historical capture a series
+    that did not exist when it was taken.
+    """
+    if recorded_asset_id and recorded_cutoff:
+        return recorded_asset_id, recorded_cutoff, BENCHMARK_RECORDED
+    return None, capture_latest_bar, BENCHMARK_RESELECTED
+
+
+def forward_gate_comparison(
+    recorded_gates: list[dict],
+    engine_gates: list[dict],
+    recorded_model: str | None,
+    has_results_check: bool,
+) -> tuple[list[str], bool] | None:
+    """Gates where this model disagrees with the capture, or None across model versions.
+
+    Comparing the current engine's gate set against a capture taken by an earlier model is not
+    a parity result: a model that adds or removes a gate differs on that key for every row of
+    every older capture. So forward parity is claimed only for captures of this model, and the
+    caller audits older ones by the arithmetic and status rules that hold across versions.
+    """
+    if recorded_model != MODEL_VERSION:
+        return None
+    recorded = {gate.get("key"): bool(gate.get("passed")) for gate in recorded_gates}
+    replayed = {gate.get("key"): bool(gate.get("passed")) for gate in engine_gates}
+    changed = sorted(key for key in set(recorded) | set(replayed)
+                     if recorded.get(key) != replayed.get(key))
+    excluded = TIME_VARYING_GATES | (set() if has_results_check else {"results_blackout"})
+    stable = [key for key in changed if key not in excluded]
+    return stable, bool(changed) and not stable
 
 
 def main() -> int:
@@ -310,26 +373,48 @@ def main() -> int:
                     day, float(high), float(low), float(close), float(volume or 0), float(open_),
                     None if open_interest is None else float(open_interest),
                 ))
-            benchmark_tickers = ["NIFTY", "NIFTYBEES"] if args.market == "IN" else ["SPY"]
             cur.execute(
-                """select a.id from public.assets a
-                    where a.country=%s and a.ticker=any(%s::text[])
-                    order by (select count(*) >= 200 and max(o.date) >= current_date - 7
-                                from public.daily_ohlcv o
-                               where o.asset_id=a.id and o.date >= current_date - 400) desc nulls last,
-                             array_position(%s::text[],a.ticker),
-                             (select count(*) from public.daily_ohlcv o where o.asset_id=a.id) desc
-                    limit 1""",
-                (args.market, benchmark_tickers, benchmark_tickers),
+                """select max(benchmark_asset_id::text),max(benchmark_latest_bar_date),max(latest_bar_date)
+                     from public.strong_swing_snapshots where market=%s and captured_at=%s""",
+                (args.market, captured_at),
             )
-            benchmark_id = cur.fetchone()
+            benchmark_asset_id, benchmark_cutoff, benchmark_source = benchmark_replay_plan(*cur.fetchone())
+            if benchmark_asset_id is None:
+                # Captures written before the benchmark identity was recorded (migration 0078).
+                cur.execute(
+                    f"""with candidate as (
+                          select a.id,a.ticker,
+                                 (select count(*) from public.daily_ohlcv o
+                                   where o.asset_id=a.id and o.date <= %(anchor)s) as bars,
+                                 (select max(o.date) from public.daily_ohlcv o
+                                   where o.asset_id=a.id and o.date <= %(anchor)s) as latest
+                            from public.assets a
+                           where a.country=%(country)s and a.ticker=any(%(tickers)s::text[])
+                        )
+                        select candidate.id from candidate
+                        order by (candidate.bars >= {BENCHMARK_MIN_HISTORY}
+                                    and (select count(distinct o.date)
+                                           from public.daily_ohlcv o
+                                           join public.assets a2 on a2.id=o.asset_id
+                                          where a2.country=%(country)s and a2.asset_class='STOCK'
+                                            and a2.is_active and o.date > candidate.latest
+                                            and o.date <= %(anchor)s) <= 1
+                                 ) desc nulls last,
+                                 array_position(%(tickers)s::text[],candidate.ticker),
+                                 candidate.bars desc
+                        limit 1""",
+                    {"country": args.market, "tickers": BENCHMARK_TICKERS[args.market],
+                     "anchor": benchmark_cutoff},
+                )
+                chosen = cur.fetchone()
+                benchmark_asset_id = chosen[0] if chosen else None
             benchmark: list[Bar] = []
-            if benchmark_id:
+            if benchmark_asset_id and benchmark_cutoff:
                 cur.execute(
                     """select date,open,high,low,close,volume,open_interest
-                         from public.daily_ohlcv where asset_id=%s
+                         from public.daily_ohlcv where asset_id=%s and date <= %s
                         order by date desc limit 260""",
-                    (benchmark_id[0],),
+                    (benchmark_asset_id, benchmark_cutoff),
                 )
                 benchmark = [Bar(
                     day, float(high), float(low), float(close), float(volume or 0), float(open_),
@@ -342,6 +427,8 @@ def main() -> int:
     gate_counts: dict[str, int] = {}
     engine_mismatches = 0
     time_varying_gate_changes = 0
+    other_model_rows = 0
+    other_models: dict[str, int] = {}
     examples: list[str] = []
     for asset_id, ticker, status, current_price, entry, stop, target, trail, latest_bar, metrics, gates in rows:
         series = bars.get(asset_id, [])
@@ -358,7 +445,9 @@ def main() -> int:
             "market": args.market, "verdict": "NO_SETUP", "currentPrice": float(current_price),
             "stopAtrMult": args.stop_mult, "targetRR": args.target_rr, "trailAtrMult": args.stop_mult,
             "bars": [bar.engine_json() for bar in series],
-            "benchmarkBars": [bar.engine_json() for bar in benchmark if bar.date <= latest_bar],
+            # The app hands every candidate the same benchmark series, so clipping it per
+            # stock here would compare against bars the capture never used.
+            "benchmarkBars": [bar.engine_json() for bar in benchmark],
             "requireLiveExecutionData": False,
             "results": metrics.get("resultsCheck"),
         })
@@ -372,18 +461,25 @@ def main() -> int:
             engine_mismatches += 1
             if len(examples) < args.show:
                 examples.append(f"{ticker}: Python engine differs from independent parity on {', '.join(engine_wrong) or 'model version'}")
-        recorded_gate_results = {gate.get("key"): bool(gate.get("passed")) for gate in gates}
-        engine_gate_results = {gate.get("key"): bool(gate.get("passed")) for gate in engine["gates"]}
-        changed = sorted(key for key in set(recorded_gate_results) | set(engine_gate_results)
-                         if recorded_gate_results.get(key) != engine_gate_results.get(key))
-        replay_exclusions = TIME_VARYING_GATES | ({"results_blackout"} if "resultsCheck" not in metrics else set())
-        stable_changed = [key for key in changed if key not in replay_exclusions]
-        if changed and not stable_changed:
-            time_varying_gate_changes += 1
-        if stable_changed or (not changed and engine["status"] != status):
-            engine_mismatches += 1
-            if len(examples) < args.show:
-                examples.append(f"{ticker}: Python status/stable gates differ (status {status} -> {engine['status']}; gates {', '.join(stable_changed) or 'none'})")
+        # Comparing the current engine's gates against a capture taken by an earlier model is
+        # not a parity result: a model that adds or removes a gate will differ on that key for
+        # every row of every older capture. Forward parity is therefore restricted to captures
+        # of this model; older ones are still audited by the arithmetic and status checks below,
+        # which hold across versions.
+        comparison = forward_gate_comparison(
+            gates, engine["gates"], metrics.get("modelVersion"), "resultsCheck" in metrics)
+        if comparison is None:
+            recorded_model = str(metrics.get("modelVersion"))
+            other_model_rows += 1
+            other_models[recorded_model] = other_models.get(recorded_model, 0) + 1
+        else:
+            stable_changed, time_varying_only = comparison
+            if time_varying_only:
+                time_varying_gate_changes += 1
+            if stable_changed or (not stable_changed and not time_varying_only and engine["status"] != status):
+                engine_mismatches += 1
+                if len(examples) < args.show:
+                    examples.append(f"{ticker}: Python status/stable gates differ (status {status} -> {engine['status']}; gates {', '.join(stable_changed) or 'none'})")
         recorded = {
             "entry": float(entry), "stop": float(stop), "target": float(target), "trail": float(trail),
             "atr_pct": float(metrics["atrPct"]) if metrics.get("atrPct") is not None else None,
@@ -423,6 +519,10 @@ def main() -> int:
     print(f"  taken during the session with a bar from that day: {unfinished}")
     print(f"  Python {MODEL_VERSION} vs independent calculation: {engine_mismatches} differ")
     print(f"  historical live-quote gates excluded from forward comparison: {time_varying_gate_changes}")
+    print(f"  benchmark series: {benchmark_source}, {len(benchmark)} bars to {benchmark_cutoff}")
+    if other_model_rows:
+        listed = ", ".join(f"{name} x{count}" for name, count in sorted(other_models.items()))
+        print(f"  rows from another model, gate replay not applicable: {other_model_rows} ({listed})")
     for _gap, line in sorted(worst, key=lambda item: -abs(item[0]))[: args.show]:
         print(f"  {line}")
     return 0 if clean == checked and unfinished == 0 and engine_mismatches == 0 else 3

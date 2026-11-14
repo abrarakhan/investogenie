@@ -366,7 +366,8 @@ async function swingCandidates(market: MobileMarket, params: URLSearchParams, us
 // ---- Strong Swing models --------------------------------------------------------------------
 
 const STRONG_TONE: Record<StrongSwingCandidate["status"], MobileTone> = {
-  EXECUTION_READY: "positive", WAIT_FOR_ENTRY: "neutral", WATCHLIST: "warning", RISK_OFF: "warning", INVALIDATED: "negative",
+  EXECUTION_READY: "positive", WAIT_FOR_ENTRY: "neutral", WATCHLIST: "warning",
+  UNVERIFIED: "warning", RISK_OFF: "warning", INVALIDATED: "negative",
 };
 const momentumTone = (status: string): MobileTone => isMomentumExecutionReady(status) ? "positive"
   : ["EXECUTION_BLOCKED", "FAILED_BREAKOUT", "LATE_PROFIT_BOOKING", "NOT_QUALIFIED", "WAIT_FOR_PULLBACK"].includes(status) ? "negative"

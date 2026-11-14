@@ -25,7 +25,7 @@ try {
               count(*) filter(where status='EXECUTION_READY') ready,
               count(*) filter(where coalesce((metrics->'resultsCheck'->>'verified')::boolean,false)) results_verified
          from public.strong_swing_snapshots
-        where market=$1 and source='scheduled' and metrics->>'modelVersion'='strong-swing-v4-breakout-bar'
+        where market=$1 and source='scheduled' and metrics->>'modelVersion'='strong-swing-v5-benchmark-verification'
         group by captured_at order by captured_at desc limit 5`, [market],
     );
     const enough = captures.rows.length >= 5;

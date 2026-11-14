@@ -5,7 +5,7 @@ from typing import Any
 
 from .common import Bar, average_true_range, js_round, mean, pct_change, round2, sma, structural_breakout
 
-MODEL_VERSION = "strong-swing-v4-breakout-bar"
+MODEL_VERSION = "strong-swing-v5-benchmark-verification"
 TRAILING_POLICY_VERSION = "strong-swing-ledger-trailing-v2-post-entry-next-bar"
 CONFIRMATION_ATR_BUFFER = 0.25
 RESULTS_BLACKOUT_SESSIONS = 3
@@ -49,6 +49,23 @@ def _sessions_between(left: str, right: str, dates: list[str]) -> float:
 
 def _fmt(value: float, digits: int) -> str:
     return f"{value:.{digits}f}"
+
+
+
+def _benchmark_usable(benchmark: list, fresh: bool, sma50, sma50_prior) -> bool:
+    """Whether the benchmark can answer the questions the benchmark gates ask."""
+    return bool(benchmark) and fresh and sma50 is not None and sma50_prior is not None
+
+
+def _benchmark_detail(benchmark: list, fresh: bool, sma50, sma50_prior) -> str:
+    """Name the specific reason, so an audit can tell these cases apart."""
+    if not benchmark:
+        return "Benchmark data is unavailable."
+    if sma50 is None or sma50_prior is None:
+        return f"Benchmark has only {len(benchmark)} bars; the 50-session regime needs more history."
+    if not fresh:
+        return "Benchmark is behind the market by more than one trading session."
+    return "Benchmark is present, current and long enough to judge the regime."
 
 
 def assess(raw: dict[str, Any]) -> dict[str, Any]:
@@ -154,6 +171,9 @@ def assess(raw: dict[str, Any]) -> dict[str, Any]:
 
     gates = [
         _gate("structure", "Structural setup", is_breakout, "Existing engine detected a breakout." if is_breakout else f"Base verdict: {verdict}."),
+        _gate("benchmark_data", "Benchmark data",
+              _benchmark_usable(benchmark, fresh, bench_sma50, bench_sma50_prior),
+              _benchmark_detail(benchmark, fresh, bench_sma50, bench_sma50_prior), "execution"),
         _gate("freshness", "Fresh EOD data", fresh, "Benchmark data unavailable — cannot verify freshness." if not benchmark else f"Latest bar {latest.date}." if fresh else f"Latest bar {latest.date}; benchmark {reference_date}.", "execution"),
         _gate("price", "Price floor", latest.close >= price_floor, f"{latest.close:.2f} vs minimum {price_floor:.2f}.", "execution"),
         _gate("liquidity", "20-day liquidity", avg_value >= value_floor, f"Average traded value {js_round(avg_value):,}.", "execution"),
@@ -187,6 +207,15 @@ def assess(raw: dict[str, Any]) -> dict[str, Any]:
     score = js_round(sum(bool(gate["passed"]) for gate in gates) / len(gates) * 100)
     breakout_failed = is_breakout and atr > 0 and latest.close < level - atr
     hard = {"extension_5d", "extension_10d", "sma20_extension", "atr_risk", "stop_width", "circuit_behaviour", "freshness", "price", "liquidity", "live_quote", "live_spread", "live_circuit", "market_shock", "results_blackout"}
+    # A benchmark that is absent, behind the market, or too short for its 50-SMA cannot answer
+    # the questions the benchmark gates ask. Treating that as RISK_OFF told the user the market
+    # was dangerous when the truth was that it could not be measured; treating the resulting
+    # relative-strength failure as WATCHLIST hid the gap as "not ready yet". Both become
+    # UNVERIFIED, which still blocks execution.
+    benchmark_usable = (bool(benchmark) and fresh
+                        and bench_sma50 is not None and bench_sma50_prior is not None)
+    if not benchmark_usable:
+        hard = hard - {"freshness", "market_shock"}
     hard_failed = any(gate["key"] in hard and gate["key"] != "sma20_extension" and gate["blocking"] and not gate["passed"] for gate in gates)
     extension_failed = not next(gate["passed"] for gate in gates if gate["key"] == "sma20_extension")
     entry_failed = not next(gate["passed"] for gate in gates if gate["key"] == "entry_zone")
@@ -194,7 +223,10 @@ def assess(raw: dict[str, Any]) -> dict[str, Any]:
     if breakout_failed:
         status = "INVALIDATED"
     elif hard_failed:
+        # A genuine breach on data that IS present still outranks an unverifiable benchmark.
         status = "RISK_OFF"
+    elif not next(gate["passed"] for gate in gates if gate["key"] == "benchmark_data"):
+        status = "UNVERIFIED"
     elif technical_passed and (entry_failed or extension_failed):
         status = "WAIT_FOR_ENTRY"
     elif extension_failed:

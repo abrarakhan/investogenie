@@ -71,6 +71,13 @@ async function captureStrongSwingSnapshot(
   market: MarketId,
   candidates: StrongSwingCandidate[],
   capture: StrongSwingSnapshotCapture,
+  /**
+   * The benchmark these candidates were actually judged against. Recorded so the forward audit
+   * replays the same series: it used to re-select one at audit time, by a different freshness
+   * rule and relative to the audit date, so an older capture could be replayed against a
+   * benchmark that was never used to produce it.
+   */
+  benchmark: { assetId: string | null; latestBarDate: string | null },
 ): Promise<void> {
   if (!candidates.length) return;
   const payload = candidates.map((candidate, index) => ({
@@ -161,16 +168,19 @@ async function captureStrongSwingSnapshot(
        (captured_at,market,asset_id,ticker,rank,status,strength_score,base_score,
         current_price,confirmation_entry,projected_target,projected_stop,
         projected_trail,expected_days,latest_bar_date,gates,metrics,source,decision_time,
-        feature_version,scheduler_run_id,market_date,data_cutoff,calendar_version)
+        feature_version,scheduler_run_id,market_date,data_cutoff,calendar_version,
+        benchmark_asset_id,benchmark_latest_bar_date)
      select stamp.captured_at,$1,rows."assetId",rows."ticker",rows."rank",rows."status",
             rows."strengthScore",rows."baseScore",rows."currentPrice",rows."entry",
             rows."target",rows."stop",rows."trail",rows."expectedDays",rows."latestDate",
-            rows."gates",rows."metrics",$3,$4::time,$5,$6::uuid,$7::date,$8::timestamptz,$9
+            rows."gates",rows."metrics",$3,$4::time,$5,$6::uuid,$7::date,$8::timestamptz,$9,
+            $10::uuid,$11::date
        from rows cross join stamp
      ${conflictClause}`,
     [market, JSON.stringify(payload), provenance.source, provenance.decisionTime,
       provenance.featureVersion, provenance.schedulerRunId, provenance.marketDate,
-      provenance.dataCutoff, provenance.calendarVersion],
+      provenance.dataCutoff, provenance.calendarVersion,
+      benchmark.assetId, benchmark.latestBarDate],
   );
 }
 
@@ -328,7 +338,10 @@ export async function getStrongSwingCandidates(
     strongSwingRank: index + 1,
   }));
   try {
-    await captureStrongSwingSnapshot(market, ranked, capture);
+    await captureStrongSwingSnapshot(market, ranked, capture, {
+      assetId: benchmarkRows[0]?.asset_id ?? null,
+      latestBarDate: benchmarkBars.at(-1)?.date ?? null,
+    });
   } catch (error) {
     console.error("[strong-swing] failed to capture audit snapshot", error);
   }

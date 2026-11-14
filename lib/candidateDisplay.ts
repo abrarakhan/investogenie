@@ -8,6 +8,7 @@ import type { ArmedSwingStatus } from "@/lib/analytics/armedSwing";
 /** Mirrors the groups StrongSwingCandidates renders; ready and pullback groups are shown in full. */
 export const STRONG_SWING_DISPLAY_LIMITS: Partial<Record<StrongSwingStatus, number>> = {
   WATCHLIST: 30,
+  UNVERIFIED: 30,
   RISK_OFF: 30,
   INVALIDATED: 20,
 };

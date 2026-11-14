@@ -12,6 +12,7 @@ const STATUS_STYLE: Record<StrongSwingStatus, string> = {
   EXECUTION_READY: "border-emerald-400/35 bg-emerald-400/10 text-emerald-300",
   WAIT_FOR_ENTRY: "border-cyan-400/35 bg-cyan-400/10 text-cyan-200",
   WATCHLIST: "border-amber-400/35 bg-amber-400/10 text-amber-200",
+  UNVERIFIED: "border-slate-400/35 bg-slate-400/10 text-slate-200",
   RISK_OFF: "border-orange-400/35 bg-orange-400/10 text-orange-200",
   INVALIDATED: "border-rose-400/35 bg-rose-400/10 text-rose-300",
 };
@@ -28,6 +29,10 @@ function rankMovement(candidate: StrongSwingCandidate): string {
 
 function rankReason(candidate: StrongSwingCandidate): string {
   if (candidate.status === "EXECUTION_READY") return "Every technical and execution gate passed.";
+  // Say plainly that this is a data gap, not a judgement about the stock or the market.
+  if (candidate.status === "UNVERIFIED") {
+    return "Benchmark data is missing, stale or too short to judge the market against. Buying is blocked until it can be verified — this is not a view on the stock.";
+  }
   const failed = candidate.gates.filter((gate) => !gate.passed);
   const technical = failed.filter((gate) => gate.category === "technical").slice(0, 2);
   const execution = failed.filter((gate) => gate.category === "execution").slice(0, 2);
@@ -235,11 +240,12 @@ export default function StrongSwingCandidates({ candidates, counts, planIds, mar
         Strong Swing starts with the same base Swing classifier. Every base Swing setup is assessed; base rank is its position in that list. Pullback candidates are confirmed breakouts that are above the buy zone (confirmed entry + 0.50 ATR) or more than 15% above the 20-day average. They are not buyable, and a later pullback does not reactivate them automatically: Execution ready still needs a current breakout with two confirming closes, so most re-qualify only by setting up again. Strong rank is recalculated after confirmation, liquidity, volatility, circuit-behaviour and entry-safety gates.
         <span className="mt-2 block text-white/45">Double-click a stock card, or long-press it on mobile, to open its interactive chart.</span>
       </div>
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-5 sm:gap-3">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6 sm:gap-3">
         {[
           ["Execution ready", total("EXECUTION_READY"), "text-emerald-300"],
           ["Pullback candidates", total("WAIT_FOR_ENTRY"), "text-cyan-200"],
           ["Watchlist", total("WATCHLIST"), "text-amber-200"],
+          ["Unverified data", total("UNVERIFIED"), "text-slate-200"],
           ["Risk off", total("RISK_OFF"), "text-orange-200"],
           ["Invalidated", total("INVALIDATED"), "text-rose-300"],
         ].map(([label, value, color]) => (
@@ -268,6 +274,7 @@ export default function StrongSwingCandidates({ candidates, counts, planIds, mar
         color="text-amber-200"
         bindChartGesture={bindChartGesture}
       />
+      <CandidateGroup title="Unverified data" {...group("UNVERIFIED")} limit={30} planIds={planIds} totalCount={total("UNVERIFIED")} color="text-slate-200" bindChartGesture={bindChartGesture} />
       <CandidateGroup title="Risk off" {...group("RISK_OFF")} limit={30} planIds={planIds} totalCount={total("RISK_OFF")} color="text-orange-200" bindChartGesture={bindChartGesture} />
       <CandidateGroup
         title="Invalidated"

@@ -37,7 +37,7 @@ def main() -> int:
         raise ValueError("inputs must be a list")
     if engine == "strong_swing":
         results = [assess_strong_swing(item) for item in inputs]
-        status_order = {"EXECUTION_READY": 0, "WAIT_FOR_ENTRY": 1, "WATCHLIST": 2, "RISK_OFF": 3, "INVALIDATED": 4}
+        status_order = {"EXECUTION_READY": 0, "WAIT_FOR_ENTRY": 1, "WATCHLIST": 2, "UNVERIFIED": 3, "RISK_OFF": 4, "INVALIDATED": 5}
         order = sorted(range(len(results)), key=lambda index: (
             status_order[results[index]["status"]], -results[index]["strengthScore"],
             -float(inputs[index].get("baseScore") or 0), -float(inputs[index].get("rankScore") or float("-inf")),

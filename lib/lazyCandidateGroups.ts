@@ -6,7 +6,7 @@
 export type LazyScreen = "strong" | "armed" | "momentum-legacy" | "momentum-v2" | "trend";
 
 export const LAZY_STATUSES: Record<LazyScreen, ReadonlySet<string>> = {
-  strong: new Set(["WAIT_FOR_ENTRY", "WATCHLIST", "RISK_OFF", "INVALIDATED"]),
+  strong: new Set(["WAIT_FOR_ENTRY", "WATCHLIST", "UNVERIFIED", "RISK_OFF", "INVALIDATED"]),
   armed: new Set(["UNVERIFIED", "FORMING", "EXTENDED", "RISK_OFF", "INVALIDATED"]),
   "momentum-legacy": new Set(["BREAKOUT_TRIGGERED", "EARLY_WATCH", "WAIT_FOR_PULLBACK"]),
   "momentum-v2": new Set(["FIRST_THRUST", "PRE_IGNITION", "RETEST_SETUP", "LATE_PROFIT_BOOKING", "FAILED_BREAKOUT"]),

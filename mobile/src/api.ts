@@ -18,7 +18,7 @@ export interface StrongCandidate {
   assetId: string;
   ticker: string;
   exchange?: string | null;
-  status: "EXECUTION_READY" | "WAIT_FOR_ENTRY" | "WATCHLIST" | "RISK_OFF" | "INVALIDATED";
+  status: "EXECUTION_READY" | "WAIT_FOR_ENTRY" | "WATCHLIST" | "UNVERIFIED" | "RISK_OFF" | "INVALIDATED";
   strengthScore: number;
   strongSwingRank: number;
   lastQuote: number | null;
