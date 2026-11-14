@@ -1,6 +1,6 @@
 # InvestoGenie on AWS Lightsail or Oracle-compatible Ubuntu
 
-_Source and release behavior reviewed 26 October 2026 through runtime revision `1c7aac3`._
+_Source and release behavior reconciled 14 November 2026 through deployed revision `f33f256`._
 
 This deployment package runs Next.js, PostgreSQL, Nginx, and the existing Node/Python scheduler on
 one Ubuntu VM. The package supports AWS Lightsail and Oracle-compatible
@@ -115,8 +115,8 @@ Deploy a pushed `main` revision:
 sudo bash /opt/investogenie/app/deploy/oracle/deploy-release.sh
 ```
 
-The release script updates the checkout and re-executes the checked-out version once, then installs locked dependencies, builds Next.js, applies the ordered migrations
-from `0033_breeze_credentials.sql` onward in numeric order, verifies required production relations, restarts the web
+The release script updates the checkout and re-executes the checked-out version once, then installs locked dependencies, builds Next.js, discovers and applies the ordered migrations
+from `0033_breeze_credentials.sql` onward in filename order (currently through 0077), verifies required production relations, restarts the web
 scheduler and Breeze services, and checks the local login endpoint.
 
 Install the local PostgreSQL backup job:

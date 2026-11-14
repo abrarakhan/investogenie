@@ -1,6 +1,6 @@
 # InvestoGenie Deployment Targets
 
-_Source and production release path reviewed 26 October 2026 through runtime revision `1c7aac3`._
+_Source and production release path reviewed 14 November 2026 through deployed revision `f33f256`._
 
 InvestoGenie supports local development/fallback and AWS production from the same Git revision.
 
@@ -41,7 +41,7 @@ credentials require the original credential-encryption key.
 6. Verify HTTPS, Data Health, scheduler logs, and a fresh PostgreSQL backup.
 
 The release script installs locked build dependencies, rejects high-severity production dependency
-findings, builds the app, applies replay-safe migrations from `0033_breeze_credentials.sql` through `0059_candidate_signal_observations.sql`,
+findings, builds the app, discovers and applies replay-safe migrations from `0033_breeze_credentials.sql` onward (currently through `0077_market_volume_curves.sql`),
 verifies required broker, news, mobile, allocation, ML, corporate-calendar, Armed/pending/execution-plan, screener and candidate-observation relations and calendar/Gmail columns, prunes development
 dependencies, and restarts both application services.
 

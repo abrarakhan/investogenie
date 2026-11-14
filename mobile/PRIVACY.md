@@ -1,6 +1,6 @@
 # InvestoGenie Mobile Privacy
 
-_Source behavior reviewed 26 October 2026 through runtime revision `1c7aac3`._
+_Source behavior reconciled 14 November 2026 through deployed revision `f33f256`._
 
 InvestoGenie Mobile connects to the owner's configured InvestoGenie server.
 

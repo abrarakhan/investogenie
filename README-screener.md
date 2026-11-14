@@ -1,6 +1,6 @@
 # Stock Screener
 
-_Source reviewed 26 October 2026 through runtime revision `1c7aac3`._
+_Source reconciled 14 November 2026 through deployed revision `f33f256`._
 
 The fundamental and price-action Stock Screener lives at `/terminal/in/stocks` and
 `/terminal/us/stocks`. The `/terminal/[market]/screener` route is the separate buy-side Swing

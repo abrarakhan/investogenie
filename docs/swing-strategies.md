@@ -1,6 +1,6 @@
 # Swing, Strong Swing and Armed Strong Swing: rules and review
 
-_Rules as of the strategy changes of 14 November 2026 (Strong Swing model `strong-swing-v4-breakout-bar`). The review that led to them was made on 13 November 2026 at revision `30e6dd4`; its production figures are from India (NSE) data of that date, read-only._
+_Rules as deployed 14 November 2026 at revision `f33f256` (Strong Swing model `strong-swing-v4-breakout-bar`). The review that led to them began at revision `30e6dd4`; production evidence below is explicitly dated._
 
 The named-strategy thresholds are frozen as policy `legendary-v2-2026-11-14`; Armed rules are `armed-v3-2026-11-14`. Changing a threshold requires a new version and replay.
 
@@ -43,18 +43,18 @@ Tick: ₹0.05 in India, $0.01 in the US.
 
 ### After purchase
 
-`lib/swingTradeProjection.ts` freezes the plan at the buy price. `calculateRecommendedGttStop` in `lib/swingTradeLedger.ts` recommends the highest of the frozen stop, the frozen trail, the trail below, and the buy price once a high reaches buy + 0.75R.
+`lib/swingTradeProjection.ts` freezes the plan at the buy price. `calculateRecommendedGttStop` in `lib/swingTradeLedger.ts` is direction-sensitive: long protection may only rise and short protection may only fall. EMA/SMA strategy lines are completed-close exits, not intraday broker stops. Qullamaggie, Minervini, Darvas and PTJ plan a 50% first-target scale-out; Simons plans the full allocation.
 
 | Strategy | Trail (trades bought from 14 November 2026) |
 | --- | --- |
 | Default Swing, Strong Swing, Momentum, Armed, Trend Continuation | highest completed high after entry − `trailAtrMult` × ATR |
-| Qullamaggie | 10-day EMA of completed closes |
-| Minervini | SMA50 |
-| PTJ | SMA200 |
+| Qullamaggie | completed close below the 10-day EMA |
+| Minervini | completed close below SMA50 |
+| PTJ | completed close below SMA200 for long; above SMA200 for short |
 | Darvas | one tick under the bottom of the newest box built since entry (`darvasTrailingBottom`) |
 | Simons | none; the target is min(frozen target, current 20-day mean) |
 
-The line is yesterday's completed value used as today's stop. Trades opened before 14 November 2026 keep the ATR trail.
+The moving-average line is evaluated only after a completed close. It does not replace the separate live catastrophic/broker stop. Trades opened before 14 November 2026 keep their prior follow-up contract.
 
 ## 2. Strong Swing (`/terminal/[market]/strong-swing`)
 
@@ -127,6 +127,6 @@ The review found no arithmetic error. The findings were places where the rules, 
 - **Partial profit-taking is explicit.** Qullamaggie, Minervini, Darvas and PTJ plans schedule 50% at the first target; Simons exits the full mean-reversion allocation. Fills remain user-confirmed ledger events.
 - **Close-only exits stay close-only.** EMA/SMA strategy lines are evaluated against completed closes and do not replace the live catastrophic broker stop.
 
-### Not yet observed in production
+### Production evidence and remaining observation
 
-The changes are tested but had not run on live data when this was written. On local 13 November data one stock (a prior-day breakout the base scan called `NO_SETUP`) passed every Strong Swing gate apart from a stale local benchmark; whether the gates now yield candidates at a useful rate needs the scheduled captures after deployment. The results gate depends on authoritative blackout-window coverage. Armed breakout confirmation also remains fail-closed until its market has a curve built from at least 40 completed sessions.
+Revision `f33f256` is deployed. India results-calendar verification covered 2,943 of 2,945 active NSE assets (99.93%) at the 14 November check. The active India Armed curve `in-median-2026-09-16-2026-11-13-40s` contains 1,425 complete Breeze asset-sessions across 40 eligible sessions; the short special session was excluded by the completeness rule. US Armed remains fail-closed because Breeze does not supply US equities and no equivalent US depth/intraday source is configured. Five genuine scheduled Strong Swing v4 captures are still required to establish post-deploy candidate frequency; they must not be reconstructed after the fact.

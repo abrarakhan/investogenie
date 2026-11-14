@@ -2,7 +2,7 @@
 
 InvestoGenie is a self-hosted market research and trade-management application for Indian and US equities. Next.js serves the web terminal and mobile APIs; PostgreSQL stores market data, user portfolios, frozen trade plans and operational history.
 
-_Code and production baseline reviewed 26 October 2026 through runtime revision `1c7aac3`. See [STATUS.md](STATUS.md) for the dated verification boundary._
+_Code and production baseline reviewed 14 November 2026 through deployed revision `f33f256`. See [STATUS.md](STATUS.md) for the dated verification boundary and [AI review handoff](AI_REVIEW_HANDOFF.md) for an external-review guide._
 
 ## Workspaces
 
@@ -11,7 +11,7 @@ _Code and production baseline reviewed 26 October 2026 through runtime revision 
 | `/markets/in`, `/markets/us` | Market overview and charts |
 | `/terminal/[market]` | India (`in`) or US (`us`) terminal |
 | `/terminal/[market]/stocks` | Fundamental and price-action Stock Screener, saved screens, natural-language queries and exports |
-| `/terminal/[market]/screener` | Buy-side Swing Candidates; India is NSE-only and capped to the top 20 |
+| `/terminal/[market]/screener` | Buy-side Swing Candidates with all current setups, strategy tags and execution-state notes |
 | `/terminal/[market]/strong-swing` | Strong Swing, legacy/V2 Momentum Ignition and Python Trend Continuation observation |
 | `/terminal/[market]/armed-swing` | Earlier pre-breakout Armed Strong Swing plans |
 | `/terminal/[market]/news-swing` | Strong Swing with source-linked news and AI assessment |
@@ -28,7 +28,7 @@ _Code and production baseline reviewed 26 October 2026 through runtime revision 
 
 Analytics run on the server. Strong Swing and Momentum purchase flows use stored execution plans; Armed Swing stores its own immutable trigger, limit, stop, target and gate snapshot. Pending buy-stops are ledger records: creating one sends no broker order and creates no position or P&L. Confirmed partial fills create separate purchased trades while preserving the unfilled remainder.
 
-Armed setups require verified results-calendar coverage and live execution data. Missing evidence blocks actionable states. India execution quotes require `BREEZE_LIVE`; a fallback quote alone cannot authorize an Armed entry.
+Armed setups require verified results-calendar coverage, a market-specific 40-session intraday volume curve and live execution data. Missing evidence blocks actionable states. India execution quotes require `BREEZE_LIVE`; a fallback quote alone cannot authorize an Armed entry. The active India curve at the reviewed production boundary contains 1,425 complete Breeze asset-sessions across 40 sessions.
 
 The ledger separates cumulative purchase turnover from external capital employed after recycling retained sale proceeds. ROI uses capital employed; XIRR uses dated contributions and terminal cash plus open-position value. Broker-reconciled acquisition/proceeds/P&L can replace gross values.
 
@@ -82,6 +82,6 @@ npm run lint
 npm run build
 ```
 
-Database checks need a configured PostgreSQL instance. Linux releases use `deploy/oracle/deploy-release.sh`; it applies its explicit migration list from 0033 through 0059 and assumes the earlier schema already exists. After updating the checkout, it re-executes the checked-out release script once so same-release migration additions are honored. It runs dependency audit/build/schema checks, but does not run the test suite.
+Database checks need a configured PostgreSQL instance. Linux releases use `deploy/oracle/deploy-release.sh`; it discovers and applies migrations from 0033 onward in filename order and assumes the earlier schema already exists. After updating the checkout, it re-executes the checked-out release script once so same-release migration additions are honored. It runs dependency audit/build/schema checks, but does not run the test suite.
 
-See [architecture](ARCHITECTURE.md), [capabilities](CAPABILITIES.md), [status](STATUS.md), [deployment](DEPLOYMENT.md), [Stock Screener](README-screener.md), [email setup](docs/EMAIL_SETUP.md), and [mobile](mobile/README.md).
+See the [documentation index](DOCUMENTATION_INDEX.md), [AI review handoff](AI_REVIEW_HANDOFF.md), [architecture](ARCHITECTURE.md), [capabilities](CAPABILITIES.md), [status](STATUS.md), [deployment](DEPLOYMENT.md), [Stock Screener](README-screener.md), [email setup](docs/EMAIL_SETUP.md), and [mobile](mobile/README.md).

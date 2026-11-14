@@ -1,6 +1,6 @@
 # InvestoGenie ML Methodology — Production Contract v1
 
-_Contract reviewed 26 October 2026 through runtime revision `1c7aac3`. The Python snapshot/feature/label foundation is present; no live serving assignment was inspected._
+_Contract reconciled 14 November 2026 through deployed revision `f33f256`. The Python snapshot/feature/label foundation is present; no validated model serving assignment was established._
 
 ## Implemented versus specified
 
@@ -14,7 +14,7 @@ monitoring automation are not present in the repository. Tables and policy contr
 implement those services. A current serving assignment requires database inspection.
 
 Migration 0051 is the ML schema boundary; the application schema extends through
-`0059_candidate_signal_observations.sql`. Later Armed/pending/execution-plan, screener-feature and candidate-observation workflows do not extend ML
+`0077_market_volume_curves.sql`. Later Armed/pending/execution-plan, screener-feature, candidate-observation and market-volume-curve workflows do not extend ML
 inclusion statuses or authorize ML broker buying.
 
 ## Purpose and boundary

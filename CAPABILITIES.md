@@ -1,6 +1,6 @@
 # InvestoGenie Capabilities
 
-_Code and production baseline reviewed 26 October 2026 through runtime revision `1c7aac3`. Implemented means present in source; provider access, continuing data coverage and installed mobile binaries still require runtime checks._
+_Code and production baseline reviewed 14 November 2026 through deployed revision `f33f256`. Implemented means present in source; provider access, continuing data coverage and installed mobile binaries still require runtime checks._
 
 ## Market research
 
@@ -12,7 +12,7 @@ _Code and production baseline reviewed 26 October 2026 through runtime revision 
 | Strong Swing | Python-authoritative confirmation, liquidity, market, results-blackout and execution gates, trade levels and deterministic ranking | `pipelines/strategy_math/strong_swing.py`, `lib/strongSwing.ts` |
 | Momentum Ignition | Python-authoritative legacy and V2 discovery with completed-session bases, separately verified live-session input and explicit execution blocking; V2 includes Momentum Ready, First Thrust, Pre-Ignition, Retest, Late Risk and Failed states | `pipelines/strategy_math/momentum.py`, `lib/momentumIgnition*.ts` |
 | Trend Continuation | Python-owned multi-session impulse, pre-impulse trend, continuation-watch, ready and extended-risk states; counter-trend rebounds cannot become ready; confirmed day-two breakouts may create an immutable manual plan after live execution and results gates; day one, pullbacks and auto-buy remain blocked | `pipelines/trend_continuation.py`, `lib/trendContinuation.ts` |
-| Armed Strong Swing | Earlier stage-2 breakout plans, time-of-day volume pace, structural stops and results blackout | `lib/armedSwing.ts`, `lib/analytics/armedSwing.ts` |
+| Armed Strong Swing | Earlier stage-2 breakout plans, blocking RS/regime gates, versioned 40-session time-of-day volume pace, structural stops and results blackout | `lib/armedSwing.ts`, `lib/analytics/armedSwing.ts` |
 | News & AI Swing | Source-linked event overlay on existing technical candidates | `lib/news/`, `lib/newsSwing.ts` |
 | Long-Term Candidates | Multi-year statement evidence and investor-inspired rankings | `lib/analytics/longTermStrategies.ts` |
 | Probability | 21-session return and risk distributions | `lib/probability-runtime.ts`, `lib/analytics/probability/` |
@@ -23,7 +23,7 @@ The Stock Screener is at `/terminal/[market]/stocks`; `/terminal/[market]/screen
 
 ## Armed Swing and execution plans
 
-Armed Swing scans eligible active stocks, ranks relative strength and assesses a bounded shortlist of 250. Bases use completed sessions; current-session volume contributes to breakout pace. India benchmarks prefer NIFTY then NIFTYBEES; the US benchmark is SPY.
+Armed Swing scans eligible active stocks, ranks relative strength and assesses a bounded shortlist of 250. Bases use completed sessions; current-session volume contributes to breakout pace against a market-specific, versioned curve containing at least 40 complete sessions. India benchmarks prefer NIFTY then NIFTYBEES; the US benchmark is SPY.
 
 States are `BUY_ZONE`, `TRIGGERED_UNCONFIRMED`, `ARMED`, `UNVERIFIED`, `FORMING`, `EXTENDED`, `RISK_OFF` and `INVALIDATED`. Missing live quotes, bid/ask depth, circuit bands or verified results coverage blocks entry. India requires Breeze live execution data. Results within three trading sessions block new entries.
 
@@ -34,6 +34,8 @@ Strong Swing and Momentum purchase validation likewise uses stored execution pla
 ## Trade Ledger and broker behavior
 
 - Purchases, edit/delete, partial/final sales and sale correction.
+- Direction-aware protection: long stops only tighten upward and short stops only tighten downward.
+- Completed-close strategy exit lines and explicit planned first-target scale-outs for the five named strategy tags.
 - Immutable purchase plans and current risk/news assessment.
 - Pending buy-stop records with a default seven-calendar-day validity.
 - Fill validation checks price band, remaining quantity and fill dates. Each confirmed partial fill creates its own purchased trade in the same database transaction.
@@ -69,6 +71,6 @@ Local Prebuild/Gradle/Xcode is the documented distribution path. Existing packag
 
 The ML foundation provides schema, scheduled snapshots, deterministic Python features/labels and golden vectors. Training/calibration, promotion automation, monitoring enforcement and inference remain design contracts rather than complete runtime implementations. ML does not currently control candidate eligibility or broker execution.
 
-Migrations extend through 0059. Migration 0058 adds persisted screener technical history and 0059 adds candidate signal observations. The Linux release script explicitly applies 0033–0059 after assuming an existing earlier schema, and re-executes the checked-out script once after pulling so migrations introduced by that release are not skipped. Provider quotas and continuing runtime health remain deployment-specific.
+Migrations extend through 0077. Migration 0077 adds versioned market-specific volume curves. The Linux release script discovers and applies migrations from 0033 onward after assuming an existing earlier schema, and re-executes the checked-out script once after pulling so migrations introduced by that release are not skipped. Provider quotas and continuing runtime health remain deployment-specific.
 
-See [architecture](ARCHITECTURE.md), [status](STATUS.md), [deployment](DEPLOYMENT.md), [ML methodology](docs/ml-methodology.md) and [swing strategy rules and review](docs/swing-strategies.md).
+See [AI review handoff](AI_REVIEW_HANDOFF.md), [architecture](ARCHITECTURE.md), [status](STATUS.md), [deployment](DEPLOYMENT.md), [ML methodology](docs/ml-methodology.md) and [swing strategy rules and review](docs/swing-strategies.md).

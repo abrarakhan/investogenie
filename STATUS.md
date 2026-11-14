@@ -1,8 +1,8 @@
 # InvestoGenie Status
 
-_Code and production baseline reviewed 26 October 2026 through runtime revision `1c7aac3` on main. This documentation commit does not alter runtime behavior._
+_Code and production baseline reviewed 14 November 2026 through deployed revision `f33f256` on main._
 
-This is a repository status reference. The production web/Breeze services, login endpoint, schema and one candidate scan were checked at revision `1c7aac3`; broker account contents and installed mobile binaries were not inspected. The checks below are a dated baseline, not a guarantee of continuing provider or market-data health.
+This is a repository status reference. The production web/Breeze services, HTTPS login endpoint, schema through 0077, India results coverage and India Armed volume curve were checked at revision `f33f256`; broker account contents and installed mobile binaries were not inspected. The checks below are a dated baseline, not a guarantee of continuing provider or market-data health.
 
 ## Implemented in the reviewed source
 
@@ -35,19 +35,26 @@ This is a repository status reference. The production web/Breeze services, login
 | 0057 | Gmail last-error timestamps and reconnect flag |
 | 0058 | Persisted daily screener technical features and forward outcomes |
 | 0059 | Candidate signal observation history |
+| 0060–0068 | Trend continuation, browser-notification deduplication, signal ranking and retrospective evaluation |
+| 0069–0071 | User roles, invitations and canonical system owner |
+| 0072–0076 | Breeze history, quote order flow, intraday bars and broker order audit/actions |
+| 0077 | Versioned market-specific intraday volume curves |
 
-The shared Linux release script applies an explicit 0033–0063 list. Fresh databases still need the full ordered schema. `scripts/verify-production-schema.mjs` checks required relations, including candidate observations, trend-continuation signals and browser-notification events, plus authoritative-calendar and Gmail-health columns. Browser notification signatures are unique per user and market day, and polling is serialized across open tabs. Trade-alert identity uses stable decision state rather than changing quote explanation text. After pulling, the release script re-executes the checked-out version once so a migration added in the same release is applied.
+The shared Linux release script discovers and applies migrations from 0033 onward in filename order. Fresh databases still need the full ordered schema. `scripts/verify-production-schema.mjs` checks required relations, including candidate observations, trend-continuation signals, browser-notification events, broker-order audits and market-volume curves. Browser notification signatures are unique per user and market day, and polling is serialized across open tabs. Trade-alert identity uses stable decision state rather than changing quote explanation text. After pulling, the release script re-executes the checked-out version once so a migration added in the same release is applied.
 
 Authenticated web pages expose an opt-in browser-alert control. While the site is open in a foreground or background tab, it polls deduplicated server events and uses the browser Notification API for candidate-ready transitions and material ledger actions. Permission is requested only from an explicit user click; denied permission is never bypassed.
 
 Trend Continuation v1 is an India-only, Python-calculated engine for persistent 3–5 session moves. It stores versioned impulse/watch/ready/extended states and appears on web and mobile Strong Swing surfaces. Day-one impulses and later pullbacks remain observational. A confirmed day-two breakout after 10:15 IST can create an immutable manual Buy & Track plan only when fresh Breeze depth, spread, circuit room, results-calendar, price-range and plan-freshness gates pass. It never feeds auto-buy.
 
-## Verified production baseline — 26 October 2026
+## Verified production baseline — 14 November 2026
 
-- Revision `1c7aac3` was checked out cleanly; web and Breeze services were active and `/login` returned HTTP 200.
-- Production dependency audit reported zero known vulnerabilities at the configured severity gate.
-- A candidate scan evaluated 40 candidates for the configured account even without an enabled push token, persisted 40 observations and refreshed live targets.
-- The Breeze worker reconciled its bounded subscriptions from those targets without a restart. These counts describe that verification run only.
+- Revision `f33f256` was checked out; web and Breeze services were active and the public HTTPS `/login` returned HTTP 200.
+- Migration 0077 was applied and the production schema verifier passed.
+- Local release validation passed 573 TypeScript tests, 91 pipeline Python tests, 77 worker Python tests, typecheck, lint and the production build before promotion.
+- Active NSE results-calendar verification covered 2,943 of 2,945 assets (99.93%) at the recorded check.
+- The active India Armed curve is `in-median-2026-09-16-2026-11-13-40s`, built from 1,425 complete Breeze asset-sessions across 40 eligible sessions. A short special session was rejected by the completeness rule.
+- US Armed remains fail-closed: Breeze is India-only and no equivalent US depth/intraday source is configured.
+- The only local uncommitted file at deployment was machine-local `.claude/launch.json`; it was not included in the release.
 
 ## Strategy review and changes — 13–14 November 2026
 
@@ -56,7 +63,8 @@ The formulas, gates and post-purchase handling of Swing Candidates, Strong Swing
 - Strong Swing is model `strong-swing-v4-breakout-bar`: breakout quality is judged on the bar that broke out, stocks holding a two-close breakout are assessed even when the base scan lists no setup, the trend needs the 50-day above the 200-day, a live price below the entry waits, and India entries need a verified results calendar with no results within three sessions. Plans and captures from v3 are refused at purchase and by auto-buy.
 - Legendary tags carry a liquidity floor, risk caps from the price paid and a breakout-day state with volume. Trades of the five named strategies bought from 14 November 2026 follow the strategy's own exit line in the ledger.
 - Armed Swing requires the full moving-average stack, volume dry-up and a pivot at least three sessions old, and measures breakout volume against a time-of-day curve.
-- Not yet observed on production data: the rate at which the new Strong Swing gates produce candidates and results-calendar coverage for the new gate. Armed breakout confirmation now requires a versioned market curve built from at least 40 completed sessions; it fails closed until enough retained intraday history exists.
+- Not yet observed over enough production decisions: the rate at which the new Strong Swing gates produce candidates. Five genuine scheduled v4 captures remain required and must not be reconstructed after the fact.
+- India Armed has its required 40-session curve. US Armed remains fail-closed until a proper US execution-depth and intraday source is added.
 - `npm run audit:strategy-readiness` is the pre-promotion gate: five scheduled v4 captures, at least one Execution Ready result per capture on average, at least 90% India results coverage, and an active 40-session volume curve per served market.
 
 ## Current behavior that matters operationally
@@ -96,7 +104,7 @@ The Linux release runs production dependency audit, build and schema verificatio
 
 ## Remaining work and runtime checks
 
-- Reconfirm the deployed revision, services and schema through 0059 after each release.
+- Reconfirm the deployed revision, services and schema through the latest migration after each release.
 - Inspect Data Health, quote/depth freshness, calendar coverage and provider failures.
 - Review unresolved CAS/fund mappings and Gmail documents needing manual review.
 - Confirm daily Breeze session validity and separately authorized buying limits.
@@ -104,4 +112,4 @@ The Linux release runs production dependency audit, build and schema verificatio
 - Implement and validate ML training, calibration, serving and monitoring before treating the design contract as an active model.
 - Check email retry/deduplication behavior before relying on exactly-once delivery or individual send times.
 
-See [capabilities](CAPABILITIES.md), [architecture](ARCHITECTURE.md) and [deployment](DEPLOYMENT.md).
+See [AI review handoff](AI_REVIEW_HANDOFF.md), [capabilities](CAPABILITIES.md), [architecture](ARCHITECTURE.md) and [deployment](DEPLOYMENT.md).

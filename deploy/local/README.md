@@ -1,6 +1,6 @@
 # Local macOS deployment
 
-_Source reviewed 26 October 2026 through runtime revision `1c7aac3`; this guide covers the local macOS package._
+_Source reconciled 14 November 2026 through deployed revision `f33f256`; this guide covers the local macOS package._
 
 Local mode is the development and data-workstation deployment. It uses the
 Mac's PostgreSQL instance and `.env.local`; it does not read Oracle production

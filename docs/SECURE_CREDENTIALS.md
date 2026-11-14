@@ -1,6 +1,6 @@
 # Credential Storage
 
-_Source reviewed 26 October 2026 through runtime revision `1c7aac3`._
+_Source reconciled 14 November 2026 through deployed revision `f33f256`; credential behavior was not changed by the strategy release._
 
 ## Implementation
 

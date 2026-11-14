@@ -1,6 +1,6 @@
 # InvestoGenie Architecture
 
-_Source and production baseline reviewed 26 October 2026 through runtime revision `1c7aac3`._
+_Source and production baseline reviewed 14 November 2026 through deployed revision `f33f256`._
 
 ## System flow
 
@@ -34,7 +34,7 @@ The web stack is Next.js 16.4.2 App Router, React 19.2.4 and TypeScript. Postgre
 | `pipelines/`, `workers/` | Python ingestion and broker workers |
 | `pipelines/ml/` | Deterministic ML feature collection and labels |
 | `scripts/` | Scheduling, ingestion and operational checks |
-| `db/migrations/` | Ordered schema through 0059 |
+| `db/migrations/` | Ordered schema through 0077 |
 | `mobile/` | Isolated React Native client |
 | `deploy/` | macOS and Ubuntu service/deployment packages |
 
@@ -50,7 +50,7 @@ Trend Continuation is a separate Python-owned observation engine (`pipelines/tre
 
 Momentum discovery likewise separates completed history from the current-session bar. During an open India session, entry-ready classification requires a fresh `BREEZE_LIVE` quote plus the matching Breeze intraday OHLCV/volume row; otherwise the setup remains visible but execution-blocked. Scheduled candidate scans run for every account independently of Expo push-token registration, persist status transitions in `candidate_signal_observations`, and refresh `live_market_targets`. The Breeze worker reconciles its bounded subscription set every two minutes so newly discovered candidates receive live bars without a service restart.
 
-Armed actionability depends on live execution quotes, bid/ask, circuit bands, liquidity, structure, regime and verified results-calendar coverage. India requires a fresh `BREEZE_LIVE` quote. Missing evidence produces unverified or blocked states. Results within three trading sessions block entries.
+Armed actionability depends on live execution quotes, bid/ask, circuit bands, liquidity, structure, relative-strength leadership, market regime, a market-specific time-of-day volume curve and verified results-calendar coverage. India requires a fresh `BREEZE_LIVE` quote. Missing evidence produces unverified or blocked states. Results within three trading sessions block entries. The curve builder accepts only complete regular sessions and needs at least 40 sessions; India production has an active 40-session Breeze curve, while US Armed remains fail-closed without a US depth/intraday source.
 
 `pipelines/corporate_results_sync.py` imports the official NSE event calendar and supplements dates through Yahoo. Authoritative negative coverage requires a complete same-day window covering the required sessions; an empty Yahoo result alone does not verify safety.
 
@@ -67,7 +67,7 @@ Long-term, probability and Universal Portfolio calculations live in their own an
 
 Pending-order actions in `app/terminal/[market]/trade-ledger/pendingOrderActions.ts` record orders without placing broker instructions. Default validity is seven calendar days. Fill recording locks the order row, validates remaining quantity/price/date, inserts a purchased ledger trade and fill audit, then updates the remainder atomically. Each partial fill is a separate trade; cancellation preserves filled trades.
 
-Ledger projection/risk calculations are shared through `lib/swingTradeProjection.ts` and `lib/swingTradeLedger.ts`. Cash-flow accounting distinguishes turnover from external capital after retained proceeds are reused. ROI and XIRR use that capital model. Broker reconciliation and explicitly enabled capped NSE cash limit buying are separate paths; no automatic selling/rebalancing is implemented.
+Ledger projection/risk calculations are shared through `lib/swingTradeProjection.ts` and `lib/swingTradeLedger.ts`. Direction-sensitive protection ensures long stops only rise and short stops only fall. Named strategies use completed-close exit lines, while live catastrophic protection remains separate. Qullamaggie, Minervini, Darvas and PTJ plans schedule a 50% first-target scale-out; Simons schedules the full mean-reversion allocation. Cash-flow accounting distinguishes turnover from external capital after retained proceeds are reused. ROI and XIRR use that capital model. Broker reconciliation and explicitly enabled capped NSE cash limit buying are separate paths; no automatic selling/rebalancing is implemented.
 
 ## News and fund data
 
@@ -105,7 +105,7 @@ Training, calibration, inference, model promotion and drift-response automation 
 
 Ubuntu packages use systemd, Nginx, external environment configuration and private PostgreSQL. The historical `deploy/oracle/` path also supports AWS hosts. macOS uses launchd and optional Tailscale access.
 
-The release script fetches main, then re-executes the checked-out script once so the current release logic is used. It installs/audits/builds/prunes Node dependencies, installs Python requirements, applies an explicit 0033–0059 migration list, verifies required schema including candidate observations, installs service units, restarts and checks login. It assumes the earlier schema and does not execute lint/tests.
+The release script fetches main, then re-executes the checked-out script once so the current release logic is used. It installs/audits/builds/prunes Node dependencies, installs Python requirements, discovers and applies migrations 0033 onward in filename order, verifies required schema including migration 0077 market-volume curves, installs service units, restarts and checks login. It assumes the earlier schema and does not execute lint/tests.
 
 Use `npm test`, `npm run lint`, `npm run build` and deployment checks before promotion. Mobile has separate typecheck/release validation; Python suites need separate execution. Runtime coverage, installed builds and production revision require host/database inspection.
 
