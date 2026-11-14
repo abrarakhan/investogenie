@@ -5,6 +5,8 @@ import { reviseSwingTradePlan, type TradePlanRevision } from "@/lib/analytics/tr
 import { isMarketOpenNow, isTradingDay, refreshMarketHolidays, zonedMarketClock } from "@/lib/market-calendar.mjs";
 import { calculateRecoveryTargets } from "@/lib/tradeRecoveryTargets";
 import { STRONG_SWING_TRAILING_POLICY_VERSION } from "@/lib/analytics/strongSwing";
+import { strategyFollowUp, type StrategyFollowUp } from "@/lib/analytics/legendaryStrategies";
+import type { OHLCV } from "@/lib/types";
 
 export type SwingTradeState =
   | "ON_TRACK"
@@ -67,7 +69,28 @@ export function calculateRecommendedGttStop(input: {
   /** Next-bar policy: only completed-session highs strictly after the fill session. */
   postEntryCompletedHigh?: number | null;
   postEntryNextBarPolicy?: boolean;
+  direction?: "LONG" | "SHORT";
 }): { recommendedStop: number; breakEvenActivated: boolean } {
+  const direction = input.direction ?? "LONG";
+  if (direction === "SHORT") {
+    const observedLow = input.postEntryNextBarPolicy
+      ? input.buyPrice
+      : Math.min(input.buyPrice, input.currentPrice ?? input.buyPrice);
+    const initialRisk = Math.max(0, input.projectedStop - input.buyPrice);
+    const breakEvenActivated = initialRisk > 0 && observedLow <= input.buyPrice - (0.75 * initialRisk);
+    const chandelierStop = input.trailingDistance === null
+      ? input.projectedStop
+      : observedLow + input.trailingDistance;
+    return {
+      recommendedStop: Math.min(
+        input.projectedStop,
+        input.projectedTrailingStop ?? input.projectedStop,
+        chandelierStop,
+        breakEvenActivated ? input.buyPrice : input.projectedStop,
+      ),
+      breakEvenActivated,
+    };
+  }
   const observedHigh = input.postEntryNextBarPolicy
     ? Math.max(input.buyPrice, input.postEntryCompletedHigh ?? input.buyPrice)
     : Math.max(input.buyPrice, input.highestHigh ?? input.buyPrice, input.currentPrice ?? input.buyPrice);
@@ -304,6 +327,15 @@ export interface SwingLedgerTrade {
   gttUpdatedAt: string | null;
   gttUpdateRequired: boolean;
   breakEvenActivated: boolean;
+  /** The strategy's own exit line in force (10-day EMA, 50-day, 200-day, box bottom), if any. */
+  strategyExitLine: number | null;
+  strategyExitLabel: string | null;
+  /** A mean-reversion trade's target as the mean stands now; null for other strategies. */
+  strategyTarget: number | null;
+  strategyCloseExitConfirmed: boolean;
+  scaleOutTarget: number | null;
+  scaleOutPlannedQuantity: number;
+  scaleOutRemainingQuantity: number;
   expectedHoldingDays: number;
   currentPrice: number | null;
   quoteAsOf: string | null;
@@ -341,6 +373,68 @@ type LedgerRow = Record<string, LedgerValue>;
  * switching them would lower a recommended stop on a live position.
  */
 export const POST_ENTRY_TRAIL_FROM = "2026-11-14";
+
+/** Strategies with a documented post-entry line or moving target. */
+const STRATEGY_LINE_KEYS = new Set(["QULLAMAGGIE", "MINERVINI", "PTJ", "DARVAS", "SIMONS"]);
+
+/**
+ * Trades of the five named strategies bought from this date display their strategy-specific
+ * completed-close exit line (or moving target). Live broker protection remains separate.
+ * Earlier trades keep the follow-up contract they were opened with.
+ */
+export function usesStrategyFollowUp(strategyKey: string, boughtOn: string | null): boolean {
+  return STRATEGY_LINE_KEYS.has(strategyKey) && boughtOn !== null && boughtOn >= POST_ENTRY_TRAIL_FROM;
+}
+
+function ledgerTradeDirection(row: LedgerRow): "LONG" | "SHORT" {
+  const raw = row.projection_snapshot;
+  let snapshot: Record<string, unknown> = {};
+  try {
+    snapshot = typeof raw === "string" ? JSON.parse(raw) as Record<string, unknown>
+      : raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
+  } catch { /* A malformed legacy snapshot stays on the long-only ledger default. */ }
+  const levels = snapshot.levels && typeof snapshot.levels === "object" ? snapshot.levels as Record<string, unknown> : null;
+  const score = snapshot.strategyScore && typeof snapshot.strategyScore === "object" ? snapshot.strategyScore as Record<string, unknown> : null;
+  return levels?.direction === "SHORT" || score?.dir === "SHORT" ? "SHORT" : "LONG";
+}
+
+function ledgerScaleOutFraction(row: LedgerRow): number {
+  const raw = row.projection_snapshot;
+  try {
+    const snapshot = typeof raw === "string" ? JSON.parse(raw) as Record<string, unknown>
+      : raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
+    const score = snapshot.strategyScore && typeof snapshot.strategyScore === "object"
+      ? snapshot.strategyScore as Record<string, unknown> : null;
+    const value = Number(score?.scaleOutFraction ?? 0);
+    return Number.isFinite(value) && value > 0 && value <= 1 ? value : 0;
+  } catch { return 0; }
+}
+
+export function strategyFollowUpTarget(
+  direction: "LONG" | "SHORT", buyPrice: number, frozenTarget: number, movingTarget: number | null,
+): number {
+  if (movingTarget === null) return frozenTarget;
+  if (direction === "LONG") return movingTarget > buyPrice ? Math.min(frozenTarget, movingTarget) : frozenTarget;
+  return movingTarget < buyPrice ? Math.max(frozenTarget, movingTarget) : frozenTarget;
+}
+
+/**
+ * The stop inputs for a trade managed on its strategy's line: the line replaces the ATR
+ * chandelier and never sits below the trail frozen at purchase. A strategy with no line yet
+ * (a Darvas trade before its first new box) keeps the frozen levels.
+ */
+export function strategyLineStopInputs(
+  frozenTrail: number | null,
+  followUp: StrategyFollowUp | null,
+  direction: "LONG" | "SHORT" = "LONG",
+): { projectedTrailingStop: number | null; trailingDistance: null } {
+  const line = followUp?.line ?? null;
+  return {
+    projectedTrailingStop: line === null ? frozenTrail
+      : direction === "LONG" ? Math.max(frozenTrail ?? line, line) : Math.min(frozenTrail ?? line, line),
+    trailingDistance: null,
+  };
+}
 
 export function usesPostEntryNextBarTrail(boughtOn: string | null, strongSwingPlanVersioned: boolean): boolean {
   return strongSwingPlanVersioned || (boughtOn !== null && boughtOn >= POST_ENTRY_TRAIL_FROM);
@@ -541,6 +635,32 @@ export async function getSwingTradeLedger(userId: string, market: "IN" | "US"): 
     }];
   }));
 
+  // Completed daily bars for open trades that follow their strategy's own exit line.
+  const followUpRows = openRows.filter((row) => usesStrategyFollowUp(String(row.strategy_key), ledgerDateText(row.bought_on)));
+  const followUpBars = new Map<string, OHLCV[]>();
+  if (followUpRows.length) {
+    const barRows = await query<{
+      asset_id: string; date: string; open: string; high: string; low: string; close: string; volume: string | null;
+    }>(
+      `select asset_id,date::text date,open,high,low,close,volume
+         from (
+           select o.*,row_number() over(partition by o.asset_id order by o.date desc) rn
+             from public.daily_ohlcv o
+            where o.asset_id = any($1::uuid[]) and o.date < $2::date
+         ) ranked
+        where rn <= 260 order by asset_id,date`,
+      [[...new Set(followUpRows.map((row) => String(row.asset_id)))], marketDate],
+    );
+    for (const bar of barRows) {
+      const list = followUpBars.get(bar.asset_id) ?? [];
+      list.push({
+        date: bar.date.slice(0, 10), open: Number(bar.open), high: Number(bar.high), low: Number(bar.low),
+        close: Number(bar.close), volume: Number(bar.volume ?? 0), openInterest: null,
+      });
+      followUpBars.set(bar.asset_id, list);
+    }
+  }
+
   return rows.map((row) => {
     const boughtOn = dateText(row.bought_on) ?? "";
     const status = String(row.status) as "OPEN" | "CLOSED";
@@ -560,21 +680,32 @@ export async function getSwingTradeLedger(userId: string, market: "IN" | "US"): 
     const quoteFresh = status === "CLOSED" || !marketOpen || quoteUpdatedAt >= Date.now() - 7 * 60 * 1000;
     const currentPrice = quoteFresh ? nullableNumber(row.current_price) : null;
     const postEntryNextBarPolicy = usesPostEntryNextBarTrail(ledgerDateText(row.bought_on), usesStrongSwingPostEntryTrail(row));
+    const direction = ledgerTradeDirection(row);
+    const followUp = String(row.status) === "OPEN" && usesStrategyFollowUp(String(row.strategy_key), ledgerDateText(row.bought_on))
+      ? strategyFollowUp(String(row.strategy_key), followUpBars.get(String(row.asset_id)) ?? [], ledgerDateText(row.bought_on) ?? "", market === "IN" ? 0.05 : 0.01, direction)
+      : null;
     const gttProtection = calculateRecommendedGttStop({
       buyPrice,
       projectedStop: Number(row.projected_stop),
+      // Strategy EMA/SMA lines are close-confirmed exits, not intraday broker stops. The
+      // frozen catastrophic/ATR protection remains the live GTT until a completed close exits.
       projectedTrailingStop: nullableNumber(row.projected_trailing_stop),
       trailingDistance: nullableNumber(row.trailing_distance),
       highestHigh: nullableNumber(row.highest_high),
       currentPrice,
       postEntryCompletedHigh: nullableNumber(row.post_entry_completed_high),
       postEntryNextBarPolicy,
+      direction,
     });
     const recommendedGttStop = gttProtection.recommendedStop;
     const recordedGttStop = nullableNumber(row.current_gtt_stop) ?? Number(row.projected_stop);
-    const effectiveTrailingStop = Math.max(recommendedGttStop, recordedGttStop);
+    const effectiveTrailingStop = direction === "LONG"
+      ? Math.max(recommendedGttStop, recordedGttStop)
+      : Math.min(recommendedGttStop, recordedGttStop);
     const breakEvenActivated = gttProtection.breakEvenActivated;
-    const gttUpdateRequired = status === "OPEN" && recommendedGttStop > recordedGttStop + 0.005;
+    const gttUpdateRequired = status === "OPEN" && (direction === "LONG"
+      ? recommendedGttStop > recordedGttStop + 0.005
+      : recommendedGttStop < recordedGttStop - 0.005);
     const priorClose = nullableNumber(row.prior_close);
     const twoSessionClose = nullableNumber(row.two_session_close);
     const stockMove1dPct = currentPrice !== null && priorClose !== null && priorClose > 0
@@ -599,6 +730,13 @@ export async function getSwingTradeLedger(userId: string, market: "IN" | "US"): 
         ? row.gtt_updated_at.toISOString()
         : row.gtt_updated_at ? String(row.gtt_updated_at) : null,
       gttUpdateRequired, breakEvenActivated,
+      strategyExitLine: followUp?.line ?? null,
+      strategyExitLabel: followUp?.lineLabel ?? null,
+      strategyTarget: followUp?.target ?? null,
+      strategyCloseExitConfirmed: followUp?.closeExitConfirmed ?? false,
+      scaleOutTarget: null as number | null,
+      scaleOutPlannedQuantity: 0,
+      scaleOutRemainingQuantity: 0,
       expectedHoldingDays: Number(row.expected_holding_days),
       currentPrice,
       quoteAsOf: dateText(row.quote_as_of),
@@ -609,10 +747,16 @@ export async function getSwingTradeLedger(userId: string, market: "IN" | "US"): 
       exitPrice: legacyExitPrice, closeReason: row.close_reason === null ? null : String(row.close_reason),
       notes: row.notes === null ? null : String(row.notes),
     };
+    const scaleOutFraction = ledgerScaleOutFraction(row);
+    trade.scaleOutTarget = scaleOutFraction > 0 ? strategyFollowUpTarget(direction, buyPrice, trade.projectedTarget, followUp?.target ?? null) : null;
+    trade.scaleOutPlannedQuantity = quantity * scaleOutFraction;
+    trade.scaleOutRemainingQuantity = Math.max(0, trade.scaleOutPlannedQuantity - soldQuantity);
     const progress = calculateSwingTradeProgress({
       status, boughtOn, buyPrice: trade.buyPrice,
       quantity: status === "OPEN" ? trade.remainingQuantity : trade.quantity,
-      currentPrice, target: trade.projectedTarget, stop: trade.projectedStop,
+      // A reversion trade's objective is the mean as it stands now, never above the frozen target.
+      currentPrice, target: strategyFollowUpTarget(direction, buyPrice, trade.projectedTarget, followUp?.target ?? null),
+      stop: trade.projectedStop,
       trailingStop: effectiveTrailingStop, expectedDays: trade.expectedHoldingDays,
       exitPrice: trade.exitPrice, asOf: trade.closedOn ?? undefined,
       market,

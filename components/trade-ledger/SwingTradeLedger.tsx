@@ -188,6 +188,12 @@ function TradeCard({ trade, today }: { trade: SwingLedgerTrade; today: string })
         {trade.soldQuantity > 0 && <span>Sold {trade.soldQuantity.toLocaleString("en-IN")}</span>}
         <span>Remaining {trade.remainingQuantity.toLocaleString("en-IN")}</span>
         {trade.soldQuantity > 0 && <span className={trade.realizedPnlValue >= 0 ? "text-emerald-300" : "text-rose-300"}>Realized {money(trade.realizedPnlValue, trade.currency)}</span>}
+        {trade.strategyExitLine !== null && <span className={trade.strategyCloseExitConfirmed ? "text-rose-300" : "text-white/45"}>
+          {trade.strategyCloseExitConfirmed ? "Completed close crossed" : "Close-confirmed exit"} {trade.strategyExitLabel} {price(trade.strategyExitLine)}
+        </span>}
+        {trade.scaleOutTarget !== null && <span className="text-amber-200">
+          First scale-out {trade.scaleOutRemainingQuantity.toLocaleString("en-IN", { maximumFractionDigits: 4 })} shares at {price(trade.scaleOutTarget)}
+        </span>}
         <span className={(tradeReturns.roiPct ?? 0) >= 0 ? "text-emerald-300" : "text-rose-300"}>ROI {pct(tradeReturns.roiPct)}</span>
         <span className={(tradeReturns.xirrPct ?? 0) >= 0 ? "text-emerald-300" : "text-rose-300"}>XIRR {pct(tradeReturns.xirrPct)}</span>
         <span>Quote session {trade.quoteAsOf ?? "unavailable"}</span>

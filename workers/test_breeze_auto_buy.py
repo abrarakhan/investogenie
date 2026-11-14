@@ -46,6 +46,7 @@ class BreezeAutoBuySafetyTests(unittest.TestCase):
         sql, params = conn.log[0]
         self.assertIn("s.metrics->>'modelVersion' = %s", sql)
         self.assertIn("s.projected_stop < s.confirmation_entry", sql)
+        self.assertIn('"key":"market_regime","passed":true', sql)
         self.assertEqual(params, (STRONG_SWING_MODEL_VERSION,))
 
     def test_calculation_version_matches_the_server_engine(self):

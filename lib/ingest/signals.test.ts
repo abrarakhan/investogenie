@@ -9,7 +9,7 @@ vi.mock("pg", () => ({
       if (sql.startsWith("select now()")) return { rows: [{ started_at: new Date("2026-11-05T09:00:00Z") }] };
       if (sql.includes("group by a.country")) return { rows: db.universe };
       if (sql.includes("from public.assets a\n        where a.is_active")) return { rows: db.assets };
-      if (sql.includes("from public.daily_ohlcv o\n            where o.asset_id = any($1)")) return { rows: db.bars };
+      if (sql.includes("from public.daily_ohlcv o join public.assets a on a.id=o.asset_id\n            where o.asset_id = any($1)")) return { rows: db.bars };
       if (sql.startsWith("update public.swing_signals")) return { rows: [], rowCount: 3 };
       return { rows: [] };
     }
@@ -69,6 +69,8 @@ describe("computeSignals retirement", () => {
     expect(universe?.params).toEqual(["2026-10-30", "2026-10-29", "2026-11-04", "2026-11-03"]);
     expect(universe?.sql).toContain("a.exchange in ('NASDAQ','NYSE','AMEX','NYSEAMERICAN','NYSEARCA')");
     expect(universe?.sql).toContain("a.ticker ~ '-P[A-Z]?$'");
+    const barSelection = db.calls.find((call) => call.sql.includes("o.date <= case when a.country='IN'"));
+    expect(barSelection?.params).toEqual([["a1"], "2026-11-04", "2026-11-03"]);
     // Retirement runs after the upsert, never before it.
     const upsertIndex = db.calls.findIndex((call) => call.sql.startsWith("insert into public.swing_signals"));
     expect(upsertIndex).toBeGreaterThan(-1);

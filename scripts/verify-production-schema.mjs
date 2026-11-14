@@ -49,6 +49,7 @@ const requiredRelations = [
   "public.strategy_retrospective_results",
   "public.strategy_retrospective_scorecards",
   "public.intraday_bars",
+  "public.market_volume_curves",
   "public.breeze_order_events",
   "public.breeze_order_actions",
 ];

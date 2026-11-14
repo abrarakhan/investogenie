@@ -6,6 +6,7 @@ import type { SwingSettings } from "@/lib/settings";
 import type { MarketId, OHLCV } from "@/lib/types";
 import { isMarketOpenNow, refreshMarketHolidays, zonedMarketClock } from "@/lib/market-calendar.mjs";
 import { chosenBenchmarkSql } from "@/lib/benchmarkSql";
+import { loadResultsChecks } from "@/lib/resultsCalendar";
 
 interface BarRow {
   asset_id: string;
@@ -109,6 +110,7 @@ async function captureStrongSwingSnapshot(
       closeLocation: candidate.closeLocation,
       triggerClearanceAtr: candidate.triggerClearanceAtr,
       marketRegimePositive: candidate.marketRegimePositive,
+      resultsCheck: candidate.resultsCheck,
       confirmationMode: candidate.confirmationMode,
     },
   }));
@@ -181,12 +183,31 @@ export async function getStrongSwingCandidates(
   await refreshMarketHolidays(market);
   const marketOpen = isMarketOpenNow(market);
   const marketDate = zonedMarketClock(market).date;
+  // A breakout that held for a second close is exactly what Strong Swing confirms, but on the
+  // hold day the base scan usually reports NO_SETUP (no new high, no squeeze). Those stocks are
+  // found here from completed bars and assessed alongside the base setups.
+  const holding = await query<{ asset_id: string }>(
+    `with ranked as (
+       select o.asset_id,o.close,o.high,row_number() over(partition by o.asset_id order by o.date desc) rn
+         from public.daily_ohlcv o join public.assets a on a.id=o.asset_id
+        where a.country=$1 and a.is_active and a.asset_class='STOCK'
+          and ($2::text is null or a.exchange=$2)
+          and o.date >= $4::date - interval '60 days'
+          and not ($3::boolean and o.date >= $4::date)
+     )
+     select asset_id from ranked where rn <= 22 group by asset_id
+     having count(*) = 22
+        and max(close) filter (where rn=1) > max(high) filter (where rn between 3 and 22)
+        and max(close) filter (where rn=2) > max(high) filter (where rn between 3 and 22)`,
+    [country, market === "IN" ? "NSE" : null, marketOpen, marketDate],
+  );
+  const alsoAssetIds = holding.map((row) => row.asset_id);
   const base = await runScreener(
     country,
     { ...settings, includeShort: false },
     // Every classifier setup is assessed. A fixed top-N pool let score ties —
     // decided by ticker name — choose which breakouts Strong Swing ever saw.
-    market === "IN" ? { exchange: "NSE", setupsOnly: true } : { setupsOnly: true },
+    market === "IN" ? { exchange: "NSE", setupsOnly: true, alsoAssetIds } : { setupsOnly: true, alsoAssetIds },
   );
   if (!base.length) return [];
 
@@ -195,7 +216,7 @@ export async function getStrongSwingCandidates(
   const baseRankByAsset = new Map(base.map((row, index) => [row.assetId, index + 1]));
 
   const ids = base.map((row) => row.assetId);
-  const [barRows, contexts, benchmarkRows] = await Promise.all([
+  const [barRows, contexts, benchmarkRows, resultsByAsset] = await Promise.all([
     query<BarRow>(
       `select asset_id,date::text date,open,high,low,close,volume,open_interest
          from (
@@ -223,6 +244,7 @@ export async function getStrongSwingCandidates(
         order by o.date desc limit 260`,
       [country, market === "IN" ? ["NIFTY", "NIFTYBEES"] : ["SPY"], marketOpen, marketDate],
     ),
+    loadResultsChecks(market, marketDate, ids),
   ]);
 
   const barsByAsset = new Map<string, OHLCV[]>();
@@ -262,6 +284,7 @@ export async function getStrongSwingCandidates(
       rankScore: row.rankScore,
       benchmarkBars,
       requireLiveExecutionData: market === "IN" && marketOpen,
+      results: resultsByAsset.get(row.assetId) ?? null,
       microstructure: context?.quote_source === "BREEZE_LIVE" ? {
         bestBid: context.best_bid === null ? null : Number(context.best_bid),
         bestAsk: context.best_ask === null ? null : Number(context.best_ask),
@@ -277,7 +300,7 @@ export async function getStrongSwingCandidates(
   for (let index = 0; index < work.length; index++) {
     const { row } = work[index];
     const assessment = assessments[index];
-    if (assessment.modelVersion !== "strong-swing-v3-python") {
+    if (assessment.modelVersion !== STRONG_SWING_MODEL_VERSION) {
       throw new Error(`Unexpected Python Strong Swing model ${assessment.modelVersion}`);
     }
     // No price range in 14 sessions means the stock did not really trade. Its stop would equal

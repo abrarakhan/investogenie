@@ -15,6 +15,8 @@
 
 import type { OHLCV } from "@/lib/types";
 
+export const ARMED_SWING_POLICY_VERSION = "armed-v3-2026-11-14";
+
 export type ArmedSwingStatus =
   | "BUY_ZONE" // crossed the trigger intraday with confirming volume pace, inside the limit
   | "TRIGGERED_UNCONFIRMED" // crossed the trigger, volume pace not yet confirming
@@ -44,6 +46,8 @@ export interface ArmedSwingInput {
   rsPercentile: number | null;
   /** Today's partial session while the market is open. */
   liveSession?: { volume: number; progress: number } | null;
+  /** Versioned, market-specific cumulative-volume curve built from many completed sessions. */
+  volumeCurve?: SessionVolumeCurve | null;
   /** Completed sessions between the latest bar and the latest session the calendar expects. */
   expectedSessionLag?: number | null;
   /**
@@ -65,8 +69,8 @@ export interface ArmedSwingInput {
 
 /**
  * Decide whether the results calendar can be trusted for one asset. A recent successful check
- * is required, and it must have produced either an upcoming date or a results date within the
- * last 70 days (so the next quarterly release cannot fall inside the blackout unseen).
+ * is required, and it must provide either an upcoming date or authoritative negative coverage
+ * spanning the complete blackout window. A past release alone cannot verify the future.
  */
 export function resultsCalendarCoverage(input: {
   today: string;
@@ -97,10 +101,9 @@ export function resultsCalendarCoverage(input: {
       detail: `NSE calendar checked through ${input.authoritativeCoverageThrough}; no result is announced in the blackout window.`,
     };
   }
-  if (input.lastPastDate && todayMs - Date.parse(`${input.lastPastDate}T00:00:00Z`) <= 70 * day) {
-    return { verified: true, detail: `Last results ${input.lastPastDate}; next is not due within the blackout.` };
-  }
-  return { verified: false, detail: "No upcoming or recent results date on file; the next release is unknown." };
+  return { verified: false, detail: input.lastPastDate
+    ? `Last results ${input.lastPastDate}; that does not verify the next blackout window.`
+    : "No upcoming results date or authoritative blackout-window coverage is on file." };
 }
 
 export interface ArmedSwingPlan {
@@ -116,6 +119,7 @@ export interface ArmedSwingPlan {
 }
 
 export interface ArmedSwingAssessment {
+  policyVersion: string;
   status: ArmedSwingStatus;
   strengthScore: number;
   gates: ArmedSwingGate[];
@@ -128,6 +132,8 @@ export interface ArmedSwingAssessment {
   distanceToTriggerAtr: number;
   baseDepthPct: number;
   contractionRatio: number;
+  /** Completed sessions since the pivot high was set. */
+  pivotAgeSessions: number;
   bandwidthPercentile: number;
   volumeDryUp: number;
   volumePace: number | null;
@@ -166,11 +172,41 @@ export const ARMED_SWING_RULES = {
   maxAtrPct: 5,
   maxStopRiskPct: 8,
   minSessionProgress: 0.15,
+  /** The pivot high must have stood this many completed sessions: a base rests under its high. */
+  minPivotAgeSessions: 3,
   maxQuoteAgeMinutes: 5,
   maxSpreadPct: 0.75,
   minLowerCircuitRoomPct: 3,
   resultsBlackoutSessions: 3,
 } as const;
+
+/** Market-specific cumulative-volume curve produced from completed intraday sessions. */
+export interface SessionVolumeCurve {
+  market: "IN" | "US";
+  version: string;
+  sampleSessions: number;
+  points: ReadonlyArray<readonly [number, number]>;
+}
+
+export function validSessionVolumeCurve(curve: SessionVolumeCurve | null | undefined, market: "IN" | "US"): curve is SessionVolumeCurve {
+  if (!curve || curve.market !== market || curve.sampleSessions < 40 || curve.points.length < 2) return false;
+  return curve.points.every(([x, y], index) => Number.isFinite(x) && Number.isFinite(y)
+    && x >= 0 && x <= 1 && y >= 0 && y <= 1
+    && (index === 0 || (x > curve.points[index - 1][0] && y >= curve.points[index - 1][1])))
+    && curve.points[0][0] === 0 && curve.points[0][1] === 0
+    && curve.points.at(-1)![0] === 1 && curve.points.at(-1)![1] === 1;
+}
+
+/** Expected cumulative share of the day's volume once `progress` (0..1) of the session has passed. */
+export function expectedVolumeShare(curve: SessionVolumeCurve, progress: number): number {
+  const p = Math.max(0, Math.min(1, progress));
+  for (let index = 1; index < curve.points.length; index++) {
+    const [x0, y0] = curve.points[index - 1];
+    const [x1, y1] = curve.points[index];
+    if (p <= x1) return y0 + ((p - x0) / (x1 - x0)) * (y1 - y0);
+  }
+  return 1;
+}
 
 const mean = (values: number[]): number =>
   values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
@@ -258,6 +294,12 @@ export function assessArmedSwing(input: ArmedSwingInput): ArmedSwingAssessment {
   const bwPercentile = bandwidthPercentile(closes);
   const contracting = contractionRatio <= R.maxContractionRatio || bwPercentile <= R.squeezePercentile;
   const lastContractionLow = Math.min(...base.slice(-R.pivotLowSessions).map((bar) => bar.low));
+  // Sessions the pivot high has stood. A stock printing a new high most days is running, not
+  // basing: there is nothing under the pivot to place a stop against.
+  let pivotIndex = 0;
+  // Strictly higher only: touching the same high again is a test of the pivot, not a new one.
+  base.forEach((bar, index) => { if (bar.high > base[pivotIndex].high) pivotIndex = index; });
+  const pivotAgeSessions = base.length - 1 - pivotIndex;
 
   // --- Buy-stop plan ----------------------------------------------------------------------
   const trigger = roundUpTick(pivot + R.triggerBufferAtr * atr, tick);
@@ -291,8 +333,8 @@ export function assessArmedSwing(input: ArmedSwingInput): ArmedSwingAssessment {
   const low52 = Math.min(...year.map((bar) => bar.low));
   const hasTrendHistory = sma150 !== null && sma200 !== null && sma200Prior !== null && sma50 !== null;
   const trendAligned = Boolean(hasTrendHistory
-    && latest.close > (sma150 as number) && latest.close > (sma200 as number)
-    && (sma50 as number) > (sma200 as number)
+    && latest.close > (sma50 as number) && latest.close > (sma150 as number) && latest.close > (sma200 as number)
+    && (sma50 as number) > (sma150 as number) && (sma150 as number) > (sma200 as number)
     && (sma200 as number) > (sma200Prior as number)
     && latest.close >= high52 * 0.75 && latest.close >= low52 * 1.3);
 
@@ -312,8 +354,11 @@ export function assessArmedSwing(input: ArmedSwingInput): ArmedSwingAssessment {
   const volumeDryUp = average50 > 0 ? mean(bars.slice(-5).map((bar) => bar.volume)) / average50 : 1;
   const averageTradedValue20 = mean(bars.slice(-20).map((bar) => bar.close * bar.volume));
   const live = input.liveSession;
-  const volumePace = live && average20 > 0
-    ? live.volume / (average20 * Math.max(R.minSessionProgress, Math.min(1, live.progress)))
+  // Pace against the share of a day's volume normally done by this time, not against the clock:
+  // a linear clock calls an ordinary heavy open a 1.5x day.
+  const curve = validSessionVolumeCurve(input.volumeCurve, market) ? input.volumeCurve : null;
+  const volumePace = live && average20 > 0 && curve
+    ? live.volume / (average20 * expectedVolumeShare(curve, Math.max(R.minSessionProgress, Math.min(1, live.progress))))
     : null;
 
   // --- Market and execution context -------------------------------------------------------
@@ -351,7 +396,7 @@ export function assessArmedSwing(input: ArmedSwingInput): ArmedSwingAssessment {
 
   const gates: ArmedSwingGate[] = [
     gate("trend", "Stage-2 trend", trendAligned, hasTrendHistory
-      ? `Close above 150/200 SMA, 50 > 200 SMA, 200 SMA rising, within 25% of the 52-week high (${high52.toFixed(2)}) and 30% above the low (${low52.toFixed(2)}).`
+      ? `Close above 50/150/200 SMA, 50 > 150 > 200 SMA, 200 SMA rising, within 25% of the 52-week high (${high52.toFixed(2)}) and 30% above the low (${low52.toFixed(2)}).`
       : "Insufficient 220-session history for the trend template."),
     gate("relative_strength", "Relative-strength rank", (input.rsPercentile ?? -1) >= R.minRsPercentile,
       input.rsPercentile === null ? "Not enough history to rank 3/6/9/12-month performance."
@@ -360,18 +405,20 @@ export function assessArmedSwing(input: ArmedSwingInput): ArmedSwingAssessment {
       `${R.baseLength}-session base is ${baseDepthPct.toFixed(1)}% deep; maximum ${R.maxBaseDepthPct}%.`),
     gate("contraction", "Volatility contraction", contracting,
       `Second-half range ${(contractionRatio * 100).toFixed(0)}% of the first half (≤ ${R.maxContractionRatio * 100}%) or bandwidth in the lowest ${(R.squeezePercentile * 100).toFixed(0)}% (now ${(bwPercentile * 100).toFixed(0)}%).`),
+    gate("pivot_rest", "Rested under the pivot", pivotAgeSessions >= R.minPivotAgeSessions,
+      `The ${plan.pivot.toFixed(2)} pivot high was set ${pivotAgeSessions} session${pivotAgeSessions === 1 ? "" : "s"} ago; a base needs at least ${R.minPivotAgeSessions} sessions under it.`),
     gate("proximity", "Near the pivot", triggered || (distanceToTriggerAtr <= R.maxDistanceAtr && distanceToTriggerPct <= R.maxDistancePct),
       triggered ? "Price is at or through the trigger."
         : `${distanceToTriggerPct.toFixed(1)}% / ${distanceToTriggerAtr.toFixed(2)} ATR below the ${plan.trigger.toFixed(2)} trigger; maximum ${R.maxDistanceAtr} ATR and ${R.maxDistancePct}%.`),
     gate("volume_dryup", "Volume dry-up", volumeDryUp <= R.maxDryUp,
-      `Five-session volume ${(volumeDryUp * 100).toFixed(0)}% of the 50-session average; supply is drying up below ${R.maxDryUp * 100}%.`, "technical", false),
+      `Five-session volume ${(volumeDryUp * 100).toFixed(0)}% of the 50-session average; supply is drying up below ${R.maxDryUp * 100}%.`),
     gate("rs_line", "RS line near high", rsLineNearHigh,
       rsLineNearHigh ? "Stock/benchmark ratio is within 2% of its six-month high — leadership often leads price."
-        : "Stock/benchmark ratio is not yet near its six-month high.", "technical", false),
+        : "Stock/benchmark ratio is not yet near its six-month high."),
     gate("breakout_volume", "Breakout volume pace", !triggered || (volumePace ?? 0) >= R.minBreakoutPace,
       !triggered ? `Applies once price crosses the trigger: needs ≥ ${R.minBreakoutPace}x time-adjusted volume pace.`
         : volumePace === null ? "Triggered outside a live session; volume pace cannot be measured."
-          : `Intraday volume pace ${volumePace.toFixed(2)}x the 20-session average; requires ${R.minBreakoutPace}x.`,
+          : `Volume so far is ${volumePace.toFixed(2)}x what the 20-session average normally trades by this time; requires ${R.minBreakoutPace}x.`,
       "technical", triggered),
     gate("freshness", "Fresh EOD data", dataFresh,
       benchmarkBars.length === 0 ? "Benchmark data unavailable — cannot verify freshness." : `Latest completed session ${latest.date}.`, "execution"),
@@ -386,7 +433,7 @@ export function assessArmedSwing(input: ArmedSwingInput): ArmedSwingAssessment {
     gate("market_shock", "Market shock", !marketShock,
       benchmarkTwoDay === null ? "Two-session benchmark move unavailable." : `${benchmarkTwoDay.toFixed(1)}% over two sessions; entries stop at -4%.`, "execution"),
     gate("market_regime", "Market regime", marketRegimePositive,
-      marketRegimePositive ? "Benchmark is above a rising 50 SMA; normal sizing." : "Selective regime: use 50% position size.", "execution", false),
+      marketRegimePositive ? "Benchmark is above a rising 50 SMA; entries are permitted." : "Benchmark is not above a rising 50 SMA; new Armed entries are blocked.", "execution"),
     gate("results_blackout", "Results blackout", resultsVerified && !inBlackout,
       !results ? "Results calendar unavailable; entry is not verified against company results."
         : !resultsVerified ? `${results.detail} Entry is not verified against company results.`
@@ -430,9 +477,9 @@ export function assessArmedSwing(input: ArmedSwingInput): ArmedSwingAssessment {
   else status = "ARMED";
 
   return {
-    status, strengthScore, gates, plan,
+    policyVersion: ARMED_SWING_POLICY_VERSION, status, strengthScore, gates, plan,
     latestClose: latest.close, latestDate: latest.date, atr, atrPct,
-    distanceToTriggerPct, distanceToTriggerAtr, baseDepthPct, contractionRatio,
+    distanceToTriggerPct, distanceToTriggerAtr, baseDepthPct, contractionRatio, pivotAgeSessions,
     bandwidthPercentile: bwPercentile, volumeDryUp, volumePace,
     rsPercentile: input.rsPercentile, rsLineNearHigh, averageTradedValue20,
     sma50, sma150, sma200, high52, low52, marketRegimePositive, suggestedExposurePct, circuitLikeSessions20,

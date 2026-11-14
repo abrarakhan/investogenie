@@ -149,8 +149,10 @@ BAR_GATES = (
 )
 HARD_RISK_GATES = {
     "extension_5d", "extension_10d", "atr_risk", "stop_width", "circuit_behaviour", "freshness",
-    "price", "liquidity", "live_quote", "live_spread", "live_circuit", "market_shock",
+    "price", "liquidity", "live_quote", "live_spread", "live_circuit", "market_shock", "results_blackout",
 }
+# Gates decided by inputs a capture does not record (the live quote at the time, the results
+# calendar as it stood), so a replay from bars cannot reproduce them.
 TIME_VARYING_GATES = {"live_quote", "live_spread", "live_circuit"}
 
 
@@ -164,8 +166,11 @@ def bar_gates(bars: list[Bar], market: str = "IN", stop_mult: float = 1.5) -> di
     sma20, sma50, sma200 = _sma(closes, 20), _sma(closes, 50), _sma(closes, 200)
     sma50_prior = _sma(closes, 50, len(closes) - 20)
     prior20 = bars[-21:-1]
-    average_volume = _mean([bar.volume for bar in prior20])
-    spread = latest.high - latest.low
+    # Breakout quality is judged on the bar that broke out: the previous one when the latest holds.
+    hold = not structural_breakout(bars) and structural_breakout(bars[:-1])
+    signal = previous if hold else latest
+    average_volume = _mean([bar.volume for bar in (bars[-22:-2] if hold else prior20)])
+    spread = signal.high - signal.low
     five = _pct_change(bars[-6].close, latest.close) if len(bars) >= 6 else None
     ten = _pct_change(bars[-11].close, latest.close) if len(bars) >= 11 else None
     above_sma20 = None if sma20 is None else _pct_change(sma20, latest.close)
@@ -175,10 +180,11 @@ def bar_gates(bars: list[Bar], market: str = "IN", stop_mult: float = 1.5) -> di
         "price": latest.close >= (20 if market == "IN" else 2),
         "liquidity": _mean([bar.close * bar.volume for bar in prior20]) >= (10_000_000 if market == "IN" else 1_000_000),
         "trend": None not in (sma20, sma50, sma200, sma50_prior)
-                 and latest.close > sma50 and latest.close > sma200 and sma20 > sma50 and sma50 > sma50_prior,
-        "clearance": ((latest.close - level) / atr if atr > 0 else 0) >= 0.25,
-        "close_quality": ((latest.close - latest.low) / spread if spread > 0 else 0.5) >= 0.7,
-        "volume": (latest.volume / average_volume if average_volume > 0 else 0) >= 1.5,
+                 and latest.close > sma50 and latest.close > sma200 and sma20 > sma50 and sma50 > sma50_prior
+                 and sma50 > sma200,
+        "clearance": ((signal.close - level) / atr if atr > 0 else 0) >= 0.25,
+        "close_quality": ((signal.close - signal.low) / spread if spread > 0 else 0.5) >= 0.7,
+        "volume": (signal.volume / average_volume if average_volume > 0 else 0) >= 1.5,
         "follow_through": previous.close >= entry and latest.close >= entry,
         "extension_5d": (limit if five is None else five) <= 30,
         "extension_10d": (limit if ten is None else ten) <= 50,
@@ -198,7 +204,8 @@ def breakout_failed(bars: list[Bar]) -> bool:
 def expected_status(gates: list[dict], failed: bool) -> str:
     """The status assessStrongSwing derives from a set of gate results."""
     passed = {gate.get("key"): bool(gate.get("passed")) for gate in gates}
-    hard_risk = any(not ok for key, ok in passed.items() if key in HARD_RISK_GATES)
+    advisory = {gate.get("key") for gate in gates if not gate.get("blocking", True)}
+    hard_risk = any(not ok for key, ok in passed.items() if key in HARD_RISK_GATES and key not in advisory)
     extension = not passed.get("sma20_extension", True)
     entry_zone = not passed.get("entry_zone", True)
     blocking = [gate for gate in gates if gate.get("blocking", True)]
@@ -353,6 +360,7 @@ def main() -> int:
             "bars": [bar.engine_json() for bar in series],
             "benchmarkBars": [bar.engine_json() for bar in benchmark if bar.date <= latest_bar],
             "requireLiveExecutionData": False,
+            "results": metrics.get("resultsCheck"),
         })
         engine_core = {
             "atr": engine["atr"], "atr_pct": engine["atrPct"], "breakout": engine["isBreakout"], "entry": engine["strongEntry"],
@@ -368,7 +376,8 @@ def main() -> int:
         engine_gate_results = {gate.get("key"): bool(gate.get("passed")) for gate in engine["gates"]}
         changed = sorted(key for key in set(recorded_gate_results) | set(engine_gate_results)
                          if recorded_gate_results.get(key) != engine_gate_results.get(key))
-        stable_changed = [key for key in changed if key not in TIME_VARYING_GATES]
+        replay_exclusions = TIME_VARYING_GATES | ({"results_blackout"} if "resultsCheck" not in metrics else set())
+        stable_changed = [key for key in changed if key not in replay_exclusions]
         if changed and not stable_changed:
             time_varying_gate_changes += 1
         if stable_changed or (not changed and engine["status"] != status):

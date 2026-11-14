@@ -21,7 +21,7 @@ from breeze_market_daemon import IST, database_url, decrypt_credential, env, is_
 
 # Must equal STRONG_SWING_MODEL_VERSION in lib/analytics/strongSwing.ts. A capture written by
 # any other calculation (the minutes around a deploy) is never bought from.
-STRONG_SWING_MODEL_VERSION = "strong-swing-v3-python"
+STRONG_SWING_MODEL_VERSION = "strong-swing-v4-breakout-bar"
 
 
 def round_limit(value: Decimal) -> Decimal:
@@ -59,6 +59,8 @@ def candidates(conn, user_id: str, strong: bool, adaptive: bool):
                  and s.captured_at >= now()-interval '20 minutes'
                  and s.metrics->>'modelVersion' = %s
                  and s.projected_stop > 0 and s.projected_stop < s.confirmation_entry
+                 -- Manual entries treat a weak market as a half-size advisory; automation stands aside.
+                 and s.gates @> '[{"key":"market_regime","passed":true}]'::jsonb
                order by s.rank limit 1
             """, (STRONG_SWING_MODEL_VERSION,))
             rows.extend(cur.fetchall())

@@ -207,3 +207,51 @@ describe("swing trade ledger progress", () => {
     expect(summary.xirrPct).not.toBeNull();
   });
 });
+
+describe("strategy exit line after purchase", () => {
+  it("applies only to the five named strategies bought from the cut-over date", async () => {
+    const { usesStrategyFollowUp } = await import("@/lib/swingTradeLedger");
+    expect(usesStrategyFollowUp("PTJ", POST_ENTRY_TRAIL_FROM)).toBe(true);
+    expect(usesStrategyFollowUp("QULLAMAGGIE", "2026-12-01")).toBe(true);
+    // Trades already open keep the ATR trail they were shown.
+    expect(usesStrategyFollowUp("PTJ", "2026-11-13")).toBe(false);
+    expect(usesStrategyFollowUp("DEFAULT_SWING", "2026-12-01")).toBe(false);
+    expect(usesStrategyFollowUp("STRONG_SWING", "2026-12-01")).toBe(false);
+  });
+
+  it("replaces the ATR chandelier with the strategy line, never below the frozen trail", async () => {
+    const { strategyLineStopInputs } = await import("@/lib/swingTradeLedger");
+    const line = (value: number | null) => ({ line: value, lineLabel: "50-day average", target: null, closeExitConfirmed: false });
+    expect(strategyLineStopInputs(95, line(101))).toEqual({ projectedTrailingStop: 101, trailingDistance: null });
+    expect(strategyLineStopInputs(95, line(90))).toEqual({ projectedTrailingStop: 95, trailingDistance: null });
+    expect(strategyLineStopInputs(95, line(null))).toEqual({ projectedTrailingStop: 95, trailingDistance: null });
+    expect(strategyLineStopInputs(105, line(101), "SHORT")).toEqual({ projectedTrailingStop: 101, trailingDistance: null });
+    expect(strategyLineStopInputs(105, line(110), "SHORT")).toEqual({ projectedTrailingStop: 105, trailingDistance: null });
+
+    // A big run no longer drags an ATR stop up: the stop is the line, plus break-even.
+    const inputs = strategyLineStopInputs(95, line(101));
+    expect(calculateRecommendedGttStop({
+      buyPrice: 100, projectedStop: 92, ...inputs, highestHigh: null, currentPrice: 130,
+      postEntryCompletedHigh: 130, postEntryNextBarPolicy: true,
+    })).toEqual({ recommendedStop: 101, breakEvenActivated: true });
+  });
+
+  it("keeps moving mean targets on the profitable side for long and short reversion trades", async () => {
+    const { strategyFollowUpTarget } = await import("@/lib/swingTradeLedger");
+    expect(strategyFollowUpTarget("LONG", 100, 115, 110)).toBe(110);
+    expect(strategyFollowUpTarget("LONG", 100, 115, 95)).toBe(115);
+    expect(strategyFollowUpTarget("SHORT", 100, 85, 90)).toBe(90);
+    expect(strategyFollowUpTarget("SHORT", 100, 85, 105)).toBe(85);
+  });
+
+  it("moves protective stops only upward for longs and downward for shorts", () => {
+    expect(calculateRecommendedGttStop({
+      buyPrice: 100, projectedStop: 92, projectedTrailingStop: 95, trailingDistance: null,
+      highestHigh: 120, currentPrice: 115, direction: "LONG",
+    }).recommendedStop).toBe(100);
+    expect(calculateRecommendedGttStop({
+      buyPrice: 100, projectedStop: 108, projectedTrailingStop: 105, trailingDistance: null,
+      highestHigh: null, currentPrice: 85, direction: "SHORT",
+    }).recommendedStop).toBe(100);
+  });
+});

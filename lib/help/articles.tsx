@@ -99,9 +99,65 @@ exp. days  = round(|target − entry| / avg daily move), capped 1..60`}</Formula
         strategy ribbon at the top of the screen filters to one system at a time. Each has its own
         detailed write-up — start with whichever style matches how you trade.
       </P>
+      <P>
+        A tagged strategy carries its own plan instead of the ATR plan above:
+      </P>
+      <Formula>{`entry    = max(strategy trigger, current price)
+stop     = the strategy's own structural stop, tightened so the risk from the
+           entry never exceeds the strategy's limit
+           (Minervini 8%, Darvas 15%, PTJ 15%, Simons 15%)
+target   = the strategy's own target (Simons: the 20-day mean)
+           otherwise entry + targetRR × (entry − stop)
+trailing = the strategy's own line (10 EMA, 50-day, 200-day, box bottom),
+           never below the stop and never above the entry`}</Formula>
+      <P>
+        A stock is tagged by a strategy only if its 20-session average traded value is at least
+        ₹1 crore (India) or $1 million (US). Under the entry, a row can carry one of four notes:
+      </P>
+      <UL>
+        <LI><strong>Broke out today on volume</strong> — the scan bar traded through the entry of a Qullamaggie or Darvas setup, closed above it, and did at least 1.5× its 50-session average volume.</LI>
+        <LI><strong>Live trigger — unconfirmed</strong> — the completed-bar setup is frozen and the live quote crossed it, but confirmation still needs the strategy&apos;s completed-bar or market-specific volume evidence.</LI>
+        <LI><strong>Extended — do not chase</strong> — the live price is more than one ATR past the trigger.</LI>
+        <LI><strong>Below stop — void</strong> — the live price is already through the strategy&apos;s stop.</LI>
+      </UL>
+
+      <H2>What happens after you buy</H2>
+      <P>
+        Logging a trade from this screen freezes the plan against your actual buy price. From then
+        on the Trade Ledger manages every strategy the same way:
+      </P>
+      <Formula>{`R                = buy price − frozen stop
+break-even       = stop moves to the buy price once a high reaches buy + 0.75 × R
+
+Default Swing, Strong Swing, Momentum, Armed, Trend Continuation:
+  trail = highest completed-session high after entry − 3 × ATR at purchase
+
+Qullamaggie   exit after a completed close below the 10-day EMA
+Minervini     exit after a completed close below the 50-day average
+PTJ           exit after a completed close through the 200-day average
+Darvas        trail = one tick under the bottom of the newest box built since entry
+Simons        no trail; the target follows the current 20-day mean
+              (never above the target frozen at purchase)
+
+broker protection = frozen catastrophic/ATR stop plus break-even; EMA/SMA lines are not intraday GTT stops
+exit prompts     = target reached, completed close through the strategy line, hard stop crossed,
+                   or the expected holding window ending below entry`}</Formula>
+      <Callout tone="warn">
+        The strategy lines apply to trades bought from 14 November 2026. Trades opened earlier keep
+        the ATR trail they were shown. Close-based strategy lines are evaluated only from completed
+        sessions; an intraday touch does not itself confirm the strategy exit.
+      </Callout>
+
+      <H2>Limits to know</H2>
+      <UL>
+        <LI>The hourly scan calculates setups only from the latest published completed session. Live quotes are a separate trigger overlay and cannot rewrite the base, ATR, trend or structural stop.</LI>
+        <LI>The base classifier is a discovery list: it has no trend, liquidity or market filter, and a close above the upper Bollinger band counts as a breakout even inside a range. Strong Swing applies those checks before anything is called buyable.</LI>
+        <LI>The default plan&apos;s entry follows the live price upward. Once it is more than one ATR past the trigger the row is marked Extended.</LI>
+        <LI>The breakout notes last for the breakout day only. The next day&apos;s scan sees a stock already above its old high.</LI>
+      </UL>
       <Callout>
         The classifier and the level engine are deterministic and dependency-free — the same code
-        runs in the browser, the API, and the nightly scan job, so what you see on screen matches
+        runs in the browser, the API, and the hourly scan job, so what you see on screen matches
         what the scan stored.
       </Callout>
 
@@ -123,53 +179,69 @@ exp. days  = round(|target − entry| / avg daily move), capped 1..60`}</Formula
 const qullamaggie: HelpArticle = {
   slug: "qullamaggie-momentum",
   category: "swing",
-  title: "Qullamaggie Momentum — the High Tight Flag",
-  subtitle: "A volume thrust followed by a shallow, quiet consolidation above a stacked EMA trend.",
+  title: "Qullamaggie Momentum — the breakout setup",
+  subtitle: "A 30%+ move, then an orderly consolidation on lighter volume above the rising 10/20 EMAs.",
   trader: "Kristjan Kullamägi",
   readMins: 6,
   summary:
-    "Detects a ≥3× volume 'flagpole' then a 3–15 day tight flag above the 10/20/50 EMAs with ATR pinned to a 30-day low. Entry on the break of the flag high.",
+    "Tags top-2% momentum leaders with a 4%+ daily range that ran 30%+ within three months and have since consolidated for 10–40 sessions, tightening and no more than 20% deep, on drying volume. Reports the breakout and its volume on the day it happens.",
   Body: () => (
     <>
       <P>
         Kristjan Kullamägi (&ldquo;Qullamaggie&rdquo;) is a Swedish swing trader known for riding
-        momentum breakouts out of tight bases. The High Tight Flag is one of his signature setups:
-        an explosive move (the flagpole) followed by a shallow, low-volatility pause (the flag),
-        entered as price breaks out of that pause.
+        momentum breakouts. His breakout setup is a stock that has already made a large move, then
+        rests in an orderly range above its rising 10- and 20-day averages while volume dries up.
+        He buys the break of that range, only in the market&apos;s strongest and most volatile
+        names.
       </P>
 
       <H2>Where it comes from</H2>
       <P>
-        The High Tight Flag is a classic momentum pattern also described in the CAN SLIM / IBD
-        tradition. Kullamägi popularised a disciplined, mechanical version through his public
-        education (qullamaggie.com and his interviews). This app implements a measurable adaptation
-        of that idea.
+        Kullamägi describes the setup in his public education (qullamaggie.com and his interviews).
+        This app implements a measurable adaptation of it.
       </P>
 
       <H2>What the app calculates</H2>
-      <P>All five conditions below must hold on the latest bar for a match (needs ~55 bars):</P>
+      <P>All eight conditions below must hold on the latest bar for a match (needs 70 bars):</P>
       <SpecTable
         rows={[
-          { k: "EMA stack", v: "close is above the 10-, 20- and 50-period EMAs simultaneously (established uptrend)." },
-          { k: "Volume thrust", v: "some bar 3–15 sessions ago traded ≥ 3× its trailing-50 average volume (the flagpole)." },
-          { k: "Flag length", v: "the consolidation since that thrust is 3–15 sessions long." },
-          { k: "Tightness", v: "flag high-to-low depth ≤ 12% of the flag high." },
-          { k: "ATR compression", v: "current 14-bar ATR is at or within 5% of its 30-bar low." },
-          { k: "Entry", v: "a break above the flag high." },
-          { k: "Score", v: "fraction of the five conditions met (a full match = 1.0)." },
+          { k: "Prior move", v: "the highest high of the last 40 sessions is at least 30% above the lowest low of the 63 sessions before it." },
+          { k: "Consolidation", v: "10 to 40 sessions have passed since that high (two weeks to two months)." },
+          { k: "Orderly", v: "the lowest low since the high is no more than 20% below it." },
+          { k: "Tightening", v: "the later half of the consolidation holds a higher low than the earlier half, in a range no wider." },
+          { k: "Surfing the averages", v: "close above the 10 and 20 EMA, 10 EMA above 20 EMA, and the 20 EMA higher than five sessions ago." },
+          { k: "Volume dry-up", v: "average volume since the high is below the average of the 20 sessions into the high." },
+          { k: "Volatile enough", v: "20-session average daily range (high ÷ low − 1) of at least 4%." },
+          { k: "Leader", v: "top 2% of its market on 1-, 3- or 6-month return (98th percentile on at least one)." },
+          { k: "Score", v: "fraction of the eight conditions met (a full match = 1.0)." },
         ]}
       />
-      <Formula>{`match  = aboveStack AND volumeThrust AND flagLength(3..15)
-         AND depth ≤ 12% AND atrNow ≤ 1.05 × atr30Low
-entry  = flag high
-`}</Formula>
+      <Formula>{`entry = consolidation high (the 40-session high)
+stop  = higher of: consolidation low, entry − 1 × ATR(14)
+trail = 10-day EMA, never below the stop
+first target = entry + targetRR × (entry − stop)`}</Formula>
+
+      <H2>What the stock is doing</H2>
+      <P>
+        It ran hard, stopped making new highs, and is drifting sideways or slightly down on lighter
+        volume while its short averages catch up underneath. The tag means the stock is resting,
+        not that it has broken out.
+      </P>
+
+      <H2>Where the app differs from the method</H2>
+      <UL>
+        <LI>He enters intraday on a break of the opening range. The app works from daily bars: it reports the breakout on the hourly scan that first sees it, with the day&apos;s volume so far against the 50-session average, and moves the stop up to that day&apos;s low.</LI>
+        <LI>A breakout counts as confirmed only on a close above the entry with 1.5× volume. Before the close the note reads unconfirmed.</LI>
+        <LI>The plan marks 50% for the first target and leaves the remainder to the 10-day EMA. The ledger shows the still-unbooked scale-out quantity; you confirm the actual broker sale manually.</LI>
+      </UL>
 
       <H2>How to read it in the app</H2>
       <P>
         Filter the strategy ribbon to <strong>Qullamaggie Momentum</strong>. A tagged row is a
-        stock currently sitting in a valid high-tight flag; the entry level is the flag high it
-        needs to clear. Higher scores mean more of the five conditions are simultaneously true.
+        leader resting under its consolidation high; the entry level is the high it needs to clear.
+        On the day it clears it, the row stays and shows the breakout note with its volume.
       </P>
+
       <Callout tone="warn">
         Momentum setups are trend-continuation bets — they assume the prior thrust resumes. They
         fail hardest in choppy, mean-reverting regimes. Treat the entry as a trigger, not a
@@ -178,8 +250,8 @@ entry  = flag high
 
       <References
         items={[
-          { text: "Kristjan Kullamägi — public trading education (qullamaggie.com), breakout / episodic-pivot / high-tight-flag methodology." },
-          { text: "W. J. O'Neil, How to Make Money in Stocks (McGraw-Hill) — CAN SLIM and the high-tight-flag base as a momentum continuation pattern." },
+          { text: "Kristjan Kullamägi — public trading education (qullamaggie.com), breakout and episodic-pivot methodology." },
+          { text: "W. J. O'Neil, How to Make Money in Stocks (McGraw-Hill) — relative-strength leadership and momentum continuation bases." },
         ]}
       />
     </>
@@ -198,7 +270,7 @@ const minervini: HelpArticle = {
   trader: "Mark Minervini",
   readMins: 7,
   summary:
-    "Requires all 8 Trend-Template criteria plus a Volatility Contraction Pattern — recent pullbacks that step down in depth and end shallow. Pivot entry at the recent high.",
+    "Requires all 8 Trend-Template criteria plus a Volatility Contraction Pattern — pullbacks that step down in depth, end within 15%, dry up in volume and sit within 5% of the pivot. Stop under the last contraction, at most 8% below the pivot.",
   Body: () => (
     <>
       <P>
@@ -221,37 +293,57 @@ const minervini: HelpArticle = {
         rows={[
           { k: "1", v: "close is above both the 150- and 200-day SMAs." },
           { k: "2", v: "the 150-day SMA is above the 200-day SMA." },
-          { k: "3", v: "the 200-day SMA is trending up (higher than ~1 month / 22 bars ago)." },
+          { k: "3", v: "the 200-day SMA is trending up (higher than 22 sessions ago)." },
           { k: "4", v: "50-day SMA > 150-day SMA > 200-day SMA (proper stack)." },
           { k: "5", v: "close is above the 50-day SMA." },
-          { k: "6", v: "close is ≥ 30% above its 52-week low." },
+          { k: "6", v: "close is at least 30% above its 52-week low." },
           { k: "7", v: "close is within 25% of its 52-week high." },
-          { k: "8", v: "relative strength — approximated here by a strong 6-month absolute return (≥ 10%)." },
+          { k: "8", v: "relative-strength rating of at least 70: weighted 12-month performance (latest quarter 40%, the three before it 20% each) ranked 1–99 against the stock's own market and asset class." },
         ]}
       />
-      <Callout tone="warn">
-        Criterion 8 in Minervini&apos;s work is an IBD-style Relative Strength rank above 70 across
-        the whole market. Without a cross-sectional RS feed, the app substitutes a 6-month absolute
-        return proxy — a deliberate, documented approximation.
-      </Callout>
+      <P>Needs 222 bars. Where a stock has no rating, a six-month return of at least 10% stands in for criterion 8.</P>
       <H3>The VCP confirmation</H3>
       <P>
-        The app finds swing pivots over the last ~120 bars and measures each peak-to-trough
-        contraction depth. It then checks the most recent contractions:
+        The app finds swing peaks and troughs over the last 120 sessions (the highest high or
+        lowest low within three sessions either side) and measures each peak-to-trough depth. The
+        contraction still in progress is measured from its peak to the lowest low since.
       </P>
-      <Formula>{`recent = last up-to-4 contraction depths
-narrowing = each contraction is shallower than the previous one
-         AND the final contraction ≤ 15% deep
-match = (Trend Template 8/8) AND narrowing
-score = (passed / 8) × 0.7 + (narrowing ? 0.3 : 0)
-pivot entry = highest high of the last 10 bars`}</Formula>
+      <Formula>{`recent     = the last 2 to 4 contraction depths
+narrowing  = each is shallower than the one before, the last is ≤ 15%
+             and none is deeper than 35%
+pivot      = high of the latest swing peak
+nearPivot  = close within 5% of the pivot, either side
+dryUp      = average volume since the pivot < 50-session average volume
+breakout   = once the close is above the pivot, that bar's volume must be
+             above its 50-session average
+match      = Trend Template 8/8 AND narrowing AND nearPivot AND dryUp AND breakout
+score      = (passed / 8) × 0.7 + 0.1 for each of the three VCP checks
+
+entry = pivot
+stop  = higher of: low of the final contraction, pivot × 0.92,
+        and 8% below the price actually paid
+trail = 50-day SMA, never below the stop
+first target = entry + targetRR × (entry − stop)`}</Formula>
+
+      <H2>What the stock is doing</H2>
+      <P>
+        A leader in a long uptrend is pulling back less each time — for example 20%, then 12%, then
+        6% — while volume fades, and price is sitting just under or just through the high that
+        began the last pullback.
+      </P>
+
+      <H2>Where the app differs from the method</H2>
+      <UL>
+        <LI>Minervini looks for a clear volume surge through the pivot. The app requires only above-average volume on that bar, and during the session the day&apos;s volume is still incomplete, so a stock just through its pivot can lose the tag until volume catches up.</LI>
+        <LI>Earnings and sales growth (the rest of SEPA) are not part of the tag.</LI>
+        <LI>The plan marks 50% for the first target and manages the remainder against completed closes and the 50-day average.</LI>
+      </UL>
 
       <H2>How to read it in the app</H2>
       <P>
-        Filter to <strong>Minervini VCP</strong>. A match means a full 8/8 trend leader whose
-        volatility is contracting into a pivot; the entry is that pivot high. The score also
-        rewards near-misses (e.g. 7/8 trend, or trend without a clean VCP) so you can see how close
-        a name is.
+        Filter to <strong>Minervini VCP</strong>. A match is a full 8/8 trend leader contracting
+        into a pivot on drying volume. The score also rewards near-misses (for example 7/8 trend, or
+        a trend without a clean VCP) so you can see how close a name is.
       </P>
 
       <References
@@ -276,7 +368,7 @@ const darvas: HelpArticle = {
   trader: "Nicolas Darvas",
   readMins: 5,
   summary:
-    "Builds a box from a confirmed high and a confirmed low, and flags stocks coiled inside it. Buy-stop sits one tick above the box top.",
+    "Builds a box under a new 52-week high from a confirmed top and a confirmed bottom that has not been broken. Buy-stop one tick above the box top, stop one tick under the box bottom.",
   Body: () => (
     <>
       <P>
@@ -295,28 +387,45 @@ const darvas: HelpArticle = {
       <H2>What the app calculates</H2>
       <SpecTable
         rows={[
-          { k: "Window", v: "the most recent ~60 bars (or all available if fewer, min 25)." },
-          { k: "Box top", v: "the highest high in the window, confirmed by ≥ 3 later sessions that all fail to exceed it." },
-          { k: "Box bottom", v: "the lowest low after the top, confirmed by ≥ 3 later sessions that all hold above it." },
-          { k: "Actionable", v: "price is currently inside the box (between confirmed bottom and top)." },
-          { k: "Entry", v: "box top + 0.01 — a buy-stop one tick above the top." },
-          { k: "Score", v: "fraction of {top confirmed, bottom confirmed, inside box} that hold." },
+          { k: "Window", v: "the most recent 60 bars (or all available if fewer, minimum 25)." },
+          { k: "Box top", v: "the highest high in the window, with at least 3 sessions since it was made." },
+          { k: "New high", v: "the box top must also be the 52-week high (or the high of all history when shorter). Darvas only built boxes on stocks making new highs." },
+          { k: "Box bottom", v: "the first new low after the top that the next three sessions all hold at or above. Once set it is fixed." },
+          { k: "Intact", v: "no later low has gone below the box bottom. A break voids the box until a new high." },
+          { k: "Tradable", v: "the stop under the box bottom is no more than 15% below the entry. Taller boxes are not tagged." },
+          { k: "Score", v: "fraction of {new high, top confirmed, bottom confirmed, intact, tradable} that hold." },
         ]}
       />
-      <Formula>{`boxFormed = topConfirmed AND bottomConfirmed AND boxTop > boxBottom
-match     = boxFormed AND (boxBottom ≤ close ≤ boxTop)
-entry     = boxTop + 0.01`}</Formula>
+      <Formula>{`match = newHigh AND topConfirmed AND bottomConfirmed AND intact AND tradable
+entry = one tick above the box top   (tick: ₹0.05 in India, $0.01 in the US)
+stop  = one tick under the box bottom
+trail = the stop; after purchase, one tick under each new box bottom
+first target = entry + targetRR × (entry − stop)`}</Formula>
+
+      <H2>What the stock is doing</H2>
+      <P>
+        It made a new 52-week high, failed to exceed it for at least three sessions, found a low
+        that held, and is now moving between the two. The tag is the wait inside the box.
+      </P>
+
+      <H2>Where the app differs from the method</H2>
+      <UL>
+        <LI>Darvas gave no number for how tall a box may be. The app refuses boxes whose stop is more than 15% from the entry.</LI>
+        <LI>He bought on a standing buy-stop order. The app reports the breakout on the hourly scan that sees it, confirmed only by a close above the box top on 1.5× volume.</LI>
+        <LI>Some accounts of his book put his stop just under the breakout price rather than under the box bottom. The app uses the box bottom.</LI>
+        <LI>A flat ₹0.05 tick is used for India; a few price bands trade on a different tick.</LI>
+      </UL>
 
       <H2>How to read it in the app</H2>
       <P>
-        Filter to <strong>Darvas Box</strong>. A tagged row is coiled inside a confirmed box; the
-        entry is the buy-stop just above the box top. The requirement for ≥3 confirming sessions on
-        both edges filters out unformed, still-moving ranges.
+        Filter to <strong>Darvas Box</strong>. A tagged row is inside a confirmed, unbroken box
+        under a new high; the entry is the buy-stop just above the box top and the stop is just
+        under the box bottom. On the day it breaks out the row stays and shows the breakout note.
       </P>
       <Callout tone="warn">
         Box breakouts can be faked out — price pokes above the top and reverses. Darvas managed this
-        with tight stops just under the breakout; the app&apos;s standard stop (1.5 × ATR below
-        entry) plays the same role.
+        with a stop just under the breakout. The app&apos;s stop is under the box bottom, which is
+        wider.
       </Callout>
 
       <References
@@ -358,26 +467,42 @@ const ptj: HelpArticle = {
       </P>
 
       <H2>What the app calculates</H2>
-      <P>Needs ~222 bars (200-day SMA plus a month of slope). It computes the 200-day SMA now and ~22 bars ago:</P>
+      <P>Needs 205 bars. It computes the 200-day SMA now and 22 sessions ago:</P>
       <SpecTable
         rows={[
-          { k: "Rising / falling", v: "SMA200 now vs SMA200 ~22 bars ago sets the trend direction." },
-          { k: "Long regime", v: "price above a rising 200-day AND proximity to it ≤ 15% (not over-extended)." },
-          { k: "Short regime", v: "price below a falling 200-day AND within 15% of it." },
+          { k: "Rising / falling", v: "SMA200 now vs SMA200 22 sessions ago sets the trend direction." },
+          { k: "Long regime", v: "close above a rising 200-day, no more than 15% above it, with the 10-bar-high entry also within 15% of the 200-day." },
+          { k: "Short regime", v: "close below a falling 200-day, within 15% of it, with the 10-bar-low entry also within 15%." },
           { k: "Mixed regime", v: "anything else — PTJ stands aside (no signal)." },
           { k: "Entry (long)", v: "break of the highest high of the last 10 bars." },
           { k: "Entry (short)", v: "break of the lowest low of the last 10 bars." },
+          { k: "Stop and trail", v: "the 200-day SMA itself." },
         ]}
       />
-      <Formula>{`slopePct = |SMA200_now − SMA200_prior| / SMA200_prior
-score(long)  = (1 + rising + nearMean + min(1, slopePct × 50)) / 4
-proximity    = (close − SMA200) / SMA200      // long: ≤ 0.15 = near mean`}</Formula>
+      <Formula>{`proximity = |close − SMA200| / SMA200
+slopePct  = |SMA200_now − SMA200_22_ago| / SMA200_22_ago
+score     = 0.5 + 0.25 × max(0, 1 − proximity / 0.15) + 0.25 × min(1, slopePct × 50)
+first target = entry + targetRR × (entry − stop)`}</Formula>
+
+      <H2>What the stock is doing</H2>
+      <P>
+        It is above a 200-day average that is itself rising, and not far above it. Nothing more is
+        required: there is no base, breakout or volume condition.
+      </P>
+
+      <H2>Where the app differs from the method</H2>
+      <UL>
+        <LI>PTJ published a risk filter, not a stock setup. The 10-bar-high entry, the 15% limit and the target at a multiple of risk are this app&apos;s additions. It tags most stocks in an uptrend.</LI>
+        <LI>His rule is to exit on a completed close through the 200-day. Intraday movement through the line is informational; the catastrophic frozen/GTT stop remains separate.</LI>
+        <LI>Short tags appear only when shorts are enabled in Settings.</LI>
+      </UL>
 
       <H2>How to read it in the app</H2>
       <P>
         Filter to <strong>PTJ 200-Day Trend</strong>. A tagged long is a stock above a rising
-        200-day that has pulled back near the average — a &ldquo;buy the dip in an uptrend&rdquo;
-        entry. The score rises with a steeper, cleaner trend and closer proximity to the mean.
+        200-day that is still near the average. The score rises with a steeper trend and closer
+        proximity to the mean. Use it to confirm direction for another setup rather than as an
+        entry by itself.
       </P>
 
       <References
@@ -421,7 +546,7 @@ const simons: HelpArticle = {
       </P>
 
       <H2>What the app calculates</H2>
-      <P>Over the last 20 closes (needs ~21 bars):</P>
+      <P>Over the last 20 closes, with 200 bars of history for the trend:</P>
       <Formula>{`mean = 20-day average close
 sd   = 20-day sample standard deviation
 z    = (close − mean) / sd
@@ -429,26 +554,47 @@ z    = (close − mean) / sd
 z ≤ −2.5σ  →  LONG   (statistically oversold, revert up)
 z ≥ +2.5σ  →  SHORT  (statistically overbought, revert down)
 score = min(1, |z| / 3.5)
-entry = current close`}</Formula>
+
+with the trend = LONG only above the 200-day average, SHORT only below it
+                 (needs 200 bars; without them there is no tag)
+sane           = sd ≤ 15% of the close
+match          = extreme AND with the trend AND sane
+
+entry  = current close
+target = the 20-day mean
+stop   = entry − 1 × sd (long), entry + 1 × sd (short)
+trail  = the stop`}</Formula>
       <SpecTable
         rows={[
           { k: "Trigger", v: "the 20-day z-score reaches ±2.5σ — a ~2-in-100 event under a normal assumption." },
           { k: "Direction", v: "oversold reverts long; overbought reverts short." },
           { k: "Score", v: "scales with how far past 2.5σ the close sits, capped at 1.0 (≈3.5σ)." },
-          { k: "Entry", v: "the current close (immediate statistical entry)." },
+          { k: "Reward to risk", v: "the target is at least 2.5σ away and the stop 1σ, so at least 2.5 by construction." },
         ]}
       />
+
+      <H2>What the stock is doing</H2>
+      <P>
+        It has fallen (or risen) unusually fast against its own last 20 sessions. The bet is a
+        partial snap back to the average, the opposite of the momentum strategies.
+      </P>
+
+      <H2>Where the app differs from the method</H2>
+      <UL>
+        <LI>Renaissance&apos;s models are proprietary; this is a single-factor tag. The 200-day trend filter and the 15% limit on one standard deviation are this app&apos;s safeguards against fading a downtrend, a collapse or an unadjusted split.</LI>
+        <LI>There is no results or news filter. A stock falling on bad results inside an uptrend is still tagged.</LI>
+        <LI>After purchase the target follows the current 20-day mean, so it comes down as the low closes enter the average.</LI>
+      </UL>
 
       <H2>How to read it in the app</H2>
       <P>
         Filter to <strong>Simons Quant Reversion</strong>. A tagged long is a stock stretched far
-        below its own 20-day mean; the thesis is a bounce back toward that mean — the opposite bet
-        from the momentum strategies.
+        below its own 20-day mean; the thesis is a bounce back toward that mean.
       </P>
       <Callout tone="warn">
         Mean reversion is dangerous in a strong trend: a stock can stay &ldquo;oversold&rdquo; and
-        keep falling. This single-factor z-score has no regime filter, so it is best read alongside
-        the trend strategies rather than in isolation.
+        keep falling. The tag only fades moves in the direction of the 200-day trend, but it is
+        still a single factor; read it alongside the trend strategies.
       </Callout>
 
       <References
@@ -1197,11 +1343,11 @@ const strongSwingArticle: HelpArticle = {
       <SpecTable
         rows={[
           { k: "Structural setup", v: "Either of the two completed confirmation bars broke above its 20-session high or upper band." },
-          { k: "Primary trend", v: "Price above the 50- and 200-day averages; 20 > 50 and the 50-day rising." },
+          { k: "Primary trend", v: "Price above the 50- and 200-day averages; 20 > 50 > 200 and the 50-day rising." },
           { k: "Relative strength", v: "Outperforming the benchmark over 20 sessions. The benchmark is the first of Nifty / NIFTYBEES with 200+ current daily bars." },
-          { k: "Decisive breakout", v: "At least 0.25 ATR above the 20-session high." },
-          { k: "Strong close", v: "Close in the top 30% of the day's range." },
-          { k: "Volume", v: "At least 1.5x the 20-session average." },
+          { k: "Decisive breakout", v: "The breakout bar closed at least 0.25 ATR above the 20-session high." },
+          { k: "Strong close", v: "The breakout bar closed in the top 30% of its range." },
+          { k: "Volume", v: "The breakout bar traded at least 1.5x its 20-session average." },
           { k: "Two-close follow-through", v: "Both latest closes hold above the confirmation entry." },
           { k: "Market regime / shock", v: "Benchmark trend supportive and no market-wide shock." },
         ]}
@@ -1209,19 +1355,46 @@ const strongSwingArticle: HelpArticle = {
       <H2>Execution safety</H2>
       <SpecTable
         rows={[
-          { k: "Entry discipline", v: "No more than 0.5 ATR above the entry — otherwise Pullback candidate." },
+          { k: "Entry discipline", v: "Live price at the entry and no more than 0.5 ATR above it — otherwise Pullback candidate. A purchase outside that zone is refused." },
+          { k: "Results blackout (India)", v: "A verified results calendar with no company results within three sessions. In the US the calendar has no coverage, so the check is shown but does not block." },
           { k: "Extension", v: "5-session return ≤ 30%, 10-session ≤ 50%, ≤ 15% above the 20-day average." },
           { k: "Volatility / stop risk", v: "ATR ≤ 5% of price; stop no more than 7% away." },
           { k: "Liquidity, price, circuits", v: "Traded-value and price floors; fewer than two circuit-like sessions in 20." },
           { k: "Live checks (India)", v: "A current Breeze quote, bid-ask spread ≤ 0.75% and at least 3% room above the lower circuit." },
         ]}
       />
+      <H2>Other checks</H2>
+      <SpecTable
+        rows={[
+          { k: "Participation", v: "Cash equities: five-session average volume at least 1.2x the 20-session average with price up over those five sessions. Derivatives: open interest up at least 5% with price up." },
+          { k: "Fresh data", v: "The stock's latest completed bar is no more than one session behind the benchmark's." },
+          { k: "Market shock", v: "No new entries when the benchmark has fallen 4% or more over two sessions." },
+          { k: "Market regime", v: "Benchmark must be above a rising 50-day average. Failing it blocks a new Armed entry." },
+        ]}
+      />
+      <H2>Levels</H2>
+      <Formula>{`breakout level = highest high of the 20 completed sessions ending two bars back
+ATR            = average of the last 14 true ranges (completed sessions)
+entry          = breakout level + 0.25 × ATR
+stop           = entry − 1.5 × ATR          (your stop multiple)
+target         = entry + 2 × (entry − stop)  (your target multiple)
+buy zone       = entry to entry + 0.5 × ATR, tested against the live price
+invalidated    = latest close below breakout level − 1 × ATR`}</Formula>
+      <H2>What the stock is doing</H2>
+      <P>
+        Day one: a close through the 20-session high on volume, near the top of its range. Day
+        two: a second close that holds above the entry; it does not have to repeat day one&apos;s
+        volume. The buy is on day three, while the live price is at the entry and within half an
+        ATR above it. Stocks holding such a breakout are assessed even when the base Swing scan no
+        longer lists them. During the session every gate is calculated from completed sessions; today&apos;s
+        price is used only for the buy zone, the spread and the circuit room.
+      </P>
       <H2>Statuses</H2>
       <UL>
         <LI><strong>Execution ready</strong> — every blocking gate passes; a plan is frozen when you log the trade.</LI>
-        <LI><strong>Pullback candidate</strong> — technically confirmed but above the buy zone or more than 15% above its 20-day average. Not buyable. A later pullback does not reactivate it automatically: Execution ready still needs a current breakout with two confirming closes.</LI>
+        <LI><strong>Pullback candidate</strong> — technically confirmed but outside the buy zone (above it, or trading below the entry) or more than 15% above its 20-day average. Not buyable. A later pullback does not reactivate it automatically: Execution ready still needs a current breakout with two confirming closes.</LI>
         <LI><strong>Awaiting confirmation</strong> — some technical gates still fail.</LI>
-        <LI><strong>Risk off</strong> — an extension, volatility, stop-width, liquidity, circuit or live-data check failed.</LI>
+        <LI><strong>Risk off</strong> — an extension, volatility, stop-width, liquidity, circuit, results or live-data check failed.</LI>
         <LI><strong>Invalidated</strong> — the unfilled setup failed a full ATR below its breakout level. Stops activate only after a purchase is recorded in the ledger.</LI>
       </UL>
       <P>
@@ -1231,6 +1404,12 @@ const strongSwingArticle: HelpArticle = {
         own stop. The same rule applies to trades of every strategy bought from
         14 November 2026 on; trades opened earlier keep the stop they were already shown.
       </P>
+      <H2>Limits to know</H2>
+      <UL>
+        <LI>Market regime stays advisory for manual entries (half size in a weak market). Automatic buying does not act while the regime check fails.</LI>
+        <LI>The results check depends on the calendar being current. A stock whose calendar cannot be verified is Risk off, not buyable.</LI>
+        <LI>When the latest bar itself breaks out, the second close has not happened yet, so the stock waits a day by design.</LI>
+      </UL>
     </>
   ),
 };
@@ -1252,13 +1431,36 @@ const armedSwingArticle: HelpArticle = {
       </P>
       <SpecTable
         rows={[
-          { k: "Stage-2 trend + leadership", v: "Trend aligned and a relative-strength rank of at least 80, with the RS line near its high." },
-          { k: "Tight base", v: "Base depth ≤ 18% with contracting volatility and volume dry-up ≤ 0.85x." },
-          { k: "Near the pivot", v: "Within 1.5 ATR and 6% of the trigger." },
-          { k: "Plan", v: "Trigger just above the pivot; limit capped 3% above the pivot; structure stop risk ≤ 8%." },
-          { k: "Execution", v: "ATR ≤ 5%, liquidity, circuit behaviour, results blackout, and live quote (≤ 5 min old), spread ≤ 0.75% and circuit room." },
+          { k: "Stage-2 trend", v: "Close above the 50-, 150- and 200-day averages, 50-day above 150-day above 200-day, 200-day higher than 20 sessions ago, within 25% of the 52-week high and at least 30% above the 52-week low." },
+          { k: "Leadership", v: "Relative-strength rank of at least 80: weighted 3/6/9/12-month return ranked across the market. Needs 12 months of history." },
+          { k: "Tight base", v: "The last 20 completed sessions are no more than 18% deep from high to low." },
+          { k: "Volatility contraction", v: "The range of the last 10 sessions is at most 75% of the 10 before them, or Bollinger bandwidth is in the lowest 25% of its history." },
+          { k: "Rested under the pivot", v: "The pivot high was set at least 3 completed sessions ago." },
+          { k: "Volume dry-up", v: "Five-session volume no more than 0.85x the 50-session average." },
+          { k: "Near the pivot", v: "Within 1.5 ATR and 6% of the trigger, or already through it." },
+          { k: "Breakout volume", v: "Once through the trigger: today's volume at least 1.5x what the 20-session average normally trades by that time of day." },
+          { k: "Execution", v: "ATR ≤ 5%, structure-stop risk ≤ 8%, liquidity and price floors, fewer than two circuit-like sessions in 20, no market shock, no results within three sessions, live quote ≤ 5 min old, spread ≤ 0.75%, at least 3% above the lower circuit and the limit inside the upper circuit." },
+          { k: "Shown but not required", v: "The RS line within 2% of its six-month high, and the market regime. A stock can be Armed with either failing." },
         ]}
       />
+      <H2>The plan</H2>
+      <Formula>{`pivot   = highest high of the last 20 completed sessions
+trigger = pivot + 0.1 × ATR                       (rounded up to the tick)
+limit   = lower of: trigger + 0.25 × ATR, pivot × 1.03
+stop    = lower of: lowest low of the last 5 sessions − 0.1 × ATR,
+                    trigger − 1 × ATR
+target  = trigger + targetRR × (trigger − stop)
+trail   = higher of: stop, trigger − 3 × ATR
+volume pace = today's volume ÷ (20-session average × share of a day's volume
+              normally traded by this time)
+              about 14% in the first 15 minutes, a third in the first hour,
+              half by midday`}</Formula>
+      <H2>What the stock is doing</H2>
+      <P>
+        A leader in a long uptrend has spent about a month in a shallow, narrowing range and is
+        within a few percent of the top of it. The order sits just above that top and fills only if
+        price gets there.
+      </P>
       <H2>Statuses</H2>
       <UL>
         <LI><strong>Buy zone</strong> — crossed the trigger on at least 1.5x volume pace and still inside the limit. Enter at or below the limit.</LI>
@@ -1266,6 +1468,12 @@ const armedSwingArticle: HelpArticle = {
         <LI><strong>Triggered · volume unconfirmed</strong> — through the trigger, but volume pace is not yet 1.5x.</LI>
         <LI><strong>Unverified</strong> — qualifies, but live quote, depth, circuit bands or the results calendar are missing.</LI>
         <LI><strong>Base forming / Extended / Risk off / Invalidated</strong> — not actionable.</LI>
+      </UL>
+      <H2>Limits to know</H2>
+      <UL>
+        <LI>Time-of-day volume is checked against a versioned curve for that market, built from at least 40 completed sessions. If that market&apos;s curve is unavailable, a triggered breakout remains unconfirmed.</LI>
+        <LI>Only the 250 highest-ranked stocks near their pivot are assessed in each market.</LI>
+        <LI>The RS line near its high is shown but not required.</LI>
       </UL>
       <Callout>Armed Swing orders and fills are recorded from the web terminal.</Callout>
     </>

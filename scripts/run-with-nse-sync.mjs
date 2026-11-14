@@ -22,6 +22,7 @@ const pipeline = resolve(root, "pipelines/nse_yfinance_sync.py");
 const indiaQuotePipeline = resolve(root, "pipelines/india_quotes_sync.py");
 const breezeHistoryPipeline = resolve(root, "pipelines/breeze_ohlcv_sync.py");
 const breezeIntradayPipeline = resolve(root, "pipelines/breeze_intraday_sync.py");
+const sessionVolumeCurvePipeline = resolve(root, "pipelines/session_volume_curve_sync.py");
 const breezeMarketWorker = resolve(root, "workers/breeze_market_daemon.py");
 const breezeAccountWorker = resolve(root, "workers/breeze_account_sync.py");
 const breezeAutoBuyWorker = resolve(root, "workers/breeze_auto_buy.py");
@@ -1105,6 +1106,12 @@ function runBreezeIntradaySync(trigger) {
   breezeIntradayChild.once("close", (code, signal) => {
     breezeIntradayChild = null;
     if (code !== 0 || signal) console.warn(`[breeze-intraday] ${trigger} did not finish (${signal ?? `exit ${code}`})`);
+    else if (existsSync(sessionVolumeCurvePipeline)) {
+      const curve = spawn(python, [sessionVolumeCurvePipeline, "--market", "IN", "--activate"], {
+        cwd: root, env: process.env, stdio: "inherit",
+      });
+      curve.once("error", (error) => console.warn(`[volume-curve] unable to start: ${error.message}`));
+    }
   });
 }
 

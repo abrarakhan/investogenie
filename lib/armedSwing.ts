@@ -5,6 +5,7 @@ import {
   rankArmedSwingCandidates,
   resultsCalendarCoverage,
   type ArmedSwingAssessment,
+  type SessionVolumeCurve,
 } from "@/lib/analytics/armedSwing";
 import {
   isMarketOpenNow,
@@ -107,7 +108,7 @@ export async function getArmedSwingCandidates(
   const progress = Math.max(0, Math.min(1,
     (clock.minutes - config.openMinutes) / (config.closeMinutes - config.openMinutes)));
 
-  const [countRows, shortlist, benchmarkRows] = await Promise.all([
+  const [countRows, shortlist, benchmarkRows, curveRows] = await Promise.all([
     query<{ count: string }>(
       `select count(*)::text count from public.assets a
         where ${config.universeWhere} and a.asset_class='STOCK' and a.is_active
@@ -172,7 +173,20 @@ export async function getArmedSwingCandidates(
         order by o.date desc limit 260`,
       [market, config.benchmarkTickers, marketOpen, sessionDate],
     ),
+    query<{ version: string; sample_sessions: number; points: unknown }>(
+      `select version,sample_sessions,points from public.market_volume_curves
+        where market=$1 and active and sample_sessions >= 40
+        order by generated_at desc limit 1`,
+      [market],
+    ).catch((error) => {
+      if ((error as { code?: string }).code === "42P01") return [];
+      throw error;
+    }),
   ]);
+  const rawCurve = curveRows[0];
+  const volumeCurve: SessionVolumeCurve | null = rawCurve && Array.isArray(rawCurve.points)
+    ? { market, version: rawCurve.version, sampleSessions: Number(rawCurve.sample_sessions), points: rawCurve.points as Array<[number, number]> }
+    : null;
 
   const ids = shortlist.map((row) => row.asset_id);
   const [barRows, liveRows, resultsRows] = ids.length ? await Promise.all([
@@ -263,6 +277,7 @@ export async function getArmedSwingCandidates(
       liveSession: marketOpen && liveVolume.has(row.asset_id)
         ? { volume: liveVolume.get(row.asset_id)!, progress }
         : null,
+      volumeCurve,
       expectedSessionLag: tradingSessionLag(market, bars.at(-1)!.date, expectedSession),
       execution: {
         quoteFresh: marketOpen && authoritative && quoteAgeMinutes !== null

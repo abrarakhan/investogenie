@@ -5,9 +5,12 @@ from typing import Any
 
 from .common import Bar, average_true_range, js_round, mean, pct_change, round2, sma, structural_breakout
 
-MODEL_VERSION = "strong-swing-v3-python"
+MODEL_VERSION = "strong-swing-v4-breakout-bar"
 TRAILING_POLICY_VERSION = "strong-swing-ledger-trailing-v2-post-entry-next-bar"
 CONFIRMATION_ATR_BUFFER = 0.25
+RESULTS_BLACKOUT_SESSIONS = 3
+# A fill this far under the confirmed entry is still at the entry (matches purchase validation).
+ENTRY_TOLERANCE = 0.999
 
 
 def _gate(key: str, label: str, passed: bool, detail: str,
@@ -85,11 +88,18 @@ def assess(raw: dict[str, Any]) -> dict[str, Any]:
     circuit_count = sum(_circuit_like(before, bar) for before, bar in zip(circuit_window, circuit_window[1:]))
     prior20 = bars[-21:-1]
     avg_volume = mean([bar.volume for bar in prior20])
-    volume_ratio = latest.volume / avg_volume if avg_volume > 0 else 0
     avg_value = mean([bar.close * bar.volume for bar in prior20])
-    spread = latest.high - latest.low
-    close_location = (latest.close - latest.low) / spread if spread > 0 else 0.5
-    clearance = (latest.close - level) / atr if atr > 0 else 0
+    # Breakout quality belongs to the bar that broke out. When that was the previous bar the
+    # latest one is only the hold: it must stay above the entry (follow-through), not repeat
+    # the breakout's volume, close and clearance.
+    signal = previous if breakout_bar == "previous" else latest
+    signal_base = bars[-22:-2] if breakout_bar == "previous" else prior20
+    signal_volume = mean([bar.volume for bar in signal_base])
+    volume_ratio = signal.volume / signal_volume if signal_volume > 0 else 0
+    spread = signal.high - signal.low
+    close_location = (signal.close - signal.low) / spread if spread > 0 else 0.5
+    clearance = (signal.close - level) / atr if atr > 0 else 0
+    signal_day = "breakout bar" if breakout_bar == "previous" else "latest bar"
 
     def benchmark_before(day: str) -> Bar | None:
         return next((bar for bar in reversed(benchmark) if bar.date <= day), None)
@@ -115,7 +125,8 @@ def assess(raw: dict[str, Any]) -> dict[str, Any]:
     price_floor = 20 if market == "IN" else 2
     value_floor = 10_000_000 if market == "IN" else 1_000_000
     trend_history = all(value is not None for value in (sma20, sma50, sma200, sma50_prior))
-    trend = bool(trend_history and latest.close > sma50 and latest.close > sma200 and sma20 > sma50 > sma50_prior)
+    trend = bool(trend_history and latest.close > sma50 and latest.close > sma200 and sma20 > sma50 > sma50_prior
+                 and sma50 > sma200)
     follow_through = previous.close >= entry and latest.close >= entry
     has_oi = bool(five_ago and five_ago.open_interest is not None and latest.open_interest is not None
                   and five_ago.open_interest > 0)
@@ -131,28 +142,42 @@ def assess(raw: dict[str, Any]) -> dict[str, Any]:
     quote_fresh = bool(micro.get("quoteFresh"))
     live_not_required = market != "IN" or not require_live
     spread_pct = ((float(ask) - float(bid)) / float(ask)) * 100 if bid and ask else None
+    at_entry = current_price >= round2(entry) * ENTRY_TOLERANCE
+    # Company results. India has an authoritative calendar, so an unverified or imminent date
+    # blocks the entry; elsewhere the check is reported but cannot block on missing coverage.
+    results = raw.get("results") or None
+    results_required = market == "IN"
+    results_verified = bool(results and results.get("verified"))
+    sessions_to_results = results.get("sessionsToNext") if results else None
+    in_blackout = sessions_to_results is not None and sessions_to_results <= RESULTS_BLACKOUT_SESSIONS
+    results_ok = results_verified and not in_blackout
 
     gates = [
         _gate("structure", "Structural setup", is_breakout, "Existing engine detected a breakout." if is_breakout else f"Base verdict: {verdict}."),
         _gate("freshness", "Fresh EOD data", fresh, "Benchmark data unavailable — cannot verify freshness." if not benchmark else f"Latest bar {latest.date}." if fresh else f"Latest bar {latest.date}; benchmark {reference_date}.", "execution"),
         _gate("price", "Price floor", latest.close >= price_floor, f"{latest.close:.2f} vs minimum {price_floor:.2f}.", "execution"),
         _gate("liquidity", "20-day liquidity", avg_value >= value_floor, f"Average traded value {js_round(avg_value):,}.", "execution"),
-        _gate("trend", "Primary trend", trend, "Price > 50/200 SMA; 20 > 50 and 50 SMA rising." if trend_history else "Insufficient 200-session trend history."),
+        _gate("trend", "Primary trend", trend, "Price > 50/200 SMA; 20 > 50 > 200 and 50 SMA rising." if trend_history else "Insufficient 200-session trend history."),
         _gate("relative_strength", "Relative strength", (relative_strength if relative_strength is not None else -math.inf) > 0, "Benchmark comparison unavailable." if relative_strength is None else f"{relative_strength:.1f}% vs benchmark over 20 sessions."),
-        _gate("clearance", "Decisive breakout", clearance >= .25, f"{clearance:.2f} ATR above the {level:.2f} 20-session high; requires 0.25."),
-        _gate("close_quality", "Strong close", close_location >= .7, f"Closed at {js_round(close_location * 100)}% of the daily range; requires top 30%."),
-        _gate("volume", "Volume confirmation", volume_ratio >= 1.5, f"{volume_ratio:.2f}x 20-session average; requires 1.50x."),
+        _gate("clearance", "Decisive breakout", clearance >= .25, f"{clearance:.2f} ATR above the {level:.2f} 20-session high on the {signal_day}; requires 0.25."),
+        _gate("close_quality", "Strong close", close_location >= .7, f"The {signal_day} closed at {js_round(close_location * 100)}% of its range; requires top 30%."),
+        _gate("volume", "Volume confirmation", volume_ratio >= 1.5, f"{volume_ratio:.2f}x 20-session average on the {signal_day}; requires 1.50x."),
         _gate("follow_through", "Two-close follow-through", follow_through, f"Both latest closes must hold above {entry:.2f}."),
         _gate("market_regime", "Market regime", regime, "Benchmark data unavailable — regime cannot be assessed." if not benchmark else "Benchmark is above a rising 50 SMA; normal sizing." if regime else "Selective regime: use 50% position size and demand relative strength.", "execution", False),
         _gate("market_shock", "Market shock", not market_shock, "Two-session benchmark move unavailable." if bench_two_day is None else f"{bench_two_day:.1f}% over two sessions; entries stop at -4%.", "execution"),
         _gate("confirmation", "OI build-up" if has_oi else "Cash-equity confirmation", bool(oi_confirmed if has_oi else cash_confirmed), f"{(oi_change or 0):.1f}% OI change over five sessions." if has_oi else f"{volume_trend5:.2f}x five-session volume vs the 20-session base, price {(price_change5 or 0):.1f}% over five sessions; requires 1.20x and a rise."),
-        _gate("entry_zone", "Entry discipline", extension_atr <= .5, f"{extension_atr:.2f} ATR above confirmed entry {entry:.2f}; maximum 0.50 ATR.", "execution"),
+        _gate("entry_zone", "Entry discipline", extension_atr <= .5 and at_entry, f"{extension_atr:.2f} ATR above confirmed entry {entry:.2f}; maximum 0.50 ATR." if at_entry else f"Price {current_price:.2f} is below the confirmed entry {entry:.2f}; wait for it to trade back at the entry.", "execution"),
         _gate("extension_5d", "Five-session extension", (ret5 if ret5 is not None else math.inf) <= 30, "Five-session return unavailable." if ret5 is None else f"{ret5:.1f}%; maximum 30%.", "execution"),
         _gate("extension_10d", "Ten-session extension", (ret10 if ret10 is not None else math.inf) <= 50, "Ten-session return unavailable." if ret10 is None else f"{ret10:.1f}%; maximum 50%.", "execution"),
         _gate("sma20_extension", "20-day extension", (above_sma20 if above_sma20 is not None else math.inf) <= 15, "20-day average unavailable." if above_sma20 is None else f"{above_sma20:.1f}% above SMA20; maximum 15%.", "execution"),
         _gate("atr_risk", "Volatility ceiling", atr_pct <= 5, f"ATR is {atr_pct:.1f}% of price; maximum 5%.", "execution"),
         _gate("stop_width", "Stop-risk ceiling", stop_risk <= 7, f"Technical stop requires {stop_risk:.1f}% risk; maximum 7%.", "execution"),
         _gate("circuit_behaviour", "Circuit behaviour", circuit_count < 2, f"{circuit_count} circuit-like closes in 20 sessions; maximum 1.", "execution"),
+        _gate("results_blackout", "Results blackout", results_ok,
+              "Results calendar unavailable; entry is not verified against company results." if not results
+              else f"{results.get('detail') or 'Results date unknown.'} Entry is not verified against company results." if not results_verified
+              else f"Results due in {sessions_to_results} session{'' if sessions_to_results == 1 else 's'} ({results.get('nextDate')}); no new entries within {RESULTS_BLACKOUT_SESSIONS}." if in_blackout
+              else str(results.get("detail") or "No results inside the blackout window."), "execution", results_required),
         _gate("live_quote", "Live broker quote", live_not_required or quote_fresh, "Live broker verification is required only during the open India session." if live_not_required else "Breeze quote is current." if quote_fresh else "Fresh Breeze execution quote is unavailable.", "execution"),
         _gate("live_spread", "Live bid-ask spread", live_not_required or (spread_pct is not None and spread_pct <= .75), "Live depth is required only during the open India session." if live_not_required else f"{spread_pct:.2f}% spread; maximum 0.75%." if spread_pct is not None else "Not verified: Breeze bid/ask depth is absent.", "execution"),
         _gate("live_circuit", "Circuit exit room", live_not_required or not lower or current_price > float(lower) * 1.03, "Live circuit verification is required only during the open India session." if live_not_required else f"{((current_price/float(lower))-1)*100:.1f}% above lower circuit; requires 3%." if lower else "Live circuit band is unavailable; the 20-session circuit-behaviour gate remains authoritative.", "execution"),
@@ -161,8 +186,8 @@ def assess(raw: dict[str, Any]) -> dict[str, Any]:
     structure["detail"] = "Latest completed bar closed above its 20-session high or upper band." if breakout_bar == "latest" else "Previous completed bar broke out; the latest bar is the hold." if breakout_bar == "previous" else f"Neither of the last two completed bars broke out (base scan: {verdict})."
     score = js_round(sum(bool(gate["passed"]) for gate in gates) / len(gates) * 100)
     breakout_failed = is_breakout and atr > 0 and latest.close < level - atr
-    hard = {"extension_5d", "extension_10d", "sma20_extension", "atr_risk", "stop_width", "circuit_behaviour", "freshness", "price", "liquidity", "live_quote", "live_spread", "live_circuit", "market_shock"}
-    hard_failed = any(gate["key"] in hard and gate["key"] != "sma20_extension" and not gate["passed"] for gate in gates)
+    hard = {"extension_5d", "extension_10d", "sma20_extension", "atr_risk", "stop_width", "circuit_behaviour", "freshness", "price", "liquidity", "live_quote", "live_spread", "live_circuit", "market_shock", "results_blackout"}
+    hard_failed = any(gate["key"] in hard and gate["key"] != "sma20_extension" and gate["blocking"] and not gate["passed"] for gate in gates)
     extension_failed = not next(gate["passed"] for gate in gates if gate["key"] == "sma20_extension")
     entry_failed = not next(gate["passed"] for gate in gates if gate["key"] == "entry_zone")
     technical_passed = all(gate["passed"] for gate in gates if gate["category"] == "technical" and gate["blocking"])
@@ -194,7 +219,8 @@ def assess(raw: dict[str, Any]) -> dict[str, Any]:
         "relativeStrength20Pct": relative_strength, "averageTradedValue20": avg_value,
         "volumeRatio": volume_ratio, "closeLocation": close_location,
         "triggerClearanceAtr": clearance, "oiChange5Pct": oi_change,
-        "marketRegimePositive": regime, "confirmationMode": "OI" if has_oi else "CASH",
+        "marketRegimePositive": regime, "resultsVerified": results_verified, "resultsCheck": results,
+        "confirmationMode": "OI" if has_oi else "CASH",
         "fiveDayReturnPct": ret5, "tenDayReturnPct": ret10,
         "distanceAboveSma20Pct": above_sma20, "atrPct": atr_pct,
         "stopRiskPct": stop_risk, "entryExtensionAtr": extension_atr,

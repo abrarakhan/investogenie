@@ -26,6 +26,8 @@
 import type { OHLCV } from "@/lib/types";
 import { deriveLevels, type RiskConfig, type SwingSetup, type TradeDirection, type TradeLevels } from "@/lib/analytics/swingClassifier";
 
+export const LEGENDARY_POLICY_VERSION = "legendary-v2-2026-11-14";
+
 export type StrategyKey =
   | "QULLAMAGGIE"
   | "MINERVINI"
@@ -89,6 +91,12 @@ export interface StrategyResult {
   exit: StrategyExit | null;
   /** Short human-readable explanation of the decision. */
   note: string;
+  /** The latest bar traded through the entry of a setup that was valid before it. */
+  triggered?: boolean;
+  /** Latest volume against the prior 50-session average, on a triggered breakout. */
+  breakoutVolumeRatio?: number | null;
+  /** Triggered, closed at or above the entry, on at least 1.5x volume. */
+  breakoutConfirmed?: boolean;
 }
 
 /** A strategy's own exit rules, as price levels on the latest bar. */
@@ -99,10 +107,15 @@ export interface StrategyExit {
   target: number | null;
   /** The line the stop trails along once the trade moves. */
   trail: number;
+  /** Largest risk the author accepts from the actual entry, as a fraction of it. */
+  maxRisk?: number;
+  /** Fraction of the original position planned for the first target; the rest follows the line. */
+  scaleOutFraction?: number;
 }
 
 /** Compact, serialisable score record stored as JSONB per matched strategy. */
 export interface StrategyScore {
+  policyVersion?: string;
   score: number;
   dir: TradeDirection;
   entry: number | null;
@@ -110,6 +123,13 @@ export interface StrategyScore {
   stop?: number | null;
   target?: number | null;
   trail?: number | null;
+  /** Risk cap from the actual entry (fraction); absent on older records. */
+  maxRisk?: number | null;
+  scaleOutFraction?: number | null;
+  /** Breakout state on the scan bar; absent when the setup is still waiting. */
+  triggered?: boolean;
+  volumeRatio?: number | null;
+  confirmed?: boolean;
 }
 
 export interface LegendaryEvaluation {
@@ -182,7 +202,7 @@ function noResult(key: StrategyKey, note: string): StrategyResult {
 const QULLA_MIN_BARS = 70;
 const QULLA_POLE_BARS = 63; // the prior move must happen within ~3 months
 const QULLA_MIN_MOVE = 0.3; // ≥30% from the pole low to the consolidation high
-const QULLA_MIN_FLAG = 3; // consolidation length, sessions
+const QULLA_MIN_FLAG = 10; // consolidation length, sessions: two weeks to two months
 const QULLA_MAX_FLAG = 40;
 const QULLA_MAX_DEPTH = 0.2; // orderly: pullback ≤20% off the consolidation high
 const QULLA_MIN_ADR = 0.04; // average daily range (high/low − 1) over 20 sessions
@@ -238,6 +258,17 @@ export function detectQullamaggie(bars: OHLCV[], momentumPercentile: number | nu
   const depth = consolidating && flagHigh > 0 ? (flagHigh - flagLow) / flagHigh : 1;
   const orderly = depth <= QULLA_MAX_DEPTH;
 
+  // Tightening: the later half of the consolidation holds a higher low inside a range no
+  // wider than the earlier half's. A pullback that keeps making lower lows is not a base.
+  const flagBars = consolidating ? bars.slice(highIdx + 1) : [];
+  const half = Math.floor(flagBars.length / 2);
+  const span = (slice: OHLCV[]) => Math.max(...slice.map((b) => b.high)) - Math.min(...slice.map((b) => b.low));
+  const early = flagBars.slice(0, half);
+  const late = flagBars.slice(half);
+  const tightening = early.length > 0 && late.length > 0
+    && Math.min(...late.map((b) => b.low)) >= Math.min(...early.map((b) => b.low))
+    && span(late) <= span(early);
+
   // Surfing the rising 10/20-day EMAs.
   const ema10 = emaSeries(closes, 10);
   const ema20 = emaSeries(closes, 20);
@@ -254,7 +285,7 @@ export function detectQullamaggie(bars: OHLCV[], momentumPercentile: number | nu
   const volatile = adr >= QULLA_MIN_ADR;
   const leader = momentumPercentile === null || momentumPercentile >= QULLA_MIN_MOMENTUM_PERCENTILE;
 
-  const conditions = [bigMove, consolidating, orderly, surfing, volumeDryUp, volatile, leader];
+  const conditions = [bigMove, consolidating, orderly, tightening, surfing, volumeDryUp, volatile, leader];
   const score = conditions.filter(Boolean).length / conditions.length;
   const matched = conditions.every(Boolean);
 
@@ -269,7 +300,7 @@ export function detectQullamaggie(bars: OHLCV[], momentumPercentile: number | nu
     score: round2(score),
     direction: "LONG",
     entryTrigger: matched ? round2(flagHigh) : null,
-    exit: matched ? { stop: round2(stop), target: null, trail: round2(Math.max(stop, ema10[lastIdx])) } : null,
+    exit: matched ? { stop: round2(stop), target: null, trail: round2(Math.max(stop, ema10[lastIdx])), scaleOutFraction: 0.5 } : null,
     note: matched
       ? `${Math.round(move * 100)}% prior move, ${flagLen}-day orderly consolidation (${Math.round(depth * 100)}% deep) on lighter volume, above the rising 10/20 EMAs, ${(adr * 100).toFixed(1)}% daily range. Entry on break of ${round2(flagHigh)}, stop ${round2(stop)}, trail the 10-day EMA.`
       : !volatile && bigMove && consolidating
@@ -289,6 +320,7 @@ const MINERVINI_MIN_RS = 70;
 const MINERVINI_MAX_FINAL_DEPTH = 0.15; // the last contraction is genuinely tight
 const MINERVINI_PIVOT_BAND = 0.05; // buy within 5% of the pivot, never chase further
 const MINERVINI_MAX_RISK = 0.08; // never risk more than 8% from entry
+const MINERVINI_MAX_BASE_DEPTH = 0.35; // the deepest recent contraction of a sound base
 
 interface Contractions {
   /** Peak→trough depths, oldest first; the last may still be forming. */
@@ -383,6 +415,7 @@ export function detectMinervini(bars: OHLCV[], rsRating: number | null = null): 
     if (recent[i] >= recent[i - 1]) narrowing = false; // each tighter than the last
   }
   if (narrowing && recent[recent.length - 1] > MINERVINI_MAX_FINAL_DEPTH) narrowing = false;
+  if (narrowing && Math.max(...recent) > MINERVINI_MAX_BASE_DEPTH) narrowing = false;
 
   // The pivot is the high that opened the final contraction; the buy point is its
   // break, and a stock more than 5% either side of it is not actionable.
@@ -394,8 +427,15 @@ export function detectMinervini(bars: OHLCV[], rsRating: number | null = null): 
   const finalStart = pivotIdx !== null && lastIdx - pivotIdx >= 3 ? pivotIdx + 1 : lastIdx - 4;
   const volumeDryUp = mean(vols.slice(finalStart)) < mean(vols.slice(-50));
 
+  // Through the pivot is a breakout, and a breakout needs demand: volume above its 50-day
+  // average on that bar. Below the pivot the stock is still setting up and this does not apply.
+  const breakoutIdx = bars.findIndex((bar, index) => index > pivotIdx! && bar.close > pivot);
+  const volumeIdx = breakoutIdx >= 0 ? breakoutIdx : lastIdx;
+  const average50 = mean(vols.slice(Math.max(0, volumeIdx - 50), volumeIdx));
+  const breakoutVolumeOk = breakoutIdx < 0 || (average50 > 0 && vols[breakoutIdx] > average50);
+
   const templateOk = passed === 8;
-  const vcp = [narrowing, nearPivot, volumeDryUp];
+  const vcp = [narrowing, nearPivot, volumeDryUp && breakoutVolumeOk];
   const matched = templateOk && vcp.every(Boolean);
   // Score blends template completeness with the VCP confirmation.
   const score = round2((passed / 8) * 0.7 + vcp.filter(Boolean).length * 0.1);
@@ -412,10 +452,10 @@ export function detectMinervini(bars: OHLCV[], rsRating: number | null = null): 
     score,
     direction: "LONG",
     entryTrigger: matched ? round2(pivot) : null,
-    exit: matched ? { stop: round2(stop), target: null, trail: round2(Math.max(stop, sma50)) } : null,
+    exit: matched ? { stop: round2(stop), target: null, trail: round2(Math.max(stop, sma50)), maxRisk: MINERVINI_MAX_RISK, scaleOutFraction: 0.5 } : null,
     note: matched
       ? `Trend Template 8/8 with ${recent.length} narrowing contractions on drying volume (VCP). Pivot entry ${round2(pivot)}, stop ${round2(stop)}, trail the 50-day.`
-      : `Trend Template ${passed}/8${recent.length >= 2 ? `, ${recent.length} contractions` : ""}${templateOk && narrowing && !nearPivot ? `, ${Math.round((close / pivot - 1) * 100)}% from the ${round2(pivot)} pivot` : ""}${templateOk && narrowing && nearPivot && !volumeDryUp ? ", volume not drying up" : ""} — not a full VCP.`,
+      : `Trend Template ${passed}/8${recent.length >= 2 ? `, ${recent.length} contractions` : ""}${templateOk && narrowing && !nearPivot ? `, ${Math.round((close / pivot - 1) * 100)}% from the ${round2(pivot)} pivot` : ""}${templateOk && narrowing && nearPivot && !volumeDryUp ? ", volume not drying up" : ""}${templateOk && narrowing && nearPivot && volumeDryUp && !breakoutVolumeOk ? ", through the pivot on below-average volume" : ""} — not a full VCP.`,
   };
 }
 
@@ -424,9 +464,13 @@ export function detectMinervini(bars: OHLCV[], rsRating: number | null = null): 
 // =============================================================================
 
 const DARVAS_MIN_BARS = 25;
-const TICK = 0.01; // one cent / one paisa above the box top
+const DEFAULT_TICK = 0.01;
+const DARVAS_MAX_BOX_RISK = 0.15; // a box whose bottom is further than this is too wide to trade
 
-export function detectDarvas(bars: OHLCV[]): StrategyResult {
+const upTick = (value: number, tick: number) => Math.ceil(value / tick - 1e-9) * tick;
+const downTick = (value: number, tick: number) => Math.floor(value / tick + 1e-9) * tick;
+
+export function detectDarvas(bars: OHLCV[], tick: number = DEFAULT_TICK): StrategyResult {
   const KEY: StrategyKey = "DARVAS";
   if (bars.length < DARVAS_MIN_BARS) return noResult(KEY, "Insufficient history (need ~25 bars).");
 
@@ -470,10 +514,14 @@ export function detectDarvas(bars: OHLCV[]): StrategyResult {
   }
 
   // No later high exceeds the top (it is the window high), so an intact box holds price.
-  const conditions = [newHigh, topConfirmed, bottomConfirmed, boxIntact];
+  // One tick outside the box, on the exchange's price grid.
+  const entry = round2(upTick(boxTop + tick, tick));
+  const stop = round2(downTick(boxBottom - tick, tick));
+  const boxRisk = entry > 0 && Number.isFinite(stop) ? (entry - stop) / entry : 1;
+  const tradable = boxRisk <= DARVAS_MAX_BOX_RISK;
+  const conditions = [newHigh, topConfirmed, bottomConfirmed, boxIntact, tradable];
   const score = conditions.filter(Boolean).length / conditions.length;
   const matched = conditions.every(Boolean) && boxTop > boxBottom;
-  const entry = round2(boxTop + TICK);
 
   return {
     key: KEY,
@@ -483,9 +531,11 @@ export function detectDarvas(bars: OHLCV[]): StrategyResult {
     entryTrigger: matched ? entry : null,
     // Darvas's stop sat just under the box bottom and was raised to the bottom of
     // each new box as the stock climbed.
-    exit: matched ? { stop: round2(boxBottom - TICK), target: null, trail: round2(boxBottom - TICK) } : null,
+    exit: matched ? { stop, target: null, trail: stop, maxRisk: DARVAS_MAX_BOX_RISK, scaleOutFraction: 0.5 } : null,
     note: matched
-      ? `Darvas box ${round2(boxBottom)}–${round2(boxTop)} confirmed under a new 52-week high. Buy-stop ${entry} (one tick above the box top), stop ${round2(boxBottom - TICK)} under the box bottom.`
+      ? `Darvas box ${round2(boxBottom)}–${round2(boxTop)} confirmed under a new 52-week high. Buy-stop ${entry} (one tick above the box top), stop ${stop} under the box bottom.`
+      : newHigh && bottomConfirmed && boxIntact && !tradable
+        ? `Box ${round2(boxBottom)}–${round2(boxTop)} is ${Math.round(boxRisk * 100)}% tall — too wide for a stop under its bottom (maximum ${DARVAS_MAX_BOX_RISK * 100}%).`
       : newHigh && bottomConfirmed && !boxIntact
         ? `Price broke below the ${round2(boxBottom)} box bottom — the box is void until a new high.`
         : newHigh
@@ -499,6 +549,7 @@ export function detectDarvas(bars: OHLCV[]): StrategyResult {
 // =============================================================================
 
 const PTJ_MIN_BARS = 205;
+const PTJ_MAX_RISK = 0.15; // the 200-day stop may sit at most this far from the entry
 
 /** Conviction once price and the 200-day trend agree: half for the alignment itself,
  * a quarter for sitting close to the average (PTJ buys the dip, not the stretch,
@@ -537,16 +588,17 @@ export function detectPTJ(bars: OHLCV[]): StrategyResult {
   if (above && rising) {
     direction = "LONG";
     const proximity = (close - sma200) / sma200; // how stretched above the mean
-    const nearMean = proximity <= 0.15; // not over-extended
-    matched = nearMean;
     entry = Math.max(...highs.slice(-10)); // breakout of the recent swing high
+    // The 200-day is the stop, so the limit is measured from the entry that will be paid.
+    const nearMean = proximity <= 0.15 && (entry - sma200) / entry <= PTJ_MAX_RISK;
+    matched = nearMean;
     score = ptjScore(proximity, slopePct);
   } else if (below && !rising) {
     direction = "SHORT";
     const proximity = (sma200 - close) / sma200;
-    const nearMean = proximity <= 0.15;
-    matched = nearMean;
     entry = Math.min(...lows.slice(-10)); // breakdown of the recent swing low
+    const nearMean = proximity <= 0.15 && (sma200 - entry) / entry <= PTJ_MAX_RISK;
+    matched = nearMean;
     score = ptjScore(proximity, slopePct);
   } else {
     return noResult(KEY, `Mixed regime — price ${above ? "above" : "below"} a ${rising ? "rising" : "falling"} 200-day. PTJ stands aside.`);
@@ -560,7 +612,7 @@ export function detectPTJ(bars: OHLCV[]): StrategyResult {
     score: round2(score),
     direction,
     entryTrigger: matched ? round2(entry) : null,
-    exit: matched ? { stop: round2(sma200), target: null, trail: round2(sma200) } : null,
+    exit: matched ? { stop: round2(sma200), target: null, trail: round2(sma200), maxRisk: PTJ_MAX_RISK, scaleOutFraction: 0.5 } : null,
     note: matched
       ? `${direction} with a ${rising ? "rising" : "falling"} 200-day MA; price near the mean. Entry ${round2(entry)}, exit on a close through the 200-day (${round2(sma200)}).`
       : `Trend aligned (${direction}) but price is over-extended from the 200-day MA.`,
@@ -573,6 +625,8 @@ export function detectPTJ(bars: OHLCV[]): StrategyResult {
 
 const SIMONS_PERIOD = 20;
 const SIMONS_Z = 2.5;
+const SIMONS_TREND_BARS = 200;
+const SIMONS_MAX_RISK = 0.15; // one sigma wider than this is a collapse or bad data, not noise
 
 export function detectSimons(bars: OHLCV[]): StrategyResult {
   const KEY: StrategyKey = "SIMONS";
@@ -588,15 +642,22 @@ export function detectSimons(bars: OHLCV[]): StrategyResult {
 
   const z = (close - m) / sd;
   // Oversold (z ≤ -2.5) → revert long; overbought (z ≥ +2.5) → revert short.
-  let matched = false;
+  let extreme = false;
   let direction: TradeDirection = "LONG";
   if (z <= -SIMONS_Z) {
-    matched = true;
+    extreme = true;
     direction = "LONG";
   } else if (z >= SIMONS_Z) {
-    matched = true;
+    extreme = true;
     direction = "SHORT";
   }
+  // Fade an extreme only with the primary trend: buy a dip above the 200-day, short a spike
+  // below it. Against the trend the "extreme" is usually the trend itself.
+  const sma200 = smaLast(closes, SIMONS_TREND_BARS);
+  const withTrend = Number.isFinite(sma200) && (direction === "LONG" ? close > sma200 : close < sma200);
+  // One sigma is the stop distance. A very wide one means a collapse or an unadjusted split.
+  const sane = close > 0 && sd / close <= SIMONS_MAX_RISK;
+  const matched = extreme && withTrend && sane;
 
   // Conviction scales with how far past the ±2.5σ threshold the close sits.
   const score = round2(Math.min(1, Math.abs(z) / 3.5));
@@ -611,10 +672,14 @@ export function detectSimons(bars: OHLCV[]): StrategyResult {
     score,
     direction,
     entryTrigger: matched ? round2(close) : null,
-    exit: matched ? { stop: round2(stop), target: round2(m), trail: round2(stop) } : null,
+    exit: matched ? { stop: round2(stop), target: round2(m), trail: round2(stop), maxRisk: SIMONS_MAX_RISK, scaleOutFraction: 1 } : null,
     note: matched
       ? `${SIMONS_PERIOD}-day z-score ${z.toFixed(2)}σ — statistical ${direction === "LONG" ? "oversold, revert up to" : "overbought, revert down to"} mean ${round2(m)}.`
-      : `z-score ${z.toFixed(2)}σ — inside the ±${SIMONS_Z}σ band.`,
+      : extreme && !sane
+        ? `z-score ${z.toFixed(2)}σ, but one σ is ${Math.round((sd / close) * 100)}% of price — a collapse or unadjusted price history, not a reversion setup.`
+        : extreme && !withTrend
+          ? `z-score ${z.toFixed(2)}σ against the 200-day trend${Number.isFinite(sma200) ? "" : " (under 200 sessions of history)"} — not faded.`
+          : `z-score ${z.toFixed(2)}σ — inside the ±${SIMONS_Z}σ band.`,
   };
 }
 
@@ -716,10 +781,16 @@ export function strategyTradeLevels(
     dir,
     risk,
   );
-  const stop = score.stop;
-  if (stop === null || stop === undefined || !Number.isFinite(stop)) return atrPlan;
+  const structuralStop = score.stop;
+  if (structuralStop === null || structuralStop === undefined || !Number.isFinite(structuralStop)) return atrPlan;
   const sign = dir === "LONG" ? 1 : -1;
   const entry = atrPlan.entry;
+  // The author's risk limit is measured from the price actually paid. When the entry has moved
+  // away from the trigger, the structural stop is tightened to keep that limit.
+  const cap = score.maxRisk ?? null;
+  const capped = cap !== null && cap > 0 ? entry * (1 - sign * cap) : null;
+  const stop = capped === null ? structuralStop
+    : dir === "LONG" ? Math.max(structuralStop, capped) : Math.min(structuralStop, capped);
   const r = sign * (entry - stop);
   if (!(r > 0)) return atrPlan;
   const ownTarget = score.target ?? null;
@@ -757,17 +828,72 @@ export function strategyTradeLevels(
  * collect the matches. Never throws — short or gappy series simply produce
  * fewer (or no) tags, letting the caller fall back to default indicators.
  */
+export const BREAKOUT_MIN_VOLUME_RATIO = 1.5;
+
+/**
+ * Qullamaggie and Darvas setups are defined by a high the stock has not yet exceeded, so the
+ * bar that breaks out no longer matches them. This re-reads the setup as it stood before the
+ * latest bar and, when that bar traded through its entry, reports the breakout itself: the
+ * entry and structural stop of the setup, the volume behind the move, and whether it closed
+ * above the entry on at least 1.5x the prior 50-session average volume.
+ */
+export function withBreakoutDay(
+  bars: OHLCV[],
+  detect: (series: OHLCV[]) => StrategyResult,
+  options: { stopAtBreakoutLow?: boolean } = {},
+): StrategyResult {
+  const now = detect(bars);
+  if (now.matched || bars.length < 2) return now;
+  const before = detect(bars.slice(0, -1));
+  const last = bars[bars.length - 1];
+  if (!before.matched || before.entryTrigger === null || before.exit === null) return now;
+  if (last.high < before.entryTrigger || last.close <= before.exit.stop) return now;
+  const average50 = mean(bars.slice(-51, -1).map((b) => b.volume));
+  const ratio = average50 > 0 ? last.volume / average50 : 0;
+  const held = last.close >= before.entryTrigger;
+  const confirmed = held && ratio >= BREAKOUT_MIN_VOLUME_RATIO;
+  // Qullamaggie's stop is the low of the breakout day, never wider than the setup's own stop.
+  const stop = options.stopAtBreakoutLow && last.low < before.entryTrigger
+    ? round2(Math.max(before.exit.stop, last.low))
+    : before.exit.stop;
+  return {
+    ...before,
+    matched: true,
+    exit: { ...before.exit, stop, trail: Math.max(stop, before.exit.trail) },
+    triggered: true,
+    breakoutVolumeRatio: Math.round(ratio * 100) / 100,
+    breakoutConfirmed: confirmed,
+    note: `Broke out through ${before.entryTrigger} on ${ratio.toFixed(2)}x the 50-session average volume`
+      + (confirmed ? " and closed above it — breakout confirmed."
+        : !held ? `, but is back below it — unconfirmed.`
+          : ` — below the ${BREAKOUT_MIN_VOLUME_RATIO}x a breakout needs; unconfirmed.`)
+      + ` Stop ${stop}.`,
+  };
+}
+
 export function evaluateLegendary(
   bars: OHLCV[],
-  context: { rsRating?: number | null; momentumPercentile?: number | null } = {},
+  context: {
+    rsRating?: number | null;
+    momentumPercentile?: number | null;
+    /** Minimum 20-session average traded value; below it no strategy is tagged. */
+    minTradedValue?: number | null;
+    /** Exchange price step used for one-tick offsets. */
+    tick?: number | null;
+  } = {},
 ): LegendaryEvaluation {
+  const tick = context.tick && context.tick > 0 ? context.tick : DEFAULT_TICK;
   const results: StrategyResult[] = [
-    detectQullamaggie(bars, context.momentumPercentile ?? null),
+    withBreakoutDay(bars, (series) => detectQullamaggie(series, context.momentumPercentile ?? null), { stopAtBreakoutLow: true }),
     detectMinervini(bars, context.rsRating ?? null),
-    detectDarvas(bars),
+    withBreakoutDay(bars, (series) => detectDarvas(series, tick)),
     detectPTJ(bars),
     detectSimons(bars),
   ];
+  // A setup nobody can trade in size is not a candidate under any of the five systems.
+  const floor = context.minTradedValue ?? null;
+  const tradedValue20 = mean(bars.slice(-20).map((b) => b.close * b.volume));
+  const liquid = floor === null || tradedValue20 >= floor;
 
   const tags: StrategyKey[] = [];
   const scores: Record<string, StrategyScore> = {};
@@ -776,13 +902,98 @@ export function evaluateLegendary(
     // measurable risk and cannot be traded as written.
     const sign = r.direction === "LONG" ? 1 : -1;
     const riskless = r.exit !== null && r.entryTrigger !== null && sign * (r.entryTrigger - r.exit.stop) <= 0;
-    if (r.matched && !riskless) {
+    if (r.matched && !riskless && liquid) {
       tags.push(r.key);
       scores[r.key] = {
+        policyVersion: LEGENDARY_POLICY_VERSION,
         score: r.score, dir: r.direction, entry: r.entryTrigger,
         stop: r.exit?.stop ?? null, target: r.exit?.target ?? null, trail: r.exit?.trail ?? null,
+        maxRisk: r.exit?.maxRisk ?? null,
+        scaleOutFraction: r.exit?.scaleOutFraction ?? null,
+        ...(r.triggered ? { triggered: true, volumeRatio: r.breakoutVolumeRatio ?? null, confirmed: Boolean(r.breakoutConfirmed) } : {}),
       };
     }
   }
   return { tags, scores, results };
+}
+
+// =============================================================================
+// After purchase: each author's own exit line
+// =============================================================================
+
+export interface StrategyFollowUp {
+  /** The line a close below ends the trade; used as the next session's stop. */
+  line: number | null;
+  lineLabel: string | null;
+  /** A target that moves with the data (mean reversion); null when the plan's target stands. */
+  target: number | null;
+  /** True only after a completed daily close crosses a close-confirmed exit line. */
+  closeExitConfirmed: boolean;
+}
+
+/**
+ * The bottom of the newest Darvas box built since the trade was opened, one tick under it.
+ * A box is a high no later session exceeded for three sessions, then the first new low the
+ * next three sessions held. A higher high starts the next box; the stop only ever moves up.
+ */
+export function darvasTrailingBottom(barsSinceEntry: OHLCV[], tick: number = DEFAULT_TICK): number | null {
+  let best: number | null = null;
+  let topIdx = 0;
+  for (let i = 0; i < barsSinceEntry.length; i++) {
+    if (barsSinceEntry[i].high > barsSinceEntry[topIdx].high) topIdx = i;
+    if (i - topIdx < 3) continue;
+    // Top confirmed at topIdx as of bar i: look for its confirmed bottom among bars up to i.
+    let runningLow = Number.POSITIVE_INFINITY;
+    for (let j = topIdx + 1; j + 3 <= i; j++) {
+      const low = barsSinceEntry[j].low;
+      if (low >= runningLow) continue;
+      runningLow = low;
+      if (barsSinceEntry[j + 1].low >= low && barsSinceEntry[j + 2].low >= low && barsSinceEntry[j + 3].low >= low) {
+        const stop = round2(downTick(low - tick, tick));
+        if (best === null || stop > best) best = stop;
+        break;
+      }
+    }
+  }
+  return best;
+}
+
+/**
+ * What a strategy's author would be watching on an open trade, from completed daily bars
+ * (ascending, none after the last finished session). Strategies without a rule of their own
+ * return an empty follow-up and stay on the ledger's ATR trail.
+ */
+export function strategyFollowUp(
+  strategyKey: string,
+  bars: OHLCV[],
+  boughtOn: string,
+  tick: number = DEFAULT_TICK,
+  direction: TradeDirection = "LONG",
+): StrategyFollowUp {
+  const none: StrategyFollowUp = { line: null, lineLabel: null, target: null, closeExitConfirmed: false };
+  if (!bars.length) return none;
+  const closes = bars.map((b) => b.close);
+  const finite = (value: number, label: string): StrategyFollowUp =>
+    Number.isFinite(value) && value > 0
+      ? { line: round2(value), lineLabel: label, target: null,
+        closeExitConfirmed: direction === "LONG" ? closes.at(-1)! < value : closes.at(-1)! > value }
+      : none;
+  switch (strategyKey) {
+    case "QULLAMAGGIE":
+      return closes.length >= 10 ? finite(emaSeries(closes, 10)[closes.length - 1], "10-day EMA") : none;
+    case "MINERVINI":
+      return finite(smaLast(closes, 50), "50-day average");
+    case "PTJ":
+      return finite(smaLast(closes, 200), "200-day average");
+    case "DARVAS": {
+      const bottom = darvasTrailingBottom(bars.filter((b) => b.date.slice(0, 10) > boughtOn), tick);
+      return bottom === null ? none : { line: bottom, lineLabel: "bottom of the latest box", target: null, closeExitConfirmed: false };
+    }
+    case "SIMONS": {
+      const mean20 = smaLast(closes, SIMONS_PERIOD);
+      return Number.isFinite(mean20) ? { line: null, lineLabel: null, target: round2(mean20), closeExitConfirmed: false } : none;
+    }
+    default:
+      return none;
+  }
 }

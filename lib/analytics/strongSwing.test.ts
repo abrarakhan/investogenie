@@ -1,7 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { assessStrongSwing, assessStrongSwingFromBars, strongSwingBreakoutLevel } from "@/lib/analytics/strongSwing";
+import {
+  assessStrongSwing as assessStrongSwingRaw,
+  assessStrongSwingFromBars as assessStrongSwingFromBarsRaw,
+  strongSwingBreakoutLevel,
+} from "@/lib/analytics/strongSwing";
 import { averageTrueRange, classifySwingSetup, deriveLevels, isStructuralBreakout } from "@/lib/analytics/swingClassifier";
 import type { OHLCV } from "@/lib/types";
+
+// India requires a verified results calendar; the tests below supply a clear one unless they
+// are about the results gate itself.
+const RESULTS_CLEAR = { verified: true, sessionsToNext: null, nextDate: null, detail: "No results due." };
+const assessStrongSwing = (input: Parameters<typeof assessStrongSwingRaw>[0]) =>
+  assessStrongSwingRaw({ results: RESULTS_CLEAR, ...input });
+const assessStrongSwingFromBars = (input: Parameters<typeof assessStrongSwingFromBarsRaw>[0]) =>
+  assessStrongSwingFromBarsRaw({ results: RESULTS_CLEAR, ...input });
 
 function risingBars(count = 240, withOi = false, slope = 0.5): OHLCV[] {
   return Array.from({ length: count }, (_, index) => {
@@ -567,5 +579,77 @@ describe("assessStrongSwingFromBars", () => {
     });
     expect(derived.status).toBe(direct.status);
     expect(derived.gates.map((gate) => [gate.key, gate.passed])).toEqual(direct.gates.map((gate) => [gate.key, gate.passed]));
+  });
+});
+
+describe("Strong Swing v4 rules", () => {
+  const ready = (overrides: Partial<Parameters<typeof assessStrongSwingRaw>[0]> = {}) => {
+    const { bars, entry } = cleanConfirmedBars();
+    return { entry, result: assessStrongSwing({
+      market: "IN", verdict: "LONG_BREAKOUT", isBreakout: true,
+      trigger: entry, atr: 2, trailingStop: null, currentPrice: entry + 0.2,
+      stopAtrMult: 1.5, bars, benchmarkBars: benchmark(), ...overrides,
+    }) };
+  };
+  const gateOf = (result: ReturnType<typeof assessStrongSwing>, key: string) =>
+    result.gates.find((gate) => gate.key === key)!;
+
+  it("blocks an India entry inside three sessions of company results", () => {
+    const { result } = ready({ results: { verified: true, sessionsToNext: 2, nextDate: "2026-11-17", detail: "Next results 2026-11-17." } });
+    expect(gateOf(result, "results_blackout").passed).toBe(false);
+    expect(result.status).toBe("RISK_OFF");
+  });
+
+  it("blocks an India entry when the results calendar cannot be verified", () => {
+    expect(ready({ results: null }).result.status).toBe("RISK_OFF");
+    expect(ready({ results: { verified: false, sessionsToNext: null, nextDate: null, detail: "Not checked." } }).result.status).toBe("RISK_OFF");
+  });
+
+  it("reports a missing US results calendar without blocking on it", () => {
+    const { result } = ready({ market: "US", results: null });
+    expect(gateOf(result, "results_blackout")).toMatchObject({ passed: false, blocking: false });
+    expect(result.status).toBe("EXECUTION_READY");
+  });
+
+  it("waits when the live price is below the confirmed entry", () => {
+    const { result, entry } = ready();
+    const below = ready({ currentPrice: entry - 1 }).result;
+    expect(result.status).toBe("EXECUTION_READY");
+    expect(gateOf(below, "entry_zone").passed).toBe(false);
+    expect(below.status).toBe("WAIT_FOR_ENTRY");
+  });
+
+  it("judges volume, close and clearance on the breakout bar when the latest bar is the hold", () => {
+    const { bars, entry } = cleanConfirmedBars();
+    // Quiet hold day: light volume and a close near the low of its range, still above the entry.
+    const hold = bars.at(-1)!;
+    bars[bars.length - 1] = { ...hold, volume: 900_000, high: hold.close + 1.5, low: hold.close - 0.1 };
+    const input = {
+      market: "IN" as const, verdict: "NO_SETUP", isBreakout: true,
+      trigger: entry, atr: 2, trailingStop: null, currentPrice: entry + 0.2,
+      stopAtrMult: 1.5, bars, benchmarkBars: benchmark(),
+    };
+    const onHoldDay = assessStrongSwing({ ...input, breakoutBar: "latest" });
+    const onBreakoutBar = assessStrongSwing({ ...input, breakoutBar: "previous" });
+    expect(gateOf(onHoldDay, "volume").passed).toBe(false);
+    expect(gateOf(onHoldDay, "close_quality").passed).toBe(false);
+    expect(gateOf(onBreakoutBar, "volume").passed).toBe(true);
+    expect(gateOf(onBreakoutBar, "close_quality").passed).toBe(true);
+    expect(gateOf(onBreakoutBar, "clearance").passed).toBe(true);
+  });
+
+  it("requires the 50-day average above the 200-day", () => {
+    // A long decline followed by a sharp recovery: price and the 50-day are rising, but the
+    // 50-day is still under the 200-day.
+    const bars = risingBars(240, false, 0.5).map((bar, index) => {
+      const close = index < 200 ? 300 - index : 100 + (index - 200) * 2.4;
+      return { ...bar, open: close - 1, high: close + 0.5, low: close - 1.5, close };
+    });
+    const result = assessStrongSwing({
+      market: "IN", verdict: "LONG_BREAKOUT", isBreakout: true, trigger: 190, atr: 2,
+      trailingStop: null, stopAtrMult: 1.5, bars, benchmarkBars: benchmark(),
+    });
+    expect(result.sma50!).toBeLessThan(result.sma200!);
+    expect(gateOf(result, "trend").passed).toBe(false);
   });
 });

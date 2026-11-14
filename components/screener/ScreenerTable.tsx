@@ -71,6 +71,27 @@ interface EffectiveLevels {
   trailingStop: number | null;
   riskReward: number | null;
   expectedDays: number | null;
+  /** Live price against the plan: void, a chase, or a breakout on the scan bar. */
+  state: ScreenRow["entryState"];
+  breakoutVolumeRatio: number | null;
+}
+
+const ENTRY_STATE_LABEL: Record<NonNullable<ScreenRow["entryState"]>, { text: string; tone: string }> = {
+  BELOW_STOP: { text: "Below stop — void", tone: "text-rose-300" },
+  EXTENDED: { text: "Extended — do not chase", tone: "text-amber-300" },
+  BREAKOUT_CONFIRMED: { text: "Broke out today on volume", tone: "text-emerald-300" },
+  BREAKOUT_UNCONFIRMED: { text: "Broke out today — unconfirmed", tone: "text-amber-300" },
+};
+
+function EntryStateNote({ levels }: { levels: EffectiveLevels }) {
+  if (!levels.state) return null;
+  const label = ENTRY_STATE_LABEL[levels.state];
+  return (
+    <div className={`text-[10px] font-medium ${label.tone}`}>
+      {label.text}
+      {levels.breakoutVolumeRatio !== null && ` (${levels.breakoutVolumeRatio.toFixed(1)}× volume)`}
+    </div>
+  );
 }
 
 /** Resolve the levels to display for a row: the selected strategy's custom
@@ -87,6 +108,8 @@ function effectiveLevels(r: ScreenRow, activeStrategy: StrategyKey | null): Effe
     trailingStop: sl ? sl.trailingStop : r.trailingStop,
     riskReward: sl ? sl.riskReward : r.riskReward,
     expectedDays: sl ? sl.expectedDays : r.expectedDays,
+    state: sl ? sl.state : r.entryState,
+    breakoutVolumeRatio: sl ? sl.breakoutVolumeRatio : null,
   };
 }
 
@@ -430,7 +453,10 @@ export default function ScreenerTable({
                         </span>
                       )}
                     </td>
-                    <td className="px-4 py-3 text-right tabular-nums text-white/80">{fmt2(lv.entry)}</td>
+                    <td className="px-4 py-3 text-right tabular-nums text-white/80">
+                      {fmt2(lv.entry)}
+                      <EntryStateNote levels={lv} />
+                    </td>
                     <td className="px-4 py-3 text-right tabular-nums text-emerald-400">{fmt2(lv.target)}</td>
                     <td className="px-4 py-3 text-right tabular-nums text-rose-400">{fmt2(lv.stopLoss)}</td>
                     <td className={`px-4 py-3 text-right tabular-nums ${trailingStopBreached(lv) ? "font-semibold text-rose-300" : "text-amber-300/80"}`}>
@@ -545,6 +571,7 @@ export default function ScreenerTable({
                 <span>R:R <b className="text-white/70">{lv.riskReward ? `${lv.riskReward.toFixed(1)}×` : "—"}</b></span>
                 <span>~{lv.expectedDays ? `${lv.expectedDays}d` : "—"}</span>
               </div>
+              <EntryStateNote levels={lv} />
 
               <a href={tradeLedgerHref(r, lv, activeStrategy)} className="mt-4 flex min-h-10 touch-manipulation items-center justify-center rounded-lg border border-[var(--ig-accent)]/35 bg-[var(--ig-accent)]/10 text-sm font-semibold text-[var(--ig-accent)]">
                 Track purchased trade

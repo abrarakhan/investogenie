@@ -31,7 +31,8 @@ describe("Python strategy authority", () => {
     const benchmark = bars(240, 200, 0.2);
     const input = { market: "IN" as const, verdict: "LONG_BREAKOUT", currentPrice: 194,
       stopAtrMult: 1.5, targetRR: 2, trailAtrMult: 3, bars: stock, benchmarkBars: benchmark,
-      requireLiveExecutionData: false };
+      requireLiveExecutionData: false,
+      results: { verified: true, sessionsToNext: 2, nextDate: "2026-11-17", detail: "Next results 2026-11-17." } };
     const legacy = assessStrongSwingFromBars(input);
     const [python] = await runPythonStrategyBatch<typeof input, typeof legacy & { strongTarget: number }>("strong_swing", [input]);
     expect(python.status).toBe(legacy.status);

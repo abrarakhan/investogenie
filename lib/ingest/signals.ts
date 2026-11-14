@@ -255,11 +255,12 @@ export async function computeSignals(databaseUrl: string): Promise<ScanSummary> 
         const { rows } = await client.query<BarRow>(
           `select o.asset_id, o.date::text as date, o.open, o.high, o.low,
                   o.close, o.volume, o.open_interest
-             from public.daily_ohlcv o
+             from public.daily_ohlcv o join public.assets a on a.id=o.asset_id
             where o.asset_id = any($1)
               and o.open > 0 and o.high > 0 and o.low > 0 and o.close > 0
+              and o.date <= case when a.country='IN' then $2::date else $3::date end
             order by o.asset_id, o.date asc`,
-          [ids],
+          [ids, indiaSignalSession, usSignalSession],
         );
 
         // Group this batch's bars per asset (rows arrive grouped + chronological).
@@ -293,6 +294,9 @@ export async function computeSignals(databaseUrl: string): Promise<ScanSummary> 
             const legendary = evaluateLegendary(series, {
               rsRating: rating,
               momentumPercentile: momentumPercentile.get(assetId) ?? null,
+              // The floors Strong Swing uses: ₹1 crore / $1M of average daily traded value.
+              minTradedValue: meta.country === "IN" ? 10_000_000 : meta.country === "US" ? 1_000_000 : null,
+              tick: meta.country === "IN" ? 0.05 : 0.01,
             });
             out.push([
               meta.id, meta.ticker, meta.country, meta.exchange, meta.asset_class,

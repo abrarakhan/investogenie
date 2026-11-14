@@ -141,6 +141,10 @@ export function validateExecutionPlanPurchase(plan: StoredExecutionPlan | null, 
   if (input.nowMs - Date.parse(plan.capturedAt) > EXECUTION_PLAN_MAX_AGE_MINUTES * 60_000) return "The execution plan is stale; reload the candidate page";
   if (input.buyPrice < plan.entry * 0.999) return `The purchase must be at or above the ${plan.entry.toFixed(2)} confirmed entry`;
   if (input.buyPrice >= plan.target) return "The purchase price must remain below the frozen target";
+  // The buy zone ends half an ATR above the confirmed entry; a fill beyond it is a chase.
+  if (plan.strategyKey === "STRONG_SWING" && plan.atr > 0 && input.buyPrice > (plan.entry + 0.5 * plan.atr) * 1.001) {
+    return `The purchase must be within the buy zone, at or below ${(plan.entry + 0.5 * plan.atr).toFixed(2)}`;
+  }
   return null;
 }
 

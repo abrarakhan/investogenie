@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  assessArmedSwing, rankArmedSwingCandidates, resultsCalendarCoverage, type ArmedSwingInput,
+  assessArmedSwing, expectedVolumeShare, rankArmedSwingCandidates, resultsCalendarCoverage, type ArmedSwingInput,
 } from "@/lib/analytics/armedSwing";
 import type { OHLCV } from "@/lib/types";
 
@@ -44,12 +44,17 @@ const freshExecution = (price: number) => ({
   bestBid: price - 0.05, bestAsk: price + 0.05,
   lowerCircuit: price * 0.8, upperCircuit: price * 1.2,
 });
+const volumeCurve = {
+  market: "IN" as const, version: "in-test-60s", sampleSessions: 60,
+  points: [[0, 0], [0.04, 0.14], [0.12, 0.27], [0.16, 0.32], [0.28, 0.42], [0.44, 0.53], [0.60, 0.65], [0.76, 0.75], [0.92, 0.88], [1, 1]] as Array<[number, number]>,
+};
 
 const input = (overrides: Partial<ArmedSwingInput> = {}): ArmedSwingInput => {
   const bars = basingLeader();
   return {
     market: "IN", bars, benchmarkBars: benchmark(), currentPrice: bars.at(-1)!.close,
     rsPercentile: 92, risk: { targetRR: 2, trailAtrMult: 3 },
+    volumeCurve,
     execution: freshExecution(bars.at(-1)!.close),
     results: { verified: true, sessionsToNext: 30, nextDate: "2026-12-01", detail: "Next results 2026-12-01." },
     ...overrides,
@@ -73,11 +78,12 @@ describe("assessArmedSwing", () => {
     const base = assessArmedSwing(input());
     const result = assessArmedSwing(input({
       currentPrice: base.plan.trigger + 0.05,
-      // 20-session average is 0.9M (five dry-up sessions at 0.6M): 1M / (0.9M x 0.4) = 2.78x.
+      // 20-session average is 0.9M (five dry-up sessions at 0.6M). 40% of the way through the
+      // session about half the day's volume has normally traded: 1M / (0.9M x 0.5025) = 2.21x.
       liveSession: { volume: 1_000_000, progress: 0.4 },
     }));
     expect(result.status).toBe("BUY_ZONE");
-    expect(result.volumePace).toBeCloseTo(2.78, 2);
+    expect(result.volumePace).toBeCloseTo(2.21, 2);
   });
 
   it("does not confirm a breakout on thin volume", () => {
@@ -103,6 +109,18 @@ describe("assessArmedSwing", () => {
     const result = assessArmedSwing(input({ rsPercentile: 55 }));
     expect(result.status).toBe("FORMING");
     expect(result.gates.find((gate) => gate.key === "relative_strength")?.passed).toBe(false);
+  });
+
+  it("blocks Armed status when the RS line or market regime is weak", () => {
+    const weakBenchmark = benchmark().map((bar, index) => ({ ...bar, close: 130 - index * 0.08 }));
+    const weakRegime = assessArmedSwing(input({ benchmarkBars: weakBenchmark }));
+    expect(weakRegime.gates.find((gate) => gate.key === "market_regime")).toMatchObject({ passed: false, blocking: true });
+    expect(weakRegime.status).not.toBe("ARMED");
+
+    const weakStock = basingLeader().map((bar, index, all) => index > all.length - 30
+      ? { ...bar, close: bar.close - 8, high: bar.high - 8, low: bar.low - 8, open: bar.open - 8 } : bar);
+    const weakRs = assessArmedSwing(input({ bars: weakStock }));
+    expect(weakRs.gates.find((gate) => gate.key === "rs_line")).toMatchObject({ passed: false, blocking: true });
   });
 
   it("goes risk off on stale data against the exchange calendar", () => {
@@ -167,9 +185,9 @@ describe("resultsCalendarCoverage", () => {
     expect(resultsCalendarCoverage({ today, lastSuccessAt: "2026-10-01T02:00:00Z", nextDate: "2026-10-30", lastPastDate: null }).verified).toBe(false);
     expect(resultsCalendarCoverage({ today, lastSuccessAt: null, nextDate: "2026-10-30", lastPastDate: null }).verified).toBe(false);
   });
-  it("accepts a known upcoming date, or a recent past release", () => {
+  it("accepts a known upcoming date but not a recent past release alone", () => {
     expect(resultsCalendarCoverage({ today, lastSuccessAt: "2026-10-12T02:00:00Z", nextDate: "2026-10-30", lastPastDate: null }).verified).toBe(true);
-    expect(resultsCalendarCoverage({ today, lastSuccessAt: "2026-10-12T02:00:00Z", nextDate: null, lastPastDate: "2026-08-20" }).verified).toBe(true);
+    expect(resultsCalendarCoverage({ today, lastSuccessAt: "2026-10-12T02:00:00Z", nextDate: null, lastPastDate: "2026-08-20" }).verified).toBe(false);
   });
   it("treats an empty or old calendar as unknown, not as no results", () => {
     expect(resultsCalendarCoverage({ today, lastSuccessAt: "2026-10-12T02:00:00Z", nextDate: null, lastPastDate: null }).verified).toBe(false);
@@ -192,5 +210,65 @@ describe("resultsCalendarCoverage", () => {
     };
     expect(resultsCalendarCoverage(base).verified).toBe(false);
     expect(resultsCalendarCoverage({ ...base, authoritativeAsOf: today, authoritativeCoverageThrough: "2026-10-15" }).verified).toBe(false);
+  });
+});
+
+describe("Armed Swing base and volume rules", () => {
+  const gateOf = (result: ReturnType<typeof assessArmedSwing>, key: string) => result.gates.find((gate) => gate.key === key)!;
+
+  it("expects more of the day's volume early than the clock implies", () => {
+    expect(expectedVolumeShare(volumeCurve, 0)).toBe(0);
+    expect(expectedVolumeShare(volumeCurve, 1)).toBe(1);
+    expect(expectedVolumeShare(volumeCurve, 0.16)).toBeCloseTo(0.32, 5); // an hour in: about a third done
+    expect(expectedVolumeShare(volumeCurve, 0.5)).toBeGreaterThan(0.5);
+    for (let p = 0.05; p < 1; p += 0.05) expect(expectedVolumeShare(volumeCurve, p)).toBeGreaterThan(expectedVolumeShare(volumeCurve, p - 0.05));
+  });
+
+  it("does not read an ordinary heavy open as breakout volume", () => {
+    const base = assessArmedSwing(input());
+    // An hour in with 27% of an average day traded: 1.69x by the clock, 0.94x against the curve.
+    const result = assessArmedSwing(input({
+      currentPrice: base.plan.trigger + 0.05,
+      liveSession: { volume: 243_000, progress: 0.16 },
+    }));
+    expect(result.volumePace).toBeLessThan(1);
+    expect(result.status).toBe("TRIGGERED_UNCONFIRMED");
+  });
+
+  it("fails closed on a triggered breakout without a verified market curve", () => {
+    const base = assessArmedSwing(input());
+    const result = assessArmedSwing(input({
+      currentPrice: base.plan.trigger + 0.05,
+      liveSession: { volume: 1_000_000, progress: 0.4 },
+      volumeCurve: null,
+    }));
+    expect(result.volumePace).toBeNull();
+    expect(result.status).toBe("TRIGGERED_UNCONFIRMED");
+  });
+
+  it("is still forming while the pivot high is less than three sessions old", () => {
+    const bars = basingLeader();
+    const last = bars.at(-1)!;
+    bars[bars.length - 1] = { ...last, high: 150.4 }; // yesterday printed a new high
+    const result = assessArmedSwing(input({ bars }));
+    expect(result.pivotAgeSessions).toBe(0);
+    expect(gateOf(result, "pivot_rest").passed).toBe(false);
+    expect(result.status).toBe("FORMING");
+    expect(assessArmedSwing(input()).pivotAgeSessions).toBeGreaterThanOrEqual(3);
+  });
+
+  it("requires volume to dry up in the base", () => {
+    const bars = basingLeader().map((bar) => ({ ...bar, volume: 1_000_000 }));
+    const result = assessArmedSwing(input({ bars }));
+    expect(gateOf(result, "volume_dryup")).toMatchObject({ passed: false, blocking: true });
+    expect(result.status).toBe("FORMING");
+  });
+
+  it("requires the close above the 50-day and the 50-day above the 150-day", () => {
+    // Shift the last 60 sessions down so price sits under its 50-day while staying above the
+    // 150- and 200-day averages.
+    const bars = basingLeader().map((bar, index, all) => index < all.length - 60 ? { ...bar, close: bar.close + 30, high: bar.high + 30, low: bar.low + 30, open: bar.open + 30 } : bar);
+    const result = assessArmedSwing(input({ bars }));
+    expect(gateOf(result, "trend").passed).toBe(false);
   });
 });

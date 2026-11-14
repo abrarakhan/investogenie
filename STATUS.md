@@ -49,6 +49,16 @@ Trend Continuation v1 is an India-only, Python-calculated engine for persistent 
 - A candidate scan evaluated 40 candidates for the configured account even without an enabled push token, persisted 40 observations and refreshed live targets.
 - The Breeze worker reconciled its bounded subscriptions from those targets without a restart. These counts describe that verification run only.
 
+## Strategy review and changes — 13–14 November 2026
+
+The formulas, gates and post-purchase handling of Swing Candidates, Strong Swing and Armed Strong Swing were reviewed at revision `30e6dd4` and the 14 findings were closed in source on 14 November 2026; see [swing strategy rules and review](docs/swing-strategies.md) for each rule and change.
+
+- Strong Swing is model `strong-swing-v4-breakout-bar`: breakout quality is judged on the bar that broke out, stocks holding a two-close breakout are assessed even when the base scan lists no setup, the trend needs the 50-day above the 200-day, a live price below the entry waits, and India entries need a verified results calendar with no results within three sessions. Plans and captures from v3 are refused at purchase and by auto-buy.
+- Legendary tags carry a liquidity floor, risk caps from the price paid and a breakout-day state with volume. Trades of the five named strategies bought from 14 November 2026 follow the strategy's own exit line in the ledger.
+- Armed Swing requires the full moving-average stack, volume dry-up and a pivot at least three sessions old, and measures breakout volume against a time-of-day curve.
+- Not yet observed on production data: the rate at which the new Strong Swing gates produce candidates and results-calendar coverage for the new gate. Armed breakout confirmation now requires a versioned market curve built from at least 40 completed sessions; it fails closed until enough retained intraday history exists.
+- `npm run audit:strategy-readiness` is the pre-promotion gate: five scheduled v4 captures, at least one Execution Ready result per capture on average, at least 90% India results coverage, and an active 40-session volume curve per served market.
+
 ## Current behavior that matters operationally
 
 Armed entries fail closed when live execution evidence or results coverage is missing. India requires `BREEZE_LIVE`; calendar verification can use a complete same-day authoritative NSE window or usable dates under the fallback coverage policy. A successful request with no usable date is insufficient on its own.

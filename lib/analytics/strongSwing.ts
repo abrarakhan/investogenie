@@ -6,6 +6,11 @@ import { averageTrueRange, isStructuralBreakout } from "@/lib/analytics/swingCla
  * entry, stop, target, trailing or classification maths changes: stored plans
  * carrying another version are refused at purchase time.
  *
+ * v4: volume, close quality and clearance are judged on the bar that broke out (the previous
+ * bar when the latest is the hold); the trend also needs the 50-day above the 200-day; a live
+ * price below the entry waits instead of staying ready; company results inside three sessions
+ * (India) block the entry.
+ *
  * v3: production calculation moved to pipelines/strategy_math/strong_swing.py.
  * This TypeScript implementation remains only as a migration-test oracle; no
  * web, mobile, alert or execution loader calls it.
@@ -18,10 +23,12 @@ import { averageTrueRange, isStructuralBreakout } from "@/lib/analytics/swingCla
  * bar is judged against the stop known before it; and the stored plan carries
  * the real ATR.
  */
-export const STRONG_SWING_MODEL_VERSION = "strong-swing-v3-python";
+export const STRONG_SWING_MODEL_VERSION = "strong-swing-v4-breakout-bar";
 export const STRONG_SWING_TRAILING_POLICY_VERSION = "strong-swing-ledger-trailing-v2-post-entry-next-bar";
 const ATR_PERIOD = 14;
 const CONFIRMATION_ATR_BUFFER = 0.25;
+const RESULTS_BLACKOUT_SESSIONS = 3;
+const ENTRY_TOLERANCE = 0.999;
 
 export type StrongSwingStatus =
   | "EXECUTION_READY"
@@ -53,11 +60,20 @@ export interface StrongSwingInput {
   microstructure?: { bestBid: number | null; bestAsk: number | null; lowerCircuit: number | null; quoteFresh: boolean };
   /** Live broker execution data is mandatory only while the exchange is open. */
   requireLiveExecutionData?: boolean;
+  /** Which confirmation bar broke out; its volume, close and clearance are the ones judged. */
+  breakoutBar?: "latest" | "previous" | null;
+  /** Results calendar; `verified` is false when the asset lacks a usable check. */
+  results?: {
+    verified: boolean; sessionsToNext: number | null; nextDate: string | null; detail: string;
+    source?: string | null; sourceAsOf?: string | null; coverageFrom?: string | null; coverageThrough?: string | null;
+  } | null;
 }
 
 export interface StrongSwingAssessment {
   status: StrongSwingStatus;
   strengthScore: number;
+  /** Point-in-time calendar evidence used by the blocking results gate. */
+  resultsCheck: StrongSwingInput["results"];
   gates: StrongSwingGate[];
   confirmationEntry: number;
   latestClose: number;
@@ -202,7 +218,7 @@ export function assessStrongSwingFromBars(input: CompletedBarStrongSwingInput): 
   // level is not proof that the user held a position: only a server-validated ledger fill can
   // activate its protective stop. Technical failed-breakout invalidation still applies below.
   const assessment = assessStrongSwing({
-    ...input, isBreakout, trigger: confirmationEntry, atr,
+    ...input, isBreakout, breakoutBar, trigger: confirmationEntry, atr,
     trailingStop: null,
   });
   const gates = assessment.gates.map((item) => item.key !== "structure" ? item : {
@@ -265,13 +281,19 @@ export function assessStrongSwing(input: StrongSwingInput): StrongSwingAssessmen
 
   const prior20 = bars.slice(-21, -1);
   const averageVolume20 = mean(prior20.map((bar) => bar.volume));
-  const volumeRatio = averageVolume20 > 0 ? latest.volume / averageVolume20 : 0;
   const averageTradedValue20 = mean(prior20.map((bar) => bar.close * bar.volume));
-  const range = latest.high - latest.low;
-  const closeLocation = range > 0 ? (latest.close - latest.low) / range : 0.5;
+  // Breakout quality belongs to the bar that broke out. When that was the previous bar the
+  // latest one is only the hold: it must stay above the entry, not repeat the breakout.
+  const signalIsPrevious = input.breakoutBar === "previous";
+  const signal = signalIsPrevious ? previous : latest;
+  const signalVolumeBase = mean((signalIsPrevious ? bars.slice(-22, -2) : prior20).map((bar) => bar.volume));
+  const volumeRatio = signalVolumeBase > 0 ? signal.volume / signalVolumeBase : 0;
+  const range = signal.high - signal.low;
+  const closeLocation = range > 0 ? (signal.close - signal.low) / range : 0.5;
   // Measured against the historical breakout level, so this reports how decisively price
   // cleared a prior high rather than its distance from a level anchored to today's close.
-  const triggerClearanceAtr = atr > 0 ? (latest.close - breakoutLevel) / atr : 0;
+  const triggerClearanceAtr = atr > 0 ? (signal.close - breakoutLevel) / atr : 0;
+  const signalDay = signalIsPrevious ? "breakout bar" : "latest bar";
 
   // Relative strength is aligned by DATE, not by array index. Indexing both series at -21
   // assumes they share a trading calendar, which fails for any stock with halts or illiquid
@@ -323,8 +345,13 @@ export function assessStrongSwing(input: StrongSwingInput): StrongSwingAssessmen
   const hasTrendHistory = sma50 !== null && sma200 !== null && sma50Prior !== null && sma20 !== null;
   const trendAligned = Boolean(
     hasTrendHistory && latest.close > (sma50 as number) && latest.close > (sma200 as number)
-      && (sma20 as number) > (sma50 as number) && (sma50 as number) > (sma50Prior as number),
+      && (sma20 as number) > (sma50 as number) && (sma50 as number) > (sma50Prior as number)
+      && (sma50 as number) > (sma200 as number),
   );
+  const atEntry = currentPrice >= round2(confirmationEntry) * ENTRY_TOLERANCE;
+  const results = input.results ?? null;
+  const resultsVerified = Boolean(results?.verified);
+  const inBlackout = results?.sessionsToNext != null && results.sessionsToNext <= RESULTS_BLACKOUT_SESSIONS;
   const followThrough = previous.close >= confirmationEntry && latest.close >= confirmationEntry;
 
   const hasOi = fiveBarsAgo?.openInterest != null && latest.openInterest != null
@@ -357,11 +384,11 @@ export function assessStrongSwing(input: StrongSwingInput): StrongSwingAssessmen
         : dataFresh ? `Latest bar ${latest.date}.` : `Latest bar ${latest.date}; benchmark ${referenceDate}.`, "execution"),
     gate("price", "Price floor", latest.close >= priceFloor, `${latest.close.toFixed(2)} vs minimum ${priceFloor.toFixed(2)}.`, "execution"),
     gate("liquidity", "20-day liquidity", averageTradedValue20 >= tradedValueFloor, `Average traded value ${Math.round(averageTradedValue20).toLocaleString("en-US")}.`, "execution"),
-    gate("trend", "Primary trend", trendAligned, hasTrendHistory ? "Price > 50/200 SMA; 20 > 50 and 50 SMA rising." : "Insufficient 200-session trend history."),
+    gate("trend", "Primary trend", trendAligned, hasTrendHistory ? "Price > 50/200 SMA; 20 > 50 > 200 and 50 SMA rising." : "Insufficient 200-session trend history."),
     gate("relative_strength", "Relative strength", (relativeStrength20Pct ?? Number.NEGATIVE_INFINITY) > 0, relativeStrength20Pct === null ? "Benchmark comparison unavailable." : `${relativeStrength20Pct.toFixed(1)}% vs benchmark over 20 sessions.`),
-    gate("clearance", "Decisive breakout", triggerClearanceAtr >= 0.25, `${triggerClearanceAtr.toFixed(2)} ATR above the ${breakoutLevel.toFixed(2)} 20-session high; requires 0.25.`),
-    gate("close_quality", "Strong close", closeLocation >= 0.7, `Closed at ${(closeLocation * 100).toFixed(0)}% of the daily range; requires top 30%.`),
-    gate("volume", "Volume confirmation", volumeRatio >= 1.5, `${volumeRatio.toFixed(2)}x 20-session average; requires 1.50x.`),
+    gate("clearance", "Decisive breakout", triggerClearanceAtr >= 0.25, `${triggerClearanceAtr.toFixed(2)} ATR above the ${breakoutLevel.toFixed(2)} 20-session high on the ${signalDay}; requires 0.25.`),
+    gate("close_quality", "Strong close", closeLocation >= 0.7, `The ${signalDay} closed at ${(closeLocation * 100).toFixed(0)}% of its range; requires top 30%.`),
+    gate("volume", "Volume confirmation", volumeRatio >= 1.5, `${volumeRatio.toFixed(2)}x 20-session average on the ${signalDay}; requires 1.50x.`),
     gate("follow_through", "Two-close follow-through", followThrough, `Both latest closes must hold above ${confirmationEntry.toFixed(2)}.`),
     gate("market_regime", "Market regime", marketRegimePositive,
       benchmarkBars.length === 0
@@ -373,8 +400,9 @@ export function assessStrongSwing(input: StrongSwingInput): StrongSwingAssessmen
       hasOi
         ? `${(oiChange5Pct ?? 0).toFixed(1)}% OI change over five sessions.`
         : `${volumeTrend5.toFixed(2)}x five-session volume vs the 20-session base, price ${(priceChange5Pct ?? 0).toFixed(1)}% over five sessions; requires 1.20x and a rise.`),
-    gate("entry_zone", "Entry discipline", entryExtensionAtr <= 0.5,
-      `${entryExtensionAtr.toFixed(2)} ATR above confirmed entry ${confirmationEntry.toFixed(2)}; maximum 0.50 ATR.`, "execution"),
+    gate("entry_zone", "Entry discipline", entryExtensionAtr <= 0.5 && atEntry,
+      atEntry ? `${entryExtensionAtr.toFixed(2)} ATR above confirmed entry ${confirmationEntry.toFixed(2)}; maximum 0.50 ATR.`
+        : `Price ${currentPrice.toFixed(2)} is below the confirmed entry ${confirmationEntry.toFixed(2)}; wait for it to trade back at the entry.`, "execution"),
     gate("extension_5d", "Five-session extension", (fiveDayReturnPct ?? Number.POSITIVE_INFINITY) <= 30,
       fiveDayReturnPct === null ? "Five-session return unavailable." : `${fiveDayReturnPct.toFixed(1)}%; maximum 30%.`, "execution"),
     gate("extension_10d", "Ten-session extension", (tenDayReturnPct ?? Number.POSITIVE_INFINITY) <= 50,
@@ -387,6 +415,11 @@ export function assessStrongSwing(input: StrongSwingInput): StrongSwingAssessmen
       `Technical stop requires ${stopRiskPct.toFixed(1)}% risk; maximum 7%.`, "execution"),
     gate("circuit_behaviour", "Circuit behaviour", circuitLikeSessions20 < 2,
       `${circuitLikeSessions20} circuit-like closes in 20 sessions; maximum 1.`, "execution"),
+    gate("results_blackout", "Results blackout", resultsVerified && !inBlackout,
+      !results ? "Results calendar unavailable; entry is not verified against company results."
+        : !resultsVerified ? `${results.detail || "Results date unknown."} Entry is not verified against company results.`
+          : inBlackout ? `Results due in ${results.sessionsToNext} session${results.sessionsToNext === 1 ? "" : "s"} (${results.nextDate}); no new entries within ${RESULTS_BLACKOUT_SESSIONS}.`
+            : results.detail || "No results inside the blackout window.", "execution", input.market === "IN"),
     gate("live_quote", "Live broker quote", input.market !== "IN" || !input.requireLiveExecutionData || Boolean(input.microstructure?.quoteFresh),
       input.market !== "IN" || !input.requireLiveExecutionData ? "Live broker verification is required only during the open India session."
         : input.microstructure?.quoteFresh ? "Breeze quote is current." : "Fresh Breeze execution quote is unavailable.", "execution"),
@@ -417,7 +450,7 @@ export function assessStrongSwing(input: StrongSwingInput): StrongSwingAssessmen
   const breakoutFailed = input.isBreakout && atr > 0 && latest.close < breakoutLevel - atr;
   const hardRiskKeys = new Set([
     "extension_5d", "extension_10d", "sma20_extension", "atr_risk",
-    "stop_width", "circuit_behaviour", "freshness", "price", "liquidity", "live_quote", "live_spread", "live_circuit", "market_shock",
+    "stop_width", "circuit_behaviour", "freshness", "price", "liquidity", "live_quote", "live_spread", "live_circuit", "market_shock", "results_blackout",
   ]);
   // Stretch above the 20-day average only says price has run ahead of its mean.
   // It still blocks buying, but a confirmed breakout failing only this is a
@@ -425,7 +458,7 @@ export function assessStrongSwing(input: StrongSwingInput): StrongSwingAssessmen
   // (BODALCHEM-style) stay RISK_OFF: a return to the zone after those is a
   // collapse, not a pullback.
   const extensionKeys = new Set(["sma20_extension"]);
-  const hardRiskFailed = gates.some((item) => hardRiskKeys.has(item.key) && !extensionKeys.has(item.key) && !item.passed);
+  const hardRiskFailed = gates.some((item) => hardRiskKeys.has(item.key) && !extensionKeys.has(item.key) && item.blocking && !item.passed);
   const extensionFailed = gates.some((item) => extensionKeys.has(item.key) && !item.passed);
   const entryZoneFailed = gates.some((item) => item.key === "entry_zone" && !item.passed);
   const technicalPassed = gates
@@ -445,6 +478,7 @@ export function assessStrongSwing(input: StrongSwingInput): StrongSwingAssessmen
   return {
     status,
     strengthScore,
+    resultsCheck: results,
     gates,
     confirmationEntry,
     latestClose: latestPrice,

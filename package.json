@@ -33,6 +33,7 @@
     "worker:breeze-oi": ".venv/bin/python workers/breeze_daemon.py",
     "sync:breeze-account": ".venv/bin/python workers/breeze_account_sync.py",
     "smoke": "node scripts/smoke-routes.mjs",
+    "audit:strategy-readiness": "node scripts/strategy-readiness-audit.mjs",
     "test": "vitest run",
     "test:watch": "vitest"
   },

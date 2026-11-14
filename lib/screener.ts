@@ -11,9 +11,37 @@ import { strategyTradeLevels, type StrategyKey, type StrategyScore } from "@/lib
 import { DEFAULT_SETTINGS, type SwingSettings } from "@/lib/settings";
 import { isMarketOpenNow, latestSignalSessionDate, refreshMarketHolidays } from "@/lib/market-calendar.mjs";
 
+/**
+ * Where the live price stands against a plan's entry and stop:
+ * - BELOW_STOP: the price is already through the stop; the plan is void until the next scan.
+ * - EXTENDED: more than one ATR past the trigger; the plan would be a chase.
+ * - BREAKOUT_CONFIRMED / BREAKOUT_UNCONFIRMED: the scan bar traded through the entry, with or
+ *   without a close above it on 1.5x volume.
+ */
+export type EntryState = "BELOW_STOP" | "EXTENDED" | "BREAKOUT_CONFIRMED" | "BREAKOUT_UNCONFIRMED";
+
+/** One ATR past the trigger is the furthest a breakout entry is still an entry. */
+export const EXTENDED_ATR = 1;
+
+export function entryState(input: {
+  direction: TradeDirection; price: number; trigger: number | null; stop: number | null; atr: number;
+  triggered?: boolean; confirmed?: boolean;
+}): EntryState | null {
+  const sign = input.direction === "LONG" ? 1 : -1;
+  if (input.stop !== null && Number.isFinite(input.stop) && sign * (input.price - input.stop) <= 0) return "BELOW_STOP";
+  if (input.trigger !== null && input.atr > 0 && sign * (input.price - input.trigger) > EXTENDED_ATR * input.atr) return "EXTENDED";
+  if (input.triggered) return input.confirmed ? "BREAKOUT_CONFIRMED" : "BREAKOUT_UNCONFIRMED";
+  if (input.trigger !== null && sign * (input.price - input.trigger) >= 0) return "BREAKOUT_UNCONFIRMED";
+  return null;
+}
+
 /** Trade levels for one legendary strategy: its own entry, stop and trailing line,
  *  with the user's R:R setting the first target where the strategy has none. */
 export interface StrategyLevel {
+  /** Live price against this strategy's own trigger and stop. */
+  state: EntryState | null;
+  /** Breakout-day volume against the prior 50-session average, when the scan bar broke out. */
+  breakoutVolumeRatio: number | null;
   direction: TradeDirection;
   entry: number;
   target: number;
@@ -48,6 +76,8 @@ export interface ScreenRow {
   rsRating: number | null;
   /** Normalized breakout quality used only to order equal scores. */
   rankScore: number | null;
+  /** Live price against the default plan's trigger (EXTENDED) — null when in range. */
+  entryState: EntryState | null;
   reason: string;
   asOf: string;
   entry: number | null;
@@ -82,6 +112,8 @@ export async function runScreener(
     strategyMatches?: boolean;
     /** Every classifier setup (no NO_SETUP rows), without a row cap. */
     setupsOnly?: boolean;
+    /** Assets kept even when the classifier calls them NO_SETUP (used with setupsOnly). */
+    alsoAssetIds?: string[];
   } = {},
 ): Promise<ScreenRow[]> {
   if (country === "IN") await refreshMarketHolidays("IN");
@@ -117,7 +149,10 @@ export async function runScreener(
       ? `cardinality(strategy_tags) > 0`
       : `exists (select 1 from jsonb_each(strategy_scores) s where s.value->>'dir' = 'LONG')`);
   } else {
-    if (opts.limit || opts.setupsOnly) conds.push(`verdict <> 'NO_SETUP'`);
+    if (opts.setupsOnly && opts.alsoAssetIds?.length) {
+      params.push(opts.alsoAssetIds);
+      conds.push(`(verdict <> 'NO_SETUP' or swing_signals.asset_id = any($${params.length}::uuid[]))`);
+    } else if (opts.limit || opts.setupsOnly) conds.push(`verdict <> 'NO_SETUP'`);
     if (!settings.includeShort) conds.push(`bias <> 'SHORT'`);
   }
   const where = conds.length ? `where ${conds.join(" and ")}` : "";
@@ -138,6 +173,12 @@ export async function runScreener(
     for (const [key, sc] of Object.entries(rawScores)) {
       const slv = strategyTradeLevels(setup, sc, settings);
       levels[key] = {
+        state: entryState({
+          direction: slv.direction, price: setup.currentPrice, atr: setup.atr,
+          trigger: sc.entry ?? null, stop: slv.stopLoss,
+          triggered: Boolean(sc.triggered), confirmed: Boolean(sc.confirmed),
+        }),
+        breakoutVolumeRatio: sc.triggered ? sc.volumeRatio ?? null : null,
         direction: slv.direction,
         entry: slv.entry,
         target: slv.target,
@@ -194,6 +235,7 @@ export async function runScreener(
         breakoutClearanceAtr: nullableNum(r.breakout_clearance_atr),
         rsRating: nullableNum(r.rs_rating),
         rankScore: nullableNum(r.rank_score),
+        entryState: null,
         reason: (r.reason as string) ?? "",
         asOf: r.as_of instanceof Date
           ? r.as_of.toISOString()
@@ -247,6 +289,12 @@ export async function runScreener(
         r.trailingStop = lv.trailingStop;
         r.riskReward = lv.riskRewardRatio;
         r.expectedDays = lv.expectedDays;
+        // The default plan re-bases its entry to the live price, so its stop is never crossed;
+        // what it can be is a chase.
+        r.entryState = r.verdict === "NO_SETUP" ? null : entryState({
+          direction: r.direction, price: q.price, atr: setup.atr, stop: null,
+          trigger: r.direction === "SHORT" ? setup.shortTrigger : setup.longTrigger,
+        });
         r.strategyLevels = deriveStrategyLevels(
           liveSetup,
           scoresByAsset.get(r.assetId) ?? {},

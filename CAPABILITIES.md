@@ -8,11 +8,11 @@ _Code and production baseline reviewed 26 October 2026 through runtime revision 
 | --- | --- | --- |
 | Market overview | India/US quotes, breadth and charts | `app/markets/`, `components/market-overview/` |
 | Stock Screener | Whitelisted AND filters, presets, universes, saved screens, CSV/Excel exports and natural-language filters | `lib/screener/`, `lib/screener-actions.ts` |
-| Swing Candidates | Buy-side setups with strategy tags and frozen levels; India NSE top 20 | `lib/screener.ts`, market screener page |
-| Strong Swing | Python-authoritative confirmation, liquidity, market and execution gates, trade levels and deterministic ranking | `pipelines/strategy_math/strong_swing.py`, `lib/strongSwing.ts` |
+| Swing Candidates | Buy-side setups with strategy tags, breakout-day and extended/void entry states, and frozen levels | `lib/screener.ts`, market screener page |
+| Strong Swing | Python-authoritative confirmation, liquidity, market, results-blackout and execution gates, trade levels and deterministic ranking | `pipelines/strategy_math/strong_swing.py`, `lib/strongSwing.ts` |
 | Momentum Ignition | Python-authoritative legacy and V2 discovery with completed-session bases, separately verified live-session input and explicit execution blocking; V2 includes Momentum Ready, First Thrust, Pre-Ignition, Retest, Late Risk and Failed states | `pipelines/strategy_math/momentum.py`, `lib/momentumIgnition*.ts` |
 | Trend Continuation | Python-owned multi-session impulse, pre-impulse trend, continuation-watch, ready and extended-risk states; counter-trend rebounds cannot become ready; confirmed day-two breakouts may create an immutable manual plan after live execution and results gates; day one, pullbacks and auto-buy remain blocked | `pipelines/trend_continuation.py`, `lib/trendContinuation.ts` |
-| Armed Strong Swing | Earlier stage-2 breakout plans, live volume pace, structural stops and results blackout | `lib/armedSwing.ts`, `lib/analytics/armedSwing.ts` |
+| Armed Strong Swing | Earlier stage-2 breakout plans, time-of-day volume pace, structural stops and results blackout | `lib/armedSwing.ts`, `lib/analytics/armedSwing.ts` |
 | News & AI Swing | Source-linked event overlay on existing technical candidates | `lib/news/`, `lib/newsSwing.ts` |
 | Long-Term Candidates | Multi-year statement evidence and investor-inspired rankings | `lib/analytics/longTermStrategies.ts` |
 | Probability | 21-session return and risk distributions | `lib/probability-runtime.ts`, `lib/analytics/probability/` |
@@ -71,4 +71,4 @@ The ML foundation provides schema, scheduled snapshots, deterministic Python fea
 
 Migrations extend through 0059. Migration 0058 adds persisted screener technical history and 0059 adds candidate signal observations. The Linux release script explicitly applies 0033–0059 after assuming an existing earlier schema, and re-executes the checked-out script once after pulling so migrations introduced by that release are not skipped. Provider quotas and continuing runtime health remain deployment-specific.
 
-See [architecture](ARCHITECTURE.md), [status](STATUS.md), [deployment](DEPLOYMENT.md) and [ML methodology](docs/ml-methodology.md).
+See [architecture](ARCHITECTURE.md), [status](STATUS.md), [deployment](DEPLOYMENT.md), [ML methodology](docs/ml-methodology.md) and [swing strategy rules and review](docs/swing-strategies.md).

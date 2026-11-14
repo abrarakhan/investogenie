@@ -47,7 +47,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--limit", type=int, default=int(os.getenv("BREEZE_INTRADAY_LIMIT", "750")))
     parser.add_argument("--sleep", type=float, default=float(os.getenv("BREEZE_INTRADAY_SLEEP_SECONDS", "0.6")))
-    parser.add_argument("--retention-days", type=int, default=int(os.getenv("BREEZE_INTRADAY_RETENTION_DAYS", "7")))
+    parser.add_argument("--retention-days", type=int, default=int(os.getenv("BREEZE_INTRADAY_RETENTION_DAYS", "120")))
     parser.add_argument("--date", help="Session to load (YYYY-MM-DD); defaults to today in IST")
     parser.add_argument("--dry-run", action="store_true", help="Fetch and report without writing")
     return parser.parse_args()
