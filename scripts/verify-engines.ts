@@ -1,6 +1,7 @@
 // Runtime self-verification of the three analytical engines. Run:
 //   npx tsx scripts/verify-engines.ts
-import { classifySwingSetup } from "../lib/analytics/swingClassifier";
+import { runPythonStrategyBatch } from "../lib/pythonStrategyMath";
+import type { SwingSignal } from "../lib/analytics/swingClassifier";
 import { analyzeFundOverlap } from "../lib/analytics/fundOverlap";
 import { buildMacroMatrix } from "../lib/analytics/macroCorrelator";
 import type { OHLCV } from "../lib/types";
@@ -34,7 +35,11 @@ for (let i = 0; i < 40; i++) {
     openInterest: oi,
   });
 }
-const swing = classifySwingSetup(bars);
+const [swingResult] = await runPythonStrategyBatch<{ bars: OHLCV[]; rsRating: null; momentumPercentile: null; minTradedValue: null; tick: number; risk: { stopAtrMult: number; targetRR: number; trailAtrMult: number } }, { signal: SwingSignal }>("swing_scan", [{
+  bars, rsRating: null, momentumPercentile: null, minTradedValue: null, tick: 0.05,
+  risk: { stopAtrMult: 1.5, targetRR: 2, trailAtrMult: 3 },
+}]);
+const swing = swingResult.signal;
 check("swing: flags LONG_BREAKOUT", swing.verdict === "LONG_BREAKOUT", `verdict=${swing.verdict}, score=${swing.score.toFixed(2)}`);
 check("swing: confirms Long Build-up via OI", swing.isLongBuildup, `oiΔ=${(swing.oiChangePct * 100).toFixed(1)}%`);
 

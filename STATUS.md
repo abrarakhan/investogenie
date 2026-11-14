@@ -9,7 +9,7 @@ This is a repository status reference. The production web/Breeze services, HTTPS
 - Next.js 16.4.2 / React 19.2.4 web application with India/US terminal routes.
 - Fundamental/price-action Stock Screener, natural-language filtering, saved screens and exports.
 - Swing, Strong Swing, legacy/V2 Momentum Ignition, News & AI, Long-Term and Probability research surfaces.
-- The Strong Swing page's four strategy engines are Python-authoritative for classifications, gates, rankings and trade levels. TypeScript loaders only assemble inputs and consume the Python batch results. The base Swing discovery scan and the separate Armed Swing screen have not yet been migrated.
+- Trading strategy calculations are Python-authoritative: Base Swing, named strategies, Strong Swing, Momentum, Trend Continuation, Armed Swing, News overlays and ledger projections. TypeScript loaders assemble inputs and consume versioned batch results; legacy TypeScript formulas are retained only as differential-test oracles.
 - Armed Strong Swing at `/terminal/[market]/armed-swing`, separate from the existing Strong Swing gates/rankings.
 - Immutable Armed and protected execution plans, with server-side ownership/session/status/price validation.
 - Ledger pending buy-stops, partial fills, remaining-quantity tracking and cancellation.

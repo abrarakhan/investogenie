@@ -6,8 +6,9 @@
 import { query } from "@/lib/db";
 import { getQuotesByAssetIds } from "@/lib/quotes";
 import { getFundamentalsByAssetIds } from "@/lib/fundamentals";
-import { deriveLevels, type SwingSetup, type TradeDirection } from "@/lib/analytics/swingClassifier";
-import { strategyTradeLevels, type StrategyKey, type StrategyScore } from "@/lib/analytics/legendaryStrategies";
+import { type SwingSetup, type TradeDirection } from "@/lib/analytics/swingClassifier";
+import { type StrategyKey, type StrategyScore } from "@/lib/analytics/legendaryStrategies";
+import { runPythonStrategyBatch } from "@/lib/pythonStrategyMath";
 import { DEFAULT_SETTINGS, type SwingSettings } from "@/lib/settings";
 import { isMarketOpenNow, latestSignalSessionDate, refreshMarketHolidays } from "@/lib/market-calendar.mjs";
 
@@ -165,33 +166,6 @@ export async function runScreener(
   const setupByAsset = new Map<string, SwingSetup>();
   const scoresByAsset = new Map<string, Record<string, StrategyScore>>();
 
-  const deriveStrategyLevels = (
-    setup: SwingSetup,
-    rawScores: Record<string, StrategyScore>,
-  ): Record<string, StrategyLevel> => {
-    const levels: Record<string, StrategyLevel> = {};
-    for (const [key, sc] of Object.entries(rawScores)) {
-      const slv = strategyTradeLevels(setup, sc, settings);
-      levels[key] = {
-        state: entryState({
-          direction: slv.direction, price: setup.currentPrice, atr: setup.atr,
-          trigger: sc.entry ?? null, stop: slv.stopLoss,
-          triggered: Boolean(sc.triggered), confirmed: Boolean(sc.confirmed),
-        }),
-        breakoutVolumeRatio: sc.triggered ? sc.volumeRatio ?? null : null,
-        direction: slv.direction,
-        entry: slv.entry,
-        target: slv.target,
-        stopLoss: slv.stopLoss,
-        trailingStop: slv.trailingStop,
-        riskReward: slv.riskRewardRatio,
-        expectedDays: slv.expectedDays,
-        score: Number(sc.score) || 0,
-      };
-    }
-    return levels;
-  };
-
   const out: ScreenRow[] = raw
     .filter((r) => opts.strategyMatches || settings.includeShort || (r.bias as string) !== "SHORT")
     .map((r) => {
@@ -205,8 +179,6 @@ export async function runScreener(
         ll22: num(r.ll22),
         dailyVelocity: num(r.daily_velocity),
       };
-      const lv = deriveLevels(setup, direction, settings);
-
       const tags = Array.isArray(r.strategy_tags) ? (r.strategy_tags as StrategyKey[]) : [];
       const rawScores = (r.strategy_scores ?? {}) as Record<string, StrategyScore>;
       const assetId = r.asset_id as string;
@@ -240,14 +212,14 @@ export async function runScreener(
         asOf: r.as_of instanceof Date
           ? r.as_of.toISOString()
           : String(r.as_of ?? ""),
-        entry: lv.entry,
-        target: lv.target,
-        stopLoss: lv.stopLoss,
-        trailingStop: lv.trailingStop,
-        riskReward: lv.riskRewardRatio,
-        expectedDays: lv.expectedDays,
+        entry: null,
+        target: null,
+        stopLoss: null,
+        trailingStop: null,
+        riskReward: null,
+        expectedDays: null,
         strategyTags: tags,
-        strategyLevels: deriveStrategyLevels(setup, rawScores),
+        strategyLevels: {},
         peRatio: null,
         marketCap: null,
         financialCurrency: null,
@@ -274,6 +246,7 @@ export async function runScreener(
     getQuotesByAssetIds(assetIds),
     getFundamentalsByAssetIds(assetIds),
   ]);
+  const levelWork: Array<{ row: ScreenRow; input: { setup: SwingSetup; direction: TradeDirection; risk: SwingSettings; scores: Record<string, StrategyScore>; noSetup: boolean } }> = [];
   for (const r of rows) {
     const q = quotes.get(r.assetId);
     if (q) {
@@ -282,23 +255,8 @@ export async function runScreener(
       const setup = setupByAsset.get(r.assetId);
       if (setup) {
         const liveSetup = { ...setup, currentPrice: q.price };
-        const lv = deriveLevels(liveSetup, r.direction, settings);
-        r.entry = lv.entry;
-        r.target = lv.target;
-        r.stopLoss = lv.stopLoss;
-        r.trailingStop = lv.trailingStop;
-        r.riskReward = lv.riskRewardRatio;
-        r.expectedDays = lv.expectedDays;
-        // The default plan re-bases its entry to the live price, so its stop is never crossed;
-        // what it can be is a chase.
-        r.entryState = r.verdict === "NO_SETUP" ? null : entryState({
-          direction: r.direction, price: q.price, atr: setup.atr, stop: null,
-          trigger: r.direction === "SHORT" ? setup.shortTrigger : setup.longTrigger,
-        });
-        r.strategyLevels = deriveStrategyLevels(
-          liveSetup,
-          scoresByAsset.get(r.assetId) ?? {},
-        );
+        levelWork.push({ row: r, input: { setup: liveSetup, direction: r.direction, risk: settings,
+          scores: scoresByAsset.get(r.assetId) ?? {}, noSetup: r.verdict === "NO_SETUP" } });
       }
     } else {
       r.entry = null;
@@ -309,6 +267,19 @@ export async function runScreener(
       r.expectedDays = null;
       r.strategyLevels = {};
     }
+  }
+  const levelResults = await runPythonStrategyBatch<(typeof levelWork)[number]["input"], {
+    default: { entry: number; target: number; stopLoss: number; trailingStop: number; riskRewardRatio: number; expectedDays: number };
+    entryState: EntryState | null; strategies: Record<string, StrategyLevel>;
+  }>("swing_levels", levelWork.map((item) => item.input));
+  levelWork.forEach(({ row }, index) => {
+    const calculated = levelResults[index];
+    row.entry = calculated.default.entry; row.target = calculated.default.target;
+    row.stopLoss = calculated.default.stopLoss; row.trailingStop = calculated.default.trailingStop;
+    row.riskReward = calculated.default.riskRewardRatio; row.expectedDays = calculated.default.expectedDays;
+    row.entryState = calculated.entryState; row.strategyLevels = calculated.strategies;
+  });
+  for (const r of rows) {
     const f = fundamentals.get(r.assetId);
     if (f) {
       r.peRatio = f.peRatio;

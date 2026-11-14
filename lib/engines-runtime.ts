@@ -15,7 +15,8 @@ import {
   type SeriesInput,
 } from "@/lib/analytics/macroCorrelator";
 import type { MarketId, FundStockWeight, UserFundHolding } from "@/lib/types";
-import { deriveLevels, type SwingSetup, type TradeDirection } from "@/lib/analytics/swingClassifier";
+import { type SwingSetup, type TradeDirection, type TradeLevels } from "@/lib/analytics/swingClassifier";
+import { runPythonStrategyBatch } from "@/lib/pythonStrategyMath";
 import { DEFAULT_SETTINGS, type SwingSettings } from "@/lib/settings";
 import { fundDisplayIdentity } from "@/lib/funds/displayName";
 import { isMarketOpenNow, latestSignalSessionDate, refreshMarketHolidays } from "@/lib/market-calendar.mjs";
@@ -76,17 +77,21 @@ export async function getTopSwingSetups(
       limit $2`,
     [country, limit * 2, signalSession, marketOpen],
   );
-  return rows
+  const selected = rows
     .filter((r) => settings.includeShort || (r.bias as string) !== "SHORT")
-    .slice(0, limit)
-    .map((r) => {
+    .slice(0, limit);
+  const work = selected.map((r) => {
       const direction: TradeDirection = (r.bias as string) === "SHORT" ? "SHORT" : "LONG";
       const setup: SwingSetup = {
         currentPrice: num(r.current_price), atr: num(r.atr),
         longTrigger: num(r.long_trigger), shortTrigger: num(r.short_trigger),
         hh22: num(r.hh22), ll22: num(r.ll22), dailyVelocity: num(r.daily_velocity),
       };
-      const lv = deriveLevels(setup, direction, settings);
+      return { row: r, direction, input: { setup, direction, risk: settings, scores: {}, noSetup: false } };
+  });
+  const calculated = await runPythonStrategyBatch<(typeof work)[number]["input"], { default: TradeLevels }>("swing_levels", work.map((item) => item.input));
+  return work.map(({ row: r, direction }, index) => {
+      const lv = calculated[index].default;
       return {
         ticker: r.ticker as string,
         verdict: r.verdict as string,

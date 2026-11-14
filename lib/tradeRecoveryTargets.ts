@@ -17,8 +17,9 @@ export async function calculateRecoveryTargets(inputs: Array<{
   cutoffDate: string;
   currentPrice: number;
   atr: number;
-  move1dPct: number | null;
-  move2dPct: number | null;
+  priorClose: number | null;
+  twoSessionClose: number | null;
+  direction: "LONG" | "SHORT";
   horizon: number;
 }>): Promise<Map<string, RecoveryTargetResult>> {
   if (!inputs.length) return new Map();

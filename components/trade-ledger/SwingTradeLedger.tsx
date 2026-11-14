@@ -3,7 +3,8 @@ import AssetPicker from "@/components/dashboard/AssetPicker";
 import DeleteTradeButton from "@/components/trade-ledger/DeleteTradeButton";
 import OrderCostPreview from "@/components/trade-ledger/OrderCostPreview";
 import PendingSubmit from "@/components/trade-ledger/PendingSubmit";
-import { summarizeSwingTradeLedger, type SwingLedgerTrade, type SwingTradeState } from "@/lib/swingTradeLedger";
+import { type SwingLedgerTrade, type SwingTradeLedgerSummary, type SwingTradeState } from "@/lib/swingTradeLedger";
+import { summarizeLedgerBooks } from "@/lib/swingTradeLedgerPython";
 
 const STATE: Record<SwingTradeState, { label: string; style: string }> = {
   ON_TRACK: { label: "On track", style: "border-emerald-500/30 bg-emerald-500/10 text-emerald-300" },
@@ -28,14 +29,20 @@ const quoteTime = (value: string | null, market: "IN" | "US") => value === null 
   timeZone: market === "IN" ? "Asia/Kolkata" : "America/New_York",
 }).format(new Date(value));
 
-export default function SwingTradeLedger({ market, trades, defaults }: {
+export default async function SwingTradeLedger({ market, trades, defaults }: {
   market: "IN" | "US";
   trades: SwingLedgerTrade[];
   defaults: Record<string, string | undefined>;
 }) {
   const open = trades.filter((trade) => trade.status === "OPEN");
   const closed = trades.filter((trade) => trade.status === "CLOSED");
-  const summary = summarizeSwingTradeLedger(trades);
+  // The whole book plus each trade on its own, in a single Python call. Summarising inside
+  // TradeCard would spawn one process per card, so the per-trade figures are computed here
+  // and handed down.
+  const [summary, ...perTrade] = await summarizeLedgerBooks([trades, ...trades.map((trade) => [trade])]);
+  const returnsByTrade = new Map<string, SwingTradeLedgerSummary>(
+    trades.map((trade, index) => [trade.id, perTrade[index]]),
+  );
   const currency = market === "IN" ? "INR" : "USD";
   const today = new Date().toISOString().slice(0, 10);
 
@@ -129,10 +136,10 @@ export default function SwingTradeLedger({ market, trades, defaults }: {
         <div className="mb-3"><h2 className="text-xl font-bold">Open trades</h2><p className="mt-1 text-sm text-white/42">Targets are projections, not guarantees. Exit alerts follow the frozen strategy plan.</p></div>
         {open.length === 0
           ? <div className="rounded-lg border border-white/10 px-5 py-12 text-center text-white/40">No open trades logged yet.</div>
-          : <div className="grid gap-4">{open.map((trade) => <TradeCard key={trade.id} trade={trade} today={today} />)}</div>}
+          : <div className="grid gap-4">{open.map((trade) => <TradeCard key={trade.id} trade={trade} today={today} returns={returnsByTrade.get(trade.id)!} />)}</div>}
       </section>
 
-      {closed.length > 0 && <section><div className="mb-3 flex flex-wrap items-baseline justify-between gap-2"><h2 className="text-xl font-bold">Closed trades</h2><span className={`text-sm font-semibold tabular-nums ${summary.realizedPnlValue >= 0 ? "text-emerald-300" : "text-rose-300"}`}>Realized P&amp;L {money(summary.realizedPnlValue, currency)}</span></div><div className="grid gap-3">{closed.map((trade) => <TradeCard key={trade.id} trade={trade} today={today} />)}</div></section>}
+      {closed.length > 0 && <section><div className="mb-3 flex flex-wrap items-baseline justify-between gap-2"><h2 className="text-xl font-bold">Closed trades</h2><span className={`text-sm font-semibold tabular-nums ${summary.realizedPnlValue >= 0 ? "text-emerald-300" : "text-rose-300"}`}>Realized P&amp;L {money(summary.realizedPnlValue, currency)}</span></div><div className="grid gap-3">{closed.map((trade) => <TradeCard key={trade.id} trade={trade} today={today} returns={returnsByTrade.get(trade.id)!} />)}</div></section>}
     </div>
   );
 }
@@ -146,11 +153,11 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   return <label className="text-xs text-white/50">{label}{children}</label>;
 }
 
-function TradeCard({ trade, today }: { trade: SwingLedgerTrade; today: string }) {
+function TradeCard({ trade, today, returns }: { trade: SwingLedgerTrade; today: string; returns: SwingTradeLedgerSummary }) {
   const state = STATE[trade.progress.state];
   const exitNow = trade.status === "OPEN" && trade.revisedPlan.action === "EXIT";
   const progressWidth = Math.max(0, Math.min(100, trade.progress.targetProgressPct ?? 0));
-  const tradeReturns = summarizeSwingTradeLedger([trade]);
+  const tradeReturns = returns;
   // Open trades value the shares still held; closed trades show what the sales returned.
   const closed = trade.status === "CLOSED";
   const investedValue = trade.progress.investedValue;

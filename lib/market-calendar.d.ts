@@ -8,6 +8,7 @@ export interface MarketClock {
 
 export function zonedMarketClock(market: CalendarMarket, at?: Date): MarketClock;
 export function isTradingDay(market: CalendarMarket, dateIso: string): boolean;
+export function marketSpecialSessionDates(market: CalendarMarket): string[];
 export function marketSessionForDate(market: CalendarMarket, dateIso: string): {
   name: string;
   openMinutes: number;

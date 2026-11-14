@@ -64,6 +64,20 @@ export interface ArmedSwingInput {
   } | null;
   /** Results calendar. `verified` is false when the asset lacks a recent, usable check. */
   results?: { verified: boolean; sessionsToNext: number | null; nextDate: string | null; detail: string } | null;
+  /** Raw point-in-time calendar evidence. Production supplies this to the Python authority. */
+  resultsEvidence?: {
+    today: string;
+    lastSuccessAt: string | null;
+    nextDate: string | null;
+    lastPastDate: string | null;
+    authoritativeSource: string | null;
+    authoritativeAsOf: string | null;
+    authoritativeCoverageFrom: string | null;
+    authoritativeCoverageThrough: string | null;
+    requiredCoverageFrom: string | null;
+    requiredCoverageThrough: string | null;
+    blackoutSessionDates: string[];
+  } | null;
   risk: { targetRR: number; trailAtrMult: number };
 }
 
@@ -148,6 +162,7 @@ export interface ArmedSwingAssessment {
   marketRegimePositive: boolean;
   suggestedExposurePct: number;
   circuitLikeSessions20: number;
+  resultsCalendarVerified?: boolean;
 }
 
 export const ARMED_SWING_RULES = {
@@ -371,10 +386,14 @@ export function assessArmedSwing(input: ArmedSwingInput): ArmedSwingAssessment {
   const benchmarkTwoDay = benchmarkBars.length >= 3 ? pctChange(benchmarkBars.at(-3)!.close, benchmarkBars.at(-1)!.close) : null;
   const marketShock = (benchmarkTwoDay ?? 0) <= -4;
   const suggestedExposurePct = marketShock ? 0 : marketRegimePositive ? 100 : 50;
-  const dataFresh = benchmarkBars.length > 0
+  // Two distinct failures hide behind one gate, and they deserve different verdicts: a stale
+  // *benchmark* is a reference-data outage, while the stock's *own* bars lagging the exchange
+  // calendar means this instrument is genuinely untradeable right now.
+  const benchmarkLagOk = benchmarkBars.length > 0
     && sessionsBetween(latest.date.slice(0, 10), (benchmarkLatest?.date ?? latest.date).slice(0, 10),
-      [...bars, ...benchmarkBars].map((bar) => bar.date.slice(0, 10))) <= 1
-    && (input.expectedSessionLag == null || input.expectedSessionLag <= 1);
+      [...bars, ...benchmarkBars].map((bar) => bar.date.slice(0, 10))) <= 1;
+  const ownDataFresh = input.expectedSessionLag == null || input.expectedSessionLag <= 1;
+  const dataFresh = benchmarkLagOk && ownDataFresh;
   let circuitLikeSessions20 = 0;
   const circuitWindow = bars.slice(-21);
   for (let index = 1; index < circuitWindow.length; index++) {
@@ -457,8 +476,23 @@ export function assessArmedSwing(input: ArmedSwingInput): ArmedSwingAssessment {
   const failed = (key: string) => gates.some((item) => item.key === key && !item.passed);
   // Missing or stale execution/results data is "unverified", not a market risk call; a real
   // threshold breach on data that IS present is a hard risk. Both block entry.
-  const unverified = !quoteVerified || !depthPresent || !bandsPresent || !resultsVerified;
-  const dataGateKeys = new Set(["live_quote", "live_spread", "live_circuit", "results_blackout"]);
+  // A benchmark that is missing or behind the market is a data problem, not a market call.
+  // Without this, a stale benchmark failed `freshness` and `market_regime`, both of which are
+  // blocking execution gates, so every candidate in the market became RISK_OFF — reporting an
+  // ingestion outage as a risk decision. Observed live: with BSE bars four sessions behind
+  // NSE, all 200 sampled India candidates read RISK_OFF. These gates still block entry; they
+  // just resolve to UNVERIFIED, which is what "we could not check" means everywhere else here.
+  // Usable means fresh AND long enough to answer the regime question. A benchmark with too
+  // few bars returns a null 50-SMA, which read as "regime negative" and hard-stopped every
+  // candidate — an absent measurement reported as a bearish market call.
+  const benchmarkUsable = benchmarkLagOk && benchmarkSma50 !== null && benchmarkSma50Prior !== null;
+  const unverified = !quoteVerified || !depthPresent || !bandsPresent || !resultsVerified || !benchmarkUsable;
+  const dataGateKeys = new Set([
+    "live_quote", "live_spread", "live_circuit", "results_blackout",
+    // Only while the benchmark is unusable: a fresh benchmark below a rising 50 SMA is a
+    // genuine risk-off signal and must keep hard-stopping entries.
+    ...(benchmarkUsable ? [] : ["freshness", "market_regime", "market_shock"]),
+  ]);
   const hardRisk = gates.some((item) => item.category === "execution" && item.blocking && !item.passed && !dataGateKeys.has(item.key))
     || (depthPresent && (spreadPct as number) > R.maxSpreadPct)
     || (bandsPresent && !gates.find((item) => item.key === "live_circuit")!.passed)

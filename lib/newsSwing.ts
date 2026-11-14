@@ -1,7 +1,8 @@
 import { query, queryOne } from "@/lib/db";
 import type { StrongSwingCandidate } from "@/lib/strongSwing";
 import { displayStrongSwing } from "@/lib/displayScanCache";
-import { rankNewsSwingCandidates, scoreNewsSwing, type NewsDirection, type NewsHorizon, type NewsScope, type NewsSwingScore } from "@/lib/analytics/newsSwing";
+import { type NewsDirection, type NewsHorizon, type NewsScope, type NewsSwingScore } from "@/lib/analytics/newsSwing";
+import { runPythonStrategyBatch } from "@/lib/pythonStrategyMath";
 import type { SwingSettings } from "@/lib/settings";
 import type { MarketId } from "@/lib/types";
 
@@ -98,16 +99,23 @@ export async function getNewsSwingWorkspace(
     model: row.model,
   }));
 
-  const candidates = rankNewsSwingCandidates(base.map((row): NewsSwingCandidate => {
+  const candidateMeta = base.map((row) => {
     const sector = sectorByAsset.get(row.assetId);
     const news = evidence.filter((item) =>
       item.scope === "MARKET"
       || (item.scope === "ASSET" && item.assetId === row.assetId)
       || (item.scope === "SECTOR" && item.sector && item.sector === sector),
     );
-    const score = scoreNewsSwing(row.strengthScore, news);
-    return { ...row, ...score, news };
-  }));
+    return { row, news };
+  });
+  const scored = await runPythonStrategyBatch<{
+    ticker: string; technicalScore: number; impacts: NewsEvidence[]; now: string;
+  }, NewsSwingScore & { pythonRank: number }>("news_swing", candidateMeta.map(({ row, news }) => ({
+    ticker: row.ticker, technicalScore: row.strengthScore, impacts: news, now: new Date().toISOString(),
+  })));
+  const candidates = candidateMeta.map(({ row, news }, index): NewsSwingCandidate & { pythonRank: number } => ({
+    ...row, ...scored[index], news,
+  })).sort((left, right) => left.pythonRank - right.pythonRank);
 
   const summary = await queryOne<{ last_fetched_at: Date | null; article_count: string; impact_count: string }>(
     `select max(a.fetched_at) last_fetched_at,

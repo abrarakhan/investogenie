@@ -26,6 +26,11 @@ class RecoveryTargetTests(unittest.TestCase):
         self.assertIsNone(result["recoveryTarget"])
         self.assertIsNone(result["historicalTarget"])
 
+    def test_short_targets_are_below_the_current_price(self):
+        result = recovery_targets(history(), 120, 4, -0.8, -1.1, 10, direction="SHORT")
+        self.assertEqual(result["recoveryTarget"], 116.0)
+        self.assertLess(result["historicalTarget"], 120)
+
     def test_requires_enough_fully_observed_analogues(self):
         result = recovery_targets(history(28), 120, 4, 1, 2, 10)
         self.assertIsNone(result["historicalTarget"])

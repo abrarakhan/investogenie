@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getMobileSessionUser } from "@/lib/mobileAuth";
-import { getSwingTradeLedger, summarizeSwingTradeLedger } from "@/lib/swingTradeLedger";
+import { getSwingTradeLedger } from "@/lib/swingTradeLedger";
+import { summarizeLedgerBooks } from "@/lib/swingTradeLedgerPython";
 import { normalizeMarket } from "@/lib/markets";
 import { createMobileTrade } from "@/lib/mobileLedgerMutations";
 
@@ -13,10 +14,12 @@ export async function GET(request: NextRequest) {
   const market = normalizeMarket(request.nextUrl.searchParams.get("market") ?? "IN");
   if (!market) return NextResponse.json({ error: "market must be IN or US" }, { status: 400 });
   const trades = await getSwingTradeLedger(user.id, market);
+  // Mobile consumes the server's figures; it must not recompute them on device.
+  const [summary] = await summarizeLedgerBooks([trades]);
   return NextResponse.json({
     market,
     generatedAt: new Date().toISOString(),
-    summary: summarizeSwingTradeLedger(trades),
+    summary,
     trades,
   });
 }

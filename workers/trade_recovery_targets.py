@@ -31,12 +31,13 @@ def round_to_tick(value, tick):
     return round(round(value / tick) * tick, 2)
 
 
-def recovery_targets(bars, current_price, current_atr, move_1d, move_2d, horizon, tick=0.05):
+def recovery_targets(bars, current_price, current_atr, move_1d, move_2d, horizon, tick=0.05, direction="LONG"):
     """Return an ATR objective and a 60th-percentile similar-path objective."""
     if current_price <= 0 or current_atr <= 0:
         return {"recoveryTarget": None, "historicalTarget": None, "sampleSize": 0, "horizon": horizon}
     horizon = max(2, min(int(horizon), 20))
-    recovery = round_to_tick(current_price + current_atr, tick)
+    short = direction == "SHORT"
+    recovery = round_to_tick(max(tick, current_price - current_atr) if short else current_price + current_atr, tick)
     current_atr_pct = current_atr / current_price
     analogues = []
     # Each tuple is (date, open, high, low, close). The last `horizon` bars can
@@ -56,14 +57,19 @@ def recovery_targets(bars, current_price, current_atr, move_1d, move_2d, horizon
             + abs(ret_2d - (move_2d or 0)) / 3
             + abs(atr_pct - current_atr_pct) / max(current_atr_pct, 0.005)
         )
-        future_high = max(bar[2] for bar in bars[index + 1:index + horizon + 1])
-        analogues.append((score, max(0, (future_high / close) - 1)))
+        if short:
+            future_low = min(bar[3] for bar in bars[index + 1:index + horizon + 1])
+            excursion = max(0, 1 - (future_low / close))
+        else:
+            future_high = max(bar[2] for bar in bars[index + 1:index + horizon + 1])
+            excursion = max(0, (future_high / close) - 1)
+        analogues.append((score, excursion))
     nearest = sorted(analogues, key=lambda item: item[0])[:20]
     historical = None
     if len(nearest) >= 12:
         forward_mfe = percentile([item[1] for item in nearest], 0.60)
         if forward_mfe is not None and forward_mfe > 0:
-            historical = round_to_tick(current_price * (1 + forward_mfe), tick)
+            historical = round_to_tick(current_price * (1 - forward_mfe if short else 1 + forward_mfe), tick)
     return {
         "recoveryTarget": recovery,
         "historicalTarget": historical,
@@ -93,14 +99,20 @@ def main():
     output = {}
     for item in requests:
         bars = list(reversed(grouped.get(item["assetId"], [])))
+        prior = item.get("priorClose")
+        prior2 = item.get("twoSessionClose")
+        current = float(item["currentPrice"])
+        move_1d = ((current / float(prior)) - 1) * 100 if prior and float(prior) > 0 else None
+        move_2d = ((current / float(prior2)) - 1) * 100 if prior2 and float(prior2) > 0 else None
         output[item["tradeId"]] = recovery_targets(
             bars,
-            float(item["currentPrice"]),
+            current,
             float(item["atr"]),
-            item.get("move1dPct"),
-            item.get("move2dPct"),
+            move_1d,
+            move_2d,
             item["horizon"],
             0.05 if item["market"] == "IN" else 0.01,
+            item.get("direction", "LONG"),
         )
     print(json.dumps(output))
 

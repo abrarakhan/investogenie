@@ -1,7 +1,8 @@
 import { queryOne } from "@/lib/db";
-import { deriveLevels, type SwingSetup } from "@/lib/analytics/swingClassifier";
-import { STRATEGY_META, strategyTradeLevels, type StrategyScore } from "@/lib/analytics/legendaryStrategies";
+import { type SwingSetup, type TradeLevels } from "@/lib/analytics/swingClassifier";
+import { STRATEGY_META, type StrategyScore } from "@/lib/analytics/legendaryStrategies";
 import { getUserSwingSettings } from "@/lib/settings";
+import { runPythonStrategyBatch } from "@/lib/pythonStrategyMath";
 
 type SignalRow = {
   asset_id: string; ticker: string; currency: string; current_price: string | number | null;
@@ -50,9 +51,17 @@ export async function resolveSignalProjection(
   const strategyScore = isStrongSwing || isMomentumIgnition || isArmedSwing || isTrendContinuation ? undefined : row.strategy_scores?.[strategyKey];
   const settings = await getUserSwingSettings(userId);
   // A legendary strategy keeps its own stop and trailing line under the actual buy price.
-  const levels = strategyScore?.dir === "LONG"
-    ? strategyTradeLevels(setup, { ...strategyScore, entry: buyPrice }, settings)
-    : deriveLevels(setup, "LONG", settings);
+  const scores = strategyScore?.dir === "LONG" ? { [strategyKey]: { ...strategyScore, entry: buyPrice } } : {};
+  const [calculated] = await runPythonStrategyBatch<{
+    setup: SwingSetup; direction: "LONG"; risk: typeof settings; scores: Record<string, StrategyScore>; noSetup: boolean;
+  }, { default: TradeLevels; strategies: Record<string, { entry: number; target: number; stopLoss: number; trailingStop: number; riskReward: number; expectedDays: number; direction: "LONG" | "SHORT" }> }>("swing_levels", [{ setup, direction: "LONG", risk: settings, scores, noSetup: false }]);
+  const strategyLevels = calculated.strategies[strategyKey];
+  const levels: TradeLevels = strategyLevels ? {
+    direction: strategyLevels.direction, currentPrice: buyPrice, entry: strategyLevels.entry,
+    target: strategyLevels.target, stopLoss: strategyLevels.stopLoss,
+    trailingStop: strategyLevels.trailingStop, atr: num(row.atr),
+    riskRewardRatio: strategyLevels.riskReward, expectedDays: strategyLevels.expectedDays,
+  } : calculated.default;
   const label = isStrongSwing
     ? "Strong Swing"
     : isArmedSwing

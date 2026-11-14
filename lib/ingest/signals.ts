@@ -11,11 +11,8 @@
 // the window would silently change is_squeeze, score and verdict. Batches are
 // therefore overlapped for throughput rather than trimmed.
 import { Pool } from "pg";
-import { classifySwingSetup, deriveLevels } from "@/lib/analytics/swingClassifier";
-import {
-  evaluateLegendary, momentumLeaderPercentiles, relativeStrengthRatings, type MomentumCloses, type RsCloses,
-} from "@/lib/analytics/legendaryStrategies";
-import { swingTieBreakScore } from "@/lib/analytics/candidateRanking";
+import { runPythonStrategyBatch } from "@/lib/pythonStrategyMath";
+import type { SwingSignal, TradeLevels } from "@/lib/analytics/swingClassifier";
 import { latestSignalSessionDate, previousTradingDay, refreshMarketHolidays } from "@/lib/market-calendar.mjs";
 import type { OHLCV } from "@/lib/types";
 
@@ -207,24 +204,20 @@ export async function computeSignals(databaseUrl: string): Promise<ScanSummary> 
         group by x.asset_id, a.country, a.asset_class`,
       [assets.map((a) => a.id)],
     );
-    const rsByPeerGroup = new Map<string, Map<string, RsCloses>>();
-    const momentumByPeerGroup = new Map<string, Map<string, MomentumCloses>>();
+    const crossSectionByPeerGroup = new Map<string, Array<{ id: string; closes: Record<string, number | null> }>>();
     const toNum = (v: string | null) => (v === null ? null : Number(v));
     for (const r of rsRows) {
-      let byAsset = rsByPeerGroup.get(r.peer_group);
-      if (!byAsset) { byAsset = new Map(); rsByPeerGroup.set(r.peer_group, byAsset); }
-      byAsset.set(r.asset_id, { c0: Number(r.c0), c63: toNum(r.c63), c126: toNum(r.c126), c189: toNum(r.c189), c252: toNum(r.c252) });
-      let momentum = momentumByPeerGroup.get(r.peer_group);
-      if (!momentum) { momentum = new Map(); momentumByPeerGroup.set(r.peer_group, momentum); }
-      momentum.set(r.asset_id, { c0: Number(r.c0), c21: toNum(r.c21), c63: toNum(r.c63), c126: toNum(r.c126) });
+      const group = crossSectionByPeerGroup.get(r.peer_group) ?? [];
+      group.push({ id: r.asset_id, closes: { c0: Number(r.c0), c21: toNum(r.c21), c63: toNum(r.c63), c126: toNum(r.c126), c189: toNum(r.c189), c252: toNum(r.c252) } });
+      crossSectionByPeerGroup.set(r.peer_group, group);
     }
     const rsRating = new Map<string, number>();
-    for (const byAsset of rsByPeerGroup.values()) {
-      for (const [id, rating] of relativeStrengthRatings(byAsset)) rsRating.set(id, rating);
-    }
     const momentumPercentile = new Map<string, number>();
-    for (const byAsset of momentumByPeerGroup.values()) {
-      for (const [id, pct] of momentumLeaderPercentiles(byAsset)) momentumPercentile.set(id, pct);
+    const crossSectionInputs = [...crossSectionByPeerGroup.values()].map((items) => ({ items }));
+    const crossSectionResults = await runPythonStrategyBatch<typeof crossSectionInputs[number], { rsRatings: Record<string, number>; momentumPercentiles: Record<string, number> }>("swing_cross_section", crossSectionInputs);
+    for (const result of crossSectionResults) {
+      for (const [id, rating] of Object.entries(result.rsRatings)) rsRating.set(id, rating);
+      for (const [id, percentile] of Object.entries(result.momentumPercentiles)) momentumPercentile.set(id, percentile);
     }
 
     let scanned = 0;
@@ -276,28 +269,29 @@ export async function computeSignals(databaseUrl: string): Promise<ScanSummary> 
           });
         }
 
-        const out: unknown[][] = [];
-        for (const [assetId, series] of bars) {
+        const work = [...bars].flatMap(([assetId, series]) => {
           const meta = metaById.get(assetId);
-          if (!meta) continue;
+          if (!meta || series.length < 21) return [];
+          return [{ assetId, meta, input: {
+            bars: series, rsRating: rsRating.get(assetId) ?? null,
+            momentumPercentile: momentumPercentile.get(assetId) ?? null,
+            minTradedValue: meta.country === "IN" ? 10_000_000 : meta.country === "US" ? 1_000_000 : null,
+            tick: meta.country === "IN" ? 0.05 : 0.01,
+            risk: { stopAtrMult: 1.5, targetRR: 2, trailAtrMult: 3 },
+          } }];
+        });
+        const calculated = await runPythonStrategyBatch<(typeof work)[number]["input"], {
+          signal: SwingSignal; levels: TradeLevels;
+          legendary: { tags: string[]; scores: Record<string, unknown> };
+          tieBreak: { breakoutClearanceAtr: number; rankScore: number };
+        }>("swing_scan", work.map((item) => item.input));
+        const out: unknown[][] = [];
+        for (let workIndex = 0; workIndex < work.length; workIndex++) {
+          const { assetId, meta } = work[workIndex];
+          const { signal: s, levels: lv, legendary, tieBreak } = calculated[workIndex];
           try {
-            const s = classifySwingSetup(series);
             if (s.verdict !== "NO_SETUP") setups++;
-            const dir = s.bias === "SHORT" ? "SHORT" : "LONG";
-            const lv = deriveLevels(s.setup, dir);
             const rating = rsRating.get(assetId) ?? null;
-            const tieBreak = swingTieBreakScore({
-              isBreakout: s.isBreakout, close: s.close, donchianHigh: s.donchianHigh,
-              upperBand: s.bollinger.upper, atr: s.setup.atr,
-              volumeExpansion: s.volumeExpansion, rsRating: rating,
-            });
-            const legendary = evaluateLegendary(series, {
-              rsRating: rating,
-              momentumPercentile: momentumPercentile.get(assetId) ?? null,
-              // The floors Strong Swing uses: ₹1 crore / $1M of average daily traded value.
-              minTradedValue: meta.country === "IN" ? 10_000_000 : meta.country === "US" ? 1_000_000 : null,
-              tick: meta.country === "IN" ? 0.05 : 0.01,
-            });
             out.push([
               meta.id, meta.ticker, meta.country, meta.exchange, meta.asset_class,
               s.verdict, s.score, s.close, s.bollinger.bandwidth * 100,
@@ -314,7 +308,7 @@ export async function computeSignals(databaseUrl: string): Promise<ScanSummary> 
               scannedByMarket.set(meta.country, (scannedByMarket.get(meta.country) ?? 0) + 1);
             }
           } catch {
-            // too few bars — skip
+            // A malformed per-asset result is skipped without retiring a whole market.
           }
         }
 

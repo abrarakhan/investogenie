@@ -1,11 +1,12 @@
 import { query } from "@/lib/db";
-import { scoreNewsSwing, type NewsDirection, type NewsScope } from "@/lib/analytics/newsSwing";
-import { assessTradeRisk, type TradeRiskAssessment, type TradeRiskState } from "@/lib/analytics/tradeRisk";
-import { reviseSwingTradePlan, type TradePlanRevision } from "@/lib/analytics/tradePlanRevision";
+import { type NewsDirection, type NewsScope } from "@/lib/analytics/newsSwing";
+import { type TradeRiskAssessment, type TradeRiskState } from "@/lib/analytics/tradeRisk";
+import { type TradePlanRevision } from "@/lib/analytics/tradePlanRevision";
 import { isMarketOpenNow, isTradingDay, refreshMarketHolidays, zonedMarketClock } from "@/lib/market-calendar.mjs";
+import { runLedgerFollowUpBatch, runLedgerGttBatch, runLedgerOverlayBatch, runLedgerProgressBatch } from "@/lib/swingTradeLedgerPython";
 import { calculateRecoveryTargets } from "@/lib/tradeRecoveryTargets";
 import { STRONG_SWING_TRAILING_POLICY_VERSION } from "@/lib/analytics/strongSwing";
-import { strategyFollowUp, type StrategyFollowUp } from "@/lib/analytics/legendaryStrategies";
+import { type StrategyFollowUp } from "@/lib/analytics/legendaryStrategies";
 import type { OHLCV } from "@/lib/types";
 
 export type SwingTradeState =
@@ -30,6 +31,7 @@ export interface SwingTradeProgressInput {
   exitPrice?: number | null;
   asOf?: string;
   market?: "IN" | "US";
+  direction?: "LONG" | "SHORT";
 }
 
 export interface SwingTradeProgress {
@@ -303,6 +305,7 @@ export interface SwingLedgerTrade {
   exchange: string | null;
   market: "IN" | "US";
   status: "OPEN" | "CLOSED";
+  direction: "LONG" | "SHORT";
   boughtOn: string;
   buyPrice: number;
   purchaseValue: number;
@@ -473,7 +476,7 @@ export const ledgerDateText = (value: LedgerValue) => {
 const dateText = ledgerDateText;
 const nullableNumber = (value: LedgerValue) => value === null ? null : Number(value);
 
-function parseExits(value: LedgerValue, unitCost: number): SwingTradeExit[] {
+function parseExits(value: LedgerValue, unitCost: number, direction: "LONG" | "SHORT"): SwingTradeExit[] {
   if (!Array.isArray(value)) return [];
   return value.flatMap((item) => {
     if (!item || typeof item !== "object") return [];
@@ -484,7 +487,8 @@ function parseExits(value: LedgerValue, unitCost: number): SwingTradeExit[] {
     const saleValue = record.saleValue === null || record.saleValue === undefined
       ? exitPrice * quantity : Number(record.saleValue);
     const realizedPnlValue = record.realizedPnl === null || record.realizedPnl === undefined
-      ? saleValue - (unitCost * quantity) : Number(record.realizedPnl);
+      ? direction === "SHORT" ? (unitCost * quantity) - saleValue : saleValue - (unitCost * quantity)
+      : Number(record.realizedPnl);
     return [{
       id: String(record.id),
       soldOn: dateText(record.soldOn) ?? "",
@@ -629,8 +633,7 @@ export async function getSwingTradeLedger(userId: string, market: "IN" | "US"): 
     return [{
       tradeId: String(row.id), assetId: String(row.asset_id), market, cutoffDate,
       currentPrice, atr,
-      move1dPct: priorClose && priorClose > 0 ? ((currentPrice / priorClose) - 1) * 100 : null,
-      move2dPct: twoSessionClose && twoSessionClose > 0 ? ((currentPrice / twoSessionClose) - 1) * 100 : null,
+      priorClose, twoSessionClose, direction: ledgerTradeDirection(row),
       horizon: Math.max(2, Number(row.expected_holding_days)),
     }];
   }));
@@ -660,65 +663,86 @@ export async function getSwingTradeLedger(userId: string, market: "IN" | "US"): 
       followUpBars.set(bar.asset_id, list);
     }
   }
+  type PythonFollowUp = StrategyFollowUp & { effectiveTarget: number };
+  const followUpWork = followUpRows.map((row) => ({
+    id: String(row.id), input: { strategyKey: String(row.strategy_key),
+      bars: followUpBars.get(String(row.asset_id)) ?? [], boughtOn: ledgerDateText(row.bought_on) ?? "",
+      tick: market === "IN" ? 0.05 : 0.01, direction: ledgerTradeDirection(row),
+      buyPrice: Number(row.buy_price), frozenTarget: Number(row.projected_target) },
+  }));
+  const followUpResults = await runLedgerFollowUpBatch<PythonFollowUp>(followUpWork.map((item) => item.input));
+  const followUpByTrade = new Map(followUpWork.map((item, index) => [item.id, followUpResults[index]]));
 
-  return rows.map((row) => {
+  // Three phases so the arithmetic can live in Python without spawning a process per trade:
+  //   1. derive the per-row intermediates the GTT stop needs, and batch it;
+  //   2. build each trade using that stop, collecting the progress inputs;
+  //   3. batch progress and finish the rows.
+  // The middle phase cannot be merged into the first: progress depends on fields of the trade
+  // object (target, remaining quantity, expected holding days) that only exist once it is built.
+  const derived = rows.map((row) => {
     const boughtOn = dateText(row.bought_on) ?? "";
     const status = String(row.status) as "OPEN" | "CLOSED";
     const buyPrice = Number(row.buy_price);
     const purchaseValue = Number(row.purchase_value ?? buyPrice * Number(row.quantity));
     const quantity = Number(row.quantity);
-    const exits = parseExits(row.exits, quantity > 0 ? purchaseValue / quantity : buyPrice);
+    const direction = ledgerTradeDirection(row);
+    const exits = parseExits(row.exits, quantity > 0 ? purchaseValue / quantity : buyPrice, direction);
     const soldQuantity = Math.min(quantity, Math.max(0, Number(row.sold_quantity ?? 0)));
     const remainingQuantity = status === "CLOSED" ? 0 : Math.max(0, quantity - soldQuantity);
     const legacyExitPrice = nullableNumber(row.exit_price);
     const realizedPnlValue = soldQuantity > 0
       ? exits.reduce((sum, exit) => sum + exit.realizedPnlValue, 0)
       : status === "CLOSED" && legacyExitPrice !== null
-        ? (legacyExitPrice * quantity) - purchaseValue
+        ? direction === "SHORT" ? purchaseValue - (legacyExitPrice * quantity) : (legacyExitPrice * quantity) - purchaseValue
         : 0;
     const quoteUpdatedAt = row.quote_updated_at ? new Date(row.quote_updated_at as Date | string).getTime() : 0;
     const quoteFresh = status === "CLOSED" || !marketOpen || quoteUpdatedAt >= Date.now() - 7 * 60 * 1000;
     const currentPrice = quoteFresh ? nullableNumber(row.current_price) : null;
     const postEntryNextBarPolicy = usesPostEntryNextBarTrail(ledgerDateText(row.bought_on), usesStrongSwingPostEntryTrail(row));
-    const direction = ledgerTradeDirection(row);
-    const followUp = String(row.status) === "OPEN" && usesStrategyFollowUp(String(row.strategy_key), ledgerDateText(row.bought_on))
-      ? strategyFollowUp(String(row.strategy_key), followUpBars.get(String(row.asset_id)) ?? [], ledgerDateText(row.bought_on) ?? "", market === "IN" ? 0.05 : 0.01, direction)
-      : null;
-    const gttProtection = calculateRecommendedGttStop({
-      buyPrice,
-      projectedStop: Number(row.projected_stop),
-      // Strategy EMA/SMA lines are close-confirmed exits, not intraday broker stops. The
-      // frozen catastrophic/ATR protection remains the live GTT until a completed close exits.
-      projectedTrailingStop: nullableNumber(row.projected_trailing_stop),
-      trailingDistance: nullableNumber(row.trailing_distance),
-      highestHigh: nullableNumber(row.highest_high),
-      currentPrice,
-      postEntryCompletedHigh: nullableNumber(row.post_entry_completed_high),
-      postEntryNextBarPolicy,
-      direction,
-    });
+    const followUp = String(row.status) === "OPEN" ? followUpByTrade.get(String(row.id)) ?? null : null;
+    return {
+      row, boughtOn, status, buyPrice, purchaseValue, quantity, exits, soldQuantity,
+      remainingQuantity, legacyExitPrice, realizedPnlValue, currentPrice,
+      postEntryNextBarPolicy, direction, followUp,
+      gttInput: {
+        buyPrice,
+        projectedStop: Number(row.projected_stop),
+        // Strategy EMA/SMA lines are close-confirmed exits, not intraday broker stops. The
+        // frozen catastrophic/ATR protection remains the live GTT until a completed close exits.
+        projectedTrailingStop: nullableNumber(row.projected_trailing_stop),
+        trailingDistance: nullableNumber(row.trailing_distance),
+        highestHigh: nullableNumber(row.highest_high),
+        currentPrice,
+        postEntryCompletedHigh: nullableNumber(row.post_entry_completed_high),
+        postEntryNextBarPolicy,
+        direction,
+        recordedGttStop: nullableNumber(row.current_gtt_stop) ?? Number(row.projected_stop),
+        status,
+      },
+    };
+  });
+
+  const gttBatch = await runLedgerGttBatch(derived.map((item) => item.gttInput));
+
+  const staged = derived.map((item, derivedIndex) => {
+    const {
+      row, boughtOn, status, buyPrice, purchaseValue, quantity, exits, soldQuantity,
+      remainingQuantity, legacyExitPrice, realizedPnlValue, currentPrice,
+      direction, followUp,
+    } = item;
+    const gttProtection = gttBatch[derivedIndex];
     const recommendedGttStop = gttProtection.recommendedStop;
     const recordedGttStop = nullableNumber(row.current_gtt_stop) ?? Number(row.projected_stop);
-    const effectiveTrailingStop = direction === "LONG"
-      ? Math.max(recommendedGttStop, recordedGttStop)
-      : Math.min(recommendedGttStop, recordedGttStop);
+    const effectiveTrailingStop = gttProtection.effectiveTrailingStop;
     const breakEvenActivated = gttProtection.breakEvenActivated;
-    const gttUpdateRequired = status === "OPEN" && (direction === "LONG"
-      ? recommendedGttStop > recordedGttStop + 0.005
-      : recommendedGttStop < recordedGttStop - 0.005);
+    const gttUpdateRequired = gttProtection.gttUpdateRequired;
     const priorClose = nullableNumber(row.prior_close);
     const twoSessionClose = nullableNumber(row.two_session_close);
-    const stockMove1dPct = currentPrice !== null && priorClose !== null && priorClose > 0
-      ? ((currentPrice / priorClose) - 1) * 100
-      : null;
-    const stockMove2dPct = currentPrice !== null && twoSessionClose !== null && twoSessionClose > 0
-      ? ((currentPrice / twoSessionClose) - 1) * 100
-      : null;
     const trade = {
       id: String(row.id), assetId: String(row.asset_id), ticker: String(row.ticker),
       assetName: row.asset_name === null ? null : String(row.asset_name),
       exchange: row.exchange === null ? null : String(row.exchange), market,
-      status, boughtOn, buyPrice, purchaseValue, quantity, soldQuantity, remainingQuantity, realizedPnlValue, exits,
+      status, direction, boughtOn, buyPrice, purchaseValue, quantity, soldQuantity, remainingQuantity, realizedPnlValue, exits,
       currency: String(row.currency), strategyKey: String(row.strategy_key),
       strategyLabel: String(row.strategy_label),
       signalVerdict: row.signal_verdict === null ? null : String(row.signal_verdict),
@@ -748,55 +772,57 @@ export async function getSwingTradeLedger(userId: string, market: "IN" | "US"): 
       notes: row.notes === null ? null : String(row.notes),
     };
     const scaleOutFraction = ledgerScaleOutFraction(row);
-    trade.scaleOutTarget = scaleOutFraction > 0 ? strategyFollowUpTarget(direction, buyPrice, trade.projectedTarget, followUp?.target ?? null) : null;
+    const effectiveTarget = (followUp as PythonFollowUp | null)?.effectiveTarget ?? trade.projectedTarget;
+    trade.scaleOutTarget = scaleOutFraction > 0 ? effectiveTarget : null;
     trade.scaleOutPlannedQuantity = quantity * scaleOutFraction;
     trade.scaleOutRemainingQuantity = Math.max(0, trade.scaleOutPlannedQuantity - soldQuantity);
-    const progress = calculateSwingTradeProgress({
-      status, boughtOn, buyPrice: trade.buyPrice,
-      quantity: status === "OPEN" ? trade.remainingQuantity : trade.quantity,
-      // A reversion trade's objective is the mean as it stands now, never above the frozen target.
-      currentPrice, target: strategyFollowUpTarget(direction, buyPrice, trade.projectedTarget, followUp?.target ?? null),
-      stop: trade.projectedStop,
-      trailingStop: effectiveTrailingStop, expectedDays: trade.expectedHoldingDays,
-      exitPrice: trade.exitPrice, asOf: trade.closedOn ?? undefined,
-      market,
-    });
+    return {
+      row, trade, direction, buyPrice, quantity, status, followUp,
+      currentPrice, effectiveTrailingStop, priorClose, twoSessionClose,
+      soldQuantity, remainingQuantity,
+      progressInput: {
+        status, boughtOn, buyPrice: trade.buyPrice,
+        quantity: status === "OPEN" ? trade.remainingQuantity : trade.quantity,
+        // A reversion trade's objective is the mean as it stands now, never above the frozen target.
+        currentPrice, target: effectiveTarget,
+        stop: trade.projectedStop,
+        trailingStop: effectiveTrailingStop, expectedDays: trade.expectedHoldingDays,
+        exitPrice: trade.exitPrice, asOf: trade.closedOn ?? undefined,
+        market,
+        direction,
+      },
+    };
+  });
+
+  const progressBatch = await runLedgerProgressBatch(staged.map((item) => item.progressInput), market);
+  const overlayMeta = staged.map((item, stagedIndex) => {
+    const {
+      row, trade, buyPrice, status,
+      currentPrice, effectiveTrailingStop, priorClose, twoSessionClose,
+      soldQuantity, remainingQuantity,
+    } = item;
+    const progress = progressBatch[stagedIndex];
     const relevantImpacts = impacts.filter((impact) =>
       impact.scope === "MARKET"
       || (impact.scope === "ASSET" && impact.asset_id === trade.assetId),
     );
-    const newsScore = scoreNewsSwing(trade.signalScore ?? 50, relevantImpacts.map((impact) => ({
+    const impactInputs = relevantImpacts.map((impact) => ({
       direction: impact.direction as NewsDirection,
       sentimentScore: Number(impact.sentimentScore),
       confidence: Number(impact.confidence),
       severity: Number(impact.severity),
       publishedAt: new Date(impact.published_at).toISOString(),
-      scope: impact.scope as NewsScope,
-    })));
-    const assetImpacts = relevantImpacts.filter((impact) => impact.scope === "ASSET" && impact.asset_id === trade.assetId);
-    const assetNewsScore = scoreNewsSwing(trade.signalScore ?? 50, assetImpacts.map((impact) => ({
-      direction: impact.direction as NewsDirection,
-      sentimentScore: Number(impact.sentimentScore), confidence: Number(impact.confidence),
-      severity: Number(impact.severity), publishedAt: new Date(impact.published_at).toISOString(),
-      scope: "ASSET" as const,
-    })));
-    const distanceToStopPct = currentPrice && effectiveTrailingStop !== null
-      ? ((currentPrice / effectiveTrailingStop) - 1) * 100
-      : currentPrice ? ((currentPrice / trade.projectedStop) - 1) * 100 : null;
-    const assessment = assessTradeRisk({
-      tradeState: progress.state,
-      pnlPct: progress.pnlPct,
-      distanceToStopPct,
-      marketMove1dPct,
-      marketMove2dPct,
-      stockMove1dPct,
-      stockMove2dPct,
-      newsScore,
-      assetNewsScore,
-      assetNewsVerified: assetImpacts.some((impact) => impact.verified_evidence),
-      newsFresh,
-    });
-    const revisedPlan = reviseSwingTradePlan({
+      scope: impact.scope, verified: impact.verified_evidence,
+    }));
+    const stop = effectiveTrailingStop ?? trade.projectedStop;
+    const distanceToStopPct = currentPrice && stop > 0
+      ? item.direction === "SHORT" ? ((stop / currentPrice) - 1) * 100 : ((currentPrice / stop) - 1) * 100
+      : null;
+    return { item, progress, relevantImpacts, input: {
+      now: new Date().toISOString(), direction: item.direction,
+      tradeState: progress.state, pnlPct: progress.pnlPct, distanceToStopPct,
+      marketMove1dPct, marketMove2dPct, priorClose, twoSessionClose,
+      technicalScore: trade.signalScore ?? 50, impacts: impactInputs, newsFresh,
       status,
       currentPrice,
       buyPrice,
@@ -806,32 +832,35 @@ export async function getSwingTradeLedger(userId: string, market: "IN" | "US"): 
       atr: nullableNumber(row.current_atr) ?? nullableNumber(row.projected_atr),
       highestHighSinceEntry: nullableNumber(row.highest_high),
       lowestLowSinceEntry: nullableNumber(row.lowest_low),
-      stockMove1dPct,
-      stockMove2dPct,
       soldQuantity,
       remainingQuantity,
       holdingWindowExpired: progress.state === "WINDOW_EXPIRED",
-      externalExitRisk: assessment.recommendation === "EXIT"
-        && assessment.reasons.some((reason) => !reason.startsWith("The recorded strategy target has been reached")),
-      externalExitReasons: assessment.recommendation === "EXIT"
-        ? assessment.reasons.filter((reason) => !reason.startsWith("The recorded strategy target has been reached"))
-        : [],
       recoveryTarget: recoveryTargets.get(trade.id)?.recoveryTarget ?? null,
       historicalTarget: recoveryTargets.get(trade.id)?.historicalTarget ?? null,
       historicalSampleSize: recoveryTargets.get(trade.id)?.sampleSize ?? 0,
       historicalHorizon: recoveryTargets.get(trade.id)?.horizon ?? 0,
-    });
+    } };
+  });
+  const overlayResults = await runLedgerOverlayBatch<{
+    risk: TradeRiskAssessment; revision: TradePlanRevision; newsAdjustment: number;
+    stockMove1dPct: number | null; stockMove2dPct: number | null;
+  }>(overlayMeta.map((entry) => entry.input));
+
+  return overlayMeta.map(({ item, progress, relevantImpacts }, index) => {
+    const { trade } = item;
+    const calculated = overlayResults[index];
+    const assetImpacts = relevantImpacts.filter((impact) => impact.scope === "ASSET" && impact.asset_id === trade.assetId);
     return {
       ...trade,
       progress,
-      revisedPlan,
+      revisedPlan: calculated.revision,
       risk: {
-        ...assessment,
-        newsAdjustment: newsScore.newsAdjustment,
+        ...calculated.risk,
+        newsAdjustment: calculated.newsAdjustment,
         marketMove1dPct,
         marketMove2dPct,
-        stockMove1dPct,
-        stockMove2dPct,
+        stockMove1dPct: calculated.stockMove1dPct,
+        stockMove2dPct: calculated.stockMove2dPct,
         newsAsOf,
         evidence: [...assetImpacts, ...relevantImpacts.filter((impact) => impact.scope !== "ASSET")].slice(0, 3).map((impact) => ({
           title: impact.title,

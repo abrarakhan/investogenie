@@ -1,12 +1,11 @@
 import { query } from "@/lib/db";
 import {
   ARMED_SWING_RULES,
-  assessArmedSwing,
-  rankArmedSwingCandidates,
-  resultsCalendarCoverage,
   type ArmedSwingAssessment,
+  type ArmedSwingInput,
   type SessionVolumeCurve,
 } from "@/lib/analytics/armedSwing";
+import { runPythonStrategyBatch } from "@/lib/pythonStrategyMath";
 import {
   isMarketOpenNow,
   latestSignalSessionDate,
@@ -19,7 +18,12 @@ import type { SwingSettings } from "@/lib/settings";
 import type { OHLCV } from "@/lib/types";
 import { chosenBenchmarkSql } from "@/lib/benchmarkSql";
 
+/** What the Python engine returns: the assessment plus the rank it assigned to the batch. */
+type PythonArmedAssessment = ArmedSwingAssessment & { pythonRank: number };
+
 export interface ArmedSwingCandidate extends ArmedSwingAssessment {
+  /** Ordering decided by the Python engine; TypeScript only sorts by it. */
+  pythonRank?: number;
   assetId: string;
   ticker: string;
   name: string | null;
@@ -240,6 +244,7 @@ export async function getArmedSwingCandidates(
   }
 
   const assessed: Omit<ArmedSwingCandidate, "rank">[] = [];
+  const work: { meta: { assetId: string; ticker: string; name: string | null; exchange: string; currentPrice: number }; input: ArmedSwingInput & { ticker: string } }[] = [];
   let resultsVerifiedCount = 0;
   const requiredCoverageFrom = tradingDayOffset(market, sessionDate, 1);
   const requiredCoverageThrough = tradingDayOffset(market, sessionDate, 3);
@@ -253,8 +258,8 @@ export async function getArmedSwingCandidates(
     const authoritative = market !== "IN" || row.quote_source === "BREEZE_LIVE";
     const nullable = (value: string | number | null) => value === null ? null : Number(value);
     const calendar = resultsByAsset.get(row.asset_id);
-    const coverage = calendar
-      ? resultsCalendarCoverage({
+    const resultsEvidence = calendar
+      ? {
         today: sessionDate,
         lastSuccessAt: calendar.last_success_at,
         nextDate: calendar.next_date,
@@ -265,10 +270,14 @@ export async function getArmedSwingCandidates(
         authoritativeCoverageThrough: calendar.authoritative_coverage_through,
         requiredCoverageFrom,
         requiredCoverageThrough,
-      })
+        blackoutSessionDates: Array.from({ length: ARMED_SWING_RULES.resultsBlackoutSessions }, (_, offset) =>
+          tradingDayOffset(market, sessionDate, offset + 1)).filter((date): date is string => date !== null),
+      }
       : null;
-    if (coverage?.verified) resultsVerifiedCount++;
-    const assessment = assessArmedSwing({
+    work.push({
+      meta: { assetId: row.asset_id, ticker: row.ticker, name: row.name, exchange: row.exchange, currentPrice },
+      input: {
+      ticker: row.ticker,
       market,
       bars,
       benchmarkBars,
@@ -288,26 +297,41 @@ export async function getArmedSwingCandidates(
         lowerCircuit: authoritative ? nullable(row.lower_circuit) : null,
         upperCircuit: authoritative ? nullable(row.upper_circuit) : null,
       },
-      results: coverage ? {
-        verified: coverage.verified,
-        detail: coverage.detail,
-        nextDate: calendar?.next_date ?? null,
-        sessionsToNext: calendar?.next_date ? tradingSessionLag(market, sessionDate, calendar.next_date) : null,
-      } : null,
+      results: null,
+      resultsEvidence,
       risk: { targetRR: settings.targetRR, trailAtrMult: settings.trailAtrMult },
-    });
-    assessed.push({
-      ...assessment,
-      assetId: row.asset_id,
-      ticker: row.ticker,
-      name: row.name,
-      exchange: row.exchange,
-      country: market,
-      currentPrice,
+      },
     });
   }
 
-  const candidates = rankArmedSwingCandidates(assessed).map((candidate, index) => ({ ...candidate, rank: index + 1 }));
+  // One batch to the Python engine, which owns the arithmetic AND the ordering. TypeScript
+  // gathers the inputs and persists the plan; it must not recompute a status, score, gate,
+  // trade level or rank here, or the two implementations can drift apart silently.
+  const pythonResults = work.length
+    ? await runPythonStrategyBatch<(typeof work)[number]["input"], PythonArmedAssessment>(
+      "armed_swing",
+      work.map((item) => item.input),
+    )
+    : [];
+
+  for (let index = 0; index < work.length; index++) {
+    const { meta } = work[index];
+    const assessment = pythonResults[index];
+    if (assessment.resultsCalendarVerified) resultsVerifiedCount++;
+    assessed.push({
+      ...assessment,
+      assetId: meta.assetId,
+      ticker: meta.ticker,
+      name: meta.name,
+      exchange: meta.exchange,
+      country: market,
+      currentPrice: meta.currentPrice,
+    });
+  }
+
+  const candidates = [...assessed]
+    .sort((left, right) => (left.pythonRank ?? Number.MAX_SAFE_INTEGER) - (right.pythonRank ?? Number.MAX_SAFE_INTEGER))
+    .map((candidate, index) => ({ ...candidate, rank: index + 1 }));
   return {
     candidates,
     universeCount: Number(countRows[0]?.count ?? 0),
