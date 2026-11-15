@@ -65,7 +65,7 @@ Authenticated web pages also provide opt-in browser notifications for candidate-
 
 Ledger push text is generic. Ready-candidate push text includes ticker, readiness state and engine; Expo receives that text and the push token. Prices, quantities and broker details are excluded. See [privacy](mobile/PRIVACY.md).
 
-Local Prebuild/Gradle/Xcode is the documented distribution path. Existing package scripts still invoke EAS Build, and release validation reads EAS profile configuration; local builds require an explicitly supplied API URL. The source cannot establish which binary is installed.
+Local Prebuild/Gradle/Xcode is the documented distribution path. Release validation requires an explicitly supplied HTTPS API URL and aligned app/package/build metadata. Generated Android and iOS projects compile locally; signing and physical-device installation are still required to establish the behavior of a distributed binary.
 
 ## ML and operational limits
 

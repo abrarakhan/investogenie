@@ -81,7 +81,7 @@ The scheduler wrapper is used by both `npm run dev` and `npm start`. Bare Next.j
 
 The digest scheduler uses one global target time, default 07:00 IST, with catch-up and bounded retries. Although per-user `send_time` and `last_sent_at` are stored, the sender selects all enabled users without enforcing those fields. Retrying a partial batch can resend to users who already received it.
 
-Mobile candidate pushes disclose ticker/readiness/engine to Expo, while ledger alerts remain generic. The documented local build path coexists with EAS Build scripts/configuration. App metadata is 0.1.1, Android version code 2, iOS build 2; package version remains 0.1.0.
+Mobile candidate pushes disclose ticker/readiness/engine to Expo, while ledger alerts remain generic. The documented release path is local Expo Prebuild followed by Gradle/Xcode. App and package metadata are aligned at 0.1.1, Android version code 2 and iOS build 2. On 15 November 2026, a generated Android debug APK and an unsigned iOS simulator app both compiled successfully; signed physical-device installation remains a separate release gate.
 
 ## Verification available in the repository
 
@@ -110,7 +110,7 @@ The Linux release runs production dependency audit, build and schema verificatio
 - Inspect Data Health, quote/depth freshness, calendar coverage and provider failures.
 - Review unresolved CAS/fund mappings and Gmail documents needing manual review.
 - Confirm daily Breeze session validity and separately authorized buying limits.
-- Validate a newly generated mobile binary on physical devices; source metadata is not install evidence.
+- Sign and install newly generated Android and iOS release binaries on physical devices, then exercise login, biometrics, notifications, deep links, market screens and ledger mutations. Native debug/simulator compilation passes, but is not device evidence.
 - Implement and validate ML training, calibration, serving and monitoring before treating the design contract as an active model.
 - Migration 0079 provides one durable email-digest claim per user and India market date and durable UUID idempotency for mobile ledger mutations. Production behavior remains pending until the migration is deployed and exercised end to end.
 

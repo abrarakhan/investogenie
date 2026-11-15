@@ -47,7 +47,8 @@ Both build scripts run it first, then regenerate the native project with `expo p
 the generated `ios/` and `android/` folders are not committed.
 
 - Android: `npm run build:android:release` builds a release APK with Gradle
-  (`android/app/build/outputs/apk/release/`). Sign it with your release keystore.
+  (`android/app/build/outputs/apk/release/`). It detects the standard macOS Android SDK location or
+  uses `ANDROID_HOME`/`ANDROID_SDK_ROOT`. Sign the result with your release keystore.
 - iOS: `npm run build:ios:release` builds the Release configuration with Xcode. It needs full Xcode
   (not only the Command Line Tools) selected with `xcode-select`, CocoaPods, and an Apple signing team
   set in Xcode for a device build.
@@ -89,16 +90,15 @@ npx expo prebuild
 Then build/sign using the generated native project and platform tools. Prebuild changes native
 files; review generated configuration and test the resulting binary against the intended server.
 
-Two existing package scripts (`build:android:preview`, `build:production`) still invoke EAS Build.
-Use them only when cloud building is intentionally chosen. `eas.json` remains committed, and
-`validate:release` checks HTTPS URLs in its preview/production profiles, bundle identifiers and
-the notification plugin. It does not validate the environment embedded by a separate local build.
+`eas.json` remains committed for an intentionally chosen cloud-build path, but the documented and
+scripted release path is local. `validate:release` verifies the local HTTPS API URL, matching app
+and package versions, bundle identifiers, build numbers and the notification plugin.
 
 The app has an EAS project ID for Expo push registration. Local building does not remove Expo
 push-relay dependence. No Expo Updates package is declared.
 
-`app.json` declares version 0.1.1, Android versionCode 2 and iOS buildNumber 2;
-`package.json` remains 0.1.0. These are source metadata, not evidence of a built or installed app.
+`app.json` and `package.json` declare version 0.1.1, Android versionCode 2 and iOS buildNumber 2.
+These are source metadata, not evidence of a built or installed app.
 
 ## Server API
 
