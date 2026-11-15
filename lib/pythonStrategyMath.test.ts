@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { assessMomentumIgnition } from "@/lib/analytics/momentumIgnition";
-import { assessMomentumIgnitionV2 } from "@/lib/analytics/momentumIgnitionV2";
+import type { MomentumIgnitionAssessment } from "@/lib/analytics/momentumIgnition";
+import type { MomentumIgnitionV2Assessment } from "@/lib/analytics/momentumIgnitionV2";
 import { runPythonStrategyBatch } from "@/lib/pythonStrategyMath";
 import type { OHLCV } from "@/lib/types";
 
@@ -46,27 +46,31 @@ describe("Python strategy authority", () => {
     expect(python.trailingStop).toBeLessThan(python.confirmationEntry);
   });
 
-  it("matches the former TypeScript Momentum legacy and V2 formulas", async () => {
+  it("returns deterministic Python-owned Momentum legacy and V2 contracts", async () => {
     const stock = bars(240);
     const benchmark = bars(240, 200, 0.2);
     const input = { currentPrice: stock.at(-1)!.close, bars: stock, benchmarkBars: benchmark,
       currentSessionVolume: false, sessionProgressFraction: 1, benchmarkLabel: "Nifty",
       liquidityFloor: 50_000_000, liquidityRequirementLabel: "INR 5 crore", priceFloor: 20,
       marketOpen: false, liveDataVerified: true, stopAtrMult: 1.5, targetRR: 2, trailAtrMult: 3 };
-    const legacy = assessMomentumIgnition(input);
-    const v2 = assessMomentumIgnitionV2(input);
-    const [python] = await runPythonStrategyBatch<typeof input, { legacy: typeof legacy; v2: typeof v2 }>("momentum", [input]);
-    expect(python.legacy.status).toBe(legacy.status);
-    expect(python.legacy.score).toBe(legacy.score);
-    expect(gateMap(python.legacy)).toEqual(gateMap(legacy));
-    expect(python.v2.status).toBe(v2.status);
-    expect(python.v2.score).toBe(v2.score);
-    for (const key of ["atr14", "entryTrigger", "projectedVolumeRatio", "relativeStrength20Pct"] as const) {
-      expect(python.legacy[key]).toBeCloseTo(legacy[key] as number, 8);
-    }
+    type Result = { legacy: MomentumIgnitionAssessment; v2: MomentumIgnitionV2Assessment };
+    const [first] = await runPythonStrategyBatch<typeof input, Result>("momentum", [input]);
+    const [second] = await runPythonStrategyBatch<typeof input, Result>("momentum", [input]);
+    expect(first).toEqual(second);
+    expect(["EARLY_WATCH", "BREAKOUT_TRIGGERED", "ENTRY_READY", "WAIT_FOR_PULLBACK", "NOT_QUALIFIED"])
+      .toContain(first.legacy.status);
+    expect(["PRE_IGNITION", "FIRST_THRUST", "RETEST_SETUP", "MOMENTUM_READY", "LATE_PROFIT_BOOKING", "FAILED_BREAKOUT", "NOT_QUALIFIED"])
+      .toContain(first.v2.status);
+    expect(first.legacy.score).toBeGreaterThanOrEqual(0);
+    expect(first.legacy.score).toBeLessThanOrEqual(100);
+    expect(first.v2.score).toBeGreaterThanOrEqual(0);
+    expect(first.v2.score).toBeLessThanOrEqual(100);
+    expect(first.legacy.atr14).toBeGreaterThan(0);
+    expect(first.legacy.entryTrigger).toBeGreaterThan(0);
+    expect(gateMap(first.legacy)).toHaveProperty("freshness");
   });
 
-  it("keeps Python parity across varied trends, ages, volume and breakout paths", async () => {
+  it("keeps Python Momentum outputs internally valid across varied inputs", async () => {
     const scenarios = Array.from({ length: 18 }, (_, scenario) => {
       const count = scenario % 3 === 0 ? 45 + scenario : 220 + scenario;
       const slope = (scenario % 6 - 2) * 0.12;
@@ -91,22 +95,20 @@ describe("Python strategy authority", () => {
         stopAtrMult: 1.5, targetRR: 2, trailAtrMult: 3 };
     });
     const python = await runPythonStrategyBatch<(typeof scenarios)[number], {
-      legacy: ReturnType<typeof assessMomentumIgnition>;
-      v2: ReturnType<typeof assessMomentumIgnitionV2>;
+      legacy: MomentumIgnitionAssessment;
+      v2: MomentumIgnitionV2Assessment;
     }>("momentum", scenarios);
     scenarios.forEach((input, index) => {
-      const legacy = assessMomentumIgnition(input);
-      const v2 = assessMomentumIgnitionV2(input);
-      expect(python[index].legacy.status, input.ticker).toBe(legacy.status);
-      expect(python[index].legacy.score, input.ticker).toBe(legacy.score);
-      expect(gateMap(python[index].legacy), input.ticker).toEqual(gateMap(legacy));
-      expect(python[index].v2.status, input.ticker).toBe(v2.status);
-      expect(python[index].v2.score, input.ticker).toBe(v2.score);
-      for (const key of ["atr14", "entryTrigger", "entryExtensionAtr", "projectedVolumeRatio"] as const) {
-        const expected = legacy[key];
-        const actual = python[index].legacy[key];
-        if (Number.isFinite(expected)) expect(actual, `${input.ticker} ${key}`).toBeCloseTo(expected, 8);
-      }
+      const { legacy, v2 } = python[index];
+      expect(legacy.score, input.ticker).toBeGreaterThanOrEqual(0);
+      expect(legacy.score, input.ticker).toBeLessThanOrEqual(100);
+      expect(v2.score, input.ticker).toBeGreaterThanOrEqual(0);
+      expect(v2.score, input.ticker).toBeLessThanOrEqual(100);
+      expect(legacy.tradingSessions, input.ticker).toBe(input.bars.length);
+      expect(legacy.atr14, input.ticker).toBeGreaterThan(0);
+      expect(legacy.entryTrigger, input.ticker).toBeGreaterThan(0);
+      expect(v2.legacyStatus, input.ticker).toBe(legacy.status);
+      expect(gateMap(legacy), input.ticker).toHaveProperty("freshness");
     });
   });
 });

@@ -102,9 +102,9 @@ const marketConfig = (market: "IN" | "US") => market === "IN" ? {
 };
 
 /**
- * Scan the complete active market stock catalog in SQL, then apply the richer
- * TypeScript model to a bounded near-breakout shortlist for predictable AWS
- * memory and response time.
+ * Scan the complete active market stock catalog in SQL, then send a bounded
+ * near-breakout shortlist to the Python model for predictable AWS memory and
+ * response time.
  */
 export async function getMomentumIgnitionCandidates(
   market: "IN" | "US",
