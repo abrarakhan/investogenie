@@ -14,7 +14,7 @@ import { LazyGroupsVersion } from "@/components/screener/LazyCandidateGroup";
 import MarketDataAutoRefresh from "@/components/app/MarketDataAutoRefresh";
 import { markLiveMarketTargets } from "@/lib/liveMarketTargets";
 import { zonedMarketClock } from "@/lib/market-calendar.mjs";
-import { getTrendContinuationStatusTotals } from "@/lib/trendContinuation";
+import { getTrendContinuationStatusTotals } from "@/features/trend-continuation/service";
 import { captureExecutionPlans, momentumExecutionPlanInputs, strongSwingExecutionPlanInputs, trendContinuationExecutionPlanInputs, type ExecutionPlanInput } from "@/lib/swingExecutionPlans";
 import ReadySignalHistory from "@/components/screener/ReadySignalHistory";
 import { getTodayReadySignalHistory } from "@/lib/candidateSignalHistory";

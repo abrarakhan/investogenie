@@ -1,4 +1,4 @@
-import type { StrongSwingCandidate } from "@/lib/strongSwing";
+import type { StrongSwingCandidate } from "@/features/strong-swing/contracts";
 import type { ProbabilityForecast } from "@/lib/analytics/probability/types";
 
 export interface EmailDigestData {

@@ -1,5 +1,5 @@
 import { notFound, redirect } from "next/navigation";
-import { runScreener } from "@/lib/screener";
+import { runScreener } from "@/features/swing/service";
 import { getUserSwingSettings } from "@/lib/settings";
 import ScreenerTable from "@/components/screener/ScreenerTable";
 import AppShell from "@/components/app/AppShell";

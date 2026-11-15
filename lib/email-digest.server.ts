@@ -9,7 +9,7 @@ import { buildEmailHtml, type EmailDigestData } from "@/lib/email/digest-templat
 import { sendEmailWithConfig } from "@/lib/email/nodemailer-service";
 import { getProbabilitySummary } from "@/lib/probability-runtime";
 import { getUserSwingSettings } from "@/lib/settings";
-import { getStrongSwingCandidates } from "@/lib/strongSwing";
+import { getStrongSwingCandidates } from "@/features/strong-swing/service";
 import type { EmailPreferences } from "@/lib/email-actions";
 
 export async function claimEmailDigest(userId: string, marketDate: string): Promise<boolean> {

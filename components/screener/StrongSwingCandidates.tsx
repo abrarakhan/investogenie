@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import type { StrongSwingCandidate } from "@/lib/strongSwing";
+import type { StrongSwingCandidate } from "@/features/strong-swing/contracts";
 import type { StrongSwingStatus } from "@/lib/analytics/strongSwing";
 import { STRONG_SWING_BLOCKED_BUY_LABEL, STRONG_SWING_STATUS_LABEL } from "@/lib/candidateStatusCopy";
 import TradingViewChartModal, { useTradingViewChart, type ChartGestureProps, type ChartSymbol } from "@/components/charts/TradingViewChartModal";

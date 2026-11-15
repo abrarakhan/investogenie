@@ -1,5 +1,5 @@
 import { query } from "@/lib/db";
-import { runScreener, type ScreenRow } from "@/lib/screener";
+import { runScreener, type ScreenRow } from "@/features/swing/service";
 import { STRONG_SWING_MODEL_VERSION, type CompletedBarStrongSwingAssessment } from "@/lib/analytics/strongSwing";
 import { runPythonStrategyBatch } from "@/lib/pythonStrategyMath";
 import type { SwingSettings } from "@/lib/settings";

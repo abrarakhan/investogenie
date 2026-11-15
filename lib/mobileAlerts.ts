@@ -1,10 +1,10 @@
 import { query } from "@/lib/db";
 import { getMomentumLegacyCandidates, getMomentumV2Candidates } from "@/features/momentum/service";
 import { getUserSwingSettings } from "@/lib/settings";
-import { getStrongSwingCandidates } from "@/lib/strongSwing";
+import { getStrongSwingCandidates } from "@/features/strong-swing/service";
 import { getSwingTradeLedger, type SwingLedgerTrade } from "@/lib/swingTradeLedger";
 import { markLiveMarketTargets } from "@/lib/liveMarketTargets";
-import { getTrendContinuationCandidates } from "@/lib/trendContinuation";
+import { getTrendContinuationCandidates } from "@/features/trend-continuation/service";
 
 const getMomentumIgnitionCandidates = getMomentumV2Candidates;
 const getLegacyMomentumIgnitionCandidates = getMomentumLegacyCandidates;

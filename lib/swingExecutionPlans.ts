@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto";
 import { query, queryOne } from "@/lib/db";
 import { isMomentumExecutionReady, MOMENTUM_EXECUTION_MODEL_VERSION } from "@/lib/momentumExecution";
-import type { StrongSwingCandidate } from "@/lib/strongSwing";
+import type { StrongSwingCandidate } from "@/features/strong-swing/contracts";
 import { STRONG_SWING_MODEL_VERSION, STRONG_SWING_TRAILING_POLICY_VERSION } from "@/lib/analytics/strongSwing";
-import type { TrendContinuationCandidate } from "@/lib/trendContinuation";
+import type { TrendContinuationCandidate } from "@/features/trend-continuation/contracts";
 
 export type ProtectedSwingStrategy = "STRONG_SWING" | "MOMENTUM_IGNITION" | "TREND_CONTINUATION";
 export const EXECUTION_PLAN_MAX_AGE_MINUTES = 30;

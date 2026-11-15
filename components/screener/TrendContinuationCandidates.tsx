@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import type { TrendContinuationCandidate, TrendContinuationStatus } from "@/lib/trendContinuation";
+import type { TrendContinuationCandidate, TrendContinuationStatus } from "@/features/trend-continuation/contracts";
 import { TREND_CONTINUATION_STATUS_LABEL } from "@/lib/candidateStatusCopy";
 import TradingViewChartModal, { useTradingViewChart, type ChartGestureProps, type ChartSymbol } from "@/components/charts/TradingViewChartModal";
 import LazyCandidateGroup, { type LazySource } from "@/components/screener/LazyCandidateGroup";

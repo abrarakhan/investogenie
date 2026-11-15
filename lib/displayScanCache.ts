@@ -24,10 +24,10 @@ import "server-only";
  * callers copy before sorting).
  */
 import type { SwingSettings } from "@/lib/settings";
-import { getStrongSwingCandidates } from "@/lib/strongSwing";
+import { getStrongSwingCandidates } from "@/features/strong-swing/service";
 import { getMomentumLegacyCandidates, getMomentumV2Candidates } from "@/features/momentum/service";
-import { getTrendContinuationCandidates } from "@/lib/trendContinuation";
-import { getArmedSwingCandidates } from "@/lib/armedSwing";
+import { getTrendContinuationCandidates } from "@/features/trend-continuation/service";
+import { getArmedSwingCandidates } from "@/features/armed-swing/service";
 import { getMarketOverview } from "@/lib/marketOverview";
 import type { MarketId } from "@/lib/types";
 

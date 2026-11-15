@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import type { ScreenRow, StrategyLevel } from "@/lib/screener";
+import type { ScreenRow, StrategyLevel } from "@/features/swing/contracts";
 import { STRATEGY_META, type StrategyKey } from "@/lib/analytics/legendaryStrategies";
 import { rankSwingCandidates, swingDisplayScore } from "@/lib/analytics/candidateRanking";
 import { swingBuildupLabel, swingVerdictLabel } from "@/lib/candidateStatusCopy";

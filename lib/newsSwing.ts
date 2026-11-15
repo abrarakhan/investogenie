@@ -1,5 +1,5 @@
 import { query, queryOne } from "@/lib/db";
-import type { StrongSwingCandidate } from "@/lib/strongSwing";
+import type { StrongSwingCandidate } from "@/features/strong-swing/contracts";
 import { displayStrongSwing } from "@/lib/displayScanCache";
 import { type NewsDirection, type NewsHorizon, type NewsScope, type NewsSwingScore } from "@/lib/analytics/newsSwing";
 import { runPythonStrategyBatch } from "@/lib/pythonStrategyMath";

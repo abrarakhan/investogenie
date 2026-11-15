@@ -1,5 +1,5 @@
 import { query, queryOne } from "@/lib/db";
-import { runScreener } from "@/lib/screener";
+import { runScreener } from "@/features/swing/service";
 import { DEFAULT_SETTINGS } from "@/lib/settings";
 import type { MarketId } from "@/lib/types";
 

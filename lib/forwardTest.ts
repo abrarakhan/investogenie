@@ -4,7 +4,7 @@
 // shows — a separate code path would be testing something the user never sees.
 
 import { query, tx } from "@/lib/db";
-import { runScreener } from "@/lib/screener";
+import { runScreener } from "@/features/swing/service";
 import { getProbabilitySummary } from "@/lib/probability-runtime";
 import { MARKET_COUNTRY } from "@/lib/markets";
 import { DEFAULT_SETTINGS } from "@/lib/settings";

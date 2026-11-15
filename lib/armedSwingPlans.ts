@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { query, queryOne } from "@/lib/db";
-import type { ArmedSwingCandidate } from "@/lib/armedSwing";
+import type { ArmedSwingCandidate } from "@/features/armed-swing/contracts";
 
 /** Exchange tick rounding tolerance around the trigger and limit. */
 const PRICE_TOLERANCE = 0.001;

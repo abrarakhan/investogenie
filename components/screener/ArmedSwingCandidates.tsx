@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import type { ArmedSwingCandidate, ArmedSwingResult } from "@/lib/armedSwing";
+import type { ArmedSwingCandidate, ArmedSwingResult } from "@/features/armed-swing/contracts";
 import type { ArmedSwingStatus } from "@/lib/analytics/armedSwing";
 import { ARMED_STATUS_LABEL as STATUS_LABEL, ARMED_WHEN_TO_ENTER as WHEN_TO_ENTER } from "@/lib/armedSwingCopy";
 import { createPendingBuyStop } from "@/app/terminal/[market]/trade-ledger/pendingOrderActions";

@@ -2,7 +2,7 @@ import { type NextRequest, NextResponse } from "next/server";
 import { checkCronAuth } from "@/lib/ingest/cronLog";
 import { query } from "@/lib/db";
 import { getUserSwingSettings } from "@/lib/settings";
-import { getStrongSwingCandidates } from "@/lib/strongSwing";
+import { getStrongSwingCandidates } from "@/features/strong-swing/service";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";

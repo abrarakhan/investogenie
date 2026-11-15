@@ -1,4 +1,4 @@
-import type { ArmedSwingCandidate } from "@/lib/armedSwing";
+import type { ArmedSwingCandidate } from "@/features/armed-swing/contracts";
 import { displayArmedSwing, displayLegacyMomentum, displayMomentumV2, displayStrongSwing, displayTrendContinuation } from "@/lib/displayScanCache";
 import { ARMED_STATUS_LABEL, ARMED_WHEN_TO_ENTER } from "@/lib/armedSwingCopy";
 import type { ArmedSwingStatus } from "@/lib/analytics/armedSwing";
@@ -11,7 +11,7 @@ import { STRATEGY_META, type StrategyKey } from "@/lib/analytics/legendaryStrate
 import { LONG_TERM_STRATEGY_META, type LongTermStrategyKey } from "@/lib/analytics/longTermStrategies";
 import { getLongTermCandidates } from "@/lib/long-term-actions";
 import { markLiveMarketTargets } from "@/lib/liveMarketTargets";
-import { runScreener, type ScreenRow } from "@/lib/screener";
+import { runScreener, type ScreenRow } from "@/features/swing/service";
 import { getScreenerResults, getSectors, getUniverses, type ScreenerStock } from "@/lib/screener/service";
 import type { Filter, SortSpec } from "@/lib/screener/filterEngine";
 import { PRESETS, PRESET_BY_KEY } from "@/lib/screener/presets";
@@ -20,12 +20,12 @@ import { getUserSwingSettings } from "@/lib/settings";
 import { zonedMarketClock } from "@/lib/market-calendar.mjs";
 import type { LegacyMomentumIgnitionCandidate, MomentumIgnitionCandidate } from "@/features/momentum/contracts";
 import { isMomentumExecutionReady } from "@/lib/momentumExecution";
-import type { StrongSwingCandidate } from "@/lib/strongSwing";
+import type { StrongSwingCandidate } from "@/features/strong-swing/contracts";
 import {
   captureExecutionPlans, executionPlanKey, momentumExecutionPlanInputs, strongSwingExecutionPlanInputs, trendContinuationExecutionPlanInputs,
   type ProtectedSwingStrategy,
 } from "@/lib/swingExecutionPlans";
-import type { TrendContinuationCandidate } from "@/lib/trendContinuation";
+import type { TrendContinuationCandidate } from "@/features/trend-continuation/contracts";
 
 /**
  * Server-driven mobile screens. Every value is computed and formatted here from the same
