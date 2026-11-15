@@ -3,6 +3,7 @@ import * as SecureStore from "expo-secure-store";
 const TOKEN_KEY = "investogenie.mobile.token";
 const configuredApiUrl = process.env.EXPO_PUBLIC_API_URL?.trim();
 const API_URL = (configuredApiUrl || "http://localhost:3000").replace(/\/$/, "");
+const responseCache = new Map<string, { etag: string; payload: unknown }>();
 
 export function apiConfigurationError(): string | null {
   if (!configuredApiUrl && !__DEV__) return "This build has no InvestoGenie server configured.";
@@ -124,17 +125,23 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const configurationError = apiConfigurationError();
   if (configurationError) throw new Error(configurationError);
   const token = await SecureStore.getItemAsync(TOKEN_KEY);
+  const method = (init.method ?? "GET").toUpperCase();
+  const cached = method === "GET" ? responseCache.get(path) : undefined;
   const response = await fetch(`${API_URL}${path}`, {
     ...init,
     headers: {
       Accept: "application/json",
       "Content-Type": "application/json",
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(cached ? { "If-None-Match": cached.etag } : {}),
       ...init.headers,
     },
   });
+  if (response.status === 304 && cached) return cached.payload as T;
   const payload = response.status === 204 ? null : await response.json().catch(() => null);
   if (!response.ok) throw new ApiError(response.status, payload?.error || `Request failed (${response.status})`);
+  const etag = response.headers.get("etag");
+  if (method === "GET" && etag) responseCache.set(path, { etag, payload });
   return payload as T;
 }
 
@@ -177,6 +184,7 @@ export async function login(email: string, password: string): Promise<MobileUser
     body: JSON.stringify({ email, password, deviceName: "InvestoGenie Android/iOS" }),
   });
   await SecureStore.setItemAsync(TOKEN_KEY, result.token);
+  responseCache.clear();
   return result.user;
 }
 
@@ -186,6 +194,7 @@ export async function logout(): Promise<void> {
     await request("/api/v1/mobile/auth/logout", { method: "DELETE" });
   } finally {
     await SecureStore.deleteItemAsync(TOKEN_KEY);
+    responseCache.clear();
   }
 }
 
@@ -285,13 +294,14 @@ export interface MobileScreen {
   options: ScreenOption[];
   searchable: boolean;
   cards: ScreenCard[];
+  pagination?: { nextCursor: string | null; total: number; pageSize: number };
 }
 
 export function getScreenCatalog() {
   return request<{ screens: ScreenCatalogEntry[] }>("/api/v1/mobile/screens");
 }
 
-export function getScreen(key: string, market: Market, params: Record<string, string> = {}) {
-  const query = new URLSearchParams({ ...params, market });
+export function getScreen(key: string, market: Market, params: Record<string, string> = {}, cursor?: string) {
+  const query = new URLSearchParams({ ...params, market, limit: "20", ...(cursor ? { cursor } : {}) });
   return request<MobileScreen>(`/api/v1/mobile/screens/${encodeURIComponent(key)}?${query.toString()}`);
 }

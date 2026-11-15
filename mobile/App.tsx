@@ -177,6 +177,7 @@ function CardScreen({ screenKey, title, market }: { screenKey: string; title: st
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<ScreenCard | null>(null);
   const [refreshing, setRefreshing] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState("");
   // Bumped to refetch; a response is applied only while its request is still the latest.
   const [reloads, setReloads] = useState(0);
@@ -188,6 +189,18 @@ function CardScreen({ screenKey, title, market }: { screenKey: string; title: st
     return () => { active = false; };
   }, [screenKey, market, params, title, reloads]);
   const load = useCallback(() => { setRefreshing(true); setError(""); setReloads((count) => count + 1); }, []);
+  const loadMore = useCallback(() => {
+    const cursor = screen?.pagination?.nextCursor;
+    if (!cursor || loadingMore) return;
+    setLoadingMore(true);
+    getScreen(screenKey, market, params, cursor)
+      .then((next) => setScreen((current) => current ? {
+        ...next,
+        cards: [...current.cards, ...next.cards.filter((card) => !current.cards.some((existing) => existing.id === card.id))],
+      } : next))
+      .catch((cause) => setError(message(cause, `Could not load more ${title}`)))
+      .finally(() => setLoadingMore(false));
+  }, [loadingMore, market, params, screen?.pagination?.nextCursor, screenKey, title]);
   useEffect(() => { const timer = setInterval(load, 300_000); return () => clearInterval(timer); }, [load]);
   if (selected) return <CardDetail card={selected} market={market} onBack={() => setSelected(null)} />;
   const setParam = (param: string, value: string) => { setRefreshing(true); setError(""); setParams((current) => ({ ...current, [param]: value })); };
@@ -200,7 +213,7 @@ function CardScreen({ screenKey, title, market }: { screenKey: string; title: st
     </ScrollView>)}
     {screen?.searchable && <View style={styles.searchRow}><TextInput style={styles.input} value={search} onChangeText={setSearch} onSubmitEditing={() => setParam("search", search.trim())} returnKeyType="search" placeholder="Search symbol or name" placeholderTextColor="#697078" autoCapitalize="characters" autoCorrect={false} /></View>}
     {!!error && <Banner text={error} />}
-    <FlatList data={screen?.cards ?? []} keyExtractor={(item) => item.id} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={load} tintColor="#34d399" />} contentContainerStyle={styles.list} ListEmptyComponent={!refreshing ? <Empty text="Nothing to show right now." /> : null} renderItem={({ item }) => <Pressable onPress={() => setSelected(item)} style={styles.card}>
+    <FlatList data={screen?.cards ?? []} keyExtractor={(item) => item.id} onEndReached={loadMore} onEndReachedThreshold={0.4} ListFooterComponent={loadingMore ? <ActivityIndicator color="#34d399" /> : null} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={load} tintColor="#34d399" />} contentContainerStyle={styles.list} ListEmptyComponent={!refreshing ? <Empty text="Nothing to show right now." /> : null} renderItem={({ item }) => <Pressable onPress={() => setSelected(item)} style={styles.card}>
       <View style={styles.rowBetween}><View style={styles.flex}><Text style={styles.ticker}>{item.title}</Text><Text numberOfLines={1} style={styles.meta}>{item.subtitle}</Text></View>{item.badge && <TonePill label={item.badge.label} tone={item.badge.tone} />}{item.score !== null && <View style={styles.score}><Text style={styles.scoreText}>{item.score}</Text></View>}</View>
       <View style={styles.metricRow}>{item.metrics.map((metric) => <Metric key={metric.label} label={metric.label} value={metric.value} positive={metric.tone === "positive"} negative={metric.tone === "negative"} />)}</View>
       {!!item.footer && <Text style={styles.cardFoot}>{item.footer}</Text>}
