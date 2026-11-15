@@ -1,6 +1,6 @@
-import { Fragment, useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, Suspense, lazy, useCallback, useEffect, useRef, useState } from "react";
 import {
-  ActivityIndicator, Alert, AppState, FlatList, Linking, Modal, Pressable, RefreshControl,
+  ActivityIndicator, Alert, AppState, FlatList, Modal, Pressable, RefreshControl,
   ScrollView, StyleSheet, Text, TextInput, View,
 } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
@@ -8,9 +8,9 @@ import { StatusBar } from "expo-status-bar";
 import * as Notifications from "expo-notifications";
 import Svg, { Line, Rect } from "react-native-svg";
 import {
-  apiConfigurationError, createMutationKey, createTrade, deleteTrade, getCandles, getLedger, getNewsSwing, getScreen, getScreenCatalog,
+  apiConfigurationError, createMutationKey, createTrade, deleteTrade, getCandles, getLedger, getScreen, getScreenCatalog,
   login, logout, recordSale, restoreSession, updateSale, updateTrade, type CandlePoint, type LedgerSummary, type LedgerTrade,
-  type Market, type MobileScreen, type MobileUser, type NewsSwingCandidate, type ScreenCard,
+  type Market, type MobileScreen, type MobileUser, type ScreenCard,
   type ScreenTone, type TradeAction,
 } from "./src/api";
 import { registerDeviceNotifications, unlockWithBiometrics } from "./src/deviceSecurity";
@@ -20,9 +20,10 @@ import { MOBILE_FEATURES, supportedMobileFeatures } from "./src/features/registr
 type Tab = string;
 /** Screens with dedicated views here; every other catalog entry renders as server-built cards. */
 const NATIVE_SCREENS: Record<string, (props: { market: Market }) => React.JSX.Element> = {
-  "news-swing": ({ market }) => <NewsSwing market={market} />,
+  "news-swing": ({ market }) => <Suspense fallback={<Centered><ActivityIndicator color="#34d399" /></Centered>}><LazyNewsSwing market={market} /></Suspense>,
   "trade-ledger": ({ market }) => <Ledger market={market} />,
 };
+const LazyNewsSwing = lazy(() => import("./src/features/NewsSwing"));
 /** The market's own calendar date. A UTC date is a day behind in India before 05:30 IST. */
 const today = (market: Market) => new Intl.DateTimeFormat("en-CA", {
   timeZone: market === "IN" ? "Asia/Kolkata" : "America/New_York", year: "numeric", month: "2-digit", day: "2-digit",
@@ -119,43 +120,6 @@ function Terminal({ user, requestedTab, onRequestedTabHandled, onLogout }: { use
     <View style={styles.tabs}><ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tabScroll}>{screens.map((screen) => <TabButton key={screen.key} active={active.key === screen.key} label={screen.tabLabel} onPress={() => selectTab(screen.key)} />)}</ScrollView></View>
     {!!notificationStatus && <Text style={styles.deviceStatus}>{notificationStatus}</Text>}
     <View style={styles.flex}>{active.kind === "native" && NATIVE_SCREENS[active.key] ? <Fragment key={`${active.key}:${market}`}>{NATIVE_SCREENS[active.key]({ market })}</Fragment> : <CardScreen key={`${active.key}:${market}`} screenKey={active.key} title={active.title} market={market} />}</View>
-  </View>;
-}
-
-function NewsSwing({ market }: { market: Market }) {
-  const [rows, setRows] = useState<NewsSwingCandidate[]>([]);
-  const [refreshing, setRefreshing] = useState(true);
-  const [error, setError] = useState("");
-  const [summary, setSummary] = useState({ articles: 0, impacts: 0, fetchedAt: null as string | null });
-  const load = useCallback(async () => {
-    setRefreshing(true); setError("");
-    try {
-      const result = await getNewsSwing(market);
-      setRows(result.candidates);
-      setSummary({ articles: result.articleCount, impacts: result.impactCount, fetchedAt: result.lastFetchedAt });
-    } catch (cause) { setError(message(cause, "Could not load News & AI Swing")); }
-    finally { setRefreshing(false); }
-  }, [market]);
-  useEffect(() => {
-    let active = true;
-    getNewsSwing(market).then((result) => {
-      if (!active) return;
-      setRows(result.candidates);
-      setSummary({ articles: result.articleCount, impacts: result.impactCount, fetchedAt: result.lastFetchedAt });
-    }).catch((cause) => { if (active) setError(message(cause, "Could not load News & AI Swing")); })
-      .finally(() => { if (active) setRefreshing(false); });
-    return () => { active = false; };
-  }, [market]);
-  useEffect(() => { const timer = setInterval(load, 300_000); return () => clearInterval(timer); }, [load]);
-  return <View style={styles.flex}><ScreenHead title="News & AI Swing" subtitle="Existing Strong Swing setups in the exact server-ranked News & AI order." />
-    <Text style={styles.newsSummary}>{summary.articles} articles · {summary.impacts} impacts · {summary.fetchedAt ? `fetched ${new Date(summary.fetchedAt).toLocaleString()}` : "awaiting news sync"}</Text>
-    {!!error && <Banner text={error} />}
-    <FlatList data={rows} keyExtractor={(item) => item.assetId} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={load} tintColor="#34d399" />} contentContainerStyle={styles.list} ListEmptyComponent={!refreshing ? <Empty text="No News & AI candidates available." /> : null} renderItem={({ item, index }) => <View style={styles.card}>
-      <View style={styles.rowBetween}><View><Text style={styles.ticker}>#{index + 1} {item.ticker}</Text><Text style={styles.meta}>Strong rank #{item.strongSwingRank} · {item.status.replaceAll("_", " ")}</Text></View><StatePill state={item.state} /></View>
-      <View style={styles.metricRow}><Metric label="TECHNICAL" value={item.technicalScore.toFixed(1)} /><Metric label="NEWS" value={`${item.newsAdjustment >= 0 ? "+" : ""}${item.newsAdjustment.toFixed(1)}`} positive={item.newsAdjustment > 0} negative={item.newsAdjustment < 0} /><Metric label="COMBINED" value={item.combinedScore.toFixed(1)} /></View>
-      <View style={styles.metricRow}><Metric label="ENTRY" value={money(item.strongEntry, market)} /><Metric label="TARGET" value={money(item.strongTarget, market)} positive /><Metric label="STOP" value={money(item.strongStop, market)} negative /></View>
-      {item.news.slice(0, 3).map((evidence) => <Pressable key={`${evidence.articleId}:${evidence.direction}`} onPress={() => void Linking.openURL(evidence.url)} style={styles.evidence}><Text style={evidence.direction === "POSITIVE" ? styles.goodValue : evidence.direction === "NEGATIVE" ? styles.badValue : styles.meta}>{evidence.direction} · {evidence.sourceName ?? "Source"}</Text><Text numberOfLines={2} style={styles.evidenceTitle}>{evidence.title}</Text><Text numberOfLines={2} style={styles.meta}>{evidence.rationale}</Text></Pressable>)}
-    </View>} />
   </View>;
 }
 
@@ -313,7 +277,6 @@ const Centered = ({ children }: { children: React.ReactNode }) => <View style={s
 const ScreenHead = ({ title, subtitle }: { title: string; subtitle: string }) => <View style={styles.screenHead}><Text style={styles.title}>{title}</Text><Text style={styles.muted}>{subtitle}</Text></View>;
 const TabButton = ({ active, label, onPress }: { active: boolean; label: string; onPress: () => void }) => <Pressable style={[styles.tab, active && styles.tabActive]} onPress={onPress}><Text style={active ? styles.tabTextActive : styles.tabText}>{label}</Text></Pressable>;
 const TonePill = ({ label, tone }: { label: string; tone: ScreenTone }) => <View style={[styles.statePill, tone === "positive" ? styles.stateFavored : tone === "negative" ? styles.stateRisk : tone === "warning" ? styles.stateCaution : null]}><Text style={styles.stateText}>{label.toUpperCase()}</Text></View>;
-const StatePill = ({ state }: { state: NewsSwingCandidate["state"] }) => <View style={[styles.statePill, state === "FAVORED" ? styles.stateFavored : state === "RISK_OFF" ? styles.stateRisk : state === "CAUTION" ? styles.stateCaution : null]}><Text style={styles.stateText}>{state.replaceAll("_", " ")}</Text></View>;
 const Metric = ({ label, value, positive, negative }: { label: string; value: string; positive?: boolean; negative?: boolean }) => <View style={styles.metric}><Text style={styles.metricLabel}>{label}</Text><Text numberOfLines={1} style={[styles.metricValue, positive && styles.goodValue, negative && styles.badValue]}>{value}</Text></View>;
 const Summary = ({ label, value }: { label: string; value: string }) => <View style={styles.summaryCard}><Text style={styles.metricLabel}>{label}</Text><Text style={styles.summaryValue}>{value}</Text></View>;
 const Empty = ({ text }: { text: string }) => <View style={styles.empty}><Text style={styles.muted}>{text}</Text></View>;
