@@ -1,11 +1,13 @@
 import { query } from "@/lib/db";
-import { getMomentumIgnitionCandidates } from "@/lib/momentumIgnition";
-import { getMomentumIgnitionCandidates as getLegacyMomentumIgnitionCandidates } from "@/lib/momentumIgnitionLegacy";
+import { getMomentumLegacyCandidates, getMomentumV2Candidates } from "@/features/momentum/service";
 import { getUserSwingSettings } from "@/lib/settings";
 import { getStrongSwingCandidates } from "@/lib/strongSwing";
 import { getSwingTradeLedger, type SwingLedgerTrade } from "@/lib/swingTradeLedger";
 import { markLiveMarketTargets } from "@/lib/liveMarketTargets";
 import { getTrendContinuationCandidates } from "@/lib/trendContinuation";
+
+const getMomentumIgnitionCandidates = getMomentumV2Candidates;
+const getLegacyMomentumIgnitionCandidates = getMomentumLegacyCandidates;
 
 export function tradeAlertSignature(trade: SwingLedgerTrade): string | null {
   if (trade.status !== "OPEN" || trade.risk.recommendation === "STAY") return null;

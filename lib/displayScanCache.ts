@@ -25,12 +25,14 @@ import "server-only";
  */
 import type { SwingSettings } from "@/lib/settings";
 import { getStrongSwingCandidates } from "@/lib/strongSwing";
-import { getMomentumIgnitionCandidates as getLegacyMomentumIgnitionCandidates } from "@/lib/momentumIgnitionLegacy";
-import { getMomentumIgnitionCandidates } from "@/lib/momentumIgnition";
+import { getMomentumLegacyCandidates, getMomentumV2Candidates } from "@/features/momentum/service";
 import { getTrendContinuationCandidates } from "@/lib/trendContinuation";
 import { getArmedSwingCandidates } from "@/lib/armedSwing";
 import { getMarketOverview } from "@/lib/marketOverview";
 import type { MarketId } from "@/lib/types";
+
+const getMomentumIgnitionCandidates = getMomentumV2Candidates;
+const getLegacyMomentumIgnitionCandidates = getMomentumLegacyCandidates;
 
 export const DISPLAY_SCAN_TTL_MS = 60_000;
 /** Oldest result served while a background refresh runs or after it failed. */

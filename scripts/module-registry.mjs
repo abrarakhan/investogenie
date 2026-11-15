@@ -1,7 +1,7 @@
 export const MODULES = [
   {
     key: "momentum", guide: "docs/modules/momentum.md",
-    paths: ["lib/momentumIgnition", "lib/momentumExecution", "lib/analytics/momentumIgnition", "components/screener/MomentumIgnition", "pipelines/strategy_math/momentum.py", "pipelines/test_momentum_strategy_math.py"],
+    paths: ["features/momentum/", "lib/momentumIgnition", "lib/momentumExecution", "lib/analytics/momentumIgnition", "components/screener/MomentumIgnition", "pipelines/strategy_math/momentum.py", "pipelines/test_momentum_strategy_math.py"],
     dependencies: ["server/strategy-bridge", "market-calendar", "execution-plans"],
     tests: ["npx vitest run lib/pythonStrategyMath.test.ts lib/momentumIgnitionCandidate.test.ts lib/momentumExecution.test.ts", "PYTHONPATH=pipelines .venv/bin/python -m unittest pipelines.test_momentum_strategy_math"],
   },

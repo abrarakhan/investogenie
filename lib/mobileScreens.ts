@@ -18,8 +18,7 @@ import { PRESETS, PRESET_BY_KEY } from "@/lib/screener/presets";
 import { query } from "@/lib/db";
 import { getUserSwingSettings } from "@/lib/settings";
 import { zonedMarketClock } from "@/lib/market-calendar.mjs";
-import type { MomentumIgnitionCandidate } from "@/lib/momentumIgnition";
-import type { MomentumIgnitionCandidate as LegacyMomentumIgnitionCandidate } from "@/lib/momentumIgnitionLegacy";
+import type { LegacyMomentumIgnitionCandidate, MomentumIgnitionCandidate } from "@/features/momentum/contracts";
 import { isMomentumExecutionReady } from "@/lib/momentumExecution";
 import type { StrongSwingCandidate } from "@/lib/strongSwing";
 import {

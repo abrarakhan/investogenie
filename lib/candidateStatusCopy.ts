@@ -1,6 +1,5 @@
 import type { StrongSwingStatus } from "@/lib/analytics/strongSwing";
-import type { MomentumIgnitionStatus } from "@/lib/analytics/momentumIgnition";
-import type { MomentumIgnitionCandidateStatus } from "@/lib/momentumIgnition";
+import type { MomentumIgnitionCandidateStatus, MomentumIgnitionStatus } from "@/features/momentum/contracts";
 import type { TrendContinuationStatus } from "@/lib/trendContinuation";
 
 // Status wording shared by the web candidate cards and the mobile screens, so both name a

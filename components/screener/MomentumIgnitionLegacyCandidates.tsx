@@ -1,8 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import type { MomentumIgnitionCandidate, MomentumIgnitionResult } from "@/lib/momentumIgnitionLegacy";
-import type { MomentumIgnitionStatus } from "@/lib/analytics/momentumIgnition";
+import type {
+  LegacyMomentumIgnitionCandidate as MomentumIgnitionCandidate,
+  LegacyMomentumIgnitionResult as MomentumIgnitionResult,
+  MomentumIgnitionStatus,
+} from "@/features/momentum/contracts";
 import { isMomentumExecutionReady } from "@/lib/momentumExecution";
 import { MOMENTUM_IGNITION_LEGACY_STATUS_LABEL } from "@/lib/candidateStatusCopy";
 import TradingViewChartModal, { useTradingViewChart, type ChartGestureProps, type ChartSymbol } from "@/components/charts/TradingViewChartModal";

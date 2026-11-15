@@ -5,7 +5,7 @@ import type {
   MomentumIgnitionCandidate,
   MomentumIgnitionCandidateStatus,
   MomentumIgnitionResult,
-} from "@/lib/momentumIgnition";
+} from "@/features/momentum/contracts";
 import { isMomentumExecutionReady } from "@/lib/momentumExecution";
 import { MOMENTUM_IGNITION_STATUS_LABEL } from "@/lib/candidateStatusCopy";
 import TradingViewChartModal, { useTradingViewChart, type ChartGestureProps, type ChartSymbol } from "@/components/charts/TradingViewChartModal";
