@@ -19,6 +19,7 @@ from strategy_math.swing_scan import (assess as assess_swing_scan, cross_section
                                       levels_for_screen as assess_swing_levels)
 from strategy_math.probability import assess as assess_probability
 from strategy_math.long_term import assess as assess_long_term, score_fundamentals
+from strategy_math.adaptive_allocation import select_pair
 
 
 def _json_safe(value):
@@ -122,6 +123,8 @@ def main() -> int:
         results = [assess_long_term(item) for item in inputs]
     elif engine == "long_term_scores":
         results = [score_fundamentals(item) for item in inputs]
+    elif engine == "adaptive_pair":
+        results = [select_pair(item["candidates"]) for item in inputs]
     else:
         raise ValueError(f"unsupported strategy engine: {engine}")
     json.dump({"engine": engine, "results": _json_safe(results)}, sys.stdout, allow_nan=False, separators=(",", ":"))

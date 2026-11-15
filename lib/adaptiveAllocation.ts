@@ -1,7 +1,8 @@
 import { query, queryOne } from "@/lib/db";
 import { latestExpectedSessionDate, refreshMarketHolidays } from "@/lib/market-calendar.mjs";
 import { backtestUniversalPortfolio, type UniversalBacktestResult, type UniversalPricePoint } from "@/lib/analytics/universalPortfolio";
-import { selectAdaptiveAllocationPair, type AdaptivePairSelection, type AdaptiveSelectionCandidate } from "@/lib/analytics/adaptiveAllocationSelection";
+import type { AdaptivePairSelection, AdaptiveSelectionCandidate } from "@/lib/analytics/adaptiveAllocationSelection";
+import { selectAdaptiveAllocationPair } from "@/lib/adaptivePairSelection";
 import type { MarketId } from "@/lib/types";
 
 interface AssetRow { id: string; ticker: string; name: string | null; exchange: string | null }
@@ -88,7 +89,7 @@ export async function getAutomaticAdaptiveSelection(
     liquidityRank: index + 1,
     prices: pricesByAsset.get(asset.id) ?? [],
   }));
-  const selected: AdaptivePairSelection = selectAdaptiveAllocationPair(candidates);
+  const selected: AdaptivePairSelection = await selectAdaptiveAllocationPair(candidates);
   return {
     tickerA: selected.assetA.ticker,
     tickerB: selected.assetB.ticker,
