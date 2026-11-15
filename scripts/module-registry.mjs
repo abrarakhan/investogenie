@@ -49,9 +49,9 @@ export const MODULES = [
   },
   {
     key: "long-term", guide: "docs/modules/long-term.md",
-    paths: ["lib/long-term", "lib/analytics/longTermStrategies", "app/terminal/[market]/long-term", "components/long-term"],
+    paths: ["lib/long-term", "lib/analytics/longTermStrategies", "app/terminal/[market]/long-term", "components/long-term", "pipelines/strategy_math/long_term.py", "pipelines/test_long_term_strategy_math.py"],
     dependencies: ["fundamentals", "market-data"],
-    tests: ["npx vitest run lib/analytics/longTermStrategies.test.ts"],
+    tests: ["npx vitest run lib/longTermRules.test.ts", "PYTHONPATH=pipelines .venv/bin/python -m unittest pipelines.test_long_term_strategy_math"],
   },
   {
     key: "probability", guide: "docs/modules/probability.md",

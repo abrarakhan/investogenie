@@ -5,12 +5,12 @@ import { query } from "@/lib/db";
 import { getLongTermData } from "@/lib/long-term-data";
 import {
   LONG_TERM_STRATEGY_KEYS,
-  scoreAllLongTermStrategies,
   type HistoricalFundamentalMetrics,
   type LongTermMarket,
   type LongTermScore,
   type LongTermStrategyKey,
 } from "@/lib/analytics/longTermStrategies";
+import { scoreLongTermBatch } from "@/lib/longTermScoring";
 
 /**
  * A candidate with every strategy already scored. Scoring depends only on the record and the
@@ -158,8 +158,9 @@ async function getScoredRecords(market: LongTermMarket): Promise<ScoredRecord[]>
   if (cached && cached.expiresAt > Date.now()) return cached.scored;
 
   const records = await getLongTermData(market);
-  const scored = records.map((record): ScoredRecord => {
-    const scores = scoreAllLongTermStrategies(record.fundamentals, market);
+  const allScores = await scoreLongTermBatch(records.map((record) => record.fundamentals), market);
+  const scored = records.map((record, recordIndex): ScoredRecord => {
+    const scores = allScores[recordIndex];
     return {
       base: {
       assetId: record.assetId,

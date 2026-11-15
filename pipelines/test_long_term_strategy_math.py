@@ -1,5 +1,5 @@
 import unittest
-from strategy_math.long_term import historical_metrics
+from strategy_math.long_term import historical_metrics, score_fundamentals
 
 class LongTermHistoryTest(unittest.TestCase):
     def test_golden_history_metrics(self):
@@ -22,5 +22,19 @@ class LongTermHistoryTest(unittest.TestCase):
     def test_missing_cash_values_remain_missing(self):
         result=historical_metrics([{"period":"2025-03-31","revenue":100,"netProfit":10,"roce":12},{"period":"2024-03-31","revenue":90,"netProfit":9,"roce":11},{"period":"2023-03-31","revenue":80,"netProfit":8,"roce":10}])
         self.assertIsNone(result["medianCashConversion5y"]); self.assertEqual(result["statementPeriods"],0)
+
+class LongTermScoringTest(unittest.TestCase):
+    def test_scoring_confidence_and_eligibility(self):
+        criterion={"label":"ROE","field":"roe","target":15,"direction":"higher","weight":1,"description":"Return"}
+        base={"roe":20,"marketCap":10000,"reportAgeDays":90,"historyYears":5,"sector":"Industrials"}
+        scores=score_fundamentals({"market":"IN","fundamentals":[base,{**base,"sector":"Financial Services"}],"strategies":[{"key":"TEST","criteria":[criterion]}]})
+        self.assertTrue(scores[0][0]["eligible"]); self.assertGreater(scores[0][0]["matchScore"],0)
+        self.assertFalse(scores[1][0]["eligible"]); self.assertIn("sector-correct",scores[1][0]["eligibilityReason"])
+
+    def test_missing_and_stale_evidence_fails_closed(self):
+        criteria=[{"label":"ROE","field":"roe","target":15,"direction":"higher","weight":1,"description":"Return"},{"label":"Debt","field":"debtToEquity","target":.5,"direction":"lower","weight":1,"description":"Debt"}]
+        f={"roe":20,"debtToEquity":None,"marketCap":10000,"reportAgeDays":500,"historyYears":1,"sector":"Industrials"}
+        score=score_fundamentals({"market":"IN","fundamentals":[f],"strategies":[{"key":"TEST","criteria":criteria}]})[0][0]
+        self.assertFalse(score["eligible"]); self.assertLess(score["confidence"],60); self.assertTrue(score["outcomes"][1]["dataMissing"])
 
 if __name__ == "__main__": unittest.main()

@@ -75,7 +75,7 @@ export interface LongTermFundamentals extends HistoricalFundamentalMetrics {
 
 type CriterionDirection = "higher" | "lower";
 
-interface Criterion {
+export interface LongTermCriterion {
   label: string;
   field: keyof LongTermFundamentals | "pegRatio" | "earningsYield";
   target: number;
@@ -106,38 +106,12 @@ export interface LongTermScore {
   outcomes: CriterionOutcome[];
 }
 
-const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
-
-function normalizedGrowth(primary: number | null, fallback: number | null): number | null {
-  const value = primary ?? fallback;
-  return value === null ? null : clamp(value, -100, 100);
-}
-
-function syntheticValue(f: LongTermFundamentals, field: Criterion["field"]): number | null {
-  if (field === "earningsYield") return f.peRatio !== null && f.peRatio > 0 ? 100 / f.peRatio : null;
-  if (field === "pegRatio") {
-    const growth = normalizedGrowth(f.profitCagr3y, f.profitGrowthYoY);
-    return f.peRatio !== null && f.peRatio > 0 && growth !== null && growth > 0
-      ? f.peRatio / Math.min(growth, 50)
-      : null;
-  }
-  if (field === "revenueCagr3y") return normalizedGrowth(f.revenueCagr3y, f.revenueGrowthYoY);
-  if (field === "profitCagr3y") return normalizedGrowth(f.profitCagr3y, f.profitGrowthYoY);
-  return f[field] as number | null;
-}
-
-function smoothCriterionScore(value: number, target: number, direction: CriterionDirection): number {
-  if (target === 0) return direction === "higher" ? (value > 0 ? 100 : 0) : (value <= 0 ? 100 : 0);
-  const signedDistance = direction === "higher" ? value / target - 1 : 1 - value / target;
-  return clamp(100 / (1 + Math.exp(-3.2 * signedDistance)), 0, 100);
-}
-
 function marketCapFloor(market: LongTermMarket, strategy: LongTermStrategyKey): number {
   if (strategy === "GRAHAM_DEFENSIVE") return market === "IN" ? 2000 : 200;
   return market === "IN" ? 500 : 50;
 }
 
-function criteriaFor(key: LongTermStrategyKey, market: LongTermMarket): Criterion[] {
+export function criteriaFor(key: LongTermStrategyKey, market: LongTermMarket): LongTermCriterion[] {
   switch (key) {
     case "LYNCH_GARP":
       return [
@@ -198,84 +172,4 @@ function criteriaFor(key: LongTermStrategyKey, market: LongTermMarket): Criterio
         { label: "Market cap", field: "marketCap", target: marketCapFloor(market, key), direction: "higher", weight: 0.3, description: "Minimum liquidity floor." },
       ];
   }
-}
-
-function sectorEligibility(sector: string | null): string | null {
-  const normalized = String(sector ?? "").toLowerCase();
-  if (/financial|bank|insurance|reit|real estate/.test(normalized)) {
-    return "Current ratios are not sector-correct for banks, insurers, financial companies, or REITs.";
-  }
-  return null;
-}
-
-function investabilityEligibility(fundamentals: LongTermFundamentals, market: LongTermMarket): string | null {
-  const floor = marketCapFloor(market, "BUFFETT_MOAT");
-  if (fundamentals.marketCap === null) return "Market capitalization is missing.";
-  if (fundamentals.marketCap < floor) {
-    return `Market capitalization is below the ${market === "IN" ? "INR 500 crore" : "USD 50 million"} investability floor.`;
-  }
-  return null;
-}
-
-export function scoreAgainstLongTermStrategy(
-  fundamentals: LongTermFundamentals,
-  key: LongTermStrategyKey,
-  market: LongTermMarket,
-): LongTermScore {
-  const criteria = criteriaFor(key, market);
-  const ineligibleReason = sectorEligibility(fundamentals.sector) ?? investabilityEligibility(fundamentals, market);
-  let weightedScore = 0;
-  let availableWeight = 0;
-  let totalWeight = 0;
-  let matchedCriteria = 0;
-  let availableCriteria = 0;
-
-  const outcomes = criteria.map((criterion): CriterionOutcome => {
-    totalWeight += criterion.weight;
-    const value = syntheticValue(fundamentals, criterion.field);
-    if (value === null || !Number.isFinite(value)) {
-      return { label: criterion.label, passed: false, dataMissing: true, description: criterion.description, value: null, score: 0 };
-    }
-    const score = smoothCriterionScore(value, criterion.target, criterion.direction);
-    const passed = criterion.direction === "higher" ? value >= criterion.target : value <= criterion.target;
-    availableWeight += criterion.weight;
-    availableCriteria += 1;
-    weightedScore += score * criterion.weight;
-    if (passed) matchedCriteria += 1;
-    return { label: criterion.label, passed, dataMissing: false, description: criterion.description, value, score: Math.round(score) };
-  });
-
-  const rawScore = availableWeight > 0 ? weightedScore / availableWeight : 0;
-  const completeness = totalWeight > 0 ? availableWeight / totalWeight : 0;
-  const ageFactor = fundamentals.reportAgeDays === null
-    ? 0
-    : fundamentals.reportAgeDays <= 180
-      ? 1
-      : fundamentals.reportAgeDays <= 365
-        ? 0.75
-        : 0.4;
-  const historyFactor = fundamentals.historyYears >= 4 ? 1 : fundamentals.historyYears >= 2 ? 0.85 : 0.65;
-  const confidence = Math.round(completeness * ageFactor * historyFactor * 100);
-  const eligible = !ineligibleReason && confidence >= 60;
-  const matchScore = eligible ? Math.round(rawScore * (0.7 + 0.3 * confidence / 100)) : 0;
-
-  return {
-    key,
-    matchScore,
-    rawScore: Math.round(rawScore),
-    confidence,
-    matchedCriteria,
-    availableCriteria,
-    totalCriteria: criteria.length,
-    eligible,
-    eligibilityReason: ineligibleReason ?? (confidence < 60 ? "Insufficient or stale evidence for this strategy." : null),
-    outcomes,
-  };
-}
-
-export function scoreAllLongTermStrategies(
-  fundamentals: LongTermFundamentals,
-  market: LongTermMarket,
-): LongTermScore[] {
-  return LONG_TERM_STRATEGY_KEYS.map((key) => scoreAgainstLongTermStrategy(fundamentals, key, market));
 }
