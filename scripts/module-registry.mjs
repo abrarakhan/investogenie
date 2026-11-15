@@ -81,7 +81,7 @@ export const MODULES = [
     key: "mobile", guide: "docs/modules/mobile.md",
     paths: ["mobile/", "app/api/v1/mobile/", "lib/mobileScreens", "lib/mobileSession", "lib/mobileMutation", "lib/mobileHttp"],
     dependencies: ["mobile-api-contracts", "auth", "notifications"],
-    tests: ["npm --prefix mobile run typecheck", "npx vitest run lib/mobileScreens.test.ts lib/mobileMutationIdempotency.test.ts lib/mobileHttp.test.ts"],
+    tests: ["npm --prefix mobile run typecheck", "npx vitest run lib/mobileScreens.test.ts lib/mobileFeatureRegistry.test.ts lib/mobileMutationIdempotency.test.ts lib/mobileHttp.test.ts"],
   },
   {
     key: "market", guide: "docs/modules/market.md",

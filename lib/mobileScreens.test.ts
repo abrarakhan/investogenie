@@ -7,7 +7,7 @@ import type { TrendContinuationCandidate } from "@/lib/trendContinuation";
 import type { ScreenerStock } from "@/lib/screener/service";
 import {
   MOBILE_SCREEN_CATALOG, armedSwingCard, formatMarketCap, formatMarketDate, formatMoney, formatPct, loadMobileScreen,
-  momentumIgnitionCard, stockScreenerCard, strongSwingCard, swingCard, trendContinuationCard,
+  marketQuoteCard, momentumIgnitionCard, stockScreenerCard, strongSwingCard, swingCard, trendContinuationCard,
 } from "@/lib/mobileScreens";
 
 const swingRow = (overrides: Partial<ScreenRow> = {}): ScreenRow => ({
@@ -84,10 +84,18 @@ describe("stockScreenerCard", () => {
   });
 });
 
+describe("marketQuoteCard", () => {
+  it("does not label an index benchmark as currency", () => {
+    const card = marketQuoteCard({ ticker: "NIFTY", name: "Nifty 50", exchange: "NSE", price: 25_500.25, changePct: 0.5, asOf: "2026-11-15" }, "IN", "Benchmark");
+    expect(card.metrics[0].value).toBe("25500.25");
+    expect(card.badge).toEqual({ label: "+0.50%", tone: "positive" });
+  });
+});
+
 describe("screen registry", () => {
   it("serves every cards screen in the catalog and rejects native or unknown keys", () => {
     expect(MOBILE_SCREEN_CATALOG.filter((item) => item.kind === "cards").map((item) => item.key))
-      .toEqual(["stock-screener", "swing", "strong-swing", "armed-swing", "long-term"]);
+      .toEqual(["market", "stock-screener", "swing", "strong-swing", "momentum-v2", "trend-continuation", "armed-swing", "long-term"]);
     expect(loadMobileScreen("trade-ledger", "IN", new URLSearchParams(), "u")).toBeNull();
     expect(loadMobileScreen("toString", "IN", new URLSearchParams(), "u")).toBeNull();
   });

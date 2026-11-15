@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { MOBILE_FEATURES, supportedMobileFeatures } from "./registry";
+import { MOBILE_FEATURES, supportedMobileFeatures } from "../mobile/src/features/registry";
+import { MOBILE_SCREEN_CATALOG } from "@/lib/mobileScreens";
 
 describe("mobile feature registry", () => {
   it("keeps generic server-driven screens without a native implementation", () => {
@@ -14,7 +15,7 @@ describe("mobile feature registry", () => {
     ])).toEqual([]);
   });
 
-  it("has unique fallback feature keys", () => {
-    expect(new Set(MOBILE_FEATURES.map((feature) => feature.key)).size).toBe(MOBILE_FEATURES.length);
+  it("keeps the offline fallback aligned with the server catalog", () => {
+    expect(MOBILE_FEATURES).toEqual(MOBILE_SCREEN_CATALOG);
   });
 });

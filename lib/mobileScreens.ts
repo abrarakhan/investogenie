@@ -26,6 +26,7 @@ import {
   type ProtectedSwingStrategy,
 } from "@/lib/swingExecutionPlans";
 import type { TrendContinuationCandidate } from "@/features/trend-continuation/contracts";
+import { getMarketOverview, type OverviewQuote } from "@/lib/marketOverview";
 
 /**
  * Server-driven mobile screens. Every value is computed and formatted here from the same
@@ -82,9 +83,12 @@ export interface MobileScreen {
  * editing); "cards" screens are rendered generically from `loadMobileScreen`.
  */
 export const MOBILE_SCREEN_CATALOG = [
+  { key: "market", title: "Market Overview", tabLabel: "Market", kind: "cards" },
   { key: "stock-screener", title: "Stock Screener", tabLabel: "Screener", kind: "cards" },
   { key: "swing", title: "Swing Candidates", tabLabel: "Swing", kind: "cards" },
   { key: "strong-swing", title: "Strong Swing", tabLabel: "Strong", kind: "cards" },
+  { key: "momentum-v2", title: "Momentum Ignition V2", tabLabel: "Momentum", kind: "cards" },
+  { key: "trend-continuation", title: "Trend Continuation", tabLabel: "Continuation", kind: "cards" },
   { key: "armed-swing", title: "Armed Strong Swing", tabLabel: "Armed", kind: "cards" },
   { key: "news-swing", title: "News & AI Swing", tabLabel: "News & AI", kind: "native" },
   { key: "long-term", title: "Long-Term Candidates", tabLabel: "Long-Term", kind: "cards" },
@@ -136,6 +140,65 @@ export function formatMarketDate(value: Date | string | null | undefined, market
 
 const pick = <T extends string>(value: string | null, allowed: readonly T[], fallback: T): T =>
   value && (allowed as readonly string[]).includes(value) ? value as T : fallback;
+
+// ---- Market overview ---------------------------------------------------------------------
+
+export function marketQuoteCard(quote: OverviewQuote, market: MobileMarket, group: string): MobileCard {
+  const displayedPrice = group === "Benchmark" ? formatNumber(quote.price, 2) : formatMoney(quote.price, market);
+  return {
+    id: `${group}:${quote.exchange}:${quote.ticker}`,
+    title: quote.ticker,
+    subtitle: `${group} · ${quote.name}`,
+    badge: quote.changePct === null ? null : { label: formatPct(quote.changePct), tone: toneOf(quote.changePct) },
+    score: null,
+    metrics: [
+      { label: "LAST", value: displayedPrice },
+      { label: "CHANGE", value: formatPct(quote.changePct), tone: toneOf(quote.changePct) },
+      { label: "AS OF", value: quote.asOf ?? nil },
+    ],
+    footer: quote.exchange,
+    chartTicker: quote.ticker,
+    guidance: null,
+    sections: [],
+  };
+}
+
+async function marketOverview(market: MobileMarket): Promise<MobileScreen> {
+  const overview = await getMarketOverview(market);
+  const breadthTotal = overview.breadth.advancers + overview.breadth.decliners + overview.breadth.unchanged;
+  const quoteCards = overview.quotes.map((quote) => marketQuoteCard(quote, market, "Benchmark"));
+  const moverCards = [
+    ...overview.gainers.map((quote) => marketQuoteCard(quote, market, "Gainer")),
+    ...overview.losers.map((quote) => marketQuoteCard(quote, market, "Decliner")),
+  ];
+  const setupCards: MobileCard[] = overview.candidates.map((candidate) => ({
+    id: `setup:${candidate.ticker}`,
+    title: candidate.ticker,
+    subtitle: `Swing setup · ${swingVerdictLabel(candidate.verdict)}`,
+    badge: { label: `${candidate.score.toFixed(0)}/100`, tone: "neutral" },
+    score: candidate.score.toFixed(0),
+    metrics: [
+      { label: "CURRENT", value: formatMoney(candidate.current, market) },
+      { label: "ENTRY", value: formatMoney(candidate.entry, market) },
+      { label: "TARGET", value: formatMoney(candidate.target, market), tone: "positive" },
+    ],
+    footer: null,
+    chartTicker: candidate.ticker,
+    guidance: null,
+    sections: [],
+  }));
+  return {
+    key: "market",
+    title: "Market Overview",
+    subtitle: "Benchmarks, breadth, movers and leading Base Swing setups from the web market workspace.",
+    generatedAt: new Date().toISOString(),
+    summary: `${overview.breadth.advancers} advancing · ${overview.breadth.decliners} declining · ${breadthTotal} quoted`,
+    notice: `Coverage: ${overview.coverage.quoted} quotes · ${overview.coverage.history} histories · ${overview.coverage.fundamentals} fundamentals`,
+    options: [],
+    searchable: false,
+    cards: [...quoteCards, ...moverCards, ...setupCards],
+  };
+}
 
 // ---- Stock screener ----------------------------------------------------------------------
 
@@ -708,9 +771,31 @@ async function longTerm(market: MobileMarket, params: URLSearchParams): Promise<
 }
 
 const LOADERS: Record<string, (market: MobileMarket, params: URLSearchParams, userId: string) => Promise<MobileScreen>> = {
+  market: (market) => marketOverview(market),
   "stock-screener": stockScreener,
   swing: swingCandidates,
   "strong-swing": strongSwing,
+  "momentum-v2": async (market, params, userId) => {
+    const selected = new URLSearchParams(params);
+    selected.set("model", "MOMENTUM_IGNITION_V2");
+    return { ...await strongSwing(market, selected, userId), key: "momentum-v2" };
+  },
+  "trend-continuation": async (market, params, userId) => {
+    if (market === "US") return {
+      key: "trend-continuation",
+      title: "Trend Continuation",
+      subtitle: "Multi-session continuation assessment.",
+      generatedAt: new Date().toISOString(),
+      summary: "India market only",
+      notice: "Trend Continuation is not enabled for the US market.",
+      options: [],
+      searchable: false,
+      cards: [],
+    };
+    const selected = new URLSearchParams(params);
+    selected.set("model", "TREND_CONTINUATION");
+    return { ...await strongSwing(market, selected, userId), key: "trend-continuation" };
+  },
   "armed-swing": armedSwing,
   "long-term": longTerm,
 };
