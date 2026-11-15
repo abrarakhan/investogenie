@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import {
-  ActivityIndicator, Alert, FlatList, Modal, Pressable, RefreshControl, ScrollView,
+  Alert, FlatList, Modal, Pressable, RefreshControl, ScrollView,
   StyleSheet, Text, TextInput, View,
 } from "react-native";
 import {
