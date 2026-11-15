@@ -10,10 +10,11 @@ import Svg, { Line, Rect } from "react-native-svg";
 import {
   apiConfigurationError, createMutationKey, createTrade, deleteTrade, getCandles, getLedger, getNewsSwing, getScreen, getScreenCatalog,
   login, logout, recordSale, restoreSession, updateSale, updateTrade, type CandlePoint, type LedgerSummary, type LedgerTrade,
-  type Market, type MobileScreen, type MobileUser, type NewsSwingCandidate, type ScreenCard, type ScreenCatalogEntry,
+  type Market, type MobileScreen, type MobileUser, type NewsSwingCandidate, type ScreenCard,
   type ScreenTone, type TradeAction,
 } from "./src/api";
 import { registerDeviceNotifications, unlockWithBiometrics } from "./src/deviceSecurity";
+import { MOBILE_FEATURES, supportedMobileFeatures } from "./src/features/registry";
 
 /** A screen key from the server catalog. */
 type Tab = string;
@@ -22,18 +23,6 @@ const NATIVE_SCREENS: Record<string, (props: { market: Market }) => React.JSX.El
   "news-swing": ({ market }) => <NewsSwing market={market} />,
   "trade-ledger": ({ market }) => <Ledger market={market} />,
 };
-/** Used until the server catalog loads, and if it cannot be reached. */
-const DEFAULT_SCREENS: ScreenCatalogEntry[] = [
-  { key: "stock-screener", title: "Stock Screener", tabLabel: "Screener", kind: "cards" },
-  { key: "swing", title: "Swing Candidates", tabLabel: "Swing", kind: "cards" },
-  { key: "strong-swing", title: "Strong Swing", tabLabel: "Strong", kind: "cards" },
-  { key: "armed-swing", title: "Armed Strong Swing", tabLabel: "Armed", kind: "cards" },
-  { key: "news-swing", title: "News & AI Swing", tabLabel: "News & AI", kind: "native" },
-  { key: "long-term", title: "Long-Term Candidates", tabLabel: "Long-Term", kind: "cards" },
-  { key: "trade-ledger", title: "Trade Ledger", tabLabel: "Ledger", kind: "native" },
-];
-// A native screen this build does not implement is hidden rather than rendered blank.
-const supported = (screens: ScreenCatalogEntry[]) => screens.filter((screen) => screen.kind === "cards" || screen.key in NATIVE_SCREENS);
 /** The market's own calendar date. A UTC date is a day behind in India before 05:30 IST. */
 const today = (market: Market) => new Intl.DateTimeFormat("en-CA", {
   timeZone: market === "IN" ? "Asia/Kolkata" : "America/New_York", year: "numeric", month: "2-digit", day: "2-digit",
@@ -117,8 +106,8 @@ function Login({ onLogin }: { onLogin: (user: MobileUser) => void }) {
 function Terminal({ user, requestedTab, onRequestedTabHandled, onLogout }: { user: MobileUser; requestedTab: Tab | null; onRequestedTabHandled: () => void; onLogout: () => void }) {
   const [market, setMarket] = useState<Market>("IN");
   const [tab, setTab] = useState<Tab>("strong-swing");
-  const [screens, setScreens] = useState(DEFAULT_SCREENS);
-  useEffect(() => { void getScreenCatalog().then((result) => { if (supported(result.screens).length) setScreens(supported(result.screens)); }).catch(() => undefined); }, []);
+  const [screens, setScreens] = useState(MOBILE_FEATURES);
+  useEffect(() => { void getScreenCatalog().then((result) => { const supported = supportedMobileFeatures(result.screens); if (supported.length) setScreens(supported); }).catch(() => undefined); }, []);
   const [notificationStatus, setNotificationStatus] = useState("");
   useEffect(() => { void registerDeviceNotifications().then(setNotificationStatus).catch(() => setNotificationStatus("Push registration is temporarily unavailable.")); }, []);
   const requested = requestedTab ?? tab;
