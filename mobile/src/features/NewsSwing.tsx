@@ -1,11 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { FlatList, Linking, Pressable, RefreshControl, StyleSheet, Text, View } from "react-native";
 import { getNewsSwing, type Market, type NewsSwingCandidate } from "../api";
-
-const money = (value: number, market: Market) => new Intl.NumberFormat(market === "IN" ? "en-IN" : "en-US", {
-  style: "currency", currency: market === "IN" ? "INR" : "USD", maximumFractionDigits: 2,
-}).format(value);
-const errorMessage = (cause: unknown) => cause instanceof Error ? cause.message : "Could not load News & AI Swing";
+import { errorMessage, money } from "../format";
+import { Banner, Empty, Metric, ScreenHead } from "../ui";
 
 export default function NewsSwing({ market }: { market: Market }) {
   const [rows, setRows] = useState<NewsSwingCandidate[]>([]);
@@ -19,33 +16,30 @@ export default function NewsSwing({ market }: { market: Market }) {
   const load = useCallback(async () => {
     setRefreshing(true); setError("");
     try { apply(await getNewsSwing(market)); }
-    catch (cause) { setError(errorMessage(cause)); }
+    catch (cause) { setError(errorMessage(cause, "Could not load News & AI Swing")); }
     finally { setRefreshing(false); }
   }, [market]);
   useEffect(() => {
     let active = true;
     getNewsSwing(market).then((result) => { if (active) apply(result); })
-      .catch((cause) => { if (active) setError(errorMessage(cause)); })
+      .catch((cause) => { if (active) setError(errorMessage(cause, "Could not load News & AI Swing")); })
       .finally(() => { if (active) setRefreshing(false); });
     return () => { active = false; };
   }, [market]);
   useEffect(() => { const timer = setInterval(load, 300_000); return () => clearInterval(timer); }, [load]);
   return <View style={styles.flex}>
-    <View style={styles.screenHead}><Text style={styles.title}>News & AI Swing</Text><Text style={styles.muted}>Existing Strong Swing setups in the exact server-ranked News & AI order.</Text></View>
+    <ScreenHead title="News & AI Swing" subtitle="Existing Strong Swing setups in the exact server-ranked News & AI order." />
     <Text style={styles.summary}>{summary.articles} articles · {summary.impacts} impacts · {summary.fetchedAt ? `fetched ${new Date(summary.fetchedAt).toLocaleString()}` : "awaiting news sync"}</Text>
-    {!!error && <Text style={styles.error}>{error}</Text>}
-    <FlatList data={rows} keyExtractor={(item) => item.assetId} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={load} tintColor="#34d399" />} contentContainerStyle={styles.list} ListEmptyComponent={!refreshing ? <View style={styles.empty}><Text style={styles.muted}>No News & AI candidates available.</Text></View> : null} renderItem={({ item, index }) => <View style={styles.card}>
+    {!!error && <Banner>{error}</Banner>}
+    <FlatList data={rows} keyExtractor={(item) => item.assetId} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={load} tintColor="#34d399" />} contentContainerStyle={styles.list} ListEmptyComponent={!refreshing ? <Empty>No News & AI candidates available.</Empty> : null} renderItem={({ item, index }) => <View style={styles.card}>
       <View style={styles.row}><View><Text style={styles.ticker}>#{index + 1} {item.ticker}</Text><Text style={styles.meta}>Strong rank #{item.strongSwingRank} · {item.status.replaceAll("_", " ")}</Text></View><StatePill state={item.state} /></View>
-      <View style={styles.metrics}><Metric label="TECHNICAL" value={item.technicalScore.toFixed(1)} /><Metric label="NEWS" value={`${item.newsAdjustment >= 0 ? "+" : ""}${item.newsAdjustment.toFixed(1)}`} tone={item.newsAdjustment > 0 ? "good" : item.newsAdjustment < 0 ? "bad" : undefined} /><Metric label="COMBINED" value={item.combinedScore.toFixed(1)} /></View>
-      <View style={styles.metrics}><Metric label="ENTRY" value={money(item.strongEntry, market)} /><Metric label="TARGET" value={money(item.strongTarget, market)} tone="good" /><Metric label="STOP" value={money(item.strongStop, market)} tone="bad" /></View>
+      <View style={styles.metrics}><Metric label="TECHNICAL" value={item.technicalScore.toFixed(1)} /><Metric label="NEWS" value={`${item.newsAdjustment >= 0 ? "+" : ""}${item.newsAdjustment.toFixed(1)}`} positive={item.newsAdjustment > 0} negative={item.newsAdjustment < 0} /><Metric label="COMBINED" value={item.combinedScore.toFixed(1)} /></View>
+      <View style={styles.metrics}><Metric label="ENTRY" value={money(item.strongEntry, market)} /><Metric label="TARGET" value={money(item.strongTarget, market)} positive /><Metric label="STOP" value={money(item.strongStop, market)} negative /></View>
       {item.news.slice(0, 3).map((evidence) => <Pressable key={`${evidence.articleId}:${evidence.direction}`} onPress={() => void Linking.openURL(evidence.url)} style={styles.evidence}><Text style={evidence.direction === "POSITIVE" ? styles.good : evidence.direction === "NEGATIVE" ? styles.bad : styles.meta}>{evidence.direction} · {evidence.sourceName ?? "Source"}</Text><Text numberOfLines={2} style={styles.evidenceTitle}>{evidence.title}</Text><Text numberOfLines={2} style={styles.meta}>{evidence.rationale}</Text></Pressable>)}
     </View>} />
   </View>;
 }
 
-function Metric({ label, value, tone }: { label: string; value: string; tone?: "good" | "bad" }) {
-  return <View style={styles.metric}><Text style={styles.metricLabel}>{label}</Text><Text numberOfLines={1} style={[styles.metricValue, tone === "good" && styles.good, tone === "bad" && styles.bad]}>{value}</Text></View>;
-}
 function StatePill({ state }: { state: NewsSwingCandidate["state"] }) {
   return <View style={[styles.pill, state === "FAVORED" ? styles.favored : state === "RISK_OFF" ? styles.risk : state === "CAUTION" ? styles.caution : null]}><Text style={styles.pillText}>{state.replaceAll("_", " ")}</Text></View>;
 }

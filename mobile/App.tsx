@@ -12,6 +12,8 @@ import {
 } from "./src/api";
 import { registerDeviceNotifications, unlockWithBiometrics } from "./src/deviceSecurity";
 import { MOBILE_FEATURES, supportedMobileFeatures } from "./src/features/registry";
+import { errorMessage } from "./src/format";
+import { Action } from "./src/ui";
 
 /** A screen key from the server catalog. */
 type Tab = string;
@@ -23,8 +25,6 @@ const NATIVE_SCREENS: Record<string, (props: { market: Market }) => React.JSX.El
 const LazyNewsSwing = lazy(() => import("./src/features/NewsSwing"));
 const LazyTradeLedger = lazy(() => import("./src/features/TradeLedger"));
 const LazyServerCardScreen = lazy(() => import("./src/features/ServerCardScreen"));
-const message = (cause: unknown, fallback: string) => cause instanceof Error ? cause.message : fallback;
-
 export default function App() {
   const [booting, setBooting] = useState(true);
   const [bootError, setBootError] = useState("");
@@ -41,7 +41,7 @@ export default function App() {
       else setUnlocked(true);
     }).catch((cause) => {
       // Offline or a server outage: keep the saved session and offer a retry.
-      setBootError(message(cause, "InvestoGenie could not be reached."));
+      setBootError(errorMessage(cause, "InvestoGenie could not be reached."));
     }).finally(() => setBooting(false));
   }, []);
   useEffect(() => { boot(); }, [boot]);
@@ -78,7 +78,7 @@ function Login({ onLogin }: { onLogin: (user: MobileUser) => void }) {
   const submit = async () => {
     setBusy(true); setError("");
     try { onLogin(await login(email.trim(), password)); }
-    catch (cause) { setError(message(cause, "Sign in failed")); }
+    catch (cause) { setError(errorMessage(cause, "Sign in failed")); }
     finally { setBusy(false); }
   };
   return <ScrollView contentContainerStyle={styles.login} keyboardShouldPersistTaps="handled">
@@ -113,7 +113,6 @@ function Terminal({ user, requestedTab, onRequestedTabHandled, onLogout }: { use
 }
 
 function Field({ value, onChangeText, placeholder, keyboard, secure, autofill }: { value: string; onChangeText: (value: string) => void; placeholder: string; keyboard?: "email-address" | "decimal-pad"; secure?: boolean; autofill?: "username" | "password" }) { return <TextInput style={styles.input} value={value} onChangeText={onChangeText} placeholder={placeholder} placeholderTextColor="#697078" autoCapitalize="none" autoCorrect={false} keyboardType={keyboard} secureTextEntry={secure} textContentType={autofill} autoComplete={autofill === "password" ? "current-password" : autofill} />; }
-function Action({ label, onPress, busy = false, disabled = false }: { label: string; onPress: () => void; busy?: boolean; disabled?: boolean }) { return <Pressable style={[styles.primary, disabled && styles.disabled]} onPress={onPress} disabled={busy || disabled}>{busy ? <ActivityIndicator color="#04110d" /> : <Text style={styles.primaryText}>{label}</Text>}</Pressable>; }
 const Centered = ({ children }: { children: React.ReactNode }) => <View style={styles.center}>{children}</View>;
 const TabButton = ({ active, label, onPress }: { active: boolean; label: string; onPress: () => void }) => <Pressable style={[styles.tab, active && styles.tabActive]} onPress={onPress}><Text style={active ? styles.tabTextActive : styles.tabText}>{label}</Text></Pressable>;
 

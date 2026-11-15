@@ -8,15 +8,8 @@ import {
   createMutationKey, createTrade, getCandles, getScreen,
   type CandlePoint, type Market, type MobileScreen, type ScreenCard, type ScreenTone, type TradeAction,
 } from "../api";
-
-const money = (value: number, market: Market) => new Intl.NumberFormat(market === "IN" ? "en-IN" : "en-US", {
-  style: "currency", currency: market === "IN" ? "INR" : "USD", maximumFractionDigits: 2,
-}).format(value);
-const today = (market: Market) => new Intl.DateTimeFormat("en-CA", {
-  timeZone: market === "IN" ? "Asia/Kolkata" : "America/New_York", year: "numeric", month: "2-digit", day: "2-digit",
-}).format(new Date());
-const amount = (text: string) => Number(text.replace(/[,\s]/g, ""));
-const message = (cause: unknown, fallback: string) => cause instanceof Error ? cause.message : fallback;
+import { amount, errorMessage, marketDate, money } from "../format";
+import { Action, Banner, Empty, Metric, ScreenHead } from "../ui";
 
 /** Generic renderer shared by every server-built market and strategy screen. */
 export default function ServerCardScreen({ screenKey, title, market }: { screenKey: string; title: string; market: Market }) {
@@ -31,7 +24,7 @@ export default function ServerCardScreen({ screenKey, title, market }: { screenK
   useEffect(() => {
     let active = true;
     getScreen(screenKey, market, params).then((result) => { if (active) setScreen(result); })
-      .catch((cause) => { if (active) setError(message(cause, `Could not load ${title}`)); })
+      .catch((cause) => { if (active) setError(errorMessage(cause, `Could not load ${title}`)); })
       .finally(() => { if (active) setRefreshing(false); });
     return () => { active = false; };
   }, [screenKey, market, params, title, reloads]);
@@ -45,7 +38,7 @@ export default function ServerCardScreen({ screenKey, title, market }: { screenK
         ...next,
         cards: [...current.cards, ...next.cards.filter((card) => !current.cards.some((existing) => existing.id === card.id))],
       } : next))
-      .catch((cause) => setError(message(cause, `Could not load more ${title}`)))
+      .catch((cause) => setError(errorMessage(cause, `Could not load more ${title}`)))
       .finally(() => setLoadingMore(false));
   }, [loadingMore, market, params, screen?.pagination?.nextCursor, screenKey, title]);
   useEffect(() => { const timer = setInterval(load, 300_000); return () => clearInterval(timer); }, [load]);
@@ -59,8 +52,8 @@ export default function ServerCardScreen({ screenKey, title, market }: { screenK
       {option.choices.map((choice) => <Pressable key={choice.value} onPress={() => setParam(option.param, choice.value)} style={[styles.chip, (params[option.param] ?? option.value) === choice.value && styles.chipActive]}><Text style={(params[option.param] ?? option.value) === choice.value ? styles.chipTextActive : styles.chipText}>{choice.label}</Text></Pressable>)}
     </ScrollView>)}
     {screen?.searchable && <View style={styles.searchRow}><TextInput style={styles.input} value={search} onChangeText={setSearch} onSubmitEditing={() => setParam("search", search.trim())} returnKeyType="search" placeholder="Search symbol or name" placeholderTextColor="#697078" autoCapitalize="characters" autoCorrect={false} /></View>}
-    {!!error && <Banner text={error} />}
-    <FlatList data={screen?.cards ?? []} keyExtractor={(item) => item.id} onEndReached={loadMore} onEndReachedThreshold={0.4} ListFooterComponent={loadingMore ? <ActivityIndicator color="#34d399" /> : null} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={load} tintColor="#34d399" />} contentContainerStyle={styles.list} ListEmptyComponent={!refreshing ? <Empty text="Nothing to show right now." /> : null} renderItem={({ item }) => <Pressable onPress={() => setSelected(item)} style={styles.card}>
+    {!!error && <Banner>{error}</Banner>}
+    <FlatList data={screen?.cards ?? []} keyExtractor={(item) => item.id} onEndReached={loadMore} onEndReachedThreshold={0.4} ListFooterComponent={loadingMore ? <ActivityIndicator color="#34d399" /> : null} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={load} tintColor="#34d399" />} contentContainerStyle={styles.list} ListEmptyComponent={!refreshing ? <Empty>Nothing to show right now.</Empty> : null} renderItem={({ item }) => <Pressable onPress={() => setSelected(item)} style={styles.card}>
       <View style={styles.rowBetween}><View style={styles.flex}><Text style={styles.ticker}>{item.title}</Text><Text numberOfLines={1} style={styles.meta}>{item.subtitle}</Text></View>{item.badge && <TonePill label={item.badge.label} tone={item.badge.tone} />}{item.score !== null && <View style={styles.score}><Text style={styles.scoreText}>{item.score}</Text></View>}</View>
       <View style={styles.metricRow}>{item.metrics.map((metric) => <Metric key={metric.label} label={metric.label} value={metric.value} positive={metric.tone === "positive"} negative={metric.tone === "negative"} />)}</View>
       {!!item.footer && <Text style={styles.cardFoot}>{item.footer}</Text>}
@@ -97,18 +90,13 @@ function PriceChart({ market, ticker }: { market: Market; ticker: string }) {
 }
 
 function TradeEntrySheet({ visible, trade, market, onClose, onSaved }: { visible: boolean; trade: TradeAction; market: Market; onClose: () => void; onSaved: () => void }) {
-  const [date, setDate] = useState(today(market)); const [price, setPrice] = useState(String(trade.suggestedPrice)); const [quantity, setQuantity] = useState(""); const [busy, setBusy] = useState(false); const [error, setError] = useState(""); const [idempotencyKey] = useState(createMutationKey);
-  const save = async () => { setBusy(true); setError(""); try { await createTrade({ assetId: trade.assetId, market, boughtOn: date, buyPrice: amount(price), quantity: amount(quantity), strategyKey: trade.strategyKey, planId: trade.planId }, idempotencyKey); onSaved(); } catch (cause) { setError(message(cause, "Trade could not be recorded")); } finally { setBusy(false); } };
+  const [date, setDate] = useState(marketDate(market)); const [price, setPrice] = useState(String(trade.suggestedPrice)); const [quantity, setQuantity] = useState(""); const [busy, setBusy] = useState(false); const [error, setError] = useState(""); const [idempotencyKey] = useState(createMutationKey);
+  const save = async () => { setBusy(true); setError(""); try { await createTrade({ assetId: trade.assetId, market, boughtOn: date, buyPrice: amount(price), quantity: amount(quantity), strategyKey: trade.strategyKey, planId: trade.planId }, idempotencyKey); onSaved(); } catch (cause) { setError(errorMessage(cause, "Trade could not be recorded")); } finally { setBusy(false); } };
   return <Sheet visible={visible} title={`Log ${trade.ticker}`} onClose={onClose}><Field value={date} onChangeText={setDate} placeholder="Purchase date YYYY-MM-DD" /><Field value={price} onChangeText={setPrice} placeholder="Buy price" keyboard="decimal-pad" /><Field value={quantity} onChangeText={setQuantity} placeholder="Quantity" keyboard="decimal-pad" />{!!error && <Text style={styles.errorText}>{error}</Text>}<Action label="Freeze plan and log trade" busy={busy} onPress={save} /></Sheet>;
 }
 function Sheet({ visible, title, onClose, children }: { visible: boolean; title: string; onClose: () => void; children: ReactNode }) { return <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}><View style={styles.modalBackdrop}><View style={styles.sheet}><View style={styles.rowBetween}><Text style={styles.sectionTitle}>{title}</Text><Pressable onPress={onClose}><Text style={styles.link}>Close</Text></Pressable></View>{children}</View></View></Modal>; }
 function Field({ value, onChangeText, placeholder, keyboard }: { value: string; onChangeText: (value: string) => void; placeholder: string; keyboard?: "decimal-pad" }) { return <TextInput style={styles.input} value={value} onChangeText={onChangeText} placeholder={placeholder} placeholderTextColor="#697078" autoCapitalize="none" autoCorrect={false} keyboardType={keyboard} />; }
-function Action({ label, onPress, busy = false }: { label: string; onPress: () => void; busy?: boolean }) { return <Pressable style={styles.primary} onPress={onPress} disabled={busy}>{busy ? <ActivityIndicator color="#04110d" /> : <Text style={styles.primaryText}>{label}</Text>}</Pressable>; }
-const ScreenHead = ({ title, subtitle }: { title: string; subtitle: string }) => <View style={styles.screenHead}><Text style={styles.title}>{title}</Text><Text style={styles.muted}>{subtitle}</Text></View>;
 const TonePill = ({ label, tone }: { label: string; tone: ScreenTone }) => <View style={[styles.statePill, tone === "positive" ? styles.stateFavored : tone === "negative" ? styles.stateRisk : tone === "warning" ? styles.stateCaution : null]}><Text style={styles.stateText}>{label.toUpperCase()}</Text></View>;
-const Metric = ({ label, value, positive, negative }: { label: string; value: string; positive?: boolean; negative?: boolean }) => <View style={styles.metric}><Text style={styles.metricLabel}>{label}</Text><Text numberOfLines={1} style={[styles.metricValue, positive && styles.goodValue, negative && styles.badValue]}>{value}</Text></View>;
-const Empty = ({ text }: { text: string }) => <View style={styles.empty}><Text style={styles.muted}>{text}</Text></View>;
-const Banner = ({ text }: { text: string }) => <Text style={styles.errorBanner}>{text}</Text>;
 
 const styles = StyleSheet.create({
   flex: { flex: 1 }, screenHead: { paddingHorizontal: 18, paddingTop: 8, paddingBottom: 12, gap: 5 }, title: { color: "#f7f8fa", fontSize: 27, fontWeight: "900" }, muted: { color: "#858c95", fontSize: 14, lineHeight: 21 }, summary: { color: "#697078", fontSize: 10, paddingHorizontal: 18, paddingBottom: 8 }, notice: { color: "#fbbf24", fontSize: 11, paddingHorizontal: 18, paddingBottom: 8 }, errorBanner: { color: "#fecdd3", backgroundColor: "#35131d", marginHorizontal: 18, marginBottom: 10, padding: 12, borderRadius: 7 }, errorText: { color: "#fb7185" },
