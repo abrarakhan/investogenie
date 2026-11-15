@@ -30,6 +30,13 @@ Use `STATUS.md` only when current progress, recent fixes, deployment state, or k
 
 Prefer current source code over documentation when they disagree.
 
+## Module Routing
+
+Before exploring a feature, read `docs/MODULE_INDEX.md`, then read only the linked
+`docs/modules/<module>.md` guide and its named entry points. Do not inventory the
+repository when the module index already identifies the boundary. Expand beyond a
+module only when a direct dependency or cross-module contract requires it.
+
 ## Context Efficiency
 
 Keep exploration narrow.
