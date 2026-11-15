@@ -1,10 +1,11 @@
 import { query } from "@/lib/db";
 import {
-  deriveHistoricalMetrics,
   type AnnualFundamentalPoint,
+  type HistoricalFundamentalMetrics,
   type LongTermFundamentals,
   type LongTermMarket,
 } from "@/lib/analytics/longTermStrategies";
+import { runPythonStrategyBatch } from "@/lib/pythonStrategyMath";
 
 interface LongTermDataRow {
   asset_id: string;
@@ -278,7 +279,11 @@ export async function getLongTermData(market: LongTermMarket): Promise<LongTermD
   if (cached && cached.expiresAt > Date.now()) return cached.records;
 
   const rows = await query<LongTermDataRow>(SQL, [market]);
-  const records = rows.map((row) => {
+  const annualSeries = rows.map((row) => parseAnnualSeries(row.annual_series));
+  const histories = await runPythonStrategyBatch<
+    { points: AnnualFundamentalPoint[] }, HistoricalFundamentalMetrics
+  >("long_term_history", annualSeries.map((points) => ({ points })));
+  const records = rows.map((row, rowIndex) => {
     const ltp = numberOrNull(row.ltp);
     const providerMarketCap = numberOrNull(row.provider_market_cap);
     const cmp = numberOrNull(row.cmp);
@@ -304,7 +309,7 @@ export async function getLongTermData(market: LongTermMarket): Promise<LongTermD
         ? freeCashFlow / adjustedMarketCap * 100
         : null;
     const reportPeriod = dateOnly(row.report_period) ?? "1970-01-01";
-    const history = deriveHistoricalMetrics(parseAnnualSeries(row.annual_series));
+    const history = histories[rowIndex];
     const annualEbit = numberOrNull(row.annual_ebit);
     const annualEbitda = numberOrNull(row.annual_ebitda);
     const annualInterestExpense = numberOrNull(row.annual_interest_expense);

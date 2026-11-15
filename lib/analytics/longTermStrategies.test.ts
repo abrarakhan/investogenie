@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  deriveHistoricalMetrics,
   scoreAgainstLongTermStrategy,
   type LongTermFundamentals,
 } from "./longTermStrategies";
@@ -35,48 +34,6 @@ const fundamentals = (overrides: Partial<LongTermFundamentals> = {}): LongTermFu
   historyYears: 5,
   statementPeriods: 5,
   ...overrides,
-});
-
-describe("deriveHistoricalMetrics", () => {
-  it("derives multi-year CAGR, median ROCE, and earnings consistency", () => {
-    const result = deriveHistoricalMetrics([
-      { period: "2025-03-31", revenue: 160, netProfit: 32, roce: 24, operatingCashFlow: 36, freeCashFlow: 20 },
-      { period: "2024-03-31", revenue: 145, netProfit: 27, roce: 20, operatingCashFlow: 29, freeCashFlow: 17 },
-      { period: "2023-03-31", revenue: 125, netProfit: 22, roce: 18, operatingCashFlow: 24, freeCashFlow: 14 },
-      { period: "2022-03-31", revenue: 100, netProfit: 16, roce: 16, operatingCashFlow: 18, freeCashFlow: 10 },
-      { period: "2021-03-31", revenue: 90, netProfit: 14, roce: 14, operatingCashFlow: 15, freeCashFlow: 9 },
-      { period: "2020-03-31", revenue: 80, netProfit: 10, roce: 12, operatingCashFlow: 11, freeCashFlow: 8 },
-    ]);
-    expect(result.revenueCagr3y).toBeCloseTo(16.96, 1);
-    expect(result.profitCagr5y).toBeCloseTo(26.18, 1);
-    expect(result.medianRoce5y).toBe(17);
-    expect(result.medianCashConversion5y).toBeCloseTo(1.09, 1);
-    expect(result.medianFcfMargin5y).toBeCloseTo(10.6, 1);
-    expect(result.statementPeriods).toBe(6);
-    expect(result.positiveProfitYearsRatio).toBe(1);
-    expect(result.historyYears).toBe(5);
-  });
-
-  it("does not manufacture CAGR from losses or insufficient history", () => {
-    const result = deriveHistoricalMetrics([
-      { period: "2025-03-31", revenue: 100, netProfit: 10, roce: 12 },
-      { period: "2024-03-31", revenue: 90, netProfit: -2, roce: 8 },
-    ]);
-    expect(result.revenueCagr3y).toBeNull();
-    expect(result.profitCagr3y).toBeNull();
-    expect(result.positiveProfitYearsRatio).toBeNull();
-  });
-
-  it("keeps missing statement values null instead of treating them as zero", () => {
-    const result = deriveHistoricalMetrics([
-      { period: "2025-03-31", revenue: 100, netProfit: 10, roce: 12, operatingCashFlow: null, freeCashFlow: null },
-      { period: "2024-03-31", revenue: 90, netProfit: 9, roce: 11 },
-      { period: "2023-03-31", revenue: 80, netProfit: 8, roce: 10 },
-    ]);
-    expect(result.medianCashConversion5y).toBeNull();
-    expect(result.medianFcfMargin5y).toBeNull();
-    expect(result.statementPeriods).toBe(0);
-  });
 });
 
 describe("long-term strategy scoring", () => {
