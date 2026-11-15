@@ -17,6 +17,7 @@ from strategy_math.ledger import (assess as assess_ledger, assess_trades as asse
 from strategy_math.ledger import assess_news
 from strategy_math.swing_scan import (assess as assess_swing_scan, cross_section as assess_swing_cross_section,
                                       levels_for_screen as assess_swing_levels)
+from strategy_math.probability import assess as assess_probability
 
 
 def _json_safe(value):
@@ -114,6 +115,8 @@ def main() -> int:
         ))
         for rank, index in enumerate(order, 1):
             results[index]["pythonRank"] = rank
+    elif engine == "probability":
+        results = [assess_probability(item) for item in inputs]
     else:
         raise ValueError(f"unsupported strategy engine: {engine}")
     json.dump({"engine": engine, "results": _json_safe(results)}, sys.stdout, allow_nan=False, separators=(",", ":"))

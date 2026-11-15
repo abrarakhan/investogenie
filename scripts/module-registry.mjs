@@ -55,7 +55,7 @@ export const MODULES = [
   },
   {
     key: "probability", guide: "docs/modules/probability.md",
-    paths: ["lib/probability-runtime", "lib/analytics/probability", "app/terminal/[market]/probability", "components/probability"],
+    paths: ["lib/probability-runtime", "lib/analytics/probability", "app/terminal/[market]/probability", "components/probability", "pipelines/strategy_math/probability.py", "pipelines/test_probability_strategy_math.py"],
     dependencies: ["market-data", "forward-test"],
     tests: ["npx vitest run lib/forwardTestEngines.test.ts"],
   },
