@@ -61,9 +61,9 @@ export const MODULES = [
   },
   {
     key: "adaptive-allocation", guide: "docs/modules/adaptive-allocation.md",
-    paths: ["lib/adaptiveAllocation", "lib/analytics/adaptiveAllocationSelection", "lib/analytics/universalPortfolio", "app/terminal/[market]/adaptive-allocation", "components/adaptive"],
+    paths: ["lib/adaptiveAllocation", "lib/adaptivePairSelection", "lib/universalPortfolio", "lib/analytics/adaptiveAllocationSelection", "lib/analytics/universalPortfolio", "app/terminal/[market]/adaptive-allocation", "components/adaptive", "pipelines/strategy_math/adaptive_allocation.py", "pipelines/test_adaptive_allocation_math.py"],
     dependencies: ["market-data", "broker"],
-    tests: ["npx vitest run lib/analytics/adaptiveAllocationSelection.test.ts lib/analytics/universalPortfolio.test.ts"],
+    tests: ["PYTHONPATH=pipelines .venv/bin/python -m unittest pipelines.test_adaptive_allocation_math"],
   },
   {
     key: "portfolio-funds", guide: "docs/modules/portfolio-funds.md",

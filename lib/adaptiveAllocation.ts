@@ -1,6 +1,7 @@
 import { query, queryOne } from "@/lib/db";
 import { latestExpectedSessionDate, refreshMarketHolidays } from "@/lib/market-calendar.mjs";
-import { backtestUniversalPortfolio, type UniversalBacktestResult, type UniversalPricePoint } from "@/lib/analytics/universalPortfolio";
+import type { UniversalBacktestResult, UniversalPricePoint } from "@/lib/analytics/universalPortfolio";
+import { backtestUniversalPortfolio } from "@/lib/universalPortfolio";
 import type { AdaptivePairSelection, AdaptiveSelectionCandidate } from "@/lib/analytics/adaptiveAllocationSelection";
 import { selectAdaptiveAllocationPair } from "@/lib/adaptivePairSelection";
 import type { MarketId } from "@/lib/types";
@@ -158,7 +159,7 @@ export async function getAdaptiveBacktest(input: {
   if (latestCommonDate < expectedSessionDate) {
     throw new Error(`Common OHLCV ends on ${latestCommonDate}; expected ${expectedSessionDate}. Refresh history before trusting this backtest.`);
   }
-  const result = backtestUniversalPortfolio(points, {
+  const result = await backtestUniversalPortfolio(points, {
     initialCapital: input.initialCapital,
     feeBps: input.feeBps,
     noTradeBandPct: input.noTradeBandPct,

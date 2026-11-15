@@ -34,6 +34,7 @@ def historical_metrics(raw):
 def assess(data): return historical_metrics(data.get("points",[]))
 
 def _clamp(v,lo,hi): return min(hi,max(lo,v))
+def _js_round(v): return math.floor(v+.5)
 def _value(f,field):
     if field=="earningsYield": return 100/f["peRatio"] if f.get("peRatio") and f["peRatio"]>0 else None
     if field in ("revenueCagr3y","profitCagr3y"):
@@ -64,11 +65,11 @@ def score_fundamentals(data):
                 if v is None or not math.isfinite(v): outcomes.append({"label":c["label"],"passed":False,"dataMissing":True,"description":c["description"],"value":None,"score":0}); continue
                 s=_score(v,c["target"],c["direction"]); passed=v>=c["target"] if c["direction"]=="higher" else v<=c["target"]
                 available_weight+=c["weight"]; available+=1; weighted+=s*c["weight"]; matched+=int(passed)
-                outcomes.append({"label":c["label"],"passed":passed,"dataMissing":False,"description":c["description"],"value":v,"score":round(s)})
+                outcomes.append({"label":c["label"],"passed":passed,"dataMissing":False,"description":c["description"],"value":v,"score":_js_round(s)})
             raw=weighted/available_weight if available_weight else 0; completeness=available_weight/total_weight if total_weight else 0
             age=f.get("reportAgeDays"); age_factor=0 if age is None else 1 if age<=180 else .75 if age<=365 else .4
             years=f.get("historyYears",0); history_factor=1 if years>=4 else .85 if years>=2 else .65
-            confidence=round(completeness*age_factor*history_factor*100); eligible=not ineligible and confidence>=60
-            scores.append({"key":strategy["key"],"matchScore":round(raw*(.7+.3*confidence/100)) if eligible else 0,"rawScore":round(raw),"confidence":confidence,"matchedCriteria":matched,"availableCriteria":available,"totalCriteria":len(strategy["criteria"]),"eligible":eligible,"eligibilityReason":ineligible or ("Insufficient or stale evidence for this strategy." if confidence<60 else None),"outcomes":outcomes})
+            confidence=_js_round(completeness*age_factor*history_factor*100); eligible=not ineligible and confidence>=60
+            scores.append({"key":strategy["key"],"matchScore":_js_round(raw*(.7+.3*confidence/100)) if eligible else 0,"rawScore":_js_round(raw),"confidence":confidence,"matchedCriteria":matched,"availableCriteria":available,"totalCriteria":len(strategy["criteria"]),"eligible":eligible,"eligibilityReason":ineligible or ("Insufficient or stale evidence for this strategy." if confidence<60 else None),"outcomes":outcomes})
         out.append(scores)
     return out
