@@ -9,7 +9,7 @@ This is a repository status reference. The production web/Breeze services, HTTPS
 - Next.js 16.4.2 / React 19.2.4 web application with India/US terminal routes.
 - Fundamental/price-action Stock Screener, natural-language filtering, saved screens and exports.
 - Swing, Strong Swing, legacy/V2 Momentum Ignition, News & AI, Long-Term and Probability research surfaces.
-- Trading strategy calculations are Python-authoritative: Base Swing, named strategies, Strong Swing, Momentum, Trend Continuation, Armed Swing, News overlays and ledger projections. TypeScript loaders assemble inputs and consume versioned batch results; legacy TypeScript formulas are retained only as differential-test oracles.
+- Trading strategy calculations are Python-authoritative: Base Swing, named strategies, Strong Swing, Momentum, Trend Continuation, Armed Swing, News overlays and ledger projections. Strong and Armed TypeScript engines have been removed; their TypeScript modules are contracts only. Other legacy formula oracles remain migration-test debt, not production authorities.
 - Armed Strong Swing at `/terminal/[market]/armed-swing`, separate from the existing Strong Swing gates/rankings.
 - Immutable Armed and protected execution plans, with server-side ownership/session/status/price validation.
 - Ledger pending buy-stops, partial fills, remaining-quantity tracking and cancellation.
@@ -39,6 +39,8 @@ This is a repository status reference. The production web/Breeze services, HTTPS
 | 0069–0071 | User roles, invitations and canonical system owner |
 | 0072–0076 | Breeze history, quote order flow, intraday bars and broker order audit/actions |
 | 0077 | Versioned market-specific intraday volume curves |
+| 0078 | Point-in-time Strong Swing benchmark identity |
+| 0079 | Email-digest and mobile-mutation idempotency |
 
 The shared Linux release script discovers and applies migrations from 0033 onward in filename order. Fresh databases still need the full ordered schema. `scripts/verify-production-schema.mjs` checks required relations, including candidate observations, trend-continuation signals, browser-notification events, broker-order audits and market-volume curves. Browser notification signatures are unique per user and market day, and polling is serialized across open tabs. Trade-alert identity uses stable decision state rather than changing quote explanation text. After pulling, the release script re-executes the checked-out version once so a migration added in the same release is applied.
 
@@ -110,6 +112,6 @@ The Linux release runs production dependency audit, build and schema verificatio
 - Confirm daily Breeze session validity and separately authorized buying limits.
 - Validate a newly generated mobile binary on physical devices; source metadata is not install evidence.
 - Implement and validate ML training, calibration, serving and monitoring before treating the design contract as an active model.
-- Check email retry/deduplication behavior before relying on exactly-once delivery or individual send times.
+- Migration 0079 provides one durable email-digest claim per user and India market date and durable UUID idempotency for mobile ledger mutations. Production behavior remains pending until the migration is deployed and exercised end to end.
 
 See [AI review handoff](AI_REVIEW_HANDOFF.md), [capabilities](CAPABILITIES.md), [architecture](ARCHITECTURE.md) and [deployment](DEPLOYMENT.md).

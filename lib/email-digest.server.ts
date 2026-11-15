@@ -12,6 +12,29 @@ import { getUserSwingSettings } from "@/lib/settings";
 import { getStrongSwingCandidates } from "@/lib/strongSwing";
 import type { EmailPreferences } from "@/lib/email-actions";
 
+export async function claimEmailDigest(userId: string, marketDate: string): Promise<boolean> {
+  const rows = await query<{ user_id: string }>(
+    `insert into public.email_digest_deliveries(user_id,market_date,status)
+     values($1,$2,'PROCESSING') on conflict do nothing returning user_id`,
+    [userId, marketDate],
+  );
+  return rows.length === 1;
+}
+
+export async function finishEmailDigest(
+  userId: string,
+  marketDate: string,
+  status: "SENT" | "FAILED",
+  error?: string,
+): Promise<void> {
+  await query(
+    `update public.email_digest_deliveries
+        set status=$3,completed_at=now(),error=$4
+      where user_id=$1 and market_date=$2`,
+    [userId, marketDate, status, error?.slice(0, 1000) ?? null],
+  );
+}
+
 /** Fetch users who have email digest enabled and should receive today's email. */
 export async function getEnabledEmailPreferences(): Promise<
   (EmailPreferences & { userName: string })[]

@@ -52,6 +52,8 @@ const requiredRelations = [
   "public.market_volume_curves",
   "public.breeze_order_events",
   "public.breeze_order_actions",
+  "public.email_digest_deliveries",
+  "public.mobile_mutation_idempotency",
 ];
 const requiredColumns = [
   ["corporate_event_sync_state", "authoritative_source"],
@@ -66,6 +68,8 @@ const requiredColumns = [
   ["browser_notification_events", "market_date"],
   ["users", "role"],
   ["users", "is_system_owner"],
+  ["strong_swing_snapshots", "benchmark_asset_id"],
+  ["strong_swing_snapshots", "benchmark_latest_bar_date"],
 ];
 const client = new pg.Client({
   connectionString: url,

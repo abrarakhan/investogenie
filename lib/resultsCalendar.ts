@@ -1,6 +1,6 @@
 import { query } from "@/lib/db";
-import { resultsCalendarCoverage } from "@/lib/analytics/armedSwing";
 import { tradingDayOffset, tradingSessionLag } from "@/lib/market-calendar.mjs";
+import { runPythonStrategyBatch } from "@/lib/pythonStrategyMath";
 
 export interface ResultsCheck {
   verified: boolean;
@@ -55,8 +55,7 @@ export async function loadResultsChecks(
   });
   const requiredCoverageFrom = tradingDayOffset(market, sessionDate, 1);
   const requiredCoverageThrough = tradingDayOffset(market, sessionDate, 3);
-  for (const row of rows) {
-    const coverage = resultsCalendarCoverage({
+  const evidence = rows.map((row) => ({
       today: sessionDate,
       lastSuccessAt: row.last_success_at,
       nextDate: row.next_date,
@@ -67,7 +66,13 @@ export async function loadResultsChecks(
       authoritativeCoverageThrough: row.authoritative_coverage_through,
       requiredCoverageFrom,
       requiredCoverageThrough,
-    });
+  }));
+  const coverageRows = await runPythonStrategyBatch<typeof evidence[number], { verified: boolean; detail: string }>(
+    "results_coverage", evidence,
+  );
+  for (let index = 0; index < rows.length; index++) {
+    const row = rows[index];
+    const coverage = coverageRows[index];
     out.set(row.asset_id, {
       verified: coverage.verified,
       detail: coverage.detail,

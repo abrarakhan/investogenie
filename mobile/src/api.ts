@@ -138,6 +138,23 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return payload as T;
 }
 
+/** Stable request identity for server-side mutation deduplication. */
+export function createMutationKey(): string {
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (character) => {
+    const random = Math.floor(Math.random() * 16);
+    const value = character === "x" ? random : (random & 0x3) | 0x8;
+    return value.toString(16);
+  });
+}
+
+function mutation<T>(path: string, method: "POST" | "PATCH" | "DELETE", body?: unknown, key = createMutationKey()): Promise<T> {
+  return request<T>(path, {
+    method,
+    headers: { "Idempotency-Key": key },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
+}
+
 export async function restoreSession(): Promise<MobileUser | null> {
   if (!(await SecureStore.getItemAsync(TOKEN_KEY))) return null;
   try {
@@ -204,30 +221,30 @@ export function getCandles(market: Market, ticker: string) {
 export function createTrade(input: {
   assetId: string; market: Market; boughtOn: string; buyPrice: number; quantity: number;
   strategyKey: TradeAction["strategyKey"]; planId: string;
-}) {
-  return request<{ id: string }>("/api/v1/mobile/trade-ledger", { method: "POST", body: JSON.stringify(input) });
+}, idempotencyKey?: string) {
+  return mutation<{ id: string }>("/api/v1/mobile/trade-ledger", "POST", input, idempotencyKey);
 }
 
 export function updateTrade(tradeId: string, input: {
   market: Market; boughtOn: string; buyPrice: number; quantity: number; notes?: string;
-}) {
-  return request<{ ok: true }>(`/api/v1/mobile/trade-ledger/${tradeId}`, { method: "PATCH", body: JSON.stringify(input) });
+}, idempotencyKey?: string) {
+  return mutation<{ ok: true }>(`/api/v1/mobile/trade-ledger/${tradeId}`, "PATCH", input, idempotencyKey);
 }
 
-export function deleteTrade(tradeId: string) {
-  return request<void>(`/api/v1/mobile/trade-ledger/${tradeId}`, { method: "DELETE" });
+export function deleteTrade(tradeId: string, idempotencyKey?: string) {
+  return mutation<void>(`/api/v1/mobile/trade-ledger/${tradeId}`, "DELETE", undefined, idempotencyKey);
 }
 
 export function recordSale(tradeId: string, input: {
   market: Market; soldOn: string; quantity: number; exitPrice: number; reason?: string;
-}) {
-  return request<{ ok: true }>(`/api/v1/mobile/trade-ledger/${tradeId}/sales`, { method: "POST", body: JSON.stringify(input) });
+}, idempotencyKey?: string) {
+  return mutation<{ ok: true }>(`/api/v1/mobile/trade-ledger/${tradeId}/sales`, "POST", input, idempotencyKey);
 }
 
 export function updateSale(tradeId: string, saleId: string, input: {
   market: Market; soldOn: string; quantity: number; exitPrice: number; reason?: string;
-}) {
-  return request<{ ok: true }>(`/api/v1/mobile/trade-ledger/${tradeId}/sales/${saleId}`, { method: "PATCH", body: JSON.stringify(input) });
+}, idempotencyKey?: string) {
+  return mutation<{ ok: true }>(`/api/v1/mobile/trade-ledger/${tradeId}/sales/${saleId}`, "PATCH", input, idempotencyKey);
 }
 
 // ---- Server-driven screens -----------------------------------------------------------------

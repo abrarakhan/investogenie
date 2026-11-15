@@ -8,7 +8,7 @@ import { StatusBar } from "expo-status-bar";
 import * as Notifications from "expo-notifications";
 import Svg, { Line, Rect } from "react-native-svg";
 import {
-  apiConfigurationError, createTrade, deleteTrade, getCandles, getLedger, getNewsSwing, getScreen, getScreenCatalog,
+  apiConfigurationError, createMutationKey, createTrade, deleteTrade, getCandles, getLedger, getNewsSwing, getScreen, getScreenCatalog,
   login, logout, recordSale, restoreSession, updateSale, updateTrade, type CandlePoint, type LedgerSummary, type LedgerTrade,
   type Market, type MobileScreen, type MobileUser, type NewsSwingCandidate, type ScreenCard, type ScreenCatalogEntry,
   type ScreenTone, type TradeAction,
@@ -275,8 +275,9 @@ function Ledger({ market }: { market: Market }) {
 
 function TradeEntrySheet({ visible, trade, market, onClose, onSaved }: { visible: boolean; trade: TradeAction; market: Market; onClose: () => void; onSaved: () => void }) {
   const [date, setDate] = useState(today(market)); const [price, setPrice] = useState(String(trade.suggestedPrice)); const [quantity, setQuantity] = useState(""); const [busy, setBusy] = useState(false); const [error, setError] = useState("");
+  const [idempotencyKey] = useState(createMutationKey);
   // Only the plan id goes to the server, which reads entry, target, stop, trail and horizon from it.
-  const save = async () => { setBusy(true); setError(""); try { await createTrade({ assetId: trade.assetId, market, boughtOn: date, buyPrice: amount(price), quantity: amount(quantity), strategyKey: trade.strategyKey, planId: trade.planId }); onSaved(); } catch (cause) { setError(message(cause, "Trade could not be recorded")); } finally { setBusy(false); } };
+  const save = async () => { setBusy(true); setError(""); try { await createTrade({ assetId: trade.assetId, market, boughtOn: date, buyPrice: amount(price), quantity: amount(quantity), strategyKey: trade.strategyKey, planId: trade.planId }, idempotencyKey); onSaved(); } catch (cause) { setError(message(cause, "Trade could not be recorded")); } finally { setBusy(false); } };
   return <Sheet visible={visible} title={`Log ${trade.ticker}`} onClose={onClose}><Field value={date} onChangeText={setDate} placeholder="Purchase date YYYY-MM-DD" /><Field value={price} onChangeText={setPrice} placeholder="Buy price" keyboard="decimal-pad" /><Field value={quantity} onChangeText={setQuantity} placeholder="Quantity" keyboard="decimal-pad" />{!!error && <Text style={styles.error}>{error}</Text>}<Action label="Freeze plan and log trade" busy={busy} onPress={save} /></Sheet>;
 }
 
@@ -286,7 +287,8 @@ function EditTradeSheet({ trade, market, onClose, onSaved }: { trade: LedgerTrad
 
 function EditTradeForm({ trade, market, onClose, onSaved }: { trade: LedgerTrade; market: Market; onClose: () => void; onSaved: () => void }) {
   const [date, setDate] = useState(trade.boughtOn); const [price, setPrice] = useState(String(trade.buyPrice)); const [quantity, setQuantity] = useState(String(trade.quantity)); const [busy, setBusy] = useState(false); const [error, setError] = useState("");
-  const save = async () => { if (!trade) return; setBusy(true); try { await updateTrade(trade.id, { market, boughtOn: date, buyPrice: amount(price), quantity: amount(quantity) }); onSaved(); } catch (cause) { setError(message(cause, "Trade could not be updated")); } finally { setBusy(false); } };
+  const [idempotencyKey] = useState(createMutationKey);
+  const save = async () => { if (!trade) return; setBusy(true); try { await updateTrade(trade.id, { market, boughtOn: date, buyPrice: amount(price), quantity: amount(quantity) }, idempotencyKey); onSaved(); } catch (cause) { setError(message(cause, "Trade could not be updated")); } finally { setBusy(false); } };
   return <Sheet visible title={`Edit ${trade.ticker}`} onClose={onClose}><Field value={date} onChangeText={setDate} placeholder="Purchase date YYYY-MM-DD" /><Field value={price} onChangeText={setPrice} placeholder="Buy price" keyboard="decimal-pad" /><Field value={quantity} onChangeText={setQuantity} placeholder="Quantity" keyboard="decimal-pad" />{!!error && <Text style={styles.error}>{error}</Text>}<Action label="Save trade" busy={busy} onPress={save} /></Sheet>;
 }
 
@@ -296,7 +298,8 @@ function SaleSheet({ trade, sale, market, onClose, onSaved }: { trade: LedgerTra
 
 function SaleForm({ trade, sale, market, onClose, onSaved }: { trade: LedgerTrade; sale?: LedgerTrade["exits"][number]; market: Market; onClose: () => void; onSaved: () => void }) {
   const [date, setDate] = useState(sale?.soldOn ?? today(market)); const [price, setPrice] = useState(String(sale?.exitPrice ?? trade.currentPrice ?? "")); const [quantity, setQuantity] = useState(String(sale?.quantity ?? trade.remainingQuantity)); const [reason, setReason] = useState(sale?.reason ?? "Manual exit"); const [busy, setBusy] = useState(false); const [error, setError] = useState("");
-  const save = async () => { if (!trade) return; setBusy(true); try { const input = { market, soldOn: date, exitPrice: amount(price), quantity: amount(quantity), reason }; if (sale) await updateSale(trade.id, sale.id, input); else await recordSale(trade.id, input); onSaved(); } catch (cause) { setError(message(cause, "Sale could not be recorded")); } finally { setBusy(false); } };
+  const [idempotencyKey] = useState(createMutationKey);
+  const save = async () => { if (!trade) return; setBusy(true); try { const input = { market, soldOn: date, exitPrice: amount(price), quantity: amount(quantity), reason }; if (sale) await updateSale(trade.id, sale.id, input, idempotencyKey); else await recordSale(trade.id, input, idempotencyKey); onSaved(); } catch (cause) { setError(message(cause, "Sale could not be recorded")); } finally { setBusy(false); } };
   return <Sheet visible title={`${sale ? "Edit sale" : "Record sale"} · ${trade.ticker}`} onClose={onClose}><Field value={date} onChangeText={setDate} placeholder="Sale date YYYY-MM-DD" /><Field value={price} onChangeText={setPrice} placeholder="Sale price" keyboard="decimal-pad" /><Field value={quantity} onChangeText={setQuantity} placeholder="Quantity" keyboard="decimal-pad" /><Field value={reason} onChangeText={setReason} placeholder="Reason" />{!!error && <Text style={styles.error}>{error}</Text>}<Action label={sale ? "Save sale" : "Record sale"} busy={busy} onPress={save} /></Sheet>;
 }
 

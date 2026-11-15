@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
-import { getEnabledEmailPreferences, sendEmailDigest } from "@/lib/email-digest.server";
+import { claimEmailDigest, finishEmailDigest, getEnabledEmailPreferences, sendEmailDigest } from "@/lib/email-digest.server";
 import { logCronRun } from "@/lib/ingest/cronLog";
+import { zonedMarketClock } from "@/lib/market-calendar.mjs";
 
 export const maxDuration = 300; // 5 minutes
 
@@ -19,18 +20,26 @@ export async function GET(request: Request) {
   const startTime = Date.now();
   let sentCount = 0;
   let errorCount = 0;
+  let skippedCount = 0;
   const errors: string[] = [];
+  const marketDate = zonedMarketClock("IN").date;
 
   try {
     const enabledUsers = await getEnabledEmailPreferences();
 
     for (const user of enabledUsers) {
+      if (!(await claimEmailDigest(user.userId, marketDate))) {
+        skippedCount++;
+        continue;
+      }
       try {
         await sendEmailDigest(user.userId);
+        await finishEmailDigest(user.userId, marketDate, "SENT");
         sentCount++;
       } catch (err) {
         errorCount++;
         const msg = err instanceof Error ? err.message : String(err);
+        await finishEmailDigest(user.userId, marketDate, "FAILED", msg).catch(() => undefined);
         errors.push(`${user.email}: ${msg}`);
         console.error(`Failed to send digest to ${user.email}:`, err);
       }
@@ -58,12 +67,13 @@ export async function GET(request: Request) {
     job: "send-email-digest",
     status: errorCount === 0 ? "ok" : "error",
     durationMs: duration,
-    detail: { sent: sentCount, errors: errorCount, errorList: errors },
+    detail: { sent: sentCount, skipped: skippedCount, errors: errorCount, errorList: errors },
   });
 
   return NextResponse.json({
     status: errorCount === 0 ? "success" : "partial",
     sent: sentCount,
+    skipped: skippedCount,
     errors: errorCount,
     duration: `${duration}ms`,
     errorList: errors,

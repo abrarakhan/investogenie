@@ -9,7 +9,8 @@ import sys
 from strategy_math.strong_swing import assess as assess_strong_swing
 from strategy_math.momentum import assess_both as assess_momentum
 from strategy_math.trend_execution import assess as assess_trend_execution
-from strategy_math.armed_swing import STATUS_ORDER as ARMED_STATUS_ORDER, assess as assess_armed_swing
+from strategy_math.armed_swing import (STATUS_ORDER as ARMED_STATUS_ORDER, assess as assess_armed_swing,
+                                       results_calendar_coverage)
 from strategy_math.ledger import (assess as assess_ledger, assess_trades as assess_ledger_trades,
                                    assess_gtt as assess_ledger_gtt, assess_progress as assess_ledger_progress,
                                    strategy_follow_up as assess_ledger_followup, assess_overlay as assess_ledger_overlay)
@@ -73,6 +74,8 @@ def main() -> int:
         ))
         for rank, index in enumerate(order, 1):
             results[index]["pythonRank"] = rank
+    elif engine == "results_coverage":
+        results = [results_calendar_coverage(item) for item in inputs]
     elif engine == "ledger_gtt":
         results = [assess_ledger_gtt(item) for item in inputs]
     elif engine == "ledger_progress":

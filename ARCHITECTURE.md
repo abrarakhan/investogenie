@@ -34,7 +34,7 @@ The web stack is Next.js 16.4.2 App Router, React 19.2.4 and TypeScript. Postgre
 | `pipelines/`, `workers/` | Python ingestion and broker workers |
 | `pipelines/ml/` | Deterministic ML feature collection and labels |
 | `scripts/` | Scheduling, ingestion and operational checks |
-| `db/migrations/` | Ordered schema through 0077 |
+| `db/migrations/` | Ordered schema through 0079 |
 | `mobile/` | Isolated React Native client |
 | `deploy/` | macOS and Ubuntu service/deployment packages |
 
@@ -42,7 +42,7 @@ The [README route table](README.md#workspaces) maps each workspace. In particula
 
 ## Calculations and candidate flow
 
-Trading strategy mathematics is Python-authoritative. `pipelines/strategy_math/swing_scan.py` owns Base Swing discovery, cross-sectional ranks, the five named strategy detectors and their live levels; the scan and screen TypeScript modules only collect raw inputs and persist/render its results. The Strong Swing page engines, Armed Swing, News & AI overlays and ledger projections use the same Python batch boundary. TypeScript calculation modules remain only as differential-test oracles until their fixtures are retired.
+Trading strategy mathematics is Python-authoritative. `pipelines/strategy_math/swing_scan.py` owns Base Swing discovery, cross-sectional ranks, the five named strategy detectors and their live levels; the scan and screen TypeScript modules only collect raw inputs and persist/render its results. Strong Swing and Armed Swing now expose TypeScript contracts only—the duplicate calculation oracles were retired. News & AI overlays and ledger projections use the same Python batch boundary. Remaining legacy TypeScript formula modules are migration-test debt and are not production authorities.
 
 Momentum Ignition legacy and V2 remain separate models but share the Python batch boundary, which also applies the V2 timing veto to legacy execution. Armed Swing is a separate screen whose loader scans market-relative strength and near-pivot candidates, then sends at most 250 shortlisted stocks, raw calendar evidence and live execution inputs to the Python engine. It excludes the in-progress bar from base construction and uses live volume only for breakout pace.
 
@@ -105,7 +105,7 @@ Training, calibration, inference, model promotion and drift-response automation 
 
 Ubuntu packages use systemd, Nginx, external environment configuration and private PostgreSQL. The historical `deploy/oracle/` path also supports AWS hosts. macOS uses launchd and optional Tailscale access.
 
-The release script fetches main, then re-executes the checked-out script once so the current release logic is used. It installs/audits/builds/prunes Node dependencies, installs Python requirements, discovers and applies migrations 0033 onward in filename order, verifies required schema including migration 0077 market-volume curves, installs service units, restarts and checks login. It assumes the earlier schema and does not execute lint/tests.
+The release script fetches main, then re-executes the checked-out script once so the current release logic is used. It installs/audits/builds/prunes Node dependencies, installs Python requirements, discovers and applies migrations 0033 onward in filename order, verifies required schema including benchmark capture metadata and delivery/mutation idempotency, installs service units, restarts and checks login. It assumes the earlier schema and does not execute lint/tests.
 
 Use `npm test`, `npm run lint`, `npm run build` and deployment checks before promotion. Mobile has separate typecheck/release validation; Python suites need separate execution. Runtime coverage, installed builds and production revision require host/database inspection.
 

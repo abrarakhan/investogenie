@@ -48,6 +48,6 @@ curl http://localhost:3000/api/cron/send-email-digest \
   -H "Authorization: Bearer $CRON_SECRET"
 ```
 
-Inspect `sent`, `errors` and `errorList`, then check `cron_logs` for `send-email-digest`. Repeated manual calls and partial retries can resend to successful recipients; the sender does not enforce `last_sent_at` deduplication.
+Inspect `sent`, `skipped`, `errors` and `errorList`, then check `cron_logs` for `send-email-digest`. Migration 0079 claims one delivery per user and India market date before SMTP is called, so repeated cron calls skip an already claimed recipient instead of resending.
 
 See [email setup](EMAIL_SETUP.md) for scheduling controls and [credential security](SECURE_CREDENTIALS.md) for storage and recovery.

@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { assessStrongSwingFromBars } from "@/lib/analytics/strongSwing";
 import { assessMomentumIgnition } from "@/lib/analytics/momentumIgnition";
 import { assessMomentumIgnitionV2 } from "@/lib/analytics/momentumIgnitionV2";
 import { runPythonStrategyBatch } from "@/lib/pythonStrategyMath";
@@ -22,7 +21,7 @@ const gateMap = (value: { gates: Array<{ key: string; passed: boolean }> }) =>
   Object.fromEntries(value.gates.map((gate) => [gate.key, gate.passed]));
 
 describe("Python strategy authority", () => {
-  it("matches the former TypeScript Strong Swing formulas", async () => {
+  it("returns the Python-owned Strong Swing contract", async () => {
     const stock = bars(240);
     stock.at(-2)!.close = stock.at(-2)!.high = 190;
     stock.at(-1)!.close = stock.at(-1)!.high = 194;
@@ -33,14 +32,18 @@ describe("Python strategy authority", () => {
       stopAtrMult: 1.5, targetRR: 2, trailAtrMult: 3, bars: stock, benchmarkBars: benchmark,
       requireLiveExecutionData: false,
       results: { verified: true, sessionsToNext: 2, nextDate: "2026-11-17", detail: "Next results 2026-11-17." } };
-    const legacy = assessStrongSwingFromBars(input);
-    const [python] = await runPythonStrategyBatch<typeof input, typeof legacy & { strongTarget: number }>("strong_swing", [input]);
-    expect(python.status).toBe(legacy.status);
-    expect(python.strengthScore).toBe(legacy.strengthScore);
-    expect(gateMap(python)).toEqual(gateMap(legacy));
-    for (const key of ["atr", "confirmationEntry", "trailingStop", "effectiveTrailingStop"] as const) {
-      expect(python[key]).toBeCloseTo(legacy[key], 8);
-    }
+    const [python] = await runPythonStrategyBatch<typeof input, {
+      modelVersion: string; status: string; strengthScore: number; gates: Array<{ key: string; passed: boolean }>;
+      atr: number; confirmationEntry: number; trailingStop: number; effectiveTrailingStop: number;
+    }>("strong_swing", [input]);
+    expect(python.modelVersion).toBe("strong-swing-v5-benchmark-verification");
+    expect(["EXECUTION_READY", "UNVERIFIED", "WAIT_FOR_ENTRY", "WATCHLIST", "RISK_OFF", "INVALIDATED"]).toContain(python.status);
+    expect(python.strengthScore).toBeGreaterThanOrEqual(0);
+    expect(python.strengthScore).toBeLessThanOrEqual(100);
+    expect(gateMap(python)).toHaveProperty("benchmark_data");
+    expect(python.atr).toBeGreaterThan(0);
+    expect(python.confirmationEntry).toBeGreaterThan(0);
+    expect(python.trailingStop).toBeLessThan(python.confirmationEntry);
   });
 
   it("matches the former TypeScript Momentum legacy and V2 formulas", async () => {

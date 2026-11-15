@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getMobileSessionUser } from "@/lib/mobileAuth";
 import { updateMobileTradeSale } from "@/lib/mobileLedgerMutations";
+import { runIdempotentMobileMutation } from "@/lib/mobileMutationResponse";
 
 export const runtime = "nodejs";
 
@@ -9,11 +10,9 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ t
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const body = await request.json().catch(() => null);
   if (!body || typeof body !== "object") return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
-  try {
-    const { tradeId, saleId } = await context.params;
+  const { tradeId, saleId } = await context.params;
+  return runIdempotentMobileMutation(request, user.id, `UPDATE_SALE:${tradeId}:${saleId}`, body, async () => {
     await updateMobileTradeSale(user.id, tradeId, saleId, body);
-    return NextResponse.json({ ok: true });
-  } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Sale could not be updated" }, { status: 400 });
-  }
+    return { body: { ok: true } };
+  });
 }

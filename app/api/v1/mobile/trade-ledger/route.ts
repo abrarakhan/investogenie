@@ -4,6 +4,7 @@ import { getSwingTradeLedger } from "@/lib/swingTradeLedger";
 import { summarizeLedgerBooks } from "@/lib/swingTradeLedgerPython";
 import { normalizeMarket } from "@/lib/markets";
 import { createMobileTrade } from "@/lib/mobileLedgerMutations";
+import { runIdempotentMobileMutation } from "@/lib/mobileMutationResponse";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -29,10 +30,8 @@ export async function POST(request: NextRequest) {
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const body = await request.json().catch(() => null);
   if (!body || typeof body !== "object") return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
-  try {
+  return runIdempotentMobileMutation(request, user.id, "CREATE_TRADE", body, async () => {
     const id = await createMobileTrade(user.id, body);
-    return NextResponse.json({ id }, { status: 201 });
-  } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Trade could not be recorded" }, { status: 400 });
-  }
+    return { status: 201, body: { id } };
+  });
 }

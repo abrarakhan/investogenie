@@ -1,6 +1,6 @@
 import { query } from "@/lib/db";
 import {
-  ARMED_SWING_RULES,
+  ARMED_SWING_INPUT_POLICY,
   type ArmedSwingAssessment,
   type ArmedSwingInput,
   type SessionVolumeCurve,
@@ -270,7 +270,7 @@ export async function getArmedSwingCandidates(
         authoritativeCoverageThrough: calendar.authoritative_coverage_through,
         requiredCoverageFrom,
         requiredCoverageThrough,
-        blackoutSessionDates: Array.from({ length: ARMED_SWING_RULES.resultsBlackoutSessions }, (_, offset) =>
+        blackoutSessionDates: Array.from({ length: ARMED_SWING_INPUT_POLICY.resultsBlackoutSessions }, (_, offset) =>
           tradingDayOffset(market, sessionDate, offset + 1)).filter((date): date is string => date !== null),
       }
       : null;
@@ -290,7 +290,7 @@ export async function getArmedSwingCandidates(
       expectedSessionLag: tradingSessionLag(market, bars.at(-1)!.date, expectedSession),
       execution: {
         quoteFresh: marketOpen && authoritative && quoteAgeMinutes !== null
-          && quoteAgeMinutes <= ARMED_SWING_RULES.maxQuoteAgeMinutes,
+          && quoteAgeMinutes <= ARMED_SWING_INPUT_POLICY.maxQuoteAgeMinutes,
         quoteAgeMinutes: marketOpen ? quoteAgeMinutes : null,
         bestBid: authoritative ? nullable(row.best_bid) : null,
         bestAsk: authoritative ? nullable(row.best_ask) : null,
