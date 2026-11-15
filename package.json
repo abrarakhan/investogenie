@@ -34,6 +34,8 @@
     "sync:breeze-account": ".venv/bin/python workers/breeze_account_sync.py",
     "smoke": "node scripts/smoke-routes.mjs",
     "audit:strategy-readiness": "node scripts/strategy-readiness-audit.mjs",
+    "context:changed": "node scripts/changed-module-context.mjs",
+    "test:changed": "node scripts/test-changed-modules.mjs",
     "test": "vitest run",
     "test:watch": "vitest"
   },
