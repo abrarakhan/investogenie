@@ -182,6 +182,18 @@ def summarize(outcomes: list[Outcome]) -> dict:
     }
 
 
+def near_miss(verdict: dict) -> bool:
+    """Ready on everything except where the price happened to be.
+
+    These are the days the live screen can still offer, because it re-reads the entry band
+    against the quote all session while this replay reads it once. Requiring entry_zone to
+    be the *only* blocking failure is what keeps the set honest: a day also failing the
+    volatility ceiling or the results blackout was never one quote away from being taken.
+    """
+    failed = [gate["key"] for gate in verdict["gates"] if gate["blocking"] and not gate["passed"]]
+    return failed == ["entry_zone"]
+
+
 def decision_view(bars: list[Bar], index: int, mode: str) -> tuple[float, dict | None, int] | None:
     """What the engine is shown about the moment of decision, and when the trade starts.
 
@@ -247,13 +259,22 @@ def scan_asset(asset: dict, bars: list[Bar], bars_json: list[dict], benchmark: d
             "results": results,
             "session": session,
         })
-        if verdict["status"] != "EXECUTION_READY":
+        ready = verdict["status"] == "EXECUTION_READY"
+        missed = options.collect != "ready" and not ready and near_miss(verdict)
+        if not ready and not missed:
             continue
-        outcome = grade(verdict["strongStop"], verdict["strongTarget"],
-                        bars[entry_index:], options.horizon)
+        if ready and options.collect == "near-miss":
+            continue
+        # A near miss has no entry price: the open was outside the band, so whether it was
+        # ever buyable is a question only the intraday path answers. It is recorded with its
+        # plan and left ungraded rather than graded at a price nobody could have paid.
+        outcome = None if missed else grade(verdict["strongStop"], verdict["strongTarget"],
+                                            bars[entry_index:], options.horizon)
         if outcome and options.overlap == "first":
             open_until = outcome.exit_date
-        signals.append({"asset": asset, "signal_date": day, "verdict": verdict, "outcome": outcome})
+        signals.append({"asset": asset, "signal_date": day, "verdict": verdict,
+                        "outcome": outcome, "near_miss": missed,
+                        "entry_date": bars[entry_index].date if entry_index < len(bars) else None})
     return signals
 
 
@@ -343,7 +364,7 @@ def store(conn, options: argparse.Namespace, benchmark: dict, signals: list[dict
             """insert into public.strong_swing_replay_signals(
                  run_id,asset_id,ticker,signal_date,strength_score,plan_entry,plan_stop,
                  plan_target,atr,expected_days,entry_date,entry_price,exit_date,exit_price,
-                 exit_reason,return_pct,max_favorable_pct,max_adverse_pct,sessions_held)
+                 exit_reason,return_pct,max_favorable_pct,max_adverse_pct,sessions_held,near_miss)
                values %s on conflict do nothing""",
             [(run_id, item["asset"]["id"], item["asset"]["ticker"], item["signal_date"],
               item["verdict"]["strengthScore"], item["verdict"]["strongEntry"],
@@ -351,8 +372,9 @@ def store(conn, options: argparse.Namespace, benchmark: dict, signals: list[dict
               item["verdict"]["atr"], item["verdict"]["strongExpectedDays"],
               *( (o.entry_date, o.entry_price, o.exit_date, o.exit_price, o.exit_reason,
                   o.return_pct, o.max_favorable_pct, o.max_adverse_pct, o.sessions_held)
-                 if (o := item["outcome"]) else (None, None, None, None, "OPEN",
-                                                 None, None, None, None)))
+                 if (o := item["outcome"]) else (item["entry_date"], None, None, None, "OPEN",
+                                                 None, None, None, None)),
+              item["near_miss"])
              for item in signals],
         )
     conn.commit()
@@ -361,10 +383,12 @@ def store(conn, options: argparse.Namespace, benchmark: dict, signals: list[dict
 
 def report(options: argparse.Namespace, benchmark: dict, signals: list[dict],
            scanned: int, sessions: int, run_id: str | None) -> None:
-    graded = [item["outcome"] for item in signals if item["outcome"]]
+    taken = [item for item in signals if not item["near_miss"]]
+    missed = [item for item in signals if item["near_miss"]]
+    graded = [item["outcome"] for item in taken if item["outcome"]]
     stats = summarize(graded)
     slippage = [(item["outcome"].entry_price / item["verdict"]["strongEntry"] - 1) * 100
-                for item in signals if item["outcome"] and item["verdict"]["strongEntry"] > 0]
+                for item in taken if item["outcome"] and item["verdict"]["strongEntry"] > 0]
     print(f"\nStrong Swing replay — {options.market} {options.start} to {options.end}")
     print(f"  model             {MODEL_VERSION}")
     print(f"  methodology       {METHODOLOGY_VERSION}")
@@ -374,7 +398,9 @@ def report(options: argparse.Namespace, benchmark: dict, signals: list[dict],
     print(f"  overlap           {'one open position per stock' if options.overlap == 'first' else 'every ready day'}")
     print(f"  decision          {DECISION_LABEL[options.session]}")
     print(f"  scanned           {scanned} assets, {sessions} asset-sessions")
-    print(f"  signals           {len(signals)} ({len(graded)} graded, horizon {options.horizon} sessions)")
+    print(f"  signals           {len(taken)} ({len(graded)} graded, horizon {options.horizon} sessions)")
+    if missed:
+        print(f"  near misses       {len(missed)} days blocked only by the entry band, ungraded")
     if not graded:
         print("  no graded signals — nothing to conclude")
         return
@@ -400,6 +426,9 @@ def main() -> None:
     parser.add_argument("--horizon", type=int, default=DEFAULT_HORIZON)
     parser.add_argument("--results", default="ignored", choices=("ignored", "strict"))
     parser.add_argument("--overlap", default="first", choices=("first", "all"))
+    parser.add_argument("--collect", default="ready", choices=("ready", "near-miss", "both"),
+                        help="'near-miss' also records days ready on every blocking gate but "
+                             "entry_zone — the ones a live intraday quote could still reach.")
     parser.add_argument("--session", default="none", choices=("none", "open", "blind", "session"),
                         help="none: judge on the signal bar's close. blind/session: judge on the "
                              "next session's close and enter the open after it; 'session' also "

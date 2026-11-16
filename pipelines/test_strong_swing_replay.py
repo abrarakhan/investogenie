@@ -227,7 +227,8 @@ class Summary(unittest.TestCase):
 def _options():
     import argparse
     return argparse.Namespace(market="IN", start="1900-01-01", end="2099-12-31", horizon=20,
-                              results="ignored", overlap="first", session="none", stop_atr=1.5,
+                              results="ignored", overlap="first", session="none", collect="ready",
+                              stop_atr=1.5,
                               target_rr=2.0, trail_atr=1.5)
 
 
@@ -272,3 +273,31 @@ class DecisionTiming(unittest.TestCase):
         """`session_live` requires a date past the latest completed bar, or it is circular."""
         _, session, _ = replay.decision_view(self.BARS, 0, "session")
         self.assertGreater(session["date"], self.BARS[0].date)
+
+
+class NearMisses(unittest.TestCase):
+    """Days ready on everything except where the price sat."""
+
+    @staticmethod
+    def verdict(*failed_blocking, advisory_failed=()):
+        gates = [{"key": "structure", "passed": True, "blocking": True},
+                 {"key": "entry_zone", "passed": "entry_zone" not in failed_blocking, "blocking": True},
+                 {"key": "atr_risk", "passed": "atr_risk" not in failed_blocking, "blocking": True},
+                 {"key": "session_hold", "passed": "session_hold" not in advisory_failed, "blocking": False}]
+        return {"gates": gates}
+
+    def test_only_the_entry_band_failing_is_a_near_miss(self):
+        self.assertTrue(replay.near_miss(self.verdict("entry_zone")))
+
+    def test_a_day_failing_nothing_is_not_a_near_miss(self):
+        """It was taken; counting it again would double-count the same trade."""
+        self.assertFalse(replay.near_miss(self.verdict()))
+
+    def test_a_second_blocking_failure_disqualifies_it(self):
+        """One quote away from buyable is the whole point; two reasons is not."""
+        self.assertFalse(replay.near_miss(self.verdict("entry_zone", "atr_risk")))
+        self.assertFalse(replay.near_miss(self.verdict("atr_risk")))
+
+    def test_a_failing_advisory_gate_does_not_disqualify_it(self):
+        """Advisory gates never blocked the trade, so they cannot un-block it either."""
+        self.assertTrue(replay.near_miss(self.verdict("entry_zone", advisory_failed=("session_hold",))))
