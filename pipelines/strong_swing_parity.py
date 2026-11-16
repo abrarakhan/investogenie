@@ -158,10 +158,14 @@ BAR_GATES = (
 HARD_RISK_GATES = {
     "extension_5d", "extension_10d", "atr_risk", "stop_width", "circuit_behaviour", "freshness",
     "price", "liquidity", "live_quote", "live_spread", "live_circuit", "market_shock", "results_blackout",
+    "session_reversal",
 }
 # Gates decided by inputs a capture does not record (the live quote at the time, the results
 # calendar as it stood), so a replay from bars cannot reproduce them.
-TIME_VARYING_GATES = {"live_quote", "live_spread", "live_circuit"}
+# The session gates belong here too: they are decided by the live session's high and the quote
+# at the time, and this check replays from completed bars with no session at all, so a replay
+# passes them whatever the capture recorded.
+TIME_VARYING_GATES = {"live_quote", "live_spread", "live_circuit", "session_hold", "session_reversal"}
 
 
 def bar_gates(bars: list[Bar], market: str = "IN", stop_mult: float = 1.5) -> dict[str, bool]:
@@ -223,6 +227,10 @@ def expected_status(gates: list[dict], failed: bool) -> str:
     hard_risk = any(not ok for key, ok in passed.items() if key in hard_gates and key not in advisory)
     extension = not passed.get("sma20_extension", True)
     entry_zone = not passed.get("entry_zone", True)
+    # Slipping below the last completed close only waits; handing back more than the entry
+    # zone's own width is a hard risk, handled by HARD_RISK_GATES above. Captures from before
+    # these gates existed default to passing, reproducing the older behaviour for them.
+    session_hold = not passed.get("session_hold", True)
     blocking = [gate for gate in gates if gate.get("blocking", True)]
     technical = all(gate.get("passed") for gate in blocking if gate.get("category") == "technical")
     if failed:
@@ -231,7 +239,7 @@ def expected_status(gates: list[dict], failed: bool) -> str:
         return "RISK_OFF"
     if not benchmark_ok:
         return "UNVERIFIED"
-    if technical and (entry_zone or extension):
+    if technical and (entry_zone or extension or session_hold):
         return "WAIT_FOR_ENTRY"
     if extension:
         return "RISK_OFF"

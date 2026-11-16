@@ -58,7 +58,7 @@ The moving-average line is evaluated only after a completed close. It does not r
 
 ## 2. Strong Swing (`/terminal/[market]/strong-swing`)
 
-Sources: `pipelines/strategy_math/strong_swing.py` (authoritative), `lib/analytics/strongSwing.ts` (test oracle), `lib/strongSwing.ts` (inputs, snapshot), `lib/resultsCalendar.ts`, `lib/swingExecutionPlans.ts` (purchase validation), `workers/breeze_auto_buy.py`, `pipelines/strong_swing_parity.py`.
+Sources: `pipelines/strategy_math/strong_swing.py` (authoritative), `lib/analytics/strongSwing.ts` (contract), `lib/strongSwing.ts` (inputs, snapshot), `lib/resultsCalendar.ts`, `lib/swingExecutionPlans.ts` (purchase validation), `workers/breeze_auto_buy.py`, `pipelines/strong_swing_parity.py`.
 
 Universe: every long base-classifier setup, plus every stock whose last two completed closes are above the highest high of the 20 sessions before them, whatever the base scan calls it. NSE only for India. Bars are completed sessions; today's bar is excluded while the market is open.
 
@@ -72,9 +72,29 @@ breakout bar   = the latest bar if it broke out, else the previous bar if it did
 
 Blocking technical gates: structural breakout on either of the last two bars; close > SMA50 and SMA200, SMA20 > SMA50 > SMA200, SMA50 rising; 20-session return above the benchmark's; **on the breakout bar**: close ≥ level + 0.25 ATR, close in the top 30% of its range, volume ≥ 1.5× the 20 sessions before it; both latest closes ≥ entry; participation (5-session volume ≥ 1.2× the 20-session average with price up, or OI +5%).
 
+The open session, when it is beyond the newest completed bar, is judged on its direction and
+not only its last price (model `strong-swing-v6-session-reversal`):
+
+```
+session hold     live price ≥ the newest completed close      → otherwise WAIT_FOR_ENTRY
+session reversal today's high − live price ≤ 0.50 × ATR(14)    → otherwise RISK_OFF
+```
+
+Before these rules the session reached the gates only as the live price, tested for its
+distance from the entry trigger but never for direction. A stock could gap up, fail at the
+high and hand the whole move back while still sitting above the trigger, and every gate
+passed: MEESHO did this on 2026-11-16 and ranked first, EXECUTION_READY, through the morning
+(open 259.00, high 261.10, back to 255.63 against Friday's close of 257.07, with the entry at
+252.96 never breached). The give-back ceiling is deliberately the entry zone's own 0.50 ATR
+width rather than a second tuned number: a give-back wider than the whole actionable zone is
+no longer the setup the completed bars described. Both rules are inert outside a live session,
+and a session dated at the newest completed bar is not a live session — that comparison would
+be circular. `pipelines/testdata/meesho_2026_11_16.json` holds the bars that produced the
+defect, replayed by `pipelines/test_strong_swing_session.py`.
+
 Blocking execution gates: fresh data; price ≥ ₹20 / $2; 20-session traded value ≥ ₹1 crore / $1M; live price ≥ entry × 0.999 and ≤ entry + 0.5 ATR; 5-session return ≤ 30%; 10-session ≤ 50%; ≤ 15% above SMA20; ATR ≤ 5%; stop ≤ 7%; fewer than two circuit-like sessions in 20; benchmark not down 4% in two sessions; India: verified results calendar with no results within three sessions; India live session: Breeze quote ≤ 5 min, spread ≤ 0.75%, ≥ 3% above the lower circuit when the band is known. Advisory: market regime (benchmark above a rising SMA50), and the results check in the US, where the calendar has no coverage.
 
-Status order: `INVALIDATED` (latest close < level − 1 ATR) → `RISK_OFF` (hard execution gate, results included) → `WAIT_FOR_ENTRY` (technically confirmed, outside the buy zone or above the SMA20 limit) → `EXECUTION_READY` → `WATCHLIST`.
+Status order: `INVALIDATED` (latest close < level − 1 ATR) → `RISK_OFF` (hard execution gate, results and intraday reversal included) → `UNVERIFIED` (benchmark absent, behind the market or too short for its 50-SMA) → `WAIT_FOR_ENTRY` (technically confirmed, but outside the buy zone, above the SMA20 limit, or below the newest completed close) → `EXECUTION_READY` → `WATCHLIST`. A reversal therefore outranks a mere slip below the prior close.
 
 Purchase validation refuses a fill below entry × 0.999, above entry + 0.5 ATR, or at/above the target. Auto-buy additionally requires the market-regime gate to pass and the current model version.
 

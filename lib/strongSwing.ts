@@ -235,7 +235,7 @@ export async function getStrongSwingCandidates(
   const baseRankByAsset = new Map(base.map((row, index) => [row.assetId, index + 1]));
 
   const ids = base.map((row) => row.assetId);
-  const [barRows, contexts, benchmarkRows, resultsByAsset] = await Promise.all([
+  const [barRows, contexts, benchmarkRows, resultsByAsset, sessionRows] = await Promise.all([
     query<BarRow>(
       `select asset_id,date::text date,open,high,low,close,volume,open_interest
          from (
@@ -264,6 +264,17 @@ export async function getStrongSwingCandidates(
       [country, market === "IN" ? ["NIFTY", "NIFTYBEES"] : ["SPY"], marketOpen, marketDate],
     ),
     loadResultsChecks(market, marketDate, ids),
+    // The open session's own bar — the partial row the completed-bar filter above removes.
+    // The gates need its high to tell a move that is holding from one that has been handed
+    // back; the last price alone cannot distinguish them.
+    query<{ asset_id: string; date: string; high: string; low: string }>(
+      `select asset_id,date::text date,high,low from (
+         select o.*,row_number() over(partition by o.asset_id order by o.date desc) rn
+           from public.daily_ohlcv o
+          where o.asset_id = any($1::uuid[]) and $2::boolean and o.date >= $3::date
+       ) ranked where rn = 1`,
+      [ids, marketOpen, marketDate],
+    ),
   ]);
 
   const barsByAsset = new Map<string, OHLCV[]>();
@@ -273,6 +284,9 @@ export async function getStrongSwingCandidates(
     barsByAsset.set(raw.asset_id, rows);
   }
   const contextByAsset = new Map(contexts.map((row) => [row.asset_id, row]));
+  const sessionByAsset = new Map(sessionRows.map((row) => [row.asset_id, {
+    date: row.date, high: Number(row.high), low: Number(row.low),
+  }]));
   const benchmarkBars = benchmarkRows.map(toBar).reverse();
   // Without the benchmark, the regime, relative-strength and freshness gates all fail at once
   // and every candidate silently drops to WATCHLIST, which reads as a market call rather than
@@ -304,6 +318,7 @@ export async function getStrongSwingCandidates(
       benchmarkBars,
       requireLiveExecutionData: market === "IN" && marketOpen,
       results: resultsByAsset.get(row.assetId) ?? null,
+      session: sessionByAsset.get(row.assetId) ?? null,
       microstructure: context?.quote_source === "BREEZE_LIVE" ? {
         bestBid: context.best_bid === null ? null : Number(context.best_bid),
         bestAsk: context.best_ask === null ? null : Number(context.best_ask),

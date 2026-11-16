@@ -1,7 +1,7 @@
 /** Strong Swing contract. All decision mathematics lives in Python. */
 import type { OHLCV } from "@/lib/types";
 
-export const STRONG_SWING_MODEL_VERSION = "strong-swing-v5-benchmark-verification";
+export const STRONG_SWING_MODEL_VERSION = "strong-swing-v6-session-reversal";
 export const STRONG_SWING_TRAILING_POLICY_VERSION = "strong-swing-ledger-trailing-v2-post-entry-next-bar";
 export type StrongSwingStatus = "EXECUTION_READY" | "UNVERIFIED" | "WAIT_FOR_ENTRY" | "WATCHLIST" | "RISK_OFF" | "INVALIDATED";
 export interface StrongSwingGate { key: string; label: string; passed: boolean; detail: string; category: "technical" | "execution"; blocking: boolean }
@@ -11,6 +11,12 @@ export interface StrongSwingInput {
   stopAtrMult?: number; targetRR?: number; trailAtrMult?: number; ticker?: string; baseScore?: number; rankScore?: number | null;
   microstructure?: { bestBid: number | null; bestAsk: number | null; lowerCircuit: number | null; quoteFresh: boolean };
   requireLiveExecutionData?: boolean; breakoutBar?: "latest" | "previous" | null;
+  /**
+   * Today's session, when it is beyond the newest completed bar. The gates are built from
+   * completed bars; this is how the open session's direction reaches them, rather than only
+   * its last price.
+   */
+  session?: { date: string; high: number; low: number } | null;
   results?: { verified: boolean; sessionsToNext: number | null; nextDate: string | null; detail: string; source?: string | null; sourceAsOf?: string | null; coverageFrom?: string | null; coverageThrough?: string | null } | null;
 }
 export interface StrongSwingAssessment {

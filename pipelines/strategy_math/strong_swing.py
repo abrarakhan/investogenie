@@ -5,10 +5,15 @@ from typing import Any
 
 from .common import Bar, average_true_range, js_round, mean, pct_change, round2, sma, structural_breakout
 
-MODEL_VERSION = "strong-swing-v5-benchmark-verification"
+MODEL_VERSION = "strong-swing-v6-session-reversal"
 TRAILING_POLICY_VERSION = "strong-swing-ledger-trailing-v2-post-entry-next-bar"
 CONFIRMATION_ATR_BUFFER = 0.25
 RESULTS_BLACKOUT_SESSIONS = 3
+# How much of today's advance may be handed back before the move being bought is gone.
+# Deliberately the same 0.50 ATR the entry zone is already a band of: a give-back wider than
+# the whole actionable zone is no longer the setup the completed bars described. Reusing that
+# constant avoids introducing a second, independently tuned number for the same idea.
+SESSION_GIVE_BACK_ATR = .5
 # A fill this far under the confirmed entry is still at the entry (matches purchase validation).
 ENTRY_TOLERANCE = 0.999
 
@@ -160,6 +165,18 @@ def assess(raw: dict[str, Any]) -> dict[str, Any]:
     live_not_required = market != "IN" or not require_live
     spread_pct = ((float(ask) - float(bid)) / float(ask)) * 100 if bid and ask else None
     at_entry = current_price >= round2(entry) * ENTRY_TOLERANCE
+    # Today's session. Until now the open session reached the gates only as `current_price`,
+    # and was tested for distance from the entry but never for direction: a stock could gap up,
+    # fail, and hand the whole move back and still read EXECUTION_READY while it sat above the
+    # trigger. The session's own high and the last completed close answer that.
+    session = raw.get("session") or {}
+    raw_session_high = session.get("high")
+    session_high = None if raw_session_high is None else float(raw_session_high)
+    # The session counts only once it is beyond the last completed bar. Otherwise the "session"
+    # is the very bar the rest of the gates are built from, and comparing them is circular.
+    session_live = session_high is not None and session_high > 0 and str(session.get("date") or "") > latest.date
+    give_back_atr = (session_high - current_price) / atr if session_live and atr > 0 else 0.0
+    holds_prior_close = current_price >= latest.close
     # Company results. India has an authoritative calendar, so an unverified or imminent date
     # blocks the entry; elsewhere the check is reported but cannot block on missing coverage.
     results = raw.get("results") or None
@@ -187,6 +204,13 @@ def assess(raw: dict[str, Any]) -> dict[str, Any]:
         _gate("market_shock", "Market shock", not market_shock, "Two-session benchmark move unavailable." if bench_two_day is None else f"{bench_two_day:.1f}% over two sessions; entries stop at -4%.", "execution"),
         _gate("confirmation", "OI build-up" if has_oi else "Cash-equity confirmation", bool(oi_confirmed if has_oi else cash_confirmed), f"{(oi_change or 0):.1f}% OI change over five sessions." if has_oi else f"{volume_trend5:.2f}x five-session volume vs the 20-session base, price {(price_change5 or 0):.1f}% over five sessions; requires 1.20x and a rise."),
         _gate("entry_zone", "Entry discipline", extension_atr <= .5 and at_entry, f"{extension_atr:.2f} ATR above confirmed entry {entry:.2f}; maximum 0.50 ATR." if at_entry else f"Price {current_price:.2f} is below the confirmed entry {entry:.2f}; wait for it to trade back at the entry.", "execution"),
+        _gate("session_hold", "Session hold", (not session_live) or holds_prior_close,
+              "No live session beyond the latest completed bar." if not session_live
+              else f"Live {current_price:.2f} holds at or above the {latest.date} close {latest.close:.2f}." if holds_prior_close
+              else f"Live {current_price:.2f} is below the {latest.date} close {latest.close:.2f}; wait for the breakout to hold.", "execution"),
+        _gate("session_reversal", "Intraday reversal", (not session_live) or give_back_atr <= SESSION_GIVE_BACK_ATR,
+              "No live session beyond the latest completed bar." if not session_live
+              else f"{give_back_atr:.2f} ATR handed back from today's high {session_high:.2f}; maximum {SESSION_GIVE_BACK_ATR:.2f}.", "execution"),
         _gate("extension_5d", "Five-session extension", (ret5 if ret5 is not None else math.inf) <= 30, "Five-session return unavailable." if ret5 is None else f"{ret5:.1f}%; maximum 30%.", "execution"),
         _gate("extension_10d", "Ten-session extension", (ret10 if ret10 is not None else math.inf) <= 50, "Ten-session return unavailable." if ret10 is None else f"{ret10:.1f}%; maximum 50%.", "execution"),
         _gate("sma20_extension", "20-day extension", (above_sma20 if above_sma20 is not None else math.inf) <= 15, "20-day average unavailable." if above_sma20 is None else f"{above_sma20:.1f}% above SMA20; maximum 15%.", "execution"),
@@ -206,7 +230,7 @@ def assess(raw: dict[str, Any]) -> dict[str, Any]:
     structure["detail"] = "Latest completed bar closed above its 20-session high or upper band." if breakout_bar == "latest" else "Previous completed bar broke out; the latest bar is the hold." if breakout_bar == "previous" else f"Neither of the last two completed bars broke out (base scan: {verdict})."
     score = js_round(sum(bool(gate["passed"]) for gate in gates) / len(gates) * 100)
     breakout_failed = is_breakout and atr > 0 and latest.close < level - atr
-    hard = {"extension_5d", "extension_10d", "sma20_extension", "atr_risk", "stop_width", "circuit_behaviour", "freshness", "price", "liquidity", "live_quote", "live_spread", "live_circuit", "market_shock", "results_blackout"}
+    hard = {"extension_5d", "extension_10d", "sma20_extension", "atr_risk", "stop_width", "circuit_behaviour", "freshness", "price", "liquidity", "live_quote", "live_spread", "live_circuit", "market_shock", "results_blackout", "session_reversal"}
     # A benchmark that is absent, behind the market, or too short for its 50-SMA cannot answer
     # the questions the benchmark gates ask. Treating that as RISK_OFF told the user the market
     # was dangerous when the truth was that it could not be measured; treating the resulting
@@ -219,6 +243,7 @@ def assess(raw: dict[str, Any]) -> dict[str, Any]:
     hard_failed = any(gate["key"] in hard and gate["key"] != "sma20_extension" and gate["blocking"] and not gate["passed"] for gate in gates)
     extension_failed = not next(gate["passed"] for gate in gates if gate["key"] == "sma20_extension")
     entry_failed = not next(gate["passed"] for gate in gates if gate["key"] == "entry_zone")
+    hold_failed = not next(gate["passed"] for gate in gates if gate["key"] == "session_hold")
     technical_passed = all(gate["passed"] for gate in gates if gate["category"] == "technical" and gate["blocking"])
     if breakout_failed:
         status = "INVALIDATED"
@@ -227,7 +252,7 @@ def assess(raw: dict[str, Any]) -> dict[str, Any]:
         status = "RISK_OFF"
     elif not next(gate["passed"] for gate in gates if gate["key"] == "benchmark_data"):
         status = "UNVERIFIED"
-    elif technical_passed and (entry_failed or extension_failed):
+    elif technical_passed and (entry_failed or extension_failed or hold_failed):
         status = "WAIT_FOR_ENTRY"
     elif extension_failed:
         status = "RISK_OFF"
@@ -257,6 +282,8 @@ def assess(raw: dict[str, Any]) -> dict[str, Any]:
         "distanceAboveSma20Pct": above_sma20, "atrPct": atr_pct,
         "stopRiskPct": stop_risk, "entryExtensionAtr": extension_atr,
         "circuitLikeSessions20": circuit_count, "suggestedExposurePct": exposure,
+        "sessionHigh": session_high if session_live else None,
+        "sessionGiveBackAtr": give_back_atr if session_live else None,
         "atr": atr, "isBreakout": is_breakout, "breakoutBar": breakout_bar,
         "trailingStop": trailing_stop, "effectiveTrailingStop": effective_trail,
         "strongEntry": entry, "strongStop": strong_stop, "strongTarget": strong_target,

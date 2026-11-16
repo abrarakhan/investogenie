@@ -3,9 +3,9 @@ from datetime import date, timedelta
 
 from pipelines.strategy_math.strong_swing import MODEL_VERSION
 from pipelines.strong_swing_parity import (
-    BENCHMARK_RECORDED, BENCHMARK_RESELECTED, Bar, average_true_range, bar_gates, benchmark_replay_plan,
-    breakout_failed, breakout_level, confirmation_breakout, differences, expected_status,
-    forward_gate_comparison, gate_differences, plan, round2, structural_breakout,
+    BENCHMARK_RECORDED, BENCHMARK_RESELECTED, TIME_VARYING_GATES, Bar, average_true_range, bar_gates,
+    benchmark_replay_plan, breakout_failed, breakout_level, confirmation_breakout, differences,
+    expected_status, forward_gate_comparison, gate_differences, plan, round2, structural_breakout,
 )
 
 
@@ -278,6 +278,73 @@ class ForwardGateComparison(unittest.TestCase):
             self._gates(structure=True, benchmark_data=False),
             self._gates(structure=True, benchmark_data=False), MODEL_VERSION, True)
         self.assertEqual(result, ([], False))
+
+
+class SessionStatusInTheChecker(unittest.TestCase):
+    """The checker derives the session rules' statuses exactly as the engine does.
+
+    The checker is a separate implementation on purpose, so a new gate in the engine does not
+    reach it automatically. When the engines started judging the open session's direction, a
+    checker that did not know `session_hold` and `session_reversal` would have called every
+    reversal-blocked capture a status mismatch.
+    """
+
+    @staticmethod
+    def _gates(**failed):
+        keys = [("structure", "technical"), ("follow_through", "technical"), ("entry_zone", "execution"),
+                ("sma20_extension", "execution"), ("atr_risk", "execution"), ("benchmark_data", "execution"),
+                ("session_hold", "execution"), ("session_reversal", "execution")]
+        return [{"key": key, "category": category, "blocking": True,
+                 "passed": not failed.get(key, False)} for key, category in keys]
+
+    def test_slipping_below_the_prior_close_waits(self):
+        self.assertEqual(expected_status(self._gates(session_hold=True), False), "WAIT_FOR_ENTRY")
+
+    def test_handing_back_the_move_is_risk_off(self):
+        self.assertEqual(expected_status(self._gates(session_reversal=True), False), "RISK_OFF")
+
+    def test_the_reversal_outranks_the_hold(self):
+        gates = self._gates(session_hold=True, session_reversal=True)
+        self.assertEqual(expected_status(gates, False), "RISK_OFF")
+
+    def test_captures_without_the_session_gates_keep_their_verdict(self):
+        """Pre-v6 captures have neither key and must still audit cleanly."""
+        legacy = [row for row in self._gates()
+                  if row["key"] not in {"session_hold", "session_reversal"}]
+        self.assertEqual(expected_status(legacy, False), "EXECUTION_READY")
+
+    def test_session_gates_are_excluded_from_forward_replay(self):
+        """The replay has no session input, so it would always pass them."""
+        self.assertLessEqual({"session_hold", "session_reversal"}, TIME_VARYING_GATES)
+        recorded = self._gates(session_hold=True, session_reversal=True)
+        replayed = self._gates()
+        stable, time_varying_only = forward_gate_comparison(recorded, replayed, MODEL_VERSION, True)
+        self.assertEqual(stable, [])
+        self.assertTrue(time_varying_only)
+
+    def test_checker_agrees_with_the_live_engine_on_every_session_condition(self):
+        from pipelines.test_strong_swing_session import gate, holding_breakout, ready_price, run
+
+        bars = holding_breakout()
+        price, atr = ready_price(), run()["atr"]
+        close = bars[-1]["close"]
+        cases = {
+            "no session": (price, None),
+            "at its own high": (price, {"date": "2027-01-01", "high": price, "low": price - .3}),
+            "below the prior close": (close - .05, {"date": "2027-01-01", "high": close + .02,
+                                                    "low": close - .1}),
+            "handed the move back": (price, {"date": "2027-01-01", "high": price + .9 * atr,
+                                             "low": price - .2}),
+        }
+        for name, (live, session) in cases.items():
+            result = run(live, session, bars=bars)
+            derived = expected_status(result["gates"], False)
+            self.assertEqual(derived, result["status"],
+                             f"{name}: checker derived {derived}, engine returned {result['status']}")
+            # Guards the cases themselves: a scenario whose gates all pass proves nothing.
+            if name not in ("no session", "at its own high"):
+                self.assertFalse(gate(result, "session_hold")["passed"]
+                                 and gate(result, "session_reversal")["passed"])
 
 
 if __name__ == "__main__":
