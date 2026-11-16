@@ -356,7 +356,9 @@ def store(conn, options: argparse.Namespace, benchmark: dict, signals: list[dict
             (options.market, MODEL_VERSION, METHODOLOGY_VERSION,
              "strict" if options.results == "strict" else "ignored",
              benchmark["asset_id"], options.start, options.end, options.horizon,
-             scanned, sessions, len(signals)),
+             # Near misses are recorded beside the trades but are not trades: counting them
+             # here would overstate by threefold what the run actually took.
+             scanned, sessions, sum(1 for item in signals if not item["near_miss"])),
         )
         run_id = cur.fetchone()[0]
         execute_values(
