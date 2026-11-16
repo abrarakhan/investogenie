@@ -4,6 +4,7 @@ import MomentumIgnitionCandidates from "@/components/screener/MomentumIgnitionCa
 import MomentumIgnitionLegacyCandidates from "@/components/screener/MomentumIgnitionLegacyCandidates";
 import TrendContinuationCandidates from "@/components/screener/TrendContinuationCandidates";
 import StrongSwingCandidates from "@/components/screener/StrongSwingCandidates";
+import { loadStrategyRecord } from "@/lib/strategyRecord";
 import { getSessionUser } from "@/lib/auth";
 import { normalizeMarket } from "@/lib/markets";
 import { getUserSwingSettings } from "@/lib/settings";
@@ -33,13 +34,14 @@ export default async function StrongSwingPage({
   if (!user) redirect("/login");
 
   const settings = await getUserSwingSettings();
-  const [candidates, legacyMomentumIgnition, momentumIgnition, trendContinuation, readyHistory, trendTotals] = await Promise.all([
+  const [candidates, legacyMomentumIgnition, momentumIgnition, trendContinuation, readyHistory, trendTotals, strategyRecord] = await Promise.all([
     displayStrongSwing(market, settings),
     displayLegacyMomentum(market, settings),
     displayMomentumV2(market, settings),
     displayTrendContinuation(market),
     getTodayReadySignalHistory(user.id, market),
     getTrendContinuationStatusTotals(market).catch(() => undefined),
+    loadStrategyRecord(market),
   ]);
   const executionPlans: ExecutionPlanInput[] = [
     ...strongSwingExecutionPlanInputs(candidates),
@@ -98,7 +100,7 @@ export default async function StrongSwingPage({
           <h2 className="mt-1 text-2xl font-black">Strong Swing Confirmation</h2>
           <p className="mt-1 text-sm text-white/45">The same base Swing signals are re-ranked only after the two-close confirmation and execution-safety gates.</p>
         </div>
-        <StrongSwingCandidates candidates={strongShown} counts={strongDisplay.counts} planIds={Object.fromEntries(planIds)} market={market} />
+        <StrongSwingCandidates candidates={strongShown} counts={strongDisplay.counts} planIds={Object.fromEntries(planIds)} market={market} record={strategyRecord} />
       </section>
       <section id="momentum-ignition" className="mt-12 scroll-mt-6 border-t border-white/10 pt-8">
         <MomentumIgnitionLegacyCandidates result={{ ...legacyMomentumIgnition, candidates: legacyShown.shown }} counts={legacyShown.counts} ranks={legacyShown.ranks} lazy planIds={Object.fromEntries(planIds)} />
