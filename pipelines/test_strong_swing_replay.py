@@ -227,9 +227,48 @@ class Summary(unittest.TestCase):
 def _options():
     import argparse
     return argparse.Namespace(market="IN", start="1900-01-01", end="2099-12-31", horizon=20,
-                              results="ignored", overlap="first", stop_atr=1.5,
+                              results="ignored", overlap="first", session="none", stop_atr=1.5,
                               target_rr=2.0, trail_atr=1.5)
 
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DecisionTiming(unittest.TestCase):
+    """The control arm and the session arm must differ in exactly one thing."""
+
+    BARS = [bar("2024-01-01", 100, 101, 99, 100), bar("2024-01-02", 100, 108, 99, 101),
+            bar("2024-01-03", 101, 102, 100, 101.5), bar("2024-01-04", 102, 103, 101, 102)]
+
+    def test_none_judges_the_signal_bar_and_enters_the_next_open(self):
+        price, session, entry = replay.decision_view(self.BARS, 0, "none")
+        self.assertEqual(price, 100)        # the signal bar's close
+        self.assertIsNone(session)
+        self.assertEqual(entry, 1)          # the next bar's open
+
+    def test_blind_and_session_agree_on_price_and_entry(self):
+        blind = replay.decision_view(self.BARS, 0, "blind")
+        live = replay.decision_view(self.BARS, 0, "session")
+        self.assertEqual(blind[0], live[0], "the two arms must price the decision identically")
+        self.assertEqual(blind[2], live[2], "the two arms must enter on the same bar")
+        # The entire difference between the arms, so the comparison measures the gates alone.
+        self.assertIsNone(blind[1])
+        self.assertEqual(live[1], {"date": "2024-01-02", "high": 108, "low": 99})
+
+    def test_the_decision_moves_to_the_session_after_the_signal(self):
+        price, _, entry = replay.decision_view(self.BARS, 0, "session")
+        self.assertEqual(price, 101)        # the close of the session the gates read
+        self.assertEqual(entry, 2)          # the open after it
+
+    def test_a_signal_with_no_room_to_decide_and_enter_is_dropped(self):
+        """Two bars are needed after the signal; the last bars of history have neither."""
+        self.assertIsNone(replay.decision_view(self.BARS, 2, "session"))
+        self.assertIsNone(replay.decision_view(self.BARS, 3, "blind"))
+        # The plain mode needs only the next open, so it survives one bar longer.
+        self.assertIsNotNone(replay.decision_view(self.BARS, 2, "none"))
+
+    def test_the_session_handed_over_is_the_one_the_gates_can_act_on(self):
+        """`session_live` requires a date past the latest completed bar, or it is circular."""
+        _, session, _ = replay.decision_view(self.BARS, 0, "session")
+        self.assertGreater(session["date"], self.BARS[0].date)

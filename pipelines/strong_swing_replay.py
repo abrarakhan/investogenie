@@ -50,6 +50,11 @@ BENCHMARK_TICKERS = {"IN": ("NIFTYBEES", "NIFTY"), "US": ("SPY",)}
 # completed bars can honestly claim: the calendar is clear for this date.
 RESULTS_CLEAR = {"verified": True, "sessionsToNext": None, "nextDate": None,
                  "detail": "Results blackout not evaluated by the replay."}
+DECISION_LABEL = {
+    "none": "signal bar's close; enter next open; v6 session gates inert",
+    "blind": "next session's close; enter the open after; session withheld (control arm)",
+    "session": "next session's close; enter the open after; v6 session gates active",
+}
 
 
 def breakout_candidate(window: list[Bar]) -> bool:
@@ -176,6 +181,28 @@ def summarize(outcomes: list[Outcome]) -> dict:
     }
 
 
+def decision_view(bars: list[Bar], index: int, mode: str) -> tuple[float, dict | None, int] | None:
+    """What the engine is shown about the moment of decision, and when the trade starts.
+
+    `none` is the plain replay: judge on the close of the signal bar and enter at the next
+    open. It cannot exercise the v6 session gates at all, because nothing beyond the signal
+    bar is in view.
+
+    Production never decides at that moment. It decides *during* the session after the
+    signal bar, which is the session those gates read. `blind` and `session` both move the
+    decision to that session's close and the entry to the open after it; they differ only
+    in whether the session is handed to the engine. That single difference is what makes
+    the pair a controlled comparison rather than two unrelated backtests.
+    """
+    if mode == "none":
+        return bars[index].close, None, index + 1
+    if index + 2 >= len(bars):
+        return None
+    live = bars[index + 1]
+    session = None if mode == "blind" else {"date": live.date, "high": live.high, "low": live.low}
+    return live.close, session, index + 2
+
+
 def scan_asset(asset: dict, bars: list[Bar], bars_json: list[dict], benchmark: dict,
                event_dates: list[str], options: argparse.Namespace) -> list[dict]:
     """Every EXECUTION_READY day this asset produced inside the replay window."""
@@ -194,24 +221,28 @@ def scan_asset(asset: dict, bars: list[Bar], bars_json: list[dict], benchmark: d
         window = bars[start:index + 1]
         if len(window) < MIN_BARS or not breakout_candidate(window):
             continue
+        view = decision_view(bars, index, options.session)
+        if view is None:
+            continue
+        current_price, session, entry_index = view
         results = (results_check(event_dates, day, benchmark["sessions"])
                    if options.results == "strict" else RESULTS_CLEAR)
         verdict = assess({
             "market": options.market,
             "verdict": "REPLAY",
-            "currentPrice": bars[index].close,
+            "currentPrice": current_price,
             "stopAtrMult": options.stop_atr, "targetRR": options.target_rr,
             "trailAtrMult": options.trail_atr,
             "bars": bars_json[start:index + 1],
             "benchmarkBars": benchmark_slice(benchmark["sessions"], benchmark["bars"], day),
             "requireLiveExecutionData": False,
             "results": results,
-            "session": None,
+            "session": session,
         })
         if verdict["status"] != "EXECUTION_READY":
             continue
         outcome = grade(verdict["strongStop"], verdict["strongTarget"],
-                        bars[index + 1:], options.horizon)
+                        bars[entry_index:], options.horizon)
         if outcome and options.overlap == "first":
             open_until = outcome.exit_date
         signals.append({"asset": asset, "signal_date": day, "verdict": verdict, "outcome": outcome})
@@ -333,6 +364,7 @@ def report(options: argparse.Namespace, benchmark: dict, signals: list[dict],
     print(f"  results gate      {'evaluated where the calendar covers the date' if options.results == 'strict' else 'not evaluated'}")
     print("  live gates        not evaluated (no recorded broker quote)")
     print(f"  overlap           {'one open position per stock' if options.overlap == 'first' else 'every ready day'}")
+    print(f"  decision          {DECISION_LABEL[options.session]}")
     print(f"  scanned           {scanned} assets, {sessions} asset-sessions")
     print(f"  signals           {len(signals)} ({len(graded)} graded, horizon {options.horizon} sessions)")
     if not graded:
@@ -360,6 +392,10 @@ def main() -> None:
     parser.add_argument("--horizon", type=int, default=DEFAULT_HORIZON)
     parser.add_argument("--results", default="ignored", choices=("ignored", "strict"))
     parser.add_argument("--overlap", default="first", choices=("first", "all"))
+    parser.add_argument("--session", default="none", choices=("none", "blind", "session"),
+                        help="none: judge on the signal bar's close. blind/session: judge on the "
+                             "next session's close and enter the open after it; 'session' also "
+                             "hands that session to the v6 gates. Use the pair to measure them.")
     parser.add_argument("--limit", type=int, default=None, help="scan only the first N tickers")
     parser.add_argument("--stop-atr", type=float, default=1.5)
     parser.add_argument("--target-rr", type=float, default=2.0)
