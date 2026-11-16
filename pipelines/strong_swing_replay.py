@@ -51,7 +51,8 @@ BENCHMARK_TICKERS = {"IN": ("NIFTYBEES", "NIFTY"), "US": ("SPY",)}
 RESULTS_CLEAR = {"verified": True, "sessionsToNext": None, "nextDate": None,
                  "detail": "Results blackout not evaluated by the replay."}
 DECISION_LABEL = {
-    "none": "signal bar's close; enter next open; v6 session gates inert",
+    "none": "signal bar's close; enter next open; session gates inert",
+    "open": "next open, judged and taken at that price; session gates inert",
     "blind": "next session's close; enter the open after; session withheld (control arm)",
     "session": "next session's close; enter the open after; v6 session gates active",
 }
@@ -196,6 +197,13 @@ def decision_view(bars: list[Bar], index: int, mode: str) -> tuple[float, dict |
     """
     if mode == "none":
         return bars[index].close, None, index + 1
+    if mode == "open":
+        # The decision the v7 entry band was measured on: judge at the next open and take
+        # that same price. Production judges against the live quote all session, so this is
+        # the open-only slice of it, not the whole of what the live gate sees.
+        if index + 1 >= len(bars):
+            return None
+        return bars[index + 1].open, None, index + 1
     if index + 2 >= len(bars):
         return None
     live = bars[index + 1]
@@ -392,7 +400,7 @@ def main() -> None:
     parser.add_argument("--horizon", type=int, default=DEFAULT_HORIZON)
     parser.add_argument("--results", default="ignored", choices=("ignored", "strict"))
     parser.add_argument("--overlap", default="first", choices=("first", "all"))
-    parser.add_argument("--session", default="none", choices=("none", "blind", "session"),
+    parser.add_argument("--session", default="none", choices=("none", "open", "blind", "session"),
                         help="none: judge on the signal bar's close. blind/session: judge on the "
                              "next session's close and enter the open after it; 'session' also "
                              "hands that session to the v6 gates. Use the pair to measure them.")

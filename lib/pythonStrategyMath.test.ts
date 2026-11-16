@@ -36,7 +36,7 @@ describe("Python strategy authority", () => {
       modelVersion: string; status: string; strengthScore: number; gates: Array<{ key: string; passed: boolean }>;
       atr: number; confirmationEntry: number; trailingStop: number; effectiveTrailingStop: number;
     }>("strong_swing", [input]);
-    expect(python.modelVersion).toBe("strong-swing-v6-session-reversal");
+    expect(python.modelVersion).toBe("strong-swing-v7-entry-band");
     expect(["EXECUTION_READY", "UNVERIFIED", "WAIT_FOR_ENTRY", "WATCHLIST", "RISK_OFF", "INVALIDATED"]).toContain(python.status);
     expect(python.strengthScore).toBeGreaterThanOrEqual(0);
     expect(python.strengthScore).toBeLessThanOrEqual(100);

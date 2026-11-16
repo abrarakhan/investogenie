@@ -5,7 +5,7 @@ from typing import Any
 
 from .common import Bar, average_true_range, js_round, mean, pct_change, round2, sma, structural_breakout
 
-MODEL_VERSION = "strong-swing-v6-session-reversal"
+MODEL_VERSION = "strong-swing-v7-entry-band"
 TRAILING_POLICY_VERSION = "strong-swing-ledger-trailing-v2-post-entry-next-bar"
 CONFIRMATION_ATR_BUFFER = 0.25
 RESULTS_BLACKOUT_SESSIONS = 3
@@ -16,6 +16,21 @@ RESULTS_BLACKOUT_SESSIONS = 3
 SESSION_GIVE_BACK_ATR = .5
 # A fill this far under the confirmed entry is still at the entry (matches purchase validation).
 ENTRY_TOLERANCE = 0.999
+# The actionable band above the confirmed entry, in ATR.
+#
+# The old rule was a ceiling alone: anything from the trigger up to 0.50 ATR qualified, on
+# the reasoning that closer to the trigger is a better price. The historical replay says the
+# opposite, consistently and in both halves of a decade split before the thresholds were
+# chosen: entries taken in the first 0.25 ATR above the trigger lost -0.41% per trade in
+# 2017-22 and -0.32% in 2023-26, while 0.25-0.75 ATR returned +0.68% and +0.87%. Those flat
+# fills were 44% of all signals and every rupee of the strategy's edge was being spent on
+# them. A trigger that is only just exceeded is not a cheap entry; it is an unconvincing one.
+#
+# The ceiling moves to 0.75 ATR because the effect still holds there and collapses beyond it
+# on a sample too thin to read. Both numbers are measured, not reasoned, and re-measuring
+# them is the only way to change them: pipelines/strong_swing_replay.py.
+ENTRY_BAND_MIN_ATR = 0.25
+ENTRY_BAND_MAX_ATR = 0.75
 
 
 def _gate(key: str, label: str, passed: bool, detail: str,
@@ -165,6 +180,17 @@ def assess(raw: dict[str, Any]) -> dict[str, Any]:
     live_not_required = market != "IN" or not require_live
     spread_pct = ((float(ask) - float(bid)) / float(ask)) * 100 if bid and ask else None
     at_entry = current_price >= round2(entry) * ENTRY_TOLERANCE
+    in_entry_band = ENTRY_BAND_MIN_ATR <= extension_atr <= ENTRY_BAND_MAX_ATR
+    entry_band_detail = (
+        f"{extension_atr:.2f} ATR above confirmed entry {entry:.2f}; band is "
+        f"{ENTRY_BAND_MIN_ATR:.2f}-{ENTRY_BAND_MAX_ATR:.2f} ATR." if in_entry_band
+        else f"Price {current_price:.2f} is below the confirmed entry {entry:.2f}; "
+             f"wait for it to clear the entry by {ENTRY_BAND_MIN_ATR:.2f} ATR." if not at_entry
+        else f"Only {extension_atr:.2f} ATR above confirmed entry {entry:.2f}; the band opens at "
+             f"{ENTRY_BAND_MIN_ATR:.2f} ATR, because fills nearer the trigger lose money."
+             if extension_atr < ENTRY_BAND_MIN_ATR
+        else f"{extension_atr:.2f} ATR above confirmed entry {entry:.2f}; "
+             f"maximum {ENTRY_BAND_MAX_ATR:.2f} ATR.")
     # Today's session. Until now the open session reached the gates only as `current_price`,
     # and was tested for distance from the entry but never for direction: a stock could gap up,
     # fail, and hand the whole move back and still read EXECUTION_READY while it sat above the
@@ -203,14 +229,19 @@ def assess(raw: dict[str, Any]) -> dict[str, Any]:
         _gate("market_regime", "Market regime", regime, "Benchmark data unavailable — regime cannot be assessed." if not benchmark else "Benchmark is above a rising 50 SMA; normal sizing." if regime else "Selective regime: use 50% position size and demand relative strength.", "execution", False),
         _gate("market_shock", "Market shock", not market_shock, "Two-session benchmark move unavailable." if bench_two_day is None else f"{bench_two_day:.1f}% over two sessions; entries stop at -4%.", "execution"),
         _gate("confirmation", "OI build-up" if has_oi else "Cash-equity confirmation", bool(oi_confirmed if has_oi else cash_confirmed), f"{(oi_change or 0):.1f}% OI change over five sessions." if has_oi else f"{volume_trend5:.2f}x five-session volume vs the 20-session base, price {(price_change5 or 0):.1f}% over five sessions; requires 1.20x and a rise."),
-        _gate("entry_zone", "Entry discipline", extension_atr <= .5 and at_entry, f"{extension_atr:.2f} ATR above confirmed entry {entry:.2f}; maximum 0.50 ATR." if at_entry else f"Price {current_price:.2f} is below the confirmed entry {entry:.2f}; wait for it to trade back at the entry.", "execution"),
+        _gate("entry_zone", "Entry discipline", in_entry_band, entry_band_detail, "execution"),
+        # Advisory, not blocking. These shipped on a single observation — MEESHO reversing
+        # intraday while reading EXECUTION_READY — and a controlled replay since then put
+        # them at an identical 47.3% win rate against a control arm that withheld the
+        # session, while removing four of every five signals. Information worth showing,
+        # not a veto worth paying for. pipelines/strong_swing_replay.py --session reruns it.
         _gate("session_hold", "Session hold", (not session_live) or holds_prior_close,
               "No live session beyond the latest completed bar." if not session_live
               else f"Live {current_price:.2f} holds at or above the {latest.date} close {latest.close:.2f}." if holds_prior_close
-              else f"Live {current_price:.2f} is below the {latest.date} close {latest.close:.2f}; wait for the breakout to hold.", "execution"),
+              else f"Live {current_price:.2f} is below the {latest.date} close {latest.close:.2f}; the breakout is not holding today.", "execution", False),
         _gate("session_reversal", "Intraday reversal", (not session_live) or give_back_atr <= SESSION_GIVE_BACK_ATR,
               "No live session beyond the latest completed bar." if not session_live
-              else f"{give_back_atr:.2f} ATR handed back from today's high {session_high:.2f}; maximum {SESSION_GIVE_BACK_ATR:.2f}.", "execution"),
+              else f"{give_back_atr:.2f} ATR handed back from today's high {session_high:.2f}; above {SESSION_GIVE_BACK_ATR:.2f} the move is being given back.", "execution", False),
         _gate("extension_5d", "Five-session extension", (ret5 if ret5 is not None else math.inf) <= 30, "Five-session return unavailable." if ret5 is None else f"{ret5:.1f}%; maximum 30%.", "execution"),
         _gate("extension_10d", "Ten-session extension", (ret10 if ret10 is not None else math.inf) <= 50, "Ten-session return unavailable." if ret10 is None else f"{ret10:.1f}%; maximum 50%.", "execution"),
         _gate("sma20_extension", "20-day extension", (above_sma20 if above_sma20 is not None else math.inf) <= 15, "20-day average unavailable." if above_sma20 is None else f"{above_sma20:.1f}% above SMA20; maximum 15%.", "execution"),
@@ -230,7 +261,7 @@ def assess(raw: dict[str, Any]) -> dict[str, Any]:
     structure["detail"] = "Latest completed bar closed above its 20-session high or upper band." if breakout_bar == "latest" else "Previous completed bar broke out; the latest bar is the hold." if breakout_bar == "previous" else f"Neither of the last two completed bars broke out (base scan: {verdict})."
     score = js_round(sum(bool(gate["passed"]) for gate in gates) / len(gates) * 100)
     breakout_failed = is_breakout and atr > 0 and latest.close < level - atr
-    hard = {"extension_5d", "extension_10d", "sma20_extension", "atr_risk", "stop_width", "circuit_behaviour", "freshness", "price", "liquidity", "live_quote", "live_spread", "live_circuit", "market_shock", "results_blackout", "session_reversal"}
+    hard = {"extension_5d", "extension_10d", "sma20_extension", "atr_risk", "stop_width", "circuit_behaviour", "freshness", "price", "liquidity", "live_quote", "live_spread", "live_circuit", "market_shock", "results_blackout"}
     # A benchmark that is absent, behind the market, or too short for its 50-SMA cannot answer
     # the questions the benchmark gates ask. Treating that as RISK_OFF told the user the market
     # was dangerous when the truth was that it could not be measured; treating the resulting
@@ -243,7 +274,6 @@ def assess(raw: dict[str, Any]) -> dict[str, Any]:
     hard_failed = any(gate["key"] in hard and gate["key"] != "sma20_extension" and gate["blocking"] and not gate["passed"] for gate in gates)
     extension_failed = not next(gate["passed"] for gate in gates if gate["key"] == "sma20_extension")
     entry_failed = not next(gate["passed"] for gate in gates if gate["key"] == "entry_zone")
-    hold_failed = not next(gate["passed"] for gate in gates if gate["key"] == "session_hold")
     technical_passed = all(gate["passed"] for gate in gates if gate["category"] == "technical" and gate["blocking"])
     if breakout_failed:
         status = "INVALIDATED"
@@ -252,7 +282,7 @@ def assess(raw: dict[str, Any]) -> dict[str, Any]:
         status = "RISK_OFF"
     elif not next(gate["passed"] for gate in gates if gate["key"] == "benchmark_data"):
         status = "UNVERIFIED"
-    elif technical_passed and (entry_failed or extension_failed or hold_failed):
+    elif technical_passed and (entry_failed or extension_failed):
         status = "WAIT_FOR_ENTRY"
     elif extension_failed:
         status = "RISK_OFF"

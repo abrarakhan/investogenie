@@ -227,10 +227,11 @@ def expected_status(gates: list[dict], failed: bool) -> str:
     hard_risk = any(not ok for key, ok in passed.items() if key in hard_gates and key not in advisory)
     extension = not passed.get("sma20_extension", True)
     entry_zone = not passed.get("entry_zone", True)
-    # Slipping below the last completed close only waits; handing back more than the entry
-    # zone's own width is a hard risk, handled by HARD_RISK_GATES above. Captures from before
+    # The session gates were blocking in v6 and advisory from v7, and this checker has to
+    # reproduce whichever rule the capture was written under. The capture itself says which:
+    # a gate recorded as non-blocking cannot have moved its own status. Captures from before
     # these gates existed default to passing, reproducing the older behaviour for them.
-    session_hold = not passed.get("session_hold", True)
+    session_hold = not passed.get("session_hold", True) and "session_hold" not in advisory
     blocking = [gate for gate in gates if gate.get("blocking", True)]
     technical = all(gate.get("passed") for gate in blocking if gate.get("category") == "technical")
     if failed:

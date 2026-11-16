@@ -109,54 +109,50 @@ class SessionGatesAreInert(unittest.TestCase):
         self.assertEqual(result["sessionGiveBackAtr"], 0)
 
 
-class SlippingBelowThePriorCloseWaits(unittest.TestCase):
-    def test_below_the_last_completed_close_waits_rather_than_blocks(self):
-        bars = holding_breakout()
-        prior_close = bars[-1]["close"]
-        # Barely off the session high, so the hold rule trips on its own.
-        result = run(prior_close - .05,
-                     {"date": "2027-01-01", "high": prior_close + .02, "low": prior_close - .1},
-                     bars=bars)
-        self.assertFalse(gate(result, "session_hold")["passed"])
-        self.assertTrue(gate(result, "session_reversal")["passed"])
-        self.assertEqual(result["status"], "WAIT_FOR_ENTRY")
-        self.assertIn("wait for the breakout to hold", gate(result, "session_hold")["detail"])
+class SessionGatesAreAdvisory(unittest.TestCase):
+    """From v7 the session gates report; they do not veto.
 
-    def test_holding_exactly_at_the_prior_close_is_holding(self):
-        bars = holding_breakout()
-        close = bars[-1]["close"]
-        result = run(close, {"date": "2027-01-01", "high": close, "low": close - .2}, bars=bars)
-        self.assertTrue(gate(result, "session_hold")["passed"])
+    They shipped on one observation and a controlled replay then put them at an identical
+    47.3% win rate against a control arm that withheld the session, while removing four of
+    every five signals. A reader still needs to see that the move is being handed back, so
+    the gates stay and stay visible — they simply no longer decide.
+    """
+
+    def _reversing(self, price_mult=.4):
+        price = run()["strongEntry"] + price_mult * run()["atr"]
+        atr = run()["atr"]
+        # Well past the old 0.50 ATR give-back ceiling, and below the prior close.
+        return run(price, {"date": "2027-01-01", "high": price + .9 * atr, "low": price - .2})
+
+    def test_both_gates_are_declared_non_blocking(self):
+        result = self._reversing()
+        for key in ("session_hold", "session_reversal"):
+            self.assertFalse(gate(result, key)["blocking"], f"{key} must be advisory")
+
+    def test_a_reversal_is_reported_but_does_not_change_the_status(self):
+        result = self._reversing()
+        self.assertFalse(gate(result, "session_reversal")["passed"])
         self.assertEqual(result["status"], "EXECUTION_READY")
 
-
-class HandingBackTheMoveBlocks(unittest.TestCase):
-    def test_a_give_back_wider_than_the_entry_zone_is_risk_off(self):
-        price = ready_price()
-        atr = run()["atr"]
-        result = run(price, {"date": "2027-01-01", "high": price + .9 * atr, "low": price - .2})
-        self.assertFalse(gate(result, "session_reversal")["passed"])
-        self.assertEqual(result["status"], "RISK_OFF")
-        self.assertAlmostEqual(result["sessionGiveBackAtr"], .9, places=6)
-
-    def test_the_reversal_rule_outranks_the_hold_rule(self):
-        """Both trip together in a real reversal; the blocking one has to decide."""
+    def test_slipping_below_the_prior_close_is_reported_but_does_not_wait(self):
+        # The hold bar closes well clear of the trigger, so the entry band and the prior
+        # close can be straddled at once: with the default fixture the band floor sits
+        # above the close and the two conditions cannot both be exercised.
         bars = holding_breakout()
-        atr = run()["atr"]
-        close = bars[-1]["close"]
-        result = run(close - .1, {"date": "2027-01-01", "high": close - .1 + .9 * atr, "low": close - .3},
-                     bars=bars)
+        bars[-1] = dict(bars[-1], close=101.8, high=101.9, low=101.0)
+        plan = run(bars=bars)
+        price = plan["strongEntry"] + .4 * plan["atr"]
+        self.assertLess(price, bars[-1]["close"], "fixture must put the price under the close")
+        result = run(price, {"date": "2027-01-01", "high": price + .1, "low": price - .1}, bars=bars)
         self.assertFalse(gate(result, "session_hold")["passed"])
-        self.assertFalse(gate(result, "session_reversal")["passed"])
-        self.assertEqual(result["status"], "RISK_OFF")
+        self.assertTrue(gate(result, "entry_zone")["passed"], "only the hold rule is in question")
+        self.assertEqual(result["status"], "EXECUTION_READY")
 
-    def test_the_ceiling_is_the_entry_zone_width_not_a_second_number(self):
-        self.assertEqual(SESSION_GIVE_BACK_ATR, .5)
-        price, atr = ready_price(), run()["atr"]
-        inside = run(price, {"date": "2027-01-01", "high": price + .49 * atr, "low": price - .2})
-        outside = run(price, {"date": "2027-01-01", "high": price + .51 * atr, "low": price - .2})
-        self.assertTrue(gate(inside, "session_reversal")["passed"])
-        self.assertFalse(gate(outside, "session_reversal")["passed"])
+    def test_the_give_back_is_still_measured_and_reported(self):
+        """Demoted, not deleted: the number a reader judges by must still be right."""
+        result = self._reversing()
+        self.assertAlmostEqual(result["sessionGiveBackAtr"], .9, places=6)
+        self.assertIn("handed back", gate(result, "session_reversal")["detail"])
 
 
 class MeeshoRegression(unittest.TestCase):
@@ -186,14 +182,20 @@ class MeeshoRegression(unittest.TestCase):
         """The defect itself: this is what the screen showed all morning."""
         self.assertEqual(self._run(None)["status"], "EXECUTION_READY")
 
-    def test_with_the_session_it_is_blocked(self):
+    def test_with_the_session_it_is_flagged_but_no_longer_blocked(self):
+        """The case that motivated the v6 gates, and the cost of retiring them.
+
+        Under v6 this read RISK_OFF. Under v7 it reads EXECUTION_READY again, with both
+        session gates failing in plain sight. That is the deliberate trade: the replay
+        could not show that blocking these paid, so the screen warns instead of refusing.
+        Its 0.31 ATR extension sits inside the v7 entry band, so nothing else stops it.
+        """
         result = self._run(self.data["session"])
-        self.assertEqual(result["status"], "RISK_OFF")
         self.assertFalse(gate(result, "session_hold")["passed"])
         self.assertFalse(gate(result, "session_reversal")["passed"])
-        # The entry trigger was never breached, which is why nothing else caught it.
-        self.assertTrue(gate(result, "entry_zone")["passed"])
         self.assertAlmostEqual(result["sessionGiveBackAtr"], .62, places=2)
+        self.assertTrue(gate(result, "entry_zone")["passed"])
+        self.assertEqual(result["status"], "EXECUTION_READY")
 
 
 if __name__ == "__main__":

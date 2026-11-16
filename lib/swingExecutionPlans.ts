@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { query, queryOne } from "@/lib/db";
 import { isMomentumExecutionReady, MOMENTUM_EXECUTION_MODEL_VERSION } from "@/lib/momentumExecution";
 import type { StrongSwingCandidate } from "@/features/strong-swing/contracts";
-import { STRONG_SWING_MODEL_VERSION, STRONG_SWING_TRAILING_POLICY_VERSION } from "@/lib/analytics/strongSwing";
+import { STRONG_SWING_ENTRY_BAND_MAX_ATR, STRONG_SWING_ENTRY_BAND_MIN_ATR, STRONG_SWING_MODEL_VERSION, STRONG_SWING_TRAILING_POLICY_VERSION } from "@/lib/analytics/strongSwing";
 import type { TrendContinuationCandidate } from "@/features/trend-continuation/contracts";
 
 export type ProtectedSwingStrategy = "STRONG_SWING" | "MOMENTUM_IGNITION" | "TREND_CONTINUATION";
@@ -141,9 +141,19 @@ export function validateExecutionPlanPurchase(plan: StoredExecutionPlan | null, 
   if (input.nowMs - Date.parse(plan.capturedAt) > EXECUTION_PLAN_MAX_AGE_MINUTES * 60_000) return "The execution plan is stale; reload the candidate page";
   if (input.buyPrice < plan.entry * 0.999) return `The purchase must be at or above the ${plan.entry.toFixed(2)} confirmed entry`;
   if (input.buyPrice >= plan.target) return "The purchase price must remain below the frozen target";
-  // The buy zone ends half an ATR above the confirmed entry; a fill beyond it is a chase.
-  if (plan.strategyKey === "STRONG_SWING" && plan.atr > 0 && input.buyPrice > (plan.entry + 0.5 * plan.atr) * 1.001) {
-    return `The purchase must be within the buy zone, at or below ${(plan.entry + 0.5 * plan.atr).toFixed(2)}`;
+  // The buy zone is a band, not a ceiling, and it has to match the engine's entry_zone gate
+  // exactly — a fill the gate admits but the validator refuses is a plan the screen offers
+  // and the ledger then rejects. Both edges are measured; see ENTRY_BAND_MIN_ATR in
+  // pipelines/strategy_math/strong_swing.py for why the floor exists at all.
+  if (plan.strategyKey === "STRONG_SWING" && plan.atr > 0) {
+    const floor = plan.entry + STRONG_SWING_ENTRY_BAND_MIN_ATR * plan.atr;
+    const ceiling = plan.entry + STRONG_SWING_ENTRY_BAND_MAX_ATR * plan.atr;
+    if (input.buyPrice < floor * 0.999) {
+      return `The purchase must be inside the buy zone, at or above ${floor.toFixed(2)}`;
+    }
+    if (input.buyPrice > ceiling * 1.001) {
+      return `The purchase must be within the buy zone, at or below ${ceiling.toFixed(2)}`;
+    }
   }
   return null;
 }
