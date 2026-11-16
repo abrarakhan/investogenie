@@ -25,7 +25,7 @@ export interface SnapshotResult {
 // (country, symbol) — the richest: OHLC history first, then NSE, then higher
 // volume. mcap_rank is computed AFTER dedup so dual listings don't distort the
 // SEBI cap bands.
-const REBUILD_SQL = `
+export const REBUILD_SQL = `
 with bars as (
   select asset_id, date, open, high, low, close, volume,
          row_number() over (partition by asset_id order by date desc) as rn
