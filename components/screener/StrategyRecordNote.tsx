@@ -21,9 +21,13 @@ export default function StrategyRecordNote({ record }: { record: StrategyRecord 
     );
   }
   const unevaluated = [
-    record.liveExecutionEvaluated ? null : "live quote, spread and circuit",
-    record.resultsEvaluated ? null : "results blackout",
-  ].filter(Boolean);
+    ...(record.liveExecutionEvaluated ? [] : ["live quote", "spread", "circuit"]),
+    ...(record.resultsEvaluated ? [] : ["results blackout"]),
+  ];
+  // "a and b and c" is what naive joining produced; the last item takes the "and".
+  const listed = unevaluated.length < 2
+    ? unevaluated.join("")
+    : `${unevaluated.slice(0, -1).join(", ")} and ${unevaluated.at(-1)}`;
   return (
     <div className="mt-3 rounded-lg border border-white/10 bg-white/[0.02] px-3 py-2.5">
       <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-white/45">
@@ -54,7 +58,7 @@ export default function StrategyRecordNote({ record }: { record: StrategyRecord 
       <p className="mt-2 text-[11px] leading-relaxed text-white/32">
         Replayed from completed bars, entering at the next session&rsquo;s open. Before brokerage,
         taxes and slippage. Delisted stocks are not in the sample, which flatters every figure above.
-        {unevaluated.length > 0 && ` The ${unevaluated.join(" and ")} gate${unevaluated.length > 1 ? "s were" : " was"} not replayed, so live trading is stricter than this.`}
+        {unevaluated.length > 0 && ` The ${listed} gate${unevaluated.length > 1 ? "s were" : " was"} not replayed, so live trading is stricter than this.`}
         {" "}Past results do not predict the next trade.
       </p>
     </div>
