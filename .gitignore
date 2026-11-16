@@ -32,6 +32,11 @@ __pycache__/
 
 # local worker logs
 /logs/
+# The Breeze SDK writes apiLogs.log into whatever directory it is run from, so a
+# pipeline or worker invoked from its own folder leaves an untracked logs/ there —
+# which the deploy script then refuses to deploy over. Unanchored, so it is caught
+# wherever the SDK drops it.
+logs/
 .runtime-india-market-holidays.json
 
 # local AI/session state and editor configuration
