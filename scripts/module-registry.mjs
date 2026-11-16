@@ -31,9 +31,9 @@ export const MODULES = [
   },
   {
     key: "stock-screener", guide: "docs/modules/stock-screener.md",
-    paths: ["lib/screener/", "app/api/screener", "app/terminal/[market]/stocks", "components/stocks", "pipelines/screener_technical_features.py", "pipelines/test_screener_technical_features.py"],
+    paths: ["lib/screener/", "app/api/screener", "app/terminal/[market]/stocks", "components/stocks", "pipelines/screener_technical_features.py", "pipelines/shareholding_sync.py", "pipelines/test_screener_technical_features.py", "pipelines/test_shareholding_sync.py"],
     dependencies: ["market-data", "fundamentals", "saved-screens"],
-    tests: ["npx vitest run lib/screener/filterEngine.test.ts lib/screener/nlQuery.test.ts", "PYTHONPATH=pipelines .venv/bin/python -m unittest pipelines.test_screener_technical_features"],
+    tests: ["npx vitest run lib/screener/fields.test.ts lib/screener/filterEngine.test.ts lib/screener/nlQuery.test.ts", "PYTHONPATH=pipelines .venv/bin/python -m unittest pipelines.test_screener_technical_features pipelines.test_shareholding_sync"],
   },
   {
     key: "ledger", guide: "docs/modules/ledger.md",

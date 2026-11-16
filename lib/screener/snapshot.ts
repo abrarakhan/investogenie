@@ -43,6 +43,12 @@ win as (
 latest_tech as (
   select distinct on (asset_id) * from public.screener_technical_daily order by asset_id,date desc
 ),
+shareholding_ranked as (
+  select r.*,
+         lag(r.promoter_holding_pct) over(partition by r.asset_id order by r.period_end_date) previous_promoter_holding_pct,
+         row_number() over(partition by r.asset_id order by r.disclosed_at desc,r.period_end_date desc) latest_rank
+    from public.asset_shareholding_reports r
+),
 ranked as (
   select
     a.id as asset_id, a.ticker as symbol, a.name, a.sector, a.country, a.exchange, a.currency,
@@ -62,6 +68,11 @@ ranked as (
     f.market_cap, f.pe_ratio, f.roe, f.roce, f.debt_to_equity, f.dividend_yield, f.free_cash_flow,
     f.sales_variance_yoy  as revenue_growth_yoy,
     f.profit_variance_yoy as profit_growth_yoy,
+    fh.net_profit,fh.revenue_cagr_3y,fh.revenue_cagr_5y,fh.profit_cagr_3y,fh.profit_cagr_5y,
+    fh.positive_profit_years_pct,
+    fh.median_roce_5y,fh.median_cash_conversion_5y,fh.median_fcf_margin_5y,
+    sh.promoter_holding_pct,
+    sh.promoter_holding_pct-sh.previous_promoter_holding_pct as promoter_holding_change_qoq,
     t.sma_20,t.sma_50,t.sma_100,t.sma_150,t.sma_200,t.ema_20,t.ema_50,
     t.distance_sma_20_pct,t.distance_sma_50_pct,t.distance_sma_100_pct,t.distance_sma_150_pct,t.distance_sma_200_pct,
     t.distance_ema_20_pct,t.distance_ema_50_pct,
@@ -83,6 +94,8 @@ ranked as (
   left join win w                       on w.asset_id = a.id
   left join public.latest_quotes q      on q.asset_id = a.id
   left join public.latest_financials f  on f.asset_id = a.id
+  left join public.screener_fundamental_latest fh on fh.asset_id = a.id
+  left join shareholding_ranked sh on sh.asset_id=a.id and sh.latest_rank=1
   left join latest_tech t               on t.asset_id = a.id
   where a.asset_class = 'STOCK'
     and a.is_active
@@ -95,7 +108,9 @@ insert into public.stock_snapshot (
   ltp, change_pct_1d, volume, trade_value, prev_close, day_open, day_high, day_low,
   high_52w, low_52w, pct_from_52w_high, pct_from_52w_low, gap_pct, intraday_vol_pct,
   market_cap, mcap_rank, pe_ratio, roe, roce, debt_to_equity, dividend_yield, free_cash_flow,
-  revenue_growth_yoy, profit_growth_yoy,
+  revenue_growth_yoy, profit_growth_yoy,net_profit,revenue_cagr_3y,revenue_cagr_5y,
+  profit_cagr_3y,profit_cagr_5y,positive_profit_years_pct,promoter_holding_pct,promoter_holding_change_qoq,
+  median_roce_5y,median_cash_conversion_5y,median_fcf_margin_5y,
   sma_20,sma_50,sma_100,sma_150,sma_200,ema_20,ema_50,
   distance_sma_20_pct,distance_sma_50_pct,distance_sma_100_pct,distance_sma_150_pct,distance_sma_200_pct,
   distance_ema_20_pct,distance_ema_50_pct,
@@ -111,7 +126,9 @@ select
   case when market_cap is not null
        then rank() over (partition by country order by market_cap desc nulls last)::int end as mcap_rank,
   pe_ratio, roe, roce, debt_to_equity, dividend_yield, free_cash_flow,
-  revenue_growth_yoy, profit_growth_yoy,
+  revenue_growth_yoy, profit_growth_yoy,net_profit,revenue_cagr_3y,revenue_cagr_5y,
+  profit_cagr_3y,profit_cagr_5y,positive_profit_years_pct,promoter_holding_pct,promoter_holding_change_qoq,
+  median_roce_5y,median_cash_conversion_5y,median_fcf_margin_5y,
   sma_20,sma_50,sma_100,sma_150,sma_200,ema_20,ema_50,
   distance_sma_20_pct,distance_sma_50_pct,distance_sma_100_pct,distance_sma_150_pct,distance_sma_200_pct,
   distance_ema_20_pct,distance_ema_50_pct,

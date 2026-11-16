@@ -59,7 +59,7 @@ all until the timer has fired once. Take one immediately with
 `sudo systemctl start investogenie-backup.service`.
 
 The release script installs locked build dependencies, rejects high-severity production dependency
-findings, builds the app, discovers and applies replay-safe migrations from `0033_breeze_credentials.sql` onward (currently through `0077_market_volume_curves.sql`),
+findings, builds the app, discovers and applies replay-safe migrations from `0033_breeze_credentials.sql` onward (currently through `0081_screener_fundamental_history.sql`),
 verifies required broker, news, mobile, allocation, ML, corporate-calendar, Armed/pending/execution-plan, screener and candidate-observation relations and calendar/Gmail columns, prunes development
 dependencies, and restarts both application services.
 

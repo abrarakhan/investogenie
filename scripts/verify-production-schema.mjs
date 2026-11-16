@@ -43,6 +43,8 @@ const requiredRelations = [
   "public.swing_pending_order_fills",
   "public.swing_execution_plans",
   "public.screener_technical_daily",
+  "public.screener_fundamental_latest",
+  "public.asset_shareholding_reports",
   "public.trend_continuation_signals",
   "public.browser_notification_events",
   "public.asset_symbol_changes",
@@ -70,6 +72,9 @@ const requiredColumns = [
   ["users", "is_system_owner"],
   ["strong_swing_snapshots", "benchmark_asset_id"],
   ["strong_swing_snapshots", "benchmark_latest_bar_date"],
+  ["screener_technical_daily", "change_pct_1d"],
+  ["stock_snapshot", "profit_cagr_3y"],
+  ["stock_snapshot", "promoter_holding_change_qoq"],
 ];
 const client = new pg.Client({
   connectionString: url,

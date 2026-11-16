@@ -9,7 +9,7 @@
 // swapping in a paid vendor (e.g. Financial Modeling Prep) means writing one more
 // implementation, not touching the screener.
 
-export type Provenance = "derived" | "quote" | "yfinance" | "todo";
+export type Provenance = "derived" | "quote" | "yfinance" | "exchange-filing" | "todo";
 
 export interface FieldProvenance {
   field: string;
@@ -43,6 +43,17 @@ export const FIELD_PROVENANCE: FieldProvenance[] = [
   { field: "free_cash_flow", source: "yfinance", note: "yfinance .info freeCashflow (Rs. Cr / USD mn)" },
   { field: "revenue_growth_yoy", source: "yfinance", note: "sales variance YoY from the reports pipeline" },
   { field: "profit_growth_yoy", source: "yfinance", note: "profit variance YoY from the reports pipeline" },
+  { field: "net_profit", source: "derived", note: "latest stored annual financial report" },
+  { field: "revenue_cagr_3y", source: "derived", note: "Python calculation over annual financial-report history" },
+  { field: "revenue_cagr_5y", source: "derived", note: "Python calculation over annual financial-report history" },
+  { field: "profit_cagr_3y", source: "derived", note: "Python calculation over annual financial-report history" },
+  { field: "profit_cagr_5y", source: "derived", note: "Python calculation over annual financial-report history" },
+  { field: "positive_profit_years_pct", source: "derived", note: "Python calculation over up to six annual reports" },
+  { field: "median_roce_5y", source: "derived", note: "Python median over up to six annual reports" },
+  { field: "median_cash_conversion_5y", source: "derived", note: "Python median operating cash flow / net profit" },
+  { field: "median_fcf_margin_5y", source: "derived", note: "Python median free-cash-flow margin over annual history" },
+  { field: "promoter_holding_pct", source: "exchange-filing", note: "latest NSE quarterly shareholding-pattern filing" },
+  { field: "promoter_holding_change_qoq", source: "exchange-filing", note: "point-in-time change between consecutive quarterly filings" },
   { field: "sector", source: "yfinance", note: "yfinance .info sector" },
 ];
 

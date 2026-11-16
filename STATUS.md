@@ -41,6 +41,8 @@ This is a repository status reference. The production web/Breeze services, HTTPS
 | 0077 | Versioned market-specific intraday volume curves |
 | 0078 | Point-in-time Strong Swing benchmark identity |
 | 0079 | Email-digest and mobile-mutation idempotency |
+| 0080 | Point-in-time one-session change for screener backtests |
+| 0081 | Historical fundamental screener metrics and point-in-time shareholding filings |
 
 The shared Linux release script discovers and applies migrations from 0033 onward in filename order. Fresh databases still need the full ordered schema. `scripts/verify-production-schema.mjs` checks required relations, including candidate observations, trend-continuation signals, browser-notification events, broker-order audits and market-volume curves. Browser notification signatures are unique per user and market day, and polling is serialized across open tabs. Trade-alert identity uses stable decision state rather than changing quote explanation text. After pulling, the release script re-executes the checked-out version once so a migration added in the same release is applied.
 

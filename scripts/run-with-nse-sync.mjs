@@ -34,6 +34,7 @@ const amfiSchemeMasterScript = resolve(root, "scripts/sync-amfi-scheme-master.mj
 const mlSnapshotScript = resolve(root, "scripts/capture-ml-snapshots.mjs");
 const strongSwingParityPipeline = resolve(root, "pipelines/strong_swing_parity.py");
 const screenerFeaturePipeline = resolve(root, "pipelines/screener_technical_features.py");
+const shareholdingPipeline = resolve(root, "pipelines/shareholding_sync.py");
 const trendContinuationPipeline = resolve(root, "pipelines/trend_continuation.py");
 const strategyRetrospectivePipeline = resolve(root, "pipelines/strategy_retrospective.py");
 const screenerRefreshScript = resolve(root, "scripts/refresh-screener.mjs");
@@ -1427,6 +1428,27 @@ function millisecondsUntilNextIstTime(hour, minute) {
 }
 
 let corporateResultsChild = null;
+let shareholdingChild = null;
+
+function runShareholdingSync(trigger) {
+  if (process.env.SHAREHOLDING_SYNC_DISABLED === "1" || !python || shareholdingChild || shuttingDown) return;
+  const started = Date.now();
+  shareholdingChild = spawn(python, [shareholdingPipeline, "--days", process.env.SHAREHOLDING_SYNC_DAYS ?? "120"],
+    { cwd: root, env: process.env, stdio: "inherit", timeout: 60 * 60_000 });
+  shareholdingChild.once("error", (error) => recordSyncJob(`shareholding/${trigger}`, "error", error.message));
+  shareholdingChild.once("close", (code, signal) => {
+    shareholdingChild = null;
+    const ok = code === 0 && !signal;
+    recordSyncJob(`shareholding/${trigger}`, ok ? "ok" : "error", ok ? null : `exit ${signal ?? code}`, 1, Date.now() - started);
+  });
+}
+
+function scheduleShareholdingSync() {
+  setTimeout(() => {
+    runShareholdingSync("daily");
+    scheduleShareholdingSync();
+  }, millisecondsUntilNextIstTime(19, 15));
+}
 
 /** Results-date calendar for the Armed Swing entry blackout. Assets without a recent
  *  successful check are treated as unverified by the app, so a skipped run fails closed. */
@@ -1650,6 +1672,7 @@ nextChild.on("close", (code, signal) => {
   if (breezeAccountChild) breezeAccountChild.kill("SIGTERM");
   if (breezeAutoBuyChild) breezeAutoBuyChild.kill("SIGTERM");
   if (corporateResultsChild) corporateResultsChild.kill("SIGTERM");
+  if (shareholdingChild) shareholdingChild.kill("SIGTERM");
   if (mlSnapshotChild) mlSnapshotChild.kill("SIGTERM");
 
   // Do not leave the wrapper alive solely because a scheduled promise or an
@@ -1670,6 +1693,8 @@ try {
 }
 console.log(`[market-calendar] NSE capital-market holidays ${refreshedNseCalendar ? "refreshed" : "using bundled fallback"}`);
 scheduleDailySync();
+scheduleShareholdingSync();
+if (!startupSyncDisabled) setTimeout(() => runShareholdingSync("startup"), 60_000);
 async function refreshTechnicalScreener(market) {
   const run = (command, args) => new Promise((resolveRun, rejectRun) => {
     const child = spawn(command, args, { cwd: root, env: process.env, stdio: "inherit", timeout: 30 * 60_000 });

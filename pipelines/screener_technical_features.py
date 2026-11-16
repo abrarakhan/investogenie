@@ -14,8 +14,10 @@ import numpy as np
 import pandas as pd
 import psycopg2
 from psycopg2.extras import execute_values
+from strategy_math.long_term import historical_metrics
 
-FEATURE_VERSION = "technical_v1"
+FEATURE_VERSION = "technical_v2_change_1d"
+FUNDAMENTAL_FEATURE_VERSION = "fundamental_history_v1"
 INCREMENTAL_WRITE_DAYS = 120
 # 320 calendar days comfortably contains the 200 completed trading sessions
 # needed by the longest indicator, including weekends and exchange holidays.
@@ -40,6 +42,9 @@ def compute_features(frame: pd.DataFrame) -> pd.DataFrame:
     high = pd.to_numeric(df["high"], errors="coerce")
     low = pd.to_numeric(df["low"], errors="coerce")
     volume = pd.to_numeric(df["volume"], errors="coerce")
+    # Point-in-time close-to-close change. pct_change uses only the previous
+    # completed row; fill_method=None prevents missing closes being filled.
+    df["change_pct_1d"] = close.pct_change(1, fill_method=None) * 100.0
     for window in (20, 50, 100, 150, 200):
         df[f"sma_{window}"] = close.rolling(window, min_periods=window).mean()
     for span in (20, 50):
@@ -71,7 +76,7 @@ def compute_features(frame: pd.DataFrame) -> pd.DataFrame:
 
 
 COLUMNS = [
-    "close", "sma_20", "sma_50", "sma_100", "sma_150", "sma_200", "ema_20", "ema_50",
+    "close", "change_pct_1d", "sma_20", "sma_50", "sma_100", "sma_150", "sma_200", "ema_20", "ema_50",
     "distance_sma_20_pct", "distance_sma_50_pct", "distance_sma_100_pct", "distance_sma_150_pct",
     "distance_sma_200_pct", "distance_ema_20_pct", "distance_ema_50_pct",
     "sma_20_vs_50_pct", "sma_20_vs_100_pct", "sma_20_vs_150_pct", "sma_20_vs_200_pct",
@@ -84,6 +89,45 @@ COLUMNS = [
 
 def db_value(value):
     return None if pd.isna(value) else float(value)
+
+
+def compute_fundamental_features(reports: pd.DataFrame) -> list[tuple]:
+    """Calculate current multi-year metrics from stored annual reports.
+
+    This reuses the Python Long-Term calculation authority so the screener and
+    Long-Term pages cannot disagree about CAGR or profitability history.
+    """
+    payload = []
+    if reports.empty:
+        return payload
+    for asset_id, group in reports.groupby("asset_id", sort=False):
+        ordered = group.sort_values("period_end_date", ascending=False)
+        points = [
+            {
+                "period": str(row.period_end_date),
+                "revenue": db_value(row.revenue),
+                "netProfit": db_value(row.net_profit),
+                "roce": db_value(row.roce),
+                "operatingCashFlow": db_value(row.operating_cash_flow),
+                "freeCashFlow": db_value(row.free_cash_flow),
+            }
+            for row in ordered.itertuples(index=False)
+        ]
+        metrics = historical_metrics(points)
+        latest = ordered.iloc[0]
+        positive = metrics["positiveProfitYearsRatio"]
+        payload.append((
+            asset_id,
+            latest["period_end_date"],
+            db_value(latest["net_profit"]),
+            metrics["revenueCagr3y"], metrics["revenueCagr5y"],
+            metrics["profitCagr3y"], metrics["profitCagr5y"],
+            None if positive is None else positive * 100.0,
+            metrics["medianRoce5y"], metrics["medianCashConversion5y"],
+            metrics["medianFcfMargin5y"],
+            metrics["historyYears"], FUNDAMENTAL_FEATURE_VERSION,
+        ))
+    return payload
 
 
 def main() -> None:
@@ -101,9 +145,16 @@ def main() -> None:
         incremental = args.incremental
         if args.bootstrap:
             with conn.cursor() as cur:
+                # A feature-version change must rebuild the complete requested
+                # history once. Otherwise a newly added column would only be
+                # populated in the 120-day incremental rewrite window and a
+                # three-year backtest would silently omit most observations.
                 cur.execute("""select exists(select 1 from public.screener_technical_daily d
-                    join public.assets a on a.id=d.asset_id where (%s is null or a.country=%s))""",
-                            (args.market, args.market))
+                    join public.assets a on a.id=d.asset_id
+                    where (%s is null or a.country=%s)
+                      and d.feature_version=%s
+                      and d.change_pct_1d is not null)""",
+                            (args.market, args.market, FEATURE_VERSION))
                 incremental = bool(cur.fetchone()[0])
         today = date.today()
         write_since = today - timedelta(days=INCREMENTAL_WRITE_DAYS) if incremental else None
@@ -119,6 +170,26 @@ def main() -> None:
             )
             rows = cur.fetchall()
         raw = pd.DataFrame(rows, columns=["asset_id", "date", "open", "high", "low", "close", "volume"])
+        with conn.cursor() as cur:
+            cur.execute(
+                """select f.asset_id::text,f.period_end_date,f.revenue,f.net_profit,f.roce,
+                          cf.operating_cash_flow,cf.free_cash_flow
+                     from public.asset_financial_reports f join public.assets a on a.id=f.asset_id
+                     left join public.asset_cash_flow_statements cf
+                       on cf.asset_id=f.asset_id and cf.period_end_date=f.period_end_date
+                      and cf.report_type=f.report_type
+                    where f.report_type='ANNUAL' and a.asset_class='STOCK' and a.is_active
+                      and (%s is null or a.country=%s)
+                    order by f.asset_id,f.period_end_date desc""",
+                (args.market, args.market),
+            )
+            report_rows = cur.fetchall()
+        reports = pd.DataFrame(
+            report_rows,
+            columns=["asset_id", "period_end_date", "revenue", "net_profit", "roce",
+                     "operating_cash_flow", "free_cash_flow"],
+        )
+        fundamental_payload = compute_fundamental_features(reports)
         with conn.cursor() as cur:
             if args.market:
                 cur.execute("""delete from public.screener_technical_daily d using public.assets a
@@ -147,6 +218,27 @@ def main() -> None:
             if payload:
                 execute_values(cur, insert_sql, payload, page_size=5000)
                 written += len(payload)
+            if fundamental_payload:
+                execute_values(
+                    cur,
+                    """insert into public.screener_fundamental_latest
+                         (asset_id,report_date,net_profit,revenue_cagr_3y,revenue_cagr_5y,
+                          profit_cagr_3y,profit_cagr_5y,positive_profit_years_pct,
+                          median_roce_5y,median_cash_conversion_5y,median_fcf_margin_5y,
+                          history_years,feature_version) values %s
+                       on conflict(asset_id) do update set
+                         report_date=excluded.report_date,net_profit=excluded.net_profit,
+                         revenue_cagr_3y=excluded.revenue_cagr_3y,revenue_cagr_5y=excluded.revenue_cagr_5y,
+                         profit_cagr_3y=excluded.profit_cagr_3y,profit_cagr_5y=excluded.profit_cagr_5y,
+                         positive_profit_years_pct=excluded.positive_profit_years_pct,
+                         median_roce_5y=excluded.median_roce_5y,
+                         median_cash_conversion_5y=excluded.median_cash_conversion_5y,
+                         median_fcf_margin_5y=excluded.median_fcf_margin_5y,
+                         history_years=excluded.history_years,feature_version=excluded.feature_version,
+                         refreshed_at=now()""",
+                    fundamental_payload,
+                    page_size=2000,
+                )
         conn.commit()
         print(f"[screener-features] wrote {written} rows ({args.market or 'ALL'}, {'incremental' if incremental else 'full'})")
     finally:

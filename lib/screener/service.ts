@@ -48,6 +48,12 @@ export interface ScreenerStock {
   free_cash_flow: number | null;
   revenue_growth_yoy: number | null;
   profit_growth_yoy: number | null;
+  net_profit: number | null;
+  revenue_cagr_3y: number | null; revenue_cagr_5y: number | null;
+  profit_cagr_3y: number | null; profit_cagr_5y: number | null;
+  positive_profit_years_pct: number | null;
+  median_roce_5y: number | null; median_cash_conversion_5y: number | null; median_fcf_margin_5y: number | null;
+  promoter_holding_pct: number | null; promoter_holding_change_qoq: number | null;
   sma_20: number | null; sma_50: number | null; sma_100: number | null;
   sma_150: number | null; sma_200: number | null; ema_20: number | null; ema_50: number | null;
   distance_sma_20_pct: number | null; distance_sma_50_pct: number | null; distance_sma_100_pct: number | null;
@@ -91,7 +97,10 @@ const NUMERIC_COLS: (keyof ScreenerStock)[] = [
   "ltp", "change_pct_1d", "volume", "trade_value", "prev_close", "day_open", "day_high",
   "day_low", "high_52w", "low_52w", "pct_from_52w_high", "pct_from_52w_low", "gap_pct",
   "intraday_vol_pct", "market_cap", "mcap_rank", "pe_ratio", "roe", "roce", "debt_to_equity",
-  "dividend_yield", "free_cash_flow", "revenue_growth_yoy", "profit_growth_yoy",
+  "dividend_yield", "free_cash_flow", "revenue_growth_yoy", "profit_growth_yoy", "net_profit",
+  "revenue_cagr_3y", "revenue_cagr_5y", "profit_cagr_3y", "profit_cagr_5y",
+  "positive_profit_years_pct", "promoter_holding_pct", "promoter_holding_change_qoq",
+  "median_roce_5y", "median_cash_conversion_5y", "median_fcf_margin_5y",
   "sma_20", "sma_50", "sma_100", "sma_150", "sma_200", "ema_20", "ema_50",
   "distance_sma_20_pct", "distance_sma_50_pct", "distance_sma_100_pct", "distance_sma_150_pct",
   "distance_sma_200_pct", "distance_ema_20_pct", "distance_ema_50_pct", "sma_20_vs_50_pct",
@@ -114,7 +123,10 @@ const SELECT_COLS = `
   s.ltp, s.change_pct_1d, s.volume, s.trade_value, s.prev_close, s.day_open, s.day_high, s.day_low,
   s.high_52w, s.low_52w, s.pct_from_52w_high, s.pct_from_52w_low, s.gap_pct, s.intraday_vol_pct,
   s.market_cap, s.mcap_rank, s.pe_ratio, s.roe, s.roce, s.debt_to_equity, s.dividend_yield,
-  s.free_cash_flow, s.revenue_growth_yoy, s.profit_growth_yoy,
+  s.free_cash_flow, s.revenue_growth_yoy, s.profit_growth_yoy, s.net_profit,
+  s.revenue_cagr_3y,s.revenue_cagr_5y,s.profit_cagr_3y,s.profit_cagr_5y,
+  s.positive_profit_years_pct,s.promoter_holding_pct,s.promoter_holding_change_qoq,
+  s.median_roce_5y,s.median_cash_conversion_5y,s.median_fcf_margin_5y,
   s.sma_20,s.sma_50,s.sma_100,s.sma_150,s.sma_200,s.ema_20,s.ema_50,
   s.distance_sma_20_pct,s.distance_sma_50_pct,s.distance_sma_100_pct,s.distance_sma_150_pct,s.distance_sma_200_pct,
   s.distance_ema_20_pct,s.distance_ema_50_pct,
