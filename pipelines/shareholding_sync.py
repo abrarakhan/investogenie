@@ -89,6 +89,17 @@ def parse_filing(row: dict) -> dict | None:
     }
 
 
+def deduplicate_filings(rows: list[dict]) -> list[dict]:
+    """Keep the latest disclosed revision for each symbol and reporting period."""
+    unique: dict[tuple[str, date], dict] = {}
+    for row in rows:
+        filing_key = (row["symbol"], row["period"])
+        current = unique.get(filing_key)
+        if current is None or row["disclosed_at"] > current["disclosed_at"]:
+            unique[filing_key] = row
+    return list(unique.values())
+
+
 def nse_rows(days: int) -> list[dict]:
     session = requests.Session()
     session.headers.update({
@@ -123,7 +134,8 @@ def main() -> None:
     if not database_url:
         raise SystemExit("DATABASE_URL is required")
     raw = csv_rows(args.csv) if args.csv else nse_rows(args.days)
-    parsed = [filing for row in raw if (filing := parse_filing(row))]
+    parsed_all = [filing for row in raw if (filing := parse_filing(row))]
+    parsed = deduplicate_filings(parsed_all)
     if not parsed:
         raise SystemExit("No explicit promoter-holding rows were found; refusing an empty/guessed import")
     conn = psycopg2.connect(database_url)

@@ -1,7 +1,7 @@
 import unittest
 from datetime import date
 
-from shareholding_sync import parse_filing
+from shareholding_sync import deduplicate_filings, parse_filing
 
 
 class ShareholdingSyncTests(unittest.TestCase):
@@ -25,6 +25,19 @@ class ShareholdingSyncTests(unittest.TestCase):
         })
         self.assertEqual(parsed["promoter"], 47.76)
         self.assertEqual(parsed["public"], 52.24)
+
+    def test_latest_revision_wins_for_same_symbol_and_period(self):
+        original = parse_filing({
+            "symbol": "ABC", "date": "30-SEP-2026", "submissionDate": "10-OCT-2026",
+            "pr_and_prgrp": "50", "public_val": "50",
+        })
+        revision = parse_filing({
+            "symbol": "ABC", "date": "30-SEP-2026", "submissionDate": "12-OCT-2026",
+            "pr_and_prgrp": "51", "public_val": "49",
+        })
+        deduped = deduplicate_filings([revision, original])
+        self.assertEqual(len(deduped), 1)
+        self.assertEqual(deduped[0]["promoter"], 51)
 
 
 if __name__ == "__main__":
