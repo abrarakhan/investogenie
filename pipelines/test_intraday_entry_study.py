@@ -96,3 +96,40 @@ class Summary(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Scale(unittest.TestCase):
+    """daily_ohlcv is auto-adjusted and Breeze intraday is raw. Matching a band computed
+    on one against candles on the other is the mistake that produced this study's first
+    answer, so the conversion and its sanity check are pinned here."""
+
+    RAW = [candle("09:15", 170.0, 175.0, 169.0, 172.0),
+           candle("15:29", 172.0, 174.0, 171.0, 172.75)]
+
+    def test_the_factor_restates_the_session_onto_the_daily_scale(self):
+        # ENGINERSIN 2017-04-24: adjusted 130.13 against a raw 172.75 close.
+        factor = study.adjustment_factor(130.13, self.RAW)
+        self.assertAlmostEqual(factor, 130.13 / 172.75, places=9)
+        self.assertAlmostEqual(study.rescale(self.RAW, factor)[-1].close, 130.13, places=6)
+
+    def test_an_unadjusted_recent_session_is_left_essentially_alone(self):
+        factor = study.adjustment_factor(172.70, self.RAW)
+        self.assertAlmostEqual(factor, 1.0, places=2)
+
+    def test_a_session_with_no_usable_close_has_no_factor(self):
+        self.assertIsNone(study.adjustment_factor(100.0, []))
+        self.assertIsNone(study.adjustment_factor(100.0, [candle("09:15", 0, 0, 0, 0)]))
+        self.assertIsNone(study.adjustment_factor(0.0, self.RAW))
+
+    def test_a_scaled_session_inside_its_daily_bar_is_credible(self):
+        day = candle("2017-04-24", 128.0, 132.0, 127.0, 130.13)
+        scaled = study.rescale(self.RAW, study.adjustment_factor(130.13, self.RAW))
+        self.assertTrue(study.scale_is_credible(scaled, day))
+
+    def test_a_session_that_does_not_fit_its_daily_bar_is_refused(self):
+        """Two instruments' prices, or a corporate action the ratio could not absorb."""
+        day = candle("2017-04-24", 50.0, 51.0, 49.0, 50.0)
+        self.assertFalse(study.scale_is_credible(self.RAW, day))
+
+    def test_an_empty_session_is_never_credible(self):
+        self.assertFalse(study.scale_is_credible([], candle("d", 1, 2, 0.5, 1)))

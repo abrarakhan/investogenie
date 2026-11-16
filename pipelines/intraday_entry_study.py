@@ -40,6 +40,43 @@ class Candle:
     close: float
 
 
+# How far a scaled session may fall outside its own daily bar before it is treated as a
+# different instrument rather than a rounding difference between two data sources.
+SCALE_TOLERANCE = 0.01
+
+
+def adjustment_factor(daily_close: float, minutes: list[Candle]) -> float | None:
+    """Put a raw Breeze session on the same scale as the adjusted daily bars.
+
+    daily_ohlcv is fetched with auto_adjust, so its prices are restated for every split and
+    dividend since; Breeze returns the prices that actually traded. For a 2017 signal those
+    differ by a third, and a band computed on one scale cannot be matched against candles on
+    the other -- the first version of this study silently did exactly that and produced a
+    result that disagreed with the daily replay for no real reason.
+
+    The factor is constant within a session, so one ratio taken at the close converts the
+    whole day. The last candle is not the official close to the paisa, which is why the
+    caller checks the scaled session against its own daily bar before trusting it.
+    """
+    if not minutes or minutes[-1].close <= 0 or daily_close <= 0:
+        return None
+    return daily_close / minutes[-1].close
+
+
+def rescale(minutes: list[Candle], factor: float) -> list[Candle]:
+    return [Candle(c.stamp, c.open * factor, c.high * factor, c.low * factor, c.close * factor)
+            for c in minutes]
+
+
+def scale_is_credible(minutes: list[Candle], day: Candle) -> bool:
+    """Whether a scaled session actually lies inside the daily bar it claims to be."""
+    if not minutes:
+        return False
+    high = max(candle.high for candle in minutes)
+    low = min(candle.low for candle in minutes)
+    return high <= day.high * (1 + SCALE_TOLERANCE) and low >= day.low * (1 - SCALE_TOLERANCE)
+
+
 def band(entry: float, atr: float) -> tuple[float, float]:
     return entry + ENTRY_BAND_MIN_ATR * atr, entry + ENTRY_BAND_MAX_ATR * atr
 
@@ -145,6 +182,16 @@ def load_minutes(cur, asset_id: str, day) -> list[Candle]:
             for row in cur.fetchall()]
 
 
+def load_day(cur, asset_id: str, day) -> Candle | None:
+    cur.execute(
+        """select date::text,open,high,low,close from public.daily_ohlcv
+            where asset_id=%s and date=%s""",
+        (asset_id, day),
+    )
+    row = cur.fetchone()
+    return None if not row else Candle(row[0], float(row[1]), float(row[2]), float(row[3]), float(row[4]))
+
+
 def load_days(cur, asset_id: str, after, horizon: int) -> list[Candle]:
     cur.execute(
         """select date::text,open,high,low,close from public.daily_ohlcv
@@ -174,7 +221,7 @@ def main() -> None:
 
     taken: list[Result] = []
     reached: list[Result] = []
-    unreached = missing = 0
+    unreached = missing = mismatched = 0
     reach_minutes: list[int] = []
 
     with psycopg2.connect(os.environ["DATABASE_URL"]) as conn:
@@ -183,8 +230,17 @@ def main() -> None:
             print(f"Studying {len(signals)} signals from run {options.run_id}\n", flush=True)
             for position, signal in enumerate(signals, start=1):
                 minutes = load_minutes(cur, signal["asset_id"], signal["entry_date"])
-                if not minutes:
+                day = load_day(cur, signal["asset_id"], signal["entry_date"])
+                if not minutes or day is None:
                     missing += 1
+                    continue
+                factor = adjustment_factor(day.close, minutes)
+                if factor is None:
+                    missing += 1
+                    continue
+                minutes = rescale(minutes, factor)
+                if not scale_is_credible(minutes, day):
+                    mismatched += 1
                     continue
                 floor, ceiling = band(float(signal["entry"]), float(signal["atr"]))
                 touch = first_touch(minutes, floor, ceiling)
@@ -204,6 +260,7 @@ def main() -> None:
 
     print(f"\nIntraday entry study — band {ENTRY_BAND_MIN_ATR}-{ENTRY_BAND_MAX_ATR} ATR above entry")
     print(f"  sessions without intraday data: {missing}")
+    print(f"  sessions whose scale disagreed: {mismatched}")
     print(f"  never reached the band:         {unreached}")
     if reach_minutes:
         print(f"  median minutes to first touch:  {int(median(reach_minutes))}\n")
