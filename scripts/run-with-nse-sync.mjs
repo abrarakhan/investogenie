@@ -99,7 +99,14 @@ const newsRefreshIntervalMinutes = Number(process.env.NEWS_REFRESH_INTERVAL_MINU
 const newsRefreshDisabled = process.env.NEWS_REFRESH_DISABLED === "1";
 const mobileAlertIntervalMinutes = Number(process.env.MOBILE_ALERT_INTERVAL_MINUTES ?? 2);
 const mobileAlertsDisabled = process.env.MOBILE_ALERTS_DISABLED === "1";
-const trendContinuationIntervalMinutes = Number(process.env.TREND_CONTINUATION_INTERVAL_MINUTES ?? 2);
+// Every 2 minutes with a 110s kill meant this scan could never finish: it assesses ~2,940
+// stocks, exceeded 110s under market-hours load, was SIGTERMed, and restarted 10s later --
+// burning one of the box's two CPUs continuously all session while completing almost never.
+// The page's own strong_swing engine (30s cap) then lost that race and was killed too, so
+// /terminal/in/strong-swing failed to render and browsers aborted it (nginx 499).
+// The interval must leave the CPU free between runs, and the cap must let a run finish.
+const trendContinuationIntervalMinutes = Number(process.env.TREND_CONTINUATION_INTERVAL_MINUTES ?? 15);
+const trendContinuationTimeoutMs = Number(process.env.TREND_CONTINUATION_TIMEOUT_MS ?? 600_000);
 const trendContinuationDisabled = process.env.TREND_CONTINUATION_DISABLED === "1";
 const breezeAccountSyncIntervalMinutes = Number(process.env.BREEZE_ACCOUNT_SYNC_INTERVAL_MINUTES ?? 5);
 const breezeAccountSyncDisabled = process.env.BREEZE_ACCOUNT_SYNC_DISABLED === "1";
@@ -809,7 +816,7 @@ async function runTrendContinuation(trigger) {
   if (trendContinuationPromise) return trendContinuationPromise;
   trendContinuationPromise = new Promise((resolveRun, rejectRun) => {
     const child = spawn(python, [trendContinuationPipeline, "--market", "IN"], {
-      cwd: root, env: process.env, stdio: "inherit", timeout: 110_000,
+      cwd: root, env: process.env, stdio: "inherit", timeout: trendContinuationTimeoutMs,
     });
     trendContinuationChild = child;
     child.once("error", rejectRun);
