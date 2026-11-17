@@ -67,6 +67,18 @@ Trend Continuation v1 is an India-only, Python-calculated engine for persistent 
 
 ## Strategy and reliability changes — 17 November 2026
 
+- Trend Continuation moved to `trend_continuation_v8_midway`, adding mid-way momentum
+  detection for days 2 to 4 of a move: three variants over the existing engine, gated on
+  NSE deliverable quantity, a Rs 10 crore ignition bar, intraday volume pace against the
+  0077 session curve, and an exhaustion ceiling. Migration 0084 adds
+  `daily_delivery_metrics` and the per-signal evidence columns.
+- Delivery ingestion stores NSE series EQ only and flags ETFs, REITs and InvITs, all of
+  which settle at or near 100% delivery by rule or construction and would otherwise read
+  as maximum conviction every session.
+- These thresholds are a specification rather than a measured edge; no replay has tested
+  them. Until delivery has been ingested for a usable history, the mid-way paths qualify
+  nothing, which is the intended fail-closed behaviour.
+
 - `entry_open` (v8) holds the session's own opening price to the entry band. One-minute
   paths for 1,295 entries measured days that gapped into the band at +0.40% per trade
   against -0.15% for the 730 that walked in later; the screen previously offered both and
@@ -151,6 +163,12 @@ The Linux release runs production dependency audit, build and schema verificatio
 - `DHAMPURSUG` closed below its recorded stop of 191.59 on 2026-10-19 and is still open in the
   ledger; the ledger records no exit. Decide the position and review why no exit was raised.
 - Database snapshots are written on the host only; no off-host copy exists.
+- Mid-way momentum has no measured record. `daily_delivery_metrics` needs a delivery
+  backfill before the variants can fire, and the thresholds should then be replayed the
+  way the Strong Swing entry band was before they are trusted.
+- `npm run build` reports a known Next.js security advisory for the installed version.
+  The build completes; the upgrade has not been applied and is a deliberate decision
+  left to the maintainer.
 - Inspect Data Health, quote/depth freshness, calendar coverage and provider failures.
 - Review unresolved CAS/fund mappings and Gmail documents needing manual review.
 - Confirm daily Breeze session validity and separately authorized buying limits.
