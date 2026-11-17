@@ -71,7 +71,8 @@ Trend Continuation v1 is an India-only, Python-calculated engine for persistent 
   detection for days 2 to 4 of a move: three variants over the existing engine, gated on
   NSE deliverable quantity, a Rs 10 crore ignition bar, intraday volume pace against the
   0077 session curve, and an exhaustion ceiling. Migration 0084 adds
-  `daily_delivery_metrics` and the per-signal evidence columns.
+  `daily_delivery_metrics` and the per-signal evidence columns; 0085 completes the
+  screener's live volume-pace column.
 - Delivery ingestion stores NSE series EQ only and flags ETFs, REITs and InvITs, all of
   which settle at or near 100% delivery by rule or construction and would otherwise read
   as maximum conviction every session.
@@ -163,9 +164,10 @@ The Linux release runs production dependency audit, build and schema verificatio
 - `DHAMPURSUG` closed below its recorded stop of 191.59 on 2026-10-19 and is still open in the
   ledger; the ledger records no exit. Decide the position and review why no exit was raised.
 - Database snapshots are written on the host only; no off-host copy exists.
-- Mid-way momentum has no measured record. `daily_delivery_metrics` needs a delivery
-  backfill before the variants can fire, and the thresholds should then be replayed the
-  way the Strong Swing entry band was before they are trusted.
+- Mid-way momentum has no measured record. The NSE EOD worker now detects an incomplete
+  delivery history independently of OHLCV freshness and fills at least forty sessions,
+  but production still needs that first backfill after deployment. The thresholds should
+  then be replayed the way the Strong Swing entry band was before they are trusted.
 - `npm run build` reports a known Next.js security advisory for the installed version.
   The build completes; the upgrade has not been applied and is a deliberate decision
   left to the maintainer.

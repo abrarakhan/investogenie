@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bhavNumber, historyBackfillStart, looksLikeFund } from "@/lib/ingest/nseHistory";
+import { bhavNumber, deliveryBackfillStart, historyBackfillStart, looksLikeFund } from "@/lib/ingest/nseHistory";
 
 /**
  * Deliverable quantity is the evidence the mid-way setups rest on, and almost every
@@ -76,5 +76,17 @@ describe("historyBackfillStart", () => {
   it("honours an explicit start", () => {
     expect(historyBackfillStart("2026-11-16", end, "2026-01-05").toISOString().slice(0, 10))
       .toBe("2026-01-05");
+  });
+});
+
+describe("deliveryBackfillStart", () => {
+  const end = new Date("2026-11-17T00:00:00Z");
+
+  it("builds an initial forty-session baseline even when OHLCV is already current", () => {
+    expect(deliveryBackfillStart(null, end).toISOString().slice(0, 10)).toBe("2026-08-19");
+  });
+
+  it("continues from the delivery table's own watermark", () => {
+    expect(deliveryBackfillStart("2026-10-30", end).toISOString().slice(0, 10)).toBe("2026-10-31");
   });
 });

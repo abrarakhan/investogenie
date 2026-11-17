@@ -15,7 +15,8 @@ from pipelines.trend_continuation import (
     EP_MIN_DELIV_PCT, EXHAUSTION_5D_GAIN_PCT, EXHAUSTION_RSI, MIN_IBS, PATH_A_MIN_RVOL,
     PATH_B_MIN_AVG_RVOL, SETUP_EP_REBOUND, SETUP_STAGE2, SETUP_STAIR_STEP, _rsi,
     accumulation_confirmed, assess_midway, ep_rebound_ok, exhaustion, internal_bar_strength,
-    red_index_alpha, red_index_boost, relative_delivery, stair_step_qualified, trend_regime_ok,
+    assess_trend_continuation, red_index_alpha, red_index_boost, relative_delivery,
+    stair_step_qualified, trend_regime_ok,
 )
 
 
@@ -59,6 +60,13 @@ class Accumulation(unittest.TestCase):
         self.assertIsNone(relative_delivery(1_000, None))
         self.assertIsNone(relative_delivery(1_000, 0))
         self.assertEqual(relative_delivery(2_500, 1_000), 2.5)
+
+    def test_a_partial_history_is_not_called_a_twenty_session_baseline(self):
+        history = DeliveryHistory({
+            f"2026-10-{day:02d}": DeliveryDay(deliv_qty=1_000)
+            for day in range(1, 6)
+        })
+        self.assertIsNone(history.baseline_before("2026-10-20"))
 
 
 class TrendRegime(unittest.TestCase):
@@ -225,6 +233,16 @@ class MidwayVariants(unittest.TestCase):
             days_since_results=2, catalyst_tag="EP")
         self.assertEqual(result["setup_variant"], SETUP_EP_REBOUND)
 
+    def test_a_verified_material_filing_can_drive_the_same_ep_exception(self):
+        series = rising_series(40)
+        close = series[-1].close * 1.05
+        series.append(bar("2026-10-20", close - 3.0, close + 0.05, close - 3.2, close, 4_000_000))
+        result = assess_midway(
+            series, delivery_for(series, 72.0), ema20=close * 0.96,
+            ema20_previous=close * 0.95, sma50=close * 1.10, sma200=close * 1.30,
+            days_since_results=None, catalyst_tag="EP")
+        self.assertEqual(result["setup_variant"], SETUP_EP_REBOUND)
+
     def test_an_exhausted_move_qualifies_for_nothing_however_good_it_looks(self):
         series = rising_series(30)
         close = series[-1].close
@@ -252,6 +270,27 @@ class MidwayVariants(unittest.TestCase):
 
     def test_too_little_history_returns_empty_features_rather_than_raising(self):
         self.assertIsNone(assess_midway([bar("2026-10-01", 1, 2, 1, 2)])["setup_variant"])
+
+    def test_completed_impulse_survives_into_the_next_live_session(self):
+        # Long enough for SMA200, with regular pullbacks so the fixture is not already
+        # over the RSI exhaustion ceiling before the impulse arrives.
+        series = rising_series(220, dip=1.5, dip_every=2)
+        close = series[-1].close * 1.05
+        impulse = bar("2026-10-20", close - 3.0, close + 0.05, close - 3.2, close, 4_000_000)
+        live = bar("2026-10-21", close, close + 0.02, close - 0.4, close + 0.01, 500_000)
+        delivery = DeliveryHistory(
+            {impulse.date: DeliveryDay(deliv_pct=72.0, deliv_qty=300_000, turnover=2e8)},
+            avg_deliv_qty_20d=100_000,
+        )
+        result = assess_trend_continuation(series + [impulse, live], session_minutes=60,
+                                           delivery=delivery, catalyst_tag="TECH")
+        self.assertEqual(result["metrics"]["setup_variant"], SETUP_STAGE2)
+        self.assertEqual(result["metrics"]["setup_age_sessions"], 0)
+        self.assertEqual(result["metrics"]["breakout_levels"]["previousSessionHigh"], impulse.high)
+        self.assertEqual(result["status"], "CONTINUATION_WATCH")
+        self.assertIsNotNone(result["entry"])
+        self.assertIsNotNone(result["stop"])
+        self.assertIsNotNone(result["target"])
 
 
 if __name__ == "__main__":

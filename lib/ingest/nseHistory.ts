@@ -171,6 +171,24 @@ export function historyBackfillStart(
   return incrementalStart < replayStart ? incrementalStart : replayStart;
 }
 
+/**
+ * Delivery was added long after daily OHLCV. A current price table therefore says
+ * nothing about whether the 20-session delivery baseline exists. Start far enough
+ * back on the first run, then advance from the delivery table's own watermark.
+ */
+export function deliveryBackfillStart(
+  latestDeliveryDate: string | null,
+  end: Date,
+  explicitStart?: string,
+): Date {
+  if (explicitStart) return new Date(`${explicitStart}T00:00:00Z`);
+  if (latestDeliveryDate) {
+    return addDays(new Date(`${latestDeliveryDate}T00:00:00Z`), 1);
+  }
+  // Ninety calendar days comfortably covers forty NSE sessions plus holidays.
+  return addDays(end, -90);
+}
+
 function parseNseDate(value: string): string | null {
   const [dd, mon, yyyy] = value.split("-");
   const month = MON[mon];
@@ -258,7 +276,10 @@ async function fetchBhavcopy(
     // The base floor, not the ignition floor. Quiet pre-breakout sessions must be
     // stored or the 20-day delivery baseline they anchor would be incomplete, and a
     // stock would look like it had no history exactly when it started moving.
-    if (turnoverRupees !== null && turnoverRupees < DELIVERY_MIN_TURNOVER) continue;
+    // The exchange turnover field is part of the eligibility rule, not optional
+    // evidence. Keeping an unmeasured row would allow a thin base into the rolling
+    // baseline merely because its turnover was absent.
+    if (turnoverRupees === null || turnoverRupees < DELIVERY_MIN_TURNOVER) continue;
     const delivQty = bhavNumber(p[iDelivQty]);
     const delivPct = bhavNumber(p[iDelivPct]);
     if (delivQty === null && delivPct === null) continue;
@@ -421,7 +442,7 @@ async function backfillIndianExchangeHistory(
   opts: NseHistoryOptions = {},
 ): Promise<NseHistorySummary> {
   const t0 = Date.now();
-  const maxSessions = opts.maxSessions ?? 20;
+  let maxSessions = opts.maxSessions ?? 20;
   const end = opts.endISO ? new Date(`${opts.endISO}T00:00:00Z`) : new Date();
 
   const client = new Client({
@@ -451,7 +472,26 @@ async function backfillIndianExchangeHistory(
     );
     const latestDateBefore = latestRows[0]?.latest ?? null;
 
-    let cursor = historyBackfillStart(latestDateBefore, end, opts.startISO);
+    const priceStart = historyBackfillStart(latestDateBefore, end, opts.startISO);
+    let cursor = priceStart;
+    if (exchange === "NSE" && !opts.startISO) {
+      const { rows: deliveryRows } = await client.query<{ latest: string | null; sessions: string | number }>(
+        `select max(d.date)::text latest,count(distinct d.date) sessions
+           from public.daily_delivery_metrics d
+           join public.assets a on a.id=d.asset_id
+          where a.exchange='NSE' and a.asset_class='STOCK' and not d.is_etf`,
+      );
+      const deliverySessions = Number(deliveryRows[0]?.sessions ?? 0);
+      const deliveryStart = deliveryBackfillStart(
+        deliverySessions < 40 ? null : deliveryRows[0]?.latest ?? null,
+        end,
+      );
+      if (deliveryStart < cursor) cursor = deliveryStart;
+      // A pre-existing current OHLCV history may have only the few delivery rows
+      // written since migration 0084. Fill the complete baseline in one EOD run;
+      // otherwise max(date) would keep pointing at the recent island forever.
+      if (deliverySessions < 40 && opts.maxSessions === undefined) maxSessions = 70;
+    }
 
     let datesAttempted = 0;
     let sessionsFetched = 0;

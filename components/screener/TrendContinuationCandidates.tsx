@@ -156,7 +156,7 @@ export default function TrendContinuationCandidates({ candidates, planIds, count
       </div>
       <div className="text-right text-xs text-white/40">
         <div><span className="font-mono font-bold text-white/75">{candidateCount}</span> ranked continuation signals{scanTotal > candidateCount ? <> of <span className="font-mono font-bold text-white/75">{scanTotal}</span> in the scan</> : null}</div>
-        <div>Rescanned every 2 minutes in market hours</div>
+        <div>Universe scan every 15 minutes; live execution checks refresh with quotes</div>
       </div>
     </div>
 

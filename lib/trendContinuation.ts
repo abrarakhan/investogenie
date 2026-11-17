@@ -150,13 +150,13 @@ export async function getTrendContinuationCandidates(market: "IN" | "US", limit 
   }));
   const assessments = await runPythonStrategyBatch<(typeof inputs)[number], Pick<TrendContinuationCandidate,
     "executionEligible" | "executionBlockers" | "observationOnly" | "currentPrice" | "todRvol">
-    & { pythonRank: number }>("trend_execution", inputs);
+    & { pythonRank: number; effectiveStatus: TrendContinuationStatus; effectiveReady: boolean }>("trend_execution", inputs);
   return rows.map((row, index) => {
     const assessment = assessments[index];
     const entry = row.entry === null ? null : Number(row.entry);
     return {
-      assetId: row.asset_id, ticker: row.ticker, name: row.name, status: row.status,
-      ready: row.ready, observationOnly: assessment.observationOnly, score: row.score,
+      assetId: row.asset_id, ticker: row.ticker, name: row.name, status: assessment.effectiveStatus,
+      ready: assessment.effectiveReady, observationOnly: assessment.observationOnly, score: row.score,
       entry, stop: row.stop === null ? null : Number(row.stop), target: row.target === null ? null : Number(row.target),
       asOfMarketDate: row.asof_market_date, computedAt: row.computed_at, metrics: row.metrics, reasons: row.reasons,
       executionEligible: assessment.executionEligible, executionBlockers: assessment.executionBlockers,

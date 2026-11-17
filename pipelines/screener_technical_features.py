@@ -194,7 +194,8 @@ def write_midway_columns(cur, since: str | None) -> int:
            set setup_variant = t.setup_variant,
                catalyst_tag = t.catalyst_tag,
                days_since_results = t.days_since_results,
-               ibs_close = t.ibs_close
+               ibs_close = t.ibs_close,
+               tod_rvol = t.tod_rvol
           from public.trend_continuation_signals t
          where t.asset_id = d.asset_id and t.asof_market_date = d.date {bounds[0]}
         """,

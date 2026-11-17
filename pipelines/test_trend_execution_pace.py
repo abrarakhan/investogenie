@@ -11,7 +11,7 @@ import unittest
 
 from pipelines.strategy_math.trend_execution import (
     CONFIRMATION_MINUTE, IMPULSE_MIN_TOD_RVOL, SESSION_MINUTES, SETUP_EP_REBOUND,
-    SETUP_STAGE2, SETUP_STAIR_STEP, STAIR_STEP_MIN_TOD_RVOL, breakout_confirmed,
+    SETUP_STAGE2, SETUP_STAIR_STEP, STAIR_STEP_MIN_TOD_RVOL, assess, breakout_confirmed,
     required_tod_rvol, session_progress, time_of_day_rvol,
 )
 
@@ -112,6 +112,50 @@ class BreakoutLevel(unittest.TestCase):
 
     def test_an_unknown_price_blocks(self):
         self.assertFalse(breakout_confirmed(SETUP_STAGE2, None, {"previousSessionHigh": 104.0})[0])
+
+
+def execution_input(*, volume=700_000, price=105.0, minutes=60):
+    return {
+        "candidate": {
+            "status": "CONTINUATION_WATCH", "ready": False,
+            "entry": 104.0, "target": 112.0,
+            "computed_at": "2026-11-17T04:44:00+00:00",
+            "metrics": {"setup_variant": SETUP_STAGE2},
+        },
+        "execution": {
+            "price": price, "best_bid": 104.9, "best_ask": 105.1,
+            "lower_circuit": 95.0, "upper_circuit": 115.0,
+            "source": "BREEZE_LIVE", "updated_at": "2026-11-17T04:44:30+00:00",
+            "last_success_at": "2026-11-17T03:00:00+00:00",
+            "authoritative_source": "NSE_CALENDAR", "authoritative_as_of": "2026-11-17",
+            "authoritative_coverage_from": "2026-11-18", "authoritative_coverage_through": "2026-11-20",
+            "next_date": None, "last_past_date": "2026-10-20",
+        },
+        "now": "2026-11-17T04:45:00+00:00", "sessionDate": "2026-11-17",
+        "marketOpen": True, "market": "IN", "holidays": [], "specialTradingDates": [],
+        "volumeCurve": CURVE, "averageVolume20": 1_000_000,
+        "liveSession": {"volume": volume, "minutesElapsed": minutes},
+        "breakoutLevels": {"previousSessionHigh": 104.0, "insideDay": False},
+    }
+
+
+class MidwayPromotion(unittest.TestCase):
+    def test_an_eod_watch_is_promoted_only_by_the_live_python_gates(self):
+        result = assess(execution_input())
+        self.assertTrue(result["executionEligible"])
+        self.assertTrue(result["effectiveReady"])
+        self.assertEqual(result["effectiveStatus"], "TREND_CONTINUATION_READY")
+
+    def test_missing_volume_pace_keeps_the_same_signal_on_watch(self):
+        raw = execution_input(volume=0)
+        result = assess(raw)
+        self.assertFalse(result["executionEligible"])
+        self.assertEqual(result["effectiveStatus"], "CONTINUATION_WATCH")
+        self.assertTrue(any("Volume pace" in item for item in result["executionBlockers"]))
+
+    def test_the_old_day_two_flag_is_not_required_for_a_midway_variant(self):
+        self.assertNotIn("early_breakout", execution_input()["candidate"]["metrics"])
+        self.assertTrue(assess(execution_input())["executionEligible"])
 
 
 if __name__ == "__main__":
