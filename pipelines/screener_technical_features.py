@@ -22,6 +22,13 @@ INCREMENTAL_WRITE_DAYS = 120
 # 320 calendar days comfortably contains the 200 completed trading sessions
 # needed by the longest indicator, including weekends and exchange holidays.
 INCREMENTAL_LOOKBACK_DAYS = 320
+MAX_STORED_ALPHA_ABS = 10000.0
+
+
+def bounded_nifty_alpha(stock_change: float, benchmark_change: float) -> float | None:
+    """Reject provider discontinuities that cannot fit the persisted alpha contract."""
+    alpha = stock_change - benchmark_change
+    return None if abs(alpha) >= MAX_STORED_ALPHA_ABS else round(alpha, 2)
 
 
 def history_start_date(today: date, years: int, incremental: bool) -> date:
@@ -178,7 +185,13 @@ def write_midway_columns(cur, since: str | None) -> int:
            )
         )
         update public.screener_technical_daily d
-           set nifty_alpha_1d = round((d.change_pct_1d - benchmark.change_pct)::numeric, 2)
+           set nifty_alpha_1d = case
+                 -- Corporate actions and unadjusted provider discontinuities can create
+                 -- impossible one-day returns.  They are not relative-strength evidence,
+                 -- and must not abort the entire point-in-time feature rebuild.
+                 when abs(d.change_pct_1d - benchmark.change_pct) >= {MAX_STORED_ALPHA_ABS} then null
+                 else round((d.change_pct_1d - benchmark.change_pct)::numeric, 2)
+               end
           from benchmark
          where benchmark.date = d.date and d.change_pct_1d is not null
            and benchmark.change_pct is not null {bounds[0]}
