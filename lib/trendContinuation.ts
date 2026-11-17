@@ -47,7 +47,11 @@ const STATUS_ORDER: Record<TrendContinuationStatus, number> = {
   TREND_CONTINUATION_READY: 0, CONTINUATION_WATCH: 1, IMPULSE_DETECTED: 2, EXTENDED_RISK: 3,
 };
 
-/** Entries first, then second-day staircases, then by status and score; "too late" stocks last. */
+/**
+ * Entries first, then second-day staircases, then by status and score; "too late" stocks
+ * last. At an equal technical score an event-driven candidate ranks ahead of a purely
+ * technical one: the same chart with a reason behind it is the better of the two.
+ */
 export function compareTrendCandidates(
   a: Pick<TrendContinuationCandidate, "status" | "ready" | "score" | "metrics">,
   b: Pick<TrendContinuationCandidate, "status" | "ready" | "score" | "metrics">,
@@ -55,7 +59,8 @@ export function compareTrendCandidates(
   return Number(b.ready) - Number(a.ready)
     || Number(b.metrics.developing_staircase === true) - Number(a.metrics.developing_staircase === true)
     || STATUS_ORDER[a.status] - STATUS_ORDER[b.status]
-    || b.score - a.score;
+    || b.score - a.score
+    || Number(b.metrics.catalyst_tag === "EP") - Number(a.metrics.catalyst_tag === "EP");
 }
 
 export async function getTrendContinuationCandidates(market: "IN" | "US", limit = 40): Promise<TrendContinuationCandidate[]> {

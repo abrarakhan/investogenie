@@ -1151,6 +1151,35 @@ def load_delivery(cur, asset_ids: list[str], sessions: int = 40) -> dict[str, De
     return out
 
 
+# Filing subjects that mark a move as event-driven rather than purely technical. Matched
+# against recent headlines for the candidate itself; a sector-wide story is not a catalyst
+# for one stock, which is why the match goes through news_impacts.asset_id rather than
+# through a text search over every article.
+CATALYST_KEYWORDS = ("financial result", "quarterly result", "order", "capacity",
+                     "expansion", "debt", "rating")
+CATALYST_NEWS_DAYS = 7
+
+
+def load_news_catalysts(cur, asset_ids: list[str], today: str) -> set[str]:
+    """Assets with a recent headline on one of the catalyst subjects.
+
+    Deliberately narrow. News may mark a move as event-driven and rank it ahead of a
+    purely technical one; it may never create a setup, so nothing here can qualify a
+    stock that the price and delivery rules rejected.
+    """
+    cur.execute(
+        """select distinct i.asset_id::text
+             from public.news_impacts i
+             join public.news_articles a on a.id=i.article_id
+            where i.asset_id = any(%s::uuid[])
+              and a.published_at >= %s::date - make_interval(days => %s)
+              and (%s)""" % ("%s", "%s", "%s",
+                             " or ".join(["lower(a.title) like %s"] * len(CATALYST_KEYWORDS))),
+        (asset_ids, today, CATALYST_NEWS_DAYS, *[f"%{word}%" for word in CATALYST_KEYWORDS]),
+    )
+    return {row[0] for row in cur.fetchall()}
+
+
 def load_recent_results(cur, asset_ids: list[str], session_dates: list[str],
                         today: str) -> dict[str, int]:
     """Trading sessions since the most recent declared result, per asset.
@@ -1225,6 +1254,13 @@ def main() -> None:
         session_dates = sorted({str(row[1]) for row in history_rows})
         with conn.cursor() as cur:
             results_by_asset = load_recent_results(cur, asset_ids, session_dates, today)
+            try:
+                news_catalysts = load_news_catalysts(cur, asset_ids, today)
+            except psycopg2.Error:
+                # News is supporting evidence for ranking, never a gate. A provider outage
+                # or a missing table must not stop the scan or change any technical verdict.
+                conn.rollback()
+                news_catalysts = set()
         regime, contexts = build_market_contexts(bars_by_asset, live_date)
         payload = []
         assessed_dates = set()
@@ -1237,9 +1273,9 @@ def main() -> None:
             session_minutes = india_session_minutes(asset_bars[-1].date, now) if asset_bars else None
             context = contexts.get(asset_id, MarketContext(regime, None, None))
             days_since_results = results_by_asset.get(asset_id)
-            catalyst_tag = (CATALYST_EP
-                            if days_since_results is not None
-                            and days_since_results <= EP_MAX_DAYS_SINCE_RESULTS
+            recent_results = (days_since_results is not None
+                              and days_since_results <= EP_MAX_DAYS_SINCE_RESULTS)
+            catalyst_tag = (CATALYST_EP if recent_results or asset_id in news_catalysts
                             else CATALYST_TECH)
             result = assess_trend_continuation(
                 asset_bars, benchmark, session_minutes, context,

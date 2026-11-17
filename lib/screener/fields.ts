@@ -102,6 +102,15 @@ export const FIELDS: FieldDef[] = [
   { key: "return_5d", label: "Return 5D", column: "return_5d", type: "number", format: "percent", unit: "%", sortable: true, historical: true },
   { key: "return_20d", label: "Return 20D", column: "return_20d", type: "number", format: "percent", unit: "%", sortable: true, historical: true },
   { key: "return_63d", label: "Return 3M", column: "return_63d", type: "number", format: "percent", unit: "%", sortable: true, historical: true },
+  // Mid-way momentum evidence. Delivery is NSE EQ only and excludes ETFs, REITs and
+  // InvITs, which settle at or near 100% by construction.
+  { key: "deliv_pct", label: "Delivery %", column: "deliv_pct", type: "number", format: "percent", unit: "%", sortable: true, historical: true, help: "Share of the session's traded quantity actually delivered; above 55% suggests positional buying rather than intraday churn" },
+  { key: "rel_deliv_20d", label: "Delivery / 20D Avg", column: "rel_deliv_20d", type: "number", format: "number", sortable: true, historical: true, help: "Deliverable quantity against the prior 20 sessions' average; 2.5x or more is unusual accumulation" },
+  { key: "nifty_alpha_1d", label: "Nifty Alpha 1D", column: "nifty_alpha_1d", type: "number", format: "percent", unit: "%", sortable: true, historical: true, help: "One session's return less the index's; strength on a red index day is worth more than the same move on a green one" },
+  { key: "ibs_close", label: "Internal Bar Strength", column: "ibs_close", type: "number", format: "number", sortable: true, historical: true, help: "Where the close sat in the session's range, 0 at the low and 1 at the high" },
+  { key: "days_since_results", label: "Sessions Since Results", column: "days_since_results", type: "number", format: "number", sortable: true, historical: true },
+  { key: "setup_variant", label: "Mid-Way Setup", column: "setup_variant", type: "text", format: "text", sortable: true, historical: true, help: "STAGE2_IMPULSE, EP_REBOUND or STAIR_STEP, as recorded by the trend scan" },
+  { key: "catalyst_tag", label: "Catalyst", column: "catalyst_tag", type: "text", format: "text", sortable: true, historical: true, help: "EP for an event-driven move, TECH for a purely technical one" },
 ];
 
 export const FIELD_BY_KEY: Record<string, FieldDef> = Object.fromEntries(

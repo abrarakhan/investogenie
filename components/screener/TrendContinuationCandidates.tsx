@@ -49,6 +49,8 @@ function CandidateCard({ candidate, rank, planId, chartGesture }: { candidate: T
       </div>
     </div>
 
+    <MidwayPills candidate={candidate} />
+
     <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
       <Metric label="3-session move" text={value(candidate.metrics.move3_atr, " ATR")} />
       <Metric label="Efficiency" text={value(typeof candidate.metrics.efficiency3 === "number" ? candidate.metrics.efficiency3 * 100 : null, "%")} />
@@ -193,6 +195,66 @@ export default function TrendContinuationCandidates({ candidates, planIds, count
     <TradingViewChartModal chart={chart} onClose={closeChart} />
   </div>;
 }
+
+/**
+ * The mid-way footprint, as compact pills beside the status.
+ *
+ * Each one answers a question a reader would otherwise have to take on trust: which
+ * trigger path fired, whether the buying was delivered or churned, how fast today is
+ * running against a normal session, whether the move had a reason behind it, and
+ * whether it has already gone too far. A card that shows only a score asks to be
+ * believed; these let it be checked.
+ */
+const VARIANT_LABEL: Record<string, string> = {
+  STAGE2_IMPULSE: "Stage-2 Impulse",
+  EP_REBOUND: "EP Rebound",
+  STAIR_STEP: "3D Stair-Step",
+};
+
+function Pill({ text, tone = "neutral" }: { text: string; tone?: "neutral" | "good" | "warn" }) {
+  const style = tone === "good"
+    ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-200"
+    : tone === "warn"
+      ? "border-orange-400/30 bg-orange-400/10 text-orange-200"
+      : "border-white/10 bg-white/[0.03] text-white/55";
+  return (
+    <span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${style}`}>
+      {text}
+    </span>
+  );
+}
+
+function MidwayPills({ candidate }: { candidate: TrendContinuationCandidate }) {
+  const metrics = candidate.metrics;
+  const number = (value: unknown) => (typeof value === "number" && Number.isFinite(value) ? value : null);
+  const variant = typeof metrics.setup_variant === "string" ? metrics.setup_variant : null;
+  const delivery = number(metrics.deliv_pct);
+  const relative = number(metrics.rel_deliv_20d);
+  const alpha = number(metrics.nifty_alpha_1d);
+  const rsi = number(metrics.midway_rsi_14);
+  const catalyst = typeof metrics.catalyst_tag === "string" ? metrics.catalyst_tag : null;
+  const exhausted = metrics.midway_exhausted === true;
+  const pills: Array<{ text: string; tone?: "neutral" | "good" | "warn" }> = [];
+  if (variant && VARIANT_LABEL[variant]) pills.push({ text: VARIANT_LABEL[variant], tone: "good" });
+  if (candidate.todRvol !== null) pills.push({ text: `RVOL ${candidate.todRvol.toFixed(1)}x` });
+  if (delivery !== null) {
+    pills.push({
+      text: relative !== null ? `Deliv ${delivery.toFixed(0)}% · ${relative.toFixed(1)}x` : `Deliv ${delivery.toFixed(0)}%`,
+      // 55% is the threshold the engine treats as positional accumulation.
+      tone: delivery >= 55 ? "good" : "neutral",
+    });
+  }
+  if (alpha !== null) pills.push({ text: `Nifty α ${alpha >= 0 ? "+" : ""}${alpha.toFixed(1)}%`, tone: alpha > 0 ? "good" : "neutral" });
+  if (catalyst) pills.push({ text: catalyst, tone: catalyst === "EP" ? "good" : "neutral" });
+  // Shown whenever the move is spent, with the number that decided it, so the badge is
+  // checkable rather than a bare warning.
+  if (exhausted) {
+    pills.push({ text: rsi !== null && rsi >= 80 ? `RSI ${rsi.toFixed(0)} exhaustion` : "Exhaustion", tone: "warn" });
+  }
+  if (!pills.length) return null;
+  return <div className="mt-3 flex flex-wrap items-center gap-1.5">{pills.map((pill) => <Pill key={pill.text} {...pill} />)}</div>;
+}
+
 
 function Metric({ label: metricLabel, text }: { label: string; text: string }) {
   return <div className="rounded-md bg-black/30 px-3 py-2">
