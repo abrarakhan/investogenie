@@ -50,6 +50,41 @@ Authenticated web pages expose an opt-in browser-alert control. While the site i
 
 Trend Continuation v1 is an India-only, Python-calculated engine for persistent 3–5 session moves. It stores versioned impulse/watch/ready/extended states and appears on web and mobile Strong Swing surfaces. Day-one impulses and later pullbacks remain observational. A confirmed day-two breakout after 10:15 IST can create an immutable manual Buy & Track plan only when fresh Breeze depth, spread, circuit room, results-calendar, price-range and plan-freshness gates pass. It never feeds auto-buy.
 
+## Verified production baseline — 17 November 2026
+
+- Revision `784f894` is checked out; web and Breeze services are active and `/login` returns HTTP 200.
+- Migrations 0082 (Strong Swing replay tables) and 0083 (near-miss flag) are applied.
+- Release validation passed 516 TypeScript tests, 215 pipeline Python tests, typecheck and lint.
+- Strong Swing moved to `strong-swing-v8-entry-open`. The stored India replay run
+  `1d6fb6e3` reproduces 612 signals at 49.3% and +0.54% per signal, unchanged from v7 —
+  the new gate is inert in the `--session open` arm the record is measured on, by design.
+- 787,151 one-minute Breeze candles are stored under source `BREEZE_REPLAY` covering the
+  replayed signals; the daily intraday sync's retention prune is scoped to exclude them.
+  The count drifts down slightly as the daily sync re-sources sessions that overlap its own
+  retention window; the bars remain, under `BREEZE_HISTORICAL`.
+- The only local uncommitted files were machine-local `.claude/launch.json` and the
+  generated block in `CLAUDE.md`; neither was included in the release.
+
+## Strategy and reliability changes — 17 November 2026
+
+- `entry_open` (v8) holds the session's own opening price to the entry band. One-minute
+  paths for 1,295 entries measured days that gapped into the band at +0.40% per trade
+  against -0.15% for the 730 that walked in later; the screen previously offered both and
+  the per-trade edge was +0.09%. Outside an open session the gate stands aside; a dated
+  session with no opening price fails rather than passing silently.
+- The gate is not a cure: the gapped-in population still wins only 48.8% of the time, and
+  MEESHO on 2026-11-16 opened inside the band at 0.69 ATR and reversed anyway.
+- The measured-record note now warns when a stored run predates the deployed model.
+- `pipelines/intraday_entry_study.py` normalises each Breeze session onto the adjusted
+  `daily_ohlcv` scale before comparing. Its first version did not, and compared 2017 raw
+  prices against adjusted ones that differ by a third; that result was discarded.
+- A full-session outage of `/terminal/in/strong-swing` was diagnosed: the recurring trend
+  scan ran every 120s with a 110s cap it could never meet, holding one of two CPUs
+  continuously, and request-path engine batches were killed at 30s in the contention.
+  Scan now every 15 minutes with a 600s cap; engine batches capped at 90s.
+- The Breeze refresh banner no longer reports a cancelled request as an outage: requests
+  carry an AbortController, abort on cleanup and after 60s, and an AbortError is swallowed.
+
 ## Verified production baseline — 14 November 2026
 
 - Revision `f33f256` was checked out; web and Breeze services were active and the public HTTPS `/login` returned HTTP 200.
@@ -109,6 +144,13 @@ The Linux release runs production dependency audit, build and schema verificatio
 ## Remaining work and runtime checks
 
 - Reconfirm the deployed revision, services and schema through the latest migration after each release.
+- The 17 November contention fixes are unproven under load: they were deployed after the India
+  session closed. Recheck `/terminal/in/strong-swing` responsiveness and the SIGTERM rate during
+  the next open session. If it is still slow, the remaining suspect is the page running a full
+  multi-thousand-stock scan per request rather than reading a cached scan.
+- `DHAMPURSUG` closed below its recorded stop of 191.59 on 2026-10-19 and is still open in the
+  ledger; the ledger records no exit. Decide the position and review why no exit was raised.
+- Database snapshots are written on the host only; no off-host copy exists.
 - Inspect Data Health, quote/depth freshness, calendar coverage and provider failures.
 - Review unresolved CAS/fund mappings and Gmail documents needing manual review.
 - Confirm daily Breeze session validity and separately authorized buying limits.
