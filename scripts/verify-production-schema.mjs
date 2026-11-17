@@ -56,6 +56,7 @@ const requiredRelations = [
   "public.breeze_order_actions",
   "public.email_digest_deliveries",
   "public.mobile_mutation_idempotency",
+  "public.daily_delivery_metrics",
 ];
 const requiredColumns = [
   ["corporate_event_sync_state", "authoritative_source"],
@@ -75,6 +76,12 @@ const requiredColumns = [
   ["screener_technical_daily", "change_pct_1d"],
   ["stock_snapshot", "profit_cagr_3y"],
   ["stock_snapshot", "promoter_holding_change_qoq"],
+  ["trend_continuation_signals", "setup_variant"],
+  ["trend_continuation_signals", "deliv_pct"],
+  ["trend_continuation_signals", "rel_deliv_20d"],
+  ["trend_continuation_signals", "catalyst_tag"],
+  ["screener_technical_daily", "deliv_pct"],
+  ["screener_technical_daily", "setup_variant"],
 ];
 const client = new pg.Client({
   connectionString: url,
