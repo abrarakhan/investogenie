@@ -182,16 +182,27 @@ def summarize(outcomes: list[Outcome]) -> dict:
     }
 
 
+# The two gates that ask only where the price is: the band against the live quote, and the
+# band against the session's open. A day blocked by nothing else is one price away from being
+# taken, which is what makes it a near miss rather than a different setup.
+ENTRY_GATES = ("entry_zone", "entry_open")
+
+
 def near_miss(verdict: dict) -> bool:
     """Ready on everything except where the price happened to be.
 
-    These are the days the live screen can still offer, because it re-reads the entry band
-    against the quote all session while this replay reads it once. Requiring entry_zone to
-    be the *only* blocking failure is what keeps the set honest: a day also failing the
-    volatility ceiling or the results blackout was never one quote away from being taken.
+    Before v8 these were the days the live screen could still offer, because it re-read the
+    entry band against the quote all session while this replay read it once. v8 refuses them,
+    having measured them at -0.15% per trade against +0.40% for days that opened in the band,
+    so the set is now what the gate excludes -- kept because re-measuring that gap is the only
+    way the rule can be revisited.
+
+    Requiring the entry gates to be the *only* blocking failures is what keeps the set honest:
+    a day also failing the volatility ceiling or the results blackout was never one quote away
+    from being taken.
     """
-    failed = [gate["key"] for gate in verdict["gates"] if gate["blocking"] and not gate["passed"]]
-    return failed == ["entry_zone"]
+    failed = {gate["key"] for gate in verdict["gates"] if gate["blocking"] and not gate["passed"]}
+    return bool(failed) and failed <= set(ENTRY_GATES)
 
 
 def decision_view(bars: list[Bar], index: int, mode: str) -> tuple[float, dict | None, int] | None:
@@ -211,15 +222,18 @@ def decision_view(bars: list[Bar], index: int, mode: str) -> tuple[float, dict |
         return bars[index].close, None, index + 1
     if mode == "open":
         # The decision the v7 entry band was measured on: judge at the next open and take
-        # that same price. Production judges against the live quote all session, so this is
-        # the open-only slice of it, not the whole of what the live gate sees.
+        # that same price. The session carries only its open, which is both the decision
+        # price and all the v8 entry_open gate needs; its high and low are deliberately
+        # withheld, so the advisory session gates stay out of view as they always were here.
         if index + 1 >= len(bars):
             return None
-        return bars[index + 1].open, None, index + 1
+        live = bars[index + 1]
+        return live.open, {"date": live.date, "open": live.open}, index + 1
     if index + 2 >= len(bars):
         return None
     live = bars[index + 1]
-    session = None if mode == "blind" else {"date": live.date, "high": live.high, "low": live.low}
+    session = (None if mode == "blind"
+               else {"date": live.date, "open": live.open, "high": live.high, "low": live.low})
     return live.close, session, index + 2
 
 

@@ -5,7 +5,7 @@ from typing import Any
 
 from .common import Bar, average_true_range, js_round, mean, pct_change, round2, sma, structural_breakout
 
-MODEL_VERSION = "strong-swing-v7-entry-band"
+MODEL_VERSION = "strong-swing-v8-entry-open"
 TRAILING_POLICY_VERSION = "strong-swing-ledger-trailing-v2-post-entry-next-bar"
 CONFIRMATION_ATR_BUFFER = 0.25
 RESULTS_BLACKOUT_SESSIONS = 3
@@ -197,12 +197,23 @@ def assess(raw: dict[str, Any]) -> dict[str, Any]:
     # trigger. The session's own high and the last completed close answer that.
     session = raw.get("session") or {}
     raw_session_high = session.get("high")
+    raw_session_open = session.get("open")
     session_high = None if raw_session_high is None else float(raw_session_high)
+    session_open = None if raw_session_open is None else float(raw_session_open)
     # The session counts only once it is beyond the last completed bar. Otherwise the "session"
     # is the very bar the rest of the gates are built from, and comparing them is circular.
-    session_live = session_high is not None and session_high > 0 and str(session.get("date") or "") > latest.date
+    session_dated = str(session.get("date") or "") > latest.date
+    session_live = session_dated and session_high is not None and session_high > 0
     give_back_atr = (session_high - current_price) / atr if session_live and atr > 0 else 0.0
     holds_prior_close = current_price >= latest.close
+    # Where the session opened, relative to the band. The band's edge belongs to days that
+    # GAPPED into it; days that opened outside and walked in later are a different and losing
+    # population (see the entry_open gate). The live screen reads the band against a quote that
+    # moves all session, so without this the two are indistinguishable on screen.
+    open_extension_atr = ((session_open - entry) / atr
+                          if session_open is not None and atr > 0 else None)
+    opened_in_band = (open_extension_atr is not None
+                     and ENTRY_BAND_MIN_ATR <= open_extension_atr <= ENTRY_BAND_MAX_ATR)
     # Company results. India has an authoritative calendar, so an unverified or imminent date
     # blocks the entry; elsewhere the check is reported but cannot block on missing coverage.
     results = raw.get("results") or None
@@ -230,6 +241,31 @@ def assess(raw: dict[str, Any]) -> dict[str, Any]:
         _gate("market_shock", "Market shock", not market_shock, "Two-session benchmark move unavailable." if bench_two_day is None else f"{bench_two_day:.1f}% over two sessions; entries stop at -4%.", "execution"),
         _gate("confirmation", "OI build-up" if has_oi else "Cash-equity confirmation", bool(oi_confirmed if has_oi else cash_confirmed), f"{(oi_change or 0):.1f}% OI change over five sessions." if has_oi else f"{volume_trend5:.2f}x five-session volume vs the 20-session base, price {(price_change5 or 0):.1f}% over five sessions; requires 1.20x and a rise."),
         _gate("entry_zone", "Entry discipline", in_entry_band, entry_band_detail, "execution"),
+        # The band, read against where the session opened rather than where it is trading now.
+        #
+        # One-minute paths for 1,295 entries across the decade split the band in two. Days whose
+        # open fell inside it returned +0.40% per trade over 565 trades; the 730 that opened
+        # outside and walked in later returned -0.15%, and both of their halves lose (-0.25%
+        # rising in from under the floor, -0.09% falling in from over the ceiling). It is not a
+        # timing effect: the later set is worse in every part of the session, including the
+        # opening minute. Judged against a live quote alone the two are indistinguishable, and
+        # taking both cuts the edge from +0.40% to +0.09% per trade.
+        #
+        # Only a dated session can be asked this, so outside an open session the gate stands
+        # aside exactly as the live_* gates do; a session that is open but whose opening price
+        # is missing fails, because then the question has an answer that is simply not at hand.
+        # Re-measure with pipelines/intraday_entry_study.py before changing this.
+        _gate("entry_open", "Opening price", (not session_dated) or opened_in_band,
+              "No live session beyond the latest completed bar; the band is read against the last close."
+              if not session_dated
+              else "Today's opening price is unavailable; whether the band was gapped into cannot be verified."
+              if session_open is None
+              else f"Opened at {session_open:.2f}, {open_extension_atr:.2f} ATR above confirmed entry "
+                   f"{entry:.2f}; inside the {ENTRY_BAND_MIN_ATR:.2f}-{ENTRY_BAND_MAX_ATR:.2f} ATR band."
+              if opened_in_band
+              else f"Opened at {session_open:.2f}, {open_extension_atr:.2f} ATR above confirmed entry "
+                   f"{entry:.2f}; outside the {ENTRY_BAND_MIN_ATR:.2f}-{ENTRY_BAND_MAX_ATR:.2f} ATR band. "
+                   f"Days that walk into the band rather than opening in it lose money.", "execution"),
         # Advisory, not blocking. These shipped on a single observation — MEESHO reversing
         # intraday while reading EXECUTION_READY — and a controlled replay since then put
         # them at an identical 47.3% win rate against a control arm that withheld the
@@ -273,7 +309,8 @@ def assess(raw: dict[str, Any]) -> dict[str, Any]:
         hard = hard - {"freshness", "market_shock"}
     hard_failed = any(gate["key"] in hard and gate["key"] != "sma20_extension" and gate["blocking"] and not gate["passed"] for gate in gates)
     extension_failed = not next(gate["passed"] for gate in gates if gate["key"] == "sma20_extension")
-    entry_failed = not next(gate["passed"] for gate in gates if gate["key"] == "entry_zone")
+    entry_failed = any(not gate["passed"] for gate in gates
+                       if gate["key"] in ("entry_zone", "entry_open"))
     technical_passed = all(gate["passed"] for gate in gates if gate["category"] == "technical" and gate["blocking"])
     if breakout_failed:
         status = "INVALIDATED"
@@ -313,6 +350,8 @@ def assess(raw: dict[str, Any]) -> dict[str, Any]:
         "stopRiskPct": stop_risk, "entryExtensionAtr": extension_atr,
         "circuitLikeSessions20": circuit_count, "suggestedExposurePct": exposure,
         "sessionHigh": session_high if session_live else None,
+        "sessionOpen": session_open if session_dated else None,
+        "openExtensionAtr": open_extension_atr if session_dated else None,
         "sessionGiveBackAtr": give_back_atr if session_live else None,
         "atr": atr, "isBreakout": is_breakout, "breakoutBar": breakout_bar,
         "trailingStop": trailing_stop, "effectiveTrailingStop": effective_trail,

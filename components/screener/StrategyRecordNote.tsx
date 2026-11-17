@@ -1,3 +1,4 @@
+import { STRONG_SWING_MODEL_VERSION } from "@/lib/analytics/strongSwing";
 import type { StrategyRecord } from "@/lib/strategyRecord";
 
 /**
@@ -20,6 +21,11 @@ export default function StrategyRecordNote({ record }: { record: StrategyRecord 
       </p>
     );
   }
+  // A record measured under an earlier model describes rules the screen no longer follows.
+  // Saying nothing would leave a number beside the Buy button that looks like evidence for
+  // the gates above it; v8's entry_open gate alone removed 730 of the 1,295 entries the v7
+  // figures were drawn from. Re-run pipelines/strong_swing_replay.py to replace it.
+  const stale = record.modelVersion !== STRONG_SWING_MODEL_VERSION;
   const unevaluated = [
     ...(record.liveExecutionEvaluated ? [] : ["live quote", "spread", "circuit"]),
     ...(record.resultsEvaluated ? [] : ["results blackout"]),
@@ -56,6 +62,12 @@ export default function StrategyRecordNote({ record }: { record: StrategyRecord 
         )}
       </div>
       <p className="mt-2 text-[11px] leading-relaxed text-white/32">
+        {stale && (
+          <span className="text-orange-300/80">
+            Measured under {record.modelVersion}, not the {STRONG_SWING_MODEL_VERSION} rules the
+            gates above use; it does not describe the current strategy.{" "}
+          </span>
+        )}
         Replayed from completed bars, entering at the next session&rsquo;s open. Before brokerage,
         taxes and slippage. Delisted stocks are not in the sample, which flatters every figure above.
         {unevaluated.length > 0 && ` The ${listed} gate${unevaluated.length > 1 ? "s were" : " was"} not replayed, so live trading is stricter than this.`}

@@ -1,7 +1,7 @@
 /** Strong Swing contract. All decision mathematics lives in Python. */
 import type { OHLCV } from "@/lib/types";
 
-export const STRONG_SWING_MODEL_VERSION = "strong-swing-v7-entry-band";
+export const STRONG_SWING_MODEL_VERSION = "strong-swing-v8-entry-open";
 /**
  * The actionable band above the confirmed entry, in ATR, mirrored from the Python engine's
  * ENTRY_BAND_MIN_ATR / ENTRY_BAND_MAX_ATR. These are not a second opinion about the
@@ -25,7 +25,7 @@ export interface StrongSwingInput {
    * completed bars; this is how the open session's direction reaches them, rather than only
    * its last price.
    */
-  session?: { date: string; high: number; low: number } | null;
+  session?: { date: string; open: number; high: number; low: number } | null;
   results?: { verified: boolean; sessionsToNext: number | null; nextDate: string | null; detail: string; source?: string | null; sourceAsOf?: string | null; coverageFrom?: string | null; coverageThrough?: string | null } | null;
 }
 export interface StrongSwingAssessment {

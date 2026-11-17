@@ -266,9 +266,10 @@ export async function getStrongSwingCandidates(
     loadResultsChecks(market, marketDate, ids),
     // The open session's own bar — the partial row the completed-bar filter above removes.
     // The gates need its high to tell a move that is holding from one that has been handed
-    // back; the last price alone cannot distinguish them.
-    query<{ asset_id: string; date: string; high: string; low: string }>(
-      `select asset_id,date::text date,high,low from (
+    // back, and its open to tell a day that gapped into the entry band from one that walked
+    // into it later; the last price alone cannot distinguish either pair.
+    query<{ asset_id: string; date: string; open: string; high: string; low: string }>(
+      `select asset_id,date::text date,open,high,low from (
          select o.*,row_number() over(partition by o.asset_id order by o.date desc) rn
            from public.daily_ohlcv o
           where o.asset_id = any($1::uuid[]) and $2::boolean and o.date >= $3::date
@@ -285,7 +286,7 @@ export async function getStrongSwingCandidates(
   }
   const contextByAsset = new Map(contexts.map((row) => [row.asset_id, row]));
   const sessionByAsset = new Map(sessionRows.map((row) => [row.asset_id, {
-    date: row.date, high: Number(row.high), low: Number(row.low),
+    date: row.date, open: Number(row.open), high: Number(row.high), low: Number(row.low),
   }]));
   const benchmarkBars = benchmarkRows.map(toBar).reverse();
   // Without the benchmark, the regime, relative-strength and freshness gates all fail at once

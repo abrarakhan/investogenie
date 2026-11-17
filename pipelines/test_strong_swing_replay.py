@@ -248,6 +248,19 @@ class DecisionTiming(unittest.TestCase):
         self.assertIsNone(session)
         self.assertEqual(entry, 1)          # the next bar's open
 
+    def test_open_mode_hands_over_the_open_and_nothing_else(self):
+        """What makes the v8 entry_open gate reachable in the arm the record comes from.
+
+        The open is both the decision price and the only thing that gate needs. The session's
+        high and low stay withheld, so the advisory session gates see no session here, exactly
+        as they did before v8 -- the arm is unchanged apart from the gate it can now exercise.
+        """
+        price, session, entry = replay.decision_view(self.BARS, 0, "open")
+        self.assertEqual(price, 100)
+        self.assertEqual(session, {"date": "2024-01-02", "open": 100})
+        self.assertEqual(entry, 1)
+        self.assertEqual(price, session["open"], "the decision price IS the open in this arm")
+
     def test_blind_and_session_agree_on_price_and_entry(self):
         blind = replay.decision_view(self.BARS, 0, "blind")
         live = replay.decision_view(self.BARS, 0, "session")
@@ -255,7 +268,7 @@ class DecisionTiming(unittest.TestCase):
         self.assertEqual(blind[2], live[2], "the two arms must enter on the same bar")
         # The entire difference between the arms, so the comparison measures the gates alone.
         self.assertIsNone(blind[1])
-        self.assertEqual(live[1], {"date": "2024-01-02", "high": 108, "low": 99})
+        self.assertEqual(live[1], {"date": "2024-01-02", "open": 100, "high": 108, "low": 99})
 
     def test_the_decision_moves_to_the_session_after_the_signal(self):
         price, _, entry = replay.decision_view(self.BARS, 0, "session")

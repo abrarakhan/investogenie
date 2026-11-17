@@ -95,14 +95,16 @@ class SessionGatesAreInert(unittest.TestCase):
     def test_a_session_dated_at_the_latest_bar_is_not_a_live_session(self):
         """Judging the newest completed bar against itself would be circular."""
         bars = holding_breakout()
-        result = run(ready_price(), {"date": bars[-1]["date"], "high": 140.0, "low": 90.0}, bars=bars)
+        price = ready_price()
+        result = run(price, {"date": bars[-1]["date"], "open": price, "high": 140.0, "low": 90.0},
+                     bars=bars)
         self.assertTrue(gate(result, "session_reversal")["passed"])
         self.assertIn("No live session", gate(result, "session_reversal")["detail"])
         self.assertEqual(result["status"], "EXECUTION_READY")
 
     def test_a_session_at_its_own_high_passes_both(self):
         price = ready_price()
-        result = run(price, {"date": "2027-01-01", "high": price, "low": price - .3})
+        result = run(price, {"date": "2027-01-01", "open": price, "high": price, "low": price - .3})
         self.assertTrue(gate(result, "session_hold")["passed"])
         self.assertTrue(gate(result, "session_reversal")["passed"])
         self.assertEqual(result["status"], "EXECUTION_READY")
@@ -122,7 +124,8 @@ class SessionGatesAreAdvisory(unittest.TestCase):
         price = run()["strongEntry"] + price_mult * run()["atr"]
         atr = run()["atr"]
         # Well past the old 0.50 ATR give-back ceiling, and below the prior close.
-        return run(price, {"date": "2027-01-01", "high": price + .9 * atr, "low": price - .2})
+        return run(price, {"date": "2027-01-01", "open": price,
+                           "high": price + .9 * atr, "low": price - .2})
 
     def test_both_gates_are_declared_non_blocking(self):
         result = self._reversing()
@@ -143,7 +146,8 @@ class SessionGatesAreAdvisory(unittest.TestCase):
         plan = run(bars=bars)
         price = plan["strongEntry"] + .4 * plan["atr"]
         self.assertLess(price, bars[-1]["close"], "fixture must put the price under the close")
-        result = run(price, {"date": "2027-01-01", "high": price + .1, "low": price - .1}, bars=bars)
+        result = run(price, {"date": "2027-01-01", "open": price,
+                             "high": price + .1, "low": price - .1}, bars=bars)
         self.assertFalse(gate(result, "session_hold")["passed"])
         self.assertTrue(gate(result, "entry_zone")["passed"], "only the hold rule is in question")
         self.assertEqual(result["status"], "EXECUTION_READY")
@@ -195,6 +199,21 @@ class MeeshoRegression(unittest.TestCase):
         self.assertFalse(gate(result, "session_reversal")["passed"])
         self.assertAlmostEqual(result["sessionGiveBackAtr"], .62, places=2)
         self.assertTrue(gate(result, "entry_zone")["passed"])
+        self.assertEqual(result["status"], "EXECUTION_READY")
+
+    def test_v8_does_not_rescue_this_case_either(self):
+        """Worth pinning, so the entry_open gate is not mistaken for a cure.
+
+        MEESHO opened at 259.00, which is 0.69 ATR above the 252.96 entry and so inside the
+        0.25-0.75 band: it gapped in exactly as the measured population does, and then handed
+        the move back anyway. The gate removes the days that WALK into the band, measured at
+        -0.15% per trade; it does not claim the days that gap in always work, and that
+        population still wins only 48.8% of the time. This case is one of its losses.
+        """
+        result = self._run(self.data["session"])
+        self.assertTrue(gate(result, "entry_open")["passed"])
+        self.assertAlmostEqual(result["openExtensionAtr"], .69, places=2)
+        self.assertEqual(result["sessionOpen"], 259.0)
         self.assertEqual(result["status"], "EXECUTION_READY")
 
 

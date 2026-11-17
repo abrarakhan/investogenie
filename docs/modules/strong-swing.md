@@ -23,6 +23,17 @@
   `strong_swing_replay_runs.results_mode` and `.live_execution_evaluated`.
 - The v6 session gates are inert in a replay by construction: history has completed
   bars and no open session, so a replay measures the completed-bar edge only.
+- `--session open`, the mode the stored record comes from, hands the engine a session
+  carrying only its open: that is both the decision price and all the v8 `entry_open`
+  gate needs, while the advisory session gates stay out of view as they always were in
+  this arm. The other modes carry the whole bar.
+- `pipelines/intraday_entry_study.py` re-grades a stored run from one-minute Breeze
+  candles (`intraday_bars`, source `BREEZE_REPLAY`) to separate days that opened in the
+  entry band from days that walked into it later. That measurement is what v8's
+  `entry_open` gate rests on, and re-running it is the only way to revisit the rule.
+  `daily_ohlcv` is split/dividend-adjusted while Breeze returns raw traded prices, so
+  each session is converted by one ratio taken at its close and checked against its own
+  daily bar; sessions that will not reconcile are counted out, never silently included.
 - The benchmark is the binding limit on how far back a replay reaches — a stock-day
   with no benchmark behind it fails `benchmark_data`. `pipelines/benchmark_history_backfill.py`
   extends that series; the daily sync only ever fetches forward.
