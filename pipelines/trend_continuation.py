@@ -329,6 +329,31 @@ def stair_step_qualified(series: list[Bar]) -> bool:
     return sum(ratios) / len(ratios) >= PATH_B_MIN_AVG_RVOL
 
 
+def breakout_levels(series: list[Bar]) -> dict:
+    """The price levels today's entry must clear, frozen with the signal.
+
+    Computed here, during the scheduled scan, rather than in the request path: the host
+    has two CPUs and a page render that recomputes levels for every candidate competes
+    with the scan that produced them. Freezing them also means the level a buy is judged
+    against is the one the signal was published with.
+
+    The last bar is today (live during a session), so the prior completed session is the
+    one before it. An inside day is a session whose whole range sat within the previous
+    session's, which is why a day-three entry uses day two's high rather than day one's.
+    """
+    if len(series) < 4:
+        return {}
+    previous = series[-2]
+    before = series[-3]
+    inside_day = previous.high <= before.high and previous.low >= before.low
+    steps = series[-4:-1]
+    return {
+        "previousSessionHigh": previous.high,
+        "insideDay": inside_day,
+        "stairStepHigh": max(bar.high for bar in steps),
+    }
+
+
 def assess_midway(
     series: list[Bar],
     delivery: DeliveryHistory | None = None,
@@ -351,7 +376,7 @@ def assess_midway(
         "setup_variant": None, "deliv_pct": None, "rel_deliv_20d": None, "ibs_close": None,
         "nifty_alpha_1d": None, "catalyst_tag": catalyst_tag, "days_since_results": days_since_results,
         "exhausted": False, "exhaustion_gain_5d": None, "exhaustion_rsi_14": None,
-        "midway_score_boost": 0, "midway_reasons": [],
+        "midway_score_boost": 0, "midway_reasons": [], "breakout_levels": {},
     }
     if len(series) < PATH_B_SESSIONS + 2:
         return features
@@ -365,6 +390,7 @@ def assess_midway(
     features.update(
         deliv_pct=today.deliv_pct, rel_deliv_20d=rel_deliv, ibs_close=ibs,
         nifty_alpha_1d=red_index_alpha(stock_return_1d, benchmark_return_1d),
+        breakout_levels=breakout_levels(series),
     )
 
     spent, gain_5d, rsi = exhaustion(series)
@@ -810,6 +836,7 @@ def _apply_midway(result: dict, midway: dict, series: list[Bar]) -> dict:
                 ("setup_variant", "deliv_pct", "rel_deliv_20d", "ibs_close",
                  "nifty_alpha_1d", "catalyst_tag", "days_since_results")}
     metrics = {**result.get("metrics", {}), **features,
+               "breakout_levels": midway.get("breakout_levels"),
                "midway_exhausted": midway["exhausted"],
                "midway_gain_5d": midway["exhaustion_gain_5d"],
                "midway_rsi_14": midway["exhaustion_rsi_14"]}

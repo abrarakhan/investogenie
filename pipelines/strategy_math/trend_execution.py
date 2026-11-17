@@ -3,7 +3,25 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
+from .armed_swing import expected_volume_share, valid_session_volume_curve
+
 BLACKOUT_SESSIONS = 3
+
+# The confirmation window opens at 10:15 IST, an hour into the session. Before that a
+# volume pace reading is mostly noise: the opening auction and the first minutes carry a
+# disproportionate share of the day's volume, so any stock looks fast.
+CONFIRMATION_MINUTE = 60
+SESSION_MINUTES = 375  # 09:15-15:30 IST
+
+# How fast the day's volume must be running, against the median session's shape at the
+# same minute. A single decisive bar is asked for more than three ordinary ones, because
+# the stair-step has already shown three sessions of evidence.
+IMPULSE_MIN_TOD_RVOL = 2.5
+STAIR_STEP_MIN_TOD_RVOL = 1.8
+
+SETUP_STAGE2 = "STAGE2_IMPULSE"
+SETUP_EP_REBOUND = "EP_REBOUND"
+SETUP_STAIR_STEP = "STAIR_STEP"
 
 
 def _number(value: Any) -> float | None:
@@ -67,6 +85,77 @@ def _coverage(execution: dict[str, Any] | None, today: str, required_from: str,
     return False, "No upcoming or recent results date on file; the next release is unknown."
 
 
+
+
+def session_progress(minutes_elapsed: float | None) -> float | None:
+    """How far through the session we are, 0 at the open and 1 at the close."""
+    if minutes_elapsed is None:
+        return None
+    return max(0.0, min(1.0, minutes_elapsed / SESSION_MINUTES))
+
+
+def time_of_day_rvol(live: dict[str, Any] | None, curve: dict[str, Any] | None,
+                     average_volume_20: float | None, market: str = "IN") -> float | None:
+    """Today's cumulative volume against what this market normally has by now.
+
+    A raw volume comparison at 10:30 says almost nothing, because a normal session has
+    only done a fraction of its day by then. The 40-session curve from migration 0077 --
+    the same one Armed Swing uses, rather than a second one maintained in parallel --
+    gives the share expected at this minute, and the ratio against it is what makes an
+    early reading comparable to a full day's.
+    """
+    if not live or not average_volume_20 or average_volume_20 <= 0:
+        return None
+    if not valid_session_volume_curve(curve, market):
+        return None
+    progress = session_progress(_number(live.get("minutesElapsed")))
+    if progress is None:
+        return None
+    expected_share = expected_volume_share(curve, progress)
+    if expected_share <= 0:
+        return None
+    volume = _number(live.get("volume"))
+    if volume is None or volume < 0:
+        return None
+    return volume / (average_volume_20 * expected_share)
+
+
+def required_tod_rvol(setup_variant: str | None) -> float:
+    return STAIR_STEP_MIN_TOD_RVOL if setup_variant == SETUP_STAIR_STEP else IMPULSE_MIN_TOD_RVOL
+
+
+def breakout_confirmed(setup_variant: str | None, price: float | None,
+                       levels: dict[str, Any] | None) -> tuple[bool, str]:
+    """Whether today's price has actually broken the level the variant entries on.
+
+    Each variant has its own level, and they are not interchangeable:
+
+    * a stage-2 impulse or event rebound enters on day two through day one's high, or on
+      day three through day two's high when day two sat inside day one's range;
+    * a stair-step enters on day four through the highest of its three steps.
+
+    Without the level there is no entry. Treating a missing level as satisfied would make
+    the pace gate the only thing standing between a candidate and a buy button.
+    """
+    if price is None or not levels:
+        return False, "Today's breakout level is unavailable."
+    if setup_variant == SETUP_STAIR_STEP:
+        level = _number(levels.get("stairStepHigh"))
+        if level is None:
+            return False, "The three-session stair-step high is unavailable."
+        if price <= level:
+            return False, f"Price {price:.2f} has not cleared the stair-step high {level:.2f}."
+        return True, f"Cleared the three-session stair-step high {level:.2f}."
+    previous_high = _number(levels.get("previousSessionHigh"))
+    if previous_high is None:
+        return False, "The prior session's high is unavailable."
+    inside_day = bool(levels.get("insideDay"))
+    if price <= previous_high:
+        shape = "inside-day" if inside_day else "opening-range"
+        return False, f"Price {price:.2f} has not cleared the {shape} level {previous_high:.2f}."
+    return True, f"Cleared {previous_high:.2f}, the prior session's high."
+
+
 def assess(raw: dict[str, Any]) -> dict[str, Any]:
     row = raw["candidate"]
     execution = raw.get("execution")
@@ -112,6 +201,27 @@ def assess(raw: dict[str, Any]) -> dict[str, Any]:
     computed = _parse(row["computed_at"])
     if computed is None or (now - computed.astimezone(timezone.utc)).total_seconds() > 5 * 60:
         blockers.append("The continuation calculation is stale; wait for the next scan.")
+
+    # Mid-way variants carry their own breakout level and volume-pace requirement, on top
+    # of every gate above rather than instead of any of them.
+    setup_variant = metrics.get("setup_variant")
+    pace = None
+    if setup_variant in (SETUP_STAGE2, SETUP_EP_REBOUND, SETUP_STAIR_STEP):
+        live = raw.get("liveSession")
+        minutes_elapsed = _number((live or {}).get("minutesElapsed"))
+        pace = time_of_day_rvol(live, raw.get("volumeCurve"),
+                                _number(raw.get("averageVolume20")), raw.get("market", "IN"))
+        required = required_tod_rvol(setup_variant)
+        if minutes_elapsed is None or minutes_elapsed < CONFIRMATION_MINUTE:
+            blockers.append("Volume pace is read only after 10:15 IST.")
+        elif pace is None:
+            blockers.append("Intraday volume pace could not be measured against the session curve.")
+        elif pace < required:
+            blockers.append(
+                f"Volume pace {pace:.1f}x is below the {required:.1f}x this setup requires.")
+        confirmed, detail = breakout_confirmed(setup_variant, price, raw.get("breakoutLevels"))
+        if not confirmed:
+            blockers.append(detail)
     return {"executionEligible": not blockers, "executionBlockers": blockers,
-            "observationOnly": bool(blockers), "currentPrice": price}
+            "observationOnly": bool(blockers), "currentPrice": price, "todRvol": pace}
 
