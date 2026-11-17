@@ -1,6 +1,8 @@
 # InvestoGenie Capabilities
 
-_Code and production baseline reviewed 14 November 2026 through deployed revision `f33f256`. Implemented means present in source; provider access, continuing data coverage and installed mobile binaries still require runtime checks._
+_Code and production baseline reviewed 17 November 2026 through deployed revision `784f894`. Implemented means present in source; provider access, continuing data coverage and installed mobile binaries still require runtime checks._
+
+This document is written to be read without the repository: it describes what the system does. [ARCHITECTURE.md](ARCHITECTURE.md) describes how it is built. File paths are given as provenance, not as required reading.
 
 ## Market research
 
@@ -17,9 +19,34 @@ _Code and production baseline reviewed 14 November 2026 through deployed revisio
 | Long-Term Candidates | Multi-year statement evidence and investor-inspired rankings | `lib/analytics/longTermStrategies.ts` |
 | Probability | 21-session return and risk distributions | `lib/probability-runtime.ts`, `lib/analytics/probability/` |
 | Adaptive Allocation | Two-asset, cost-aware Universal Portfolio research and saved strategies | `lib/adaptiveAllocation.ts`, `lib/analytics/universalPortfolio.ts` |
-| Forward tests | Recorded signal outcomes and comparison views | market forward-test page |
+| Forward tests | Live paper-trading of every engine's own calls, frozen at the moment they were made | `lib/forwardTestEngines.ts`, `lib/forwardTest.ts` |
+| In-app help library | 23 long-form articles explaining every strategy's rules, formulas and thresholds | `lib/help/articles.tsx`, `/help` |
 
 The Stock Screener is at `/terminal/[market]/stocks`; `/terminal/[market]/screener` is Swing Candidates. AI dispatch supports Anthropic, OpenAI, Google and DeepSeek. Generated filters go through schema/filter validation and sanitization rather than becoming arbitrary SQL.
+
+### Workspace routes
+
+`/terminal/[market]` is the market workspace; beneath it sit `stocks` (Stock Screener),
+`screener` (Swing Candidates), `strong-swing`, `armed-swing`, `news-swing`, `long-term`,
+`probability`, `adaptive-allocation`, `forward-test` and `trade-ledger`, plus `/terminal/in/cas`
+for the India CAS import. Outside the terminal: `/markets/[market]` market overview, `/portfolio/mutual-funds`
+and `/portfolio/fund-mapping`, `/settings`, `/data/health`, `/admin/sync`, `/help` and `/help/[slug]`,
+`/about`, `/login` and `/login/reset`. Markets are `IN` (NSE/BSE) and `US`.
+
+### In-app help library
+
+23 articles across six categories - swing (5), execution (7), long-term (7), probability, engine and
+data - explain each strategy in the reader's own terms: the rules, the exact thresholds, worked
+formulas and the named trader or origin a strategy derives from. They are the user-facing
+counterpart to this document and are served from the app itself rather than kept as external notes.
+
+### Forward tests
+
+Forward testing records what each engine actually called, as it called it. A candidate from Strong
+Swing, Momentum Ignition (legacy and V2), Trend Continuation, Trend day-two and its watch variant, or
+Armed Swing becomes a frozen paper call: a resting buy order at that engine's own entry, carrying its
+own target and stop. Nothing is recalculated afterwards, so the comparison measures the engine rather
+than a later opinion of it. Results are stored in `forward_test_positions` and compared across engines.
 
 ## Armed Swing and execution plans
 
@@ -46,6 +73,52 @@ Strong Swing and Momentum purchase validation likewise uses stored execution pla
 - Separately enabled automatic buying with spending limits and order intents for Strong Swing and saved Adaptive Allocation strategies; no automatic selling/rebalancing.
 
 Recording a pending order or ledger fill does not submit a broker order.
+
+## Measurement: does any of this work?
+
+Three separate mechanisms answer that question, and they are deliberately different in kind.
+
+**Historical replay** (`pipelines/strong_swing_replay.py`) runs the live engine itself over a decade
+of daily history and grades every day it would have called EXECUTION_READY, entering at the next
+session's open. It calls the same `assess` the screen calls rather than reimplementing the strategy,
+and no bar after the signal date ever reaches the engine - a test asserts that against a real scan.
+Three gates cannot be judged from history, because no broker quote was ever recorded for past days:
+live quote, live spread and live circuit. Each run records which gates it could evaluate. The
+benchmark series is the binding limit on how far back a replay reaches, since a day with no
+benchmark behind it fails the benchmark gate.
+
+The current India run covers 612 graded trades from 2017 to 2026 at a 49.3% win rate and +0.54% per
+signal, held to a 20-session horizon. **Those figures are shown on the Strong Swing screen beside
+the Buy button**, with their caveats stated: before brokerage, taxes and slippage; delisted stocks
+are absent from the sample, which flatters every figure; and the gates that could not be replayed
+make live trading stricter than the record. The note also warns when a stored run was measured under
+an earlier model version than the one the gates are currently using.
+
+**Intraday entry study** (`pipelines/intraday_entry_study.py`) re-grades a stored replay run against
+one-minute Breeze candles, to ask what the screen offers that the replay does not. This is what
+established that the entry band only pays on days that gapped into it, and produced the v8
+`entry_open` gate. It must normalise each Breeze session onto the adjusted daily scale before
+comparing: daily history is split- and dividend-adjusted while Breeze returns raw traded prices, and
+for a 2017 signal those differ by a third.
+
+**Strategy retrospective** (`pipelines/strategy_retrospective.py`) is explicitly *not* a
+reconstructed backtest. It grades only signals the production app actually recorded at the time,
+entering at the next observed session open. It is the narrowest and most trustworthy of the three,
+and correspondingly the smallest sample.
+
+## Accounts, access and operations surfaces
+
+Web sessions use signed HTTP-only cookies. The system supports login, password reset by token, and
+invitation-based account creation; one account is the designated system owner and administrator.
+`/data/health` reports provider coverage, quote and depth freshness, calendar coverage and provider
+failures. `/admin/sync` exposes ingestion controls. Authenticated pages offer opt-in browser
+notifications for candidate-ready transitions and material open-trade actions.
+
+Scheduled work runs under a Node supervisor started by `npm run dev` and `npm start`; bare Next.js
+scripts do not run it. Cron-style HTTP handlers under `/api/cron/` cover scans, quote refresh,
+screener refresh, backfills for NSE, BSE and US, news intelligence, mobile alerts, Gmail disclosures,
+forward tests, the Breeze auto-buy evaluator and the email digest. They authenticate with a
+configured bearer secret.
 
 ## Funds, credentials and automation
 
