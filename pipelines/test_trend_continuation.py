@@ -23,9 +23,13 @@ class TrendContinuationTests(unittest.TestCase):
         self.assertGreaterEqual(result["metrics"]["move3_atr"], 1.5)
 
     def test_orderly_pullback_is_found_but_watch_only(self):
-        history = [100 + index * 0.3 for index in range(21)] + [108, 110, 113, 111.5]
+        # The base drifts up with periodic down closes; a straight ramp reads as a
+        # spent move under the v8 exhaustion ceiling and never reaches the pullback rule.
+        history = [100 + index * 0.35 - (1.2 if index % 3 == 2 else 0) for index in range(21)]
+        history += [108, 110, 113, 111.5]
         volumes = [100_000] * 21 + [180_000, 190_000, 175_000, 160_000]
         result = assess_trend_continuation(bars(history, volumes))
+        self.assertLess(result["metrics"]["midway_rsi_14"], 80, "fixture must not be exhausted")
         self.assertEqual(result["status"], "CONTINUATION_WATCH")
         self.assertFalse(result["ready"])
         self.assertIsNone(result["entry"])
@@ -69,6 +73,21 @@ class TrendContinuationTests(unittest.TestCase):
         self.assertEqual(result["status"], "NOT_QUALIFIED")
 
 
+def drifting_base(count, start, step, *, date_prefix="2026-08", volume=100_000, dip=0.6, dip_every=4):
+    """An uptrending base that still has down sessions in it.
+
+    Real stocks do not rise every session; a fixture that does has a 14-day RSI of 100
+    and trips the v8 exhaustion ceiling before the rule under test is ever reached.
+    The drift is the trend these tests need, and the periodic down close is what keeps
+    the fixture a plausible stock rather than a straight line.
+    """
+    out = []
+    for index in range(count):
+        close = start + index * step - (dip if index % dip_every == dip_every - 1 else 0)
+        out.append(Bar(f"{date_prefix}-{index:02d}", close, close + 0.6, close - 0.6, close, volume))
+    return out
+
+
 def range_base(sessions=60, volume=100_000):
     """A sideways base around 100 with a 20-session high of 100.75."""
     result = []
@@ -83,8 +102,7 @@ IGNITION = Bar("2026-10-29", 100.2, 104.2, 100.0, 104.0, 300_000)
 
 class DayTwoBreakoutTests(unittest.TestCase):
     def test_two_session_staircase_is_surfaced_before_full_ignition(self):
-        base = [Bar(f"2026-08-{index:02d}", 95 + index * 0.08, 95.6 + index * 0.08,
-                    94.6 + index * 0.08, 95 + index * 0.08, 100_000) for index in range(60)]
+        base = drifting_base(60, 95, 0.1)
         first = Bar("2026-10-28", 99.7, 100.9, 99.5, 100.7, 90_000)
         second = Bar("2026-10-29", 100.7, 102.3, 100.6, 102.0, 120_000)
         result = assess_trend_continuation(base + [first, second])
@@ -238,8 +256,7 @@ STRONG = MarketContext(regime_positive=True, strength_rank=0.9, avg_traded_value
 
 
 def staircase_series(second_close=102.0, second_high=102.3):
-    base = [Bar(f"2026-08-{index:02d}", 95 + index * 0.08, 95.6 + index * 0.08,
-                94.6 + index * 0.08, 95 + index * 0.08, 100_000) for index in range(60)]
+    base = drifting_base(60, 95, 0.1)
     first = Bar("2026-10-28", 99.7, 100.9, 99.5, 100.7, 90_000)
     second = Bar("2026-10-29", 100.7, second_high, 100.6, second_close, 120_000)
     return base + [first, second]
