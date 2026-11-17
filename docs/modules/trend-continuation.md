@@ -1,5 +1,15 @@
 # Trend Continuation module
 
+Trend Continuation watches for a persistent three-to-five session impulse and asks whether it is
+likely to continue or has become extended. It is primarily an observation engine: most of its states
+report, and an observation-only state must never unlock buying or auto-buy.
+
+The one actionable path is a confirmed day-two breakout, which may create an immutable manual plan
+after live execution and results gates pass. Day one, pullbacks and any automatic buying remain
+blocked. Counter-trend rebounds can never become ready, however strong they look.
+
+## Boundaries and invariants
+
 - Owns multi-session impulse/continuation observation and confirmed day-two execution safety.
 - Public boundary: `features/trend-continuation/service.ts` and `features/trend-continuation/contracts.ts`.
 - Transitional server implementation: `lib/trendContinuation.ts`.

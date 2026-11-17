@@ -1,5 +1,22 @@
 # Operations module
 
+Operations covers everything that keeps data arriving and the service running: ingestion schedules,
+provider workers, backfill and repair queues, data-health reporting, schema migrations, backups and
+deployment.
+
+A principle runs through it: a data failure must stay distinguishable from a strategy decision. If a
+provider is down, the user must not be shown "no candidates" as though the market offered none. That
+is why missing evidence produces unverified and blocked states throughout the engines rather than
+silent absence.
+
+Scheduled work runs under a Node supervisor started by `npm run dev` and `npm start`; bare Next.js
+scripts skip it entirely, so a developer running Next directly gets no ingestion. Cron-style HTTP
+handlers under `/api/cron/` provide an external trigger for the same jobs and authenticate with a
+configured bearer secret. Production is AWS Lightsail with systemd, nginx, external environment
+configuration and a private PostgreSQL instance.
+
+## Boundaries and invariants
+
 - Owns ingestion schedules, provider workers, backfills, data health, schema migrations, backups and deployment.
 - Production is a two-vCPU host, so scheduled Python work and request rendering compete for the
   same CPUs. A recurring job that cannot finish inside its own cap does not merely fail: it

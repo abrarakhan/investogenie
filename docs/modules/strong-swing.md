@@ -1,5 +1,26 @@
 # Strong Swing module
 
+Strong Swing is the most conservative of the confirmed engines and the one wired to automation. It
+takes Base Swing setups and demands a confirmed breakout - the bar that broke out judged on its own
+merits, two closes holding above the entry - then applies 28 gates covering trend, relative strength,
+breakout quality, volume, liquidity, volatility, extension, circuit behaviour, market regime, a
+verified results calendar and live broker execution data. Three of those gates are advisory and
+report without vetoing; the rest block.
+
+Status runs INVALIDATED, RISK_OFF, UNVERIFIED, WAIT_FOR_ENTRY, EXECUTION_READY, WATCHLIST. The
+distinction between UNVERIFIED and RISK_OFF matters: a benchmark that is absent, stale or too short
+cannot answer the questions the benchmark gates ask, and reporting that as RISK_OFF would tell the
+user the market was dangerous when the truth is that it could not be measured.
+
+The current model is `strong-swing-v8-entry-open`. Its entry band is the rule most worth
+understanding: an actionable price sits between 0.25 and 0.75 ATR above the confirmed entry, and the
+session's own opening price must be in that band too. Both edges are measured rather than reasoned -
+see the historical replay below - and both are mirrored by purchase validation so the screen and the
+ledger cannot disagree. A price only just above the trigger is not a cheap entry; a decade of replay
+says it is an unconvincing one.
+
+## Boundaries and invariants
+
 - Owns confirmed Swing assessment, gates, ranking, immutable plans and capture auditing.
 - Public boundary: `features/strong-swing/service.ts` and `features/strong-swing/contracts.ts`.
 - Transitional server implementation: `lib/strongSwing.ts`; internal contracts: `lib/analytics/strongSwing.ts`.

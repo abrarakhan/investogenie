@@ -1,8 +1,8 @@
 # InvestoGenie documentation index
 
-_Reconciled 14 November 2026 through deployed revision `f33f256`._
+_Reconciled 17 November 2026 through deployed revision `784f894`._
 
-Use [AI_REVIEW_HANDOFF.md](AI_REVIEW_HANDOFF.md) when handing the repository to another AI reviewer. The index below explains the scope of every Markdown document; generated machine-local Claude context is not part of the product contract.
+Use [GEMINI.md](GEMINI.md) when handing this system to a reader who has the files but not the checkout; it points at the two documents that stand alone. Use [AI_REVIEW_HANDOFF.md](AI_REVIEW_HANDOFF.md) when handing the repository to another AI reviewer. The index below explains the scope of every Markdown document; generated machine-local Claude context is not part of the product contract.
 
 | Document | Scope |
 | --- | --- |
@@ -12,9 +12,12 @@ Use [AI_REVIEW_HANDOFF.md](AI_REVIEW_HANDOFF.md) when handing the repository to 
 | `CAPABILITIES.md` | Implemented application behavior |
 | `STATUS.md` | Dated source/production verification and known gaps |
 | `DEPLOYMENT.md` | Environment separation and production promotion workflow |
+| `GEMINI.md` | Entry point for a reader without the checkout; routes to the two standalone documents |
 | `AGENTS.md` | Mandatory coding, testing, safety and deployment instructions for coding agents |
 | `CLAUDE.md` | Claude-specific pointer and machine-generated local session context; not an application contract |
 | `README-screener.md` | Stock Screener filters, data and limits |
+| `docs/MODULE_INDEX.md` | Routing table from module to guide, entry points and calculation owner |
+| `docs/modules/*.md` | One guide per module: description, then boundaries and invariants |
 | `docs/swing-strategies.md` | Exact Swing, Strong Swing, Armed and named-strategy rules |
 | `docs/ml-methodology.md` | ML production lifecycle contract and frozen semantics |
 | `docs/EMAIL_SETUP.md` | Digest configuration and operational limits |
