@@ -16,11 +16,14 @@ export interface TrendContinuationCandidate {
   executionEligible: boolean; executionBlockers: string[]; currentPrice: number | null;
   /** Today's volume against the session curve's expectation at this minute. */
   todRvol: number | null;
+  /** Version of the Python detector that produced this persisted signal. */
+  featureVersion?: string;
 }
 interface Row {
   asset_id: string; ticker: string; name: string | null; status: TrendContinuationStatus;
   ready: boolean; observation_only: boolean; score: number; entry: string | null; stop: string | null;
   target: string | null; asof_market_date: string; computed_at: string;
+  feature_version: string;
   metrics: Record<string, number | boolean | number[] | string | null | Record<string, unknown>>; reasons: string[];
 }
 
@@ -69,7 +72,7 @@ export async function getTrendContinuationCandidates(market: "IN" | "US", limit 
   const marketOpen = isMarketOpenNow(market);
   const sessionDate = zonedMarketClock(market).date;
   const rows = await query<Row>(`select distinct on (asset_id) asset_id,ticker,name,status,ready,observation_only,
-      score,entry,stop,target,asof_market_date::text,computed_at::text,metrics,reasons
+      score,entry,stop,target,asof_market_date::text,computed_at::text,feature_version,metrics,reasons
     from public.trend_continuation_signals where market=$1
       and asof_market_date=(select max(asof_market_date) from public.trend_continuation_signals where market=$1)
     order by asset_id,asof_market_date desc,computed_at desc`, [market]);
@@ -161,6 +164,7 @@ export async function getTrendContinuationCandidates(market: "IN" | "US", limit 
       asOfMarketDate: row.asof_market_date, computedAt: row.computed_at, metrics: row.metrics, reasons: row.reasons,
       executionEligible: assessment.executionEligible, executionBlockers: assessment.executionBlockers,
       currentPrice: assessment.currentPrice, todRvol: assessment.todRvol ?? null,
+      featureVersion: row.feature_version,
       pythonRank: assessment.pythonRank,
     };
   }).sort((left, right) => (left.pythonRank ?? Number.MAX_SAFE_INTEGER) - (right.pythonRank ?? Number.MAX_SAFE_INTEGER)).slice(0, limit);

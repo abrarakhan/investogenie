@@ -37,7 +37,28 @@ blocked. Counter-trend rebounds can never become ready, however strong they look
   per request.
 - Exhaustion (>22% over five sessions, or 14-day RSI >= 80) forces `EXTENDED_RISK`. It can
   only take a candidate away, never create one.
-- These thresholds are a specification, not a measured edge: unlike the Strong Swing entry
-  band, none has been through a historical replay.
+- `pipelines/midway_replay.py` performs a point-in-time next-trigger replay of all three
+  variants, freezes the detector's own entry/stop/target, gives stop priority on an
+  ambiguous daily bar and deducts configurable costs. Historical EP evidence is
+  deliberately limited to recorded RESULTS events because filing taxonomy is not fully
+  point-in-time. A replay measures the rule; it does not by itself prove a future edge.
+- Forward observation is variant-specific (`ENGINE:MIDWAY_STAGE2`,
+  `ENGINE:MIDWAY_EP_REBOUND`, `ENGINE:MIDWAY_STAIR_STEP`) and enrolls every qualified
+  persisted candidate rather than the page's display cap.
 - Focused checks: `pipelines/test_trend_continuation.py`, `test_midway_momentum.py`,
-  `test_trend_execution_pace.py` and trend execution tests.
+  `test_midway_replay.py`, `test_trend_execution_pace.py` and trend execution tests.
+
+## Operator commands
+
+Run on the production host after loading `/etc/investogenie/investogenie.env`:
+
+```bash
+bash scripts/midway-ops.sh status
+bash scripts/midway-ops.sh today
+bash scripts/midway-ops.sh replay 2026-09-01 2026-11-17 /tmp/midway-replay.json
+bash scripts/midway-ops.sh scorecard
+```
+
+`today` refreshes the NSE bhavcopy/delivery source, runs the scheduled Python scan,
+enrolls qualified variants for forward observation and prints coverage. NSE delivery is
+not supplied by Breeze; a missing exchange file therefore remains fail-closed.

@@ -76,9 +76,11 @@ Trend Continuation v1 is an India-only, Python-calculated engine for persistent 
 - Delivery ingestion stores NSE series EQ only and flags ETFs, REITs and InvITs, all of
   which settle at or near 100% delivery by rule or construction and would otherwise read
   as maximum conviction every session.
-- These thresholds are a specification rather than a measured edge; no replay has tested
-  them. Until delivery has been ingested for a usable history, the mid-way paths qualify
-  nothing, which is the intended fail-closed behaviour.
+- A point-in-time next-trigger replay and variant-specific forward cohorts now measure the
+  three paths separately. The replay reuses the Python-authoritative detector and freezes
+  its plan; it does not manufacture missing historical filing evidence. Until delivery has
+  a usable 20-session baseline, the mid-way paths qualify nothing, which is the intended
+  fail-closed behaviour.
 
 - `entry_open` (v8) holds the session's own opening price to the entry band. One-minute
   paths for 1,295 entries measured days that gapped into the band at +0.40% per trade

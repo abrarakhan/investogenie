@@ -1,8 +1,8 @@
 """The mid-way momentum rules: days 2 to 4, before exhaustion.
 
-These thresholds are a stated specification, not a measured edge. Nothing here has
-been through a historical replay the way the Strong Swing entry band was, so the tests
-pin what the rules *are* and which evidence each one demands, not that they make money.
+These tests pin what the rules *are* and which evidence each one demands. The separate
+point-in-time replay measures observed outcomes; neither a fixture nor a replay promises
+that the thresholds will make money in future sessions.
 
 The exclusions matter more than the qualifications. A delivery figure that is high for
 the wrong reason, a rebound mistaken for a trend, or a move entered after it has
