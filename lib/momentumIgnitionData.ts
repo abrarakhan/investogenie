@@ -2,6 +2,32 @@ import { cache } from "react";
 import { query } from "@/lib/db";
 import { chosenBenchmarkSql } from "@/lib/benchmarkSql";
 
+/**
+ * Collapse identical concurrent loads into one query.
+ *
+ * react/cache dedupes only inside a single request. The Legacy and V2 momentum
+ * scans are refreshed as separate displayScanCache entries, so their background
+ * refreshes run outside any request and each issued its own copy of the same
+ * 420-day whole-universe query — three were observed running at once on
+ * production, each taking over two minutes.
+ *
+ * Only in-flight calls are shared; nothing completed is retained, so no caller
+ * can be served a result older than it would have computed for itself.
+ * Resolved values are shared between callers, so they must not be mutated —
+ * the same contract react/cache already imposed here.
+ */
+const inFlight = new Map<string, Promise<unknown>>();
+
+function dedupeInFlight<T>(key: string, compute: () => Promise<T>): Promise<T> {
+  const running = inFlight.get(key) as Promise<T> | undefined;
+  if (running) return running;
+  const pending = compute().finally(() => {
+    if (inFlight.get(key) === pending) inFlight.delete(key);
+  });
+  inFlight.set(key, pending);
+  return pending;
+}
+
 export interface MomentumPreliminaryRow {
   asset_id: string;
   ticker: string;
@@ -81,8 +107,8 @@ const preliminarySql = (market: "IN" | "US") => {
    limit 350`;
 };
 
-/** Request-scoped reuse for the identical legacy/V2 market scan. */
-export const loadMomentumPreliminaryBundle = cache(async (
+/** Shared by the identical legacy/V2 market scan, within a request and across concurrent ones. */
+export const loadMomentumPreliminaryBundle = cache((
   market: "IN" | "US",
   expectedSessionDate: string,
   marketOpen: boolean,
@@ -90,7 +116,10 @@ export const loadMomentumPreliminaryBundle = cache(async (
   priceFloor: number,
   preliminaryLiquidityFloor: number,
   benchmarkTickersKey: string,
-) => {
+) => dedupeInFlight(JSON.stringify([
+  "preliminary", market, expectedSessionDate, marketOpen, sessionDate,
+  priceFloor, preliminaryLiquidityFloor, benchmarkTickersKey,
+]), async () => {
   const universeWhere = market === "IN"
     ? "a.country='IN' and a.exchange='NSE'"
     : "a.country='US' and a.exchange in ('NASDAQ','NYSE','AMEX','NYSEARCA','NYSEAMERICAN')";
@@ -117,14 +146,14 @@ export const loadMomentumPreliminaryBundle = cache(async (
     ),
   ]);
   return { countRows, preliminary, benchmarkRows };
-});
+}));
 
-/** Request-scoped reuse for the identical 260-bar histories consumed by both models. */
-export const loadMomentumBars = cache(async (
+/** Shared by the identical 260-bar histories consumed by both models, within a request and across concurrent ones. */
+export const loadMomentumBars = cache((
   assetIdsKey: string,
   marketOpen = false,
   sessionDate = "1970-01-01",
-) => {
+) => dedupeInFlight(JSON.stringify(["bars", assetIdsKey, marketOpen, sessionDate]), async () => {
   const ids = JSON.parse(assetIdsKey) as string[];
   return query<MomentumBarRow>(
     `select asset_id,date::text date,open,high,low,close,volume,open_interest
@@ -135,11 +164,12 @@ export const loadMomentumBars = cache(async (
        ) ranked where rn<=260 order by asset_id,date`,
     [ids, marketOpen, sessionDate],
   );
-});
+}));
 
 /** Current-session bars are kept separate from the completed history so a
  * missing live bar can never make the previous close masquerade as live OHLCV. */
-export const loadMomentumLiveBars = cache(async (assetIdsKey: string, sessionDate: string) => {
+export const loadMomentumLiveBars = cache((assetIdsKey: string, sessionDate: string) =>
+  dedupeInFlight(JSON.stringify(["live-bars", assetIdsKey, sessionDate]), async () => {
   const ids = JSON.parse(assetIdsKey) as string[];
   if (!ids.length) return [] as MomentumBarRow[];
   return query<MomentumBarRow>(
@@ -148,4 +178,4 @@ export const loadMomentumLiveBars = cache(async (assetIdsKey: string, sessionDat
       where asset_id=any($1::uuid[]) and date=$2::date`,
     [ids, sessionDate],
   );
-});
+}));

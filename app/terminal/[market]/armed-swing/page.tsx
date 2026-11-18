@@ -3,7 +3,8 @@ import AppShell from "@/components/app/AppShell";
 import ArmedSwingCandidates from "@/components/screener/ArmedSwingCandidates";
 import MarketDataAutoRefresh from "@/components/app/MarketDataAutoRefresh";
 import { getSessionUser } from "@/lib/auth";
-import { displayArmedSwing, displayScanComputedAt } from "@/lib/displayScanCache";
+import { DISPLAY_SCAN_TTL_MS, displayArmedSwing, displayScanComputedAt } from "@/lib/displayScanCache";
+import StaleScanNotice from "@/components/screener/StaleScanNotice";
 import { trimArmedSwingForDisplay } from "@/lib/candidateDisplay";
 import { splitForLazyDisplay } from "@/lib/lazyCandidateGroups";
 import { LazyGroupsVersion } from "@/components/screener/LazyCandidateGroup";
@@ -46,6 +47,7 @@ export default async function ArmedSwingPage({ params }: { params: Promise<{ mar
       title="Armed Strong Swing"
       subtitle="Pre-breakout entries: stage-2 leaders in tight bases just under their pivot, with a buy-stop plan that fills on the breakout instead of after two confirming closes."
     >
+      <StaleScanNotice computedAt={displayScanComputedAt(result)} staleAfterMs={DISPLAY_SCAN_TTL_MS * 3} />
       <MarketDataAutoRefresh market={market} assetIds={liveIds} />
       <div className="mb-6 border-l-2 border-[var(--ig-accent)] pl-4 text-sm leading-relaxed text-white/52">
         Armed enters earlier than Strong Swing, so it accepts more failed breakouts in exchange for a lower entry and a tighter structure stop.

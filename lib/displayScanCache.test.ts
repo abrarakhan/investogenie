@@ -106,6 +106,44 @@ describe("cachedForDisplay", () => {
     warn.mockRestore();
   });
 
+  it("serves the last good result when a refresh fails past the max age", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    let calls = 0;
+    const compute = async () => {
+      calls++;
+      if (calls > 1) throw new Error("Python momentum engine failed (SIGTERM)");
+      return "good";
+    };
+    expect(await cachedForDisplay("k", compute)).toBe("good");
+    // Past MAX_AGE the reader waits for a fresh scan; when that scan fails it
+    // must still get a screen, or every reload recomputes on a dying host.
+    vi.setSystemTime(Date.now() + DISPLAY_SCAN_MAX_AGE_MS + 1);
+    expect(await cachedForDisplay("k", compute)).toBe("good");
+    expect(calls).toBe(2);
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it("reports the true age of a stale result so the screen can say so", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const computedAt = Date.now();
+    let calls = 0;
+    const compute = async () => {
+      calls++;
+      if (calls > 1) throw new Error("boom");
+      return { scan: 1 };
+    };
+    await cachedForDisplay("k", compute);
+    vi.setSystemTime(computedAt + DISPLAY_SCAN_MAX_AGE_MS + 1);
+    const served = await cachedForDisplay("k", compute);
+    expect(displayScanComputedAt(served)).toBe(computedAt);
+    warn.mockRestore();
+  });
+
+  it("still throws when a scan fails and there is nothing to fall back on", async () => {
+    await expect(cachedForDisplay("k", async () => { throw new Error("boom"); })).rejects.toThrow("boom");
+  });
+
   it("records when each result was computed", async () => {
     const first = await cachedForDisplay("k", async () => ({ scan: 1 }));
     expect(displayScanComputedAt(first)).toBe(Date.now());

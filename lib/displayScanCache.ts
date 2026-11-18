@@ -22,7 +22,18 @@ import "server-only";
  * Concurrent requests share one in-flight computation; a failure is never
  * cached. Cached values are shared, so callers must not mutate them (current
  * callers copy before sorting).
+ *
+ * Two properties keep a slow host from turning a slow screen into a dead one:
+ *  - Scans run on the capped display pool, so a render the browser abandoned
+ *    stops costing database CPU instead of running to completion unread.
+ *  - When a refresh fails and a previous result exists, that result is served
+ *    rather than throwing. Without this a failed scan left nothing cached, so
+ *    the next reader recomputed everything from scratch on an already
+ *    overloaded host and failed in turn. Callers must surface the age: the
+ *    served result can be older than DISPLAY_SCAN_MAX_AGE_MS, and
+ *    displayScanComputedAt reports when it was actually computed.
  */
+import { runOnDisplayPool } from "@/lib/db";
 import type { SwingSettings } from "@/lib/settings";
 import { getStrongSwingCandidates } from "@/features/strong-swing/service";
 import { getMomentumLegacyCandidates, getMomentumV2Candidates } from "@/features/momentum/service";
@@ -64,7 +75,7 @@ export function displayScanComputedAt(value: unknown): number {
 
 function refresh(key: string, entry: Entry, now: () => number): Promise<unknown> {
   if (entry.pending) return entry.pending;
-  const pending = entry.compute().then(
+  const pending = runOnDisplayPool(() => entry.compute()).then(
     (value) => {
       entry.value = value;
       entry.hasValue = true;
@@ -115,7 +126,19 @@ export async function cachedForDisplay<T>(key: string, compute: () => Promise<T>
       return entry.value as T;
     }
   }
-  return refresh(key, entry, now) as Promise<T>;
+  try {
+    return (await refresh(key, entry, now)) as T;
+  } catch (error) {
+    // A stale result beats no screen at all; the caller shows how old it is.
+    if (entry.hasValue && entries.get(key) === entry) {
+      console.warn(
+        `[display-scan] serving stale result for ${key.split(":", 2).join(":")}:`,
+        error instanceof Error ? error.message : error,
+      );
+      return entry.value as T;
+    }
+    throw error;
+  }
 }
 
 function evictOverflow(): void {

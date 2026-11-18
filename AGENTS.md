@@ -139,6 +139,32 @@ Do not automatically run every expensive validation command for trivial changes.
 
 Never claim that a test, lint, build, deployment, migration, or command succeeded unless it was actually executed successfully.
 
+### Targeted tests and typecheck do not establish that a feature works
+
+Typecheck cannot see SQL, because SQL lives in strings. Unit tests on functions you
+just wrote only confirm they match the intent already in your head. Feature breakage
+in this repository lands at the seams between layers, which is exactly where neither
+looks. Before reporting a change complete:
+
+- Trace one real object end to end through the path a user exercises — scan →
+  persistence → execution gates → UI — and report what you observed, not that the
+  tests passed.
+- Open the page whose query, column or on-screen copy you changed, not a neighbouring
+  one.
+- Grep for every consumer of a table, column or constant you touched: other `select`
+  statements, `db/screener_snapshot_rebuild.sql`, `lib/screener/snapshot.ts`,
+  `scripts/verify-production-schema.mjs`, and any UI text that states the old value.
+- Register **every** column a migration adds in `scripts/verify-production-schema.mjs`.
+  A partial list defeats the gate that exists to catch deploy-time schema mismatch.
+- State the missing-data branch for each new threshold. Absent evidence must block;
+  `value !== null && value < floor` admits every row where the field is absent.
+- When a spec says "promote X to Y", implement the promotion, not only the gating.
+- Add at least one test that asks "does a real candidate get through?", not only
+  pure-function unit tests.
+
+Report what you demonstrated, not what you implemented. A gap named in prose is not a
+gap handled.
+
 ## Database Safety
 
 - Inspect relevant schema/migrations before database changes.

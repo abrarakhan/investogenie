@@ -8,7 +8,7 @@ import { loadStrategyRecord } from "@/lib/strategyRecord";
 import { getSessionUser } from "@/lib/auth";
 import { normalizeMarket } from "@/lib/markets";
 import { getUserSwingSettings } from "@/lib/settings";
-import { displayLegacyMomentum, displayMomentumV2, displayScanComputedAt, displayStrongSwing, displayTrendContinuation } from "@/lib/displayScanCache";
+import { DISPLAY_SCAN_TTL_MS, displayLegacyMomentum, displayMomentumV2, displayScanComputedAt, displayStrongSwing, displayTrendContinuation } from "@/lib/displayScanCache";
 import { trimStrongSwingForDisplay } from "@/lib/candidateDisplay";
 import { splitForLazyDisplay } from "@/lib/lazyCandidateGroups";
 import { LazyGroupsVersion } from "@/components/screener/LazyCandidateGroup";
@@ -18,6 +18,7 @@ import { zonedMarketClock } from "@/lib/market-calendar.mjs";
 import { getTrendContinuationStatusTotals } from "@/features/trend-continuation/service";
 import { captureExecutionPlans, momentumExecutionPlanInputs, strongSwingExecutionPlanInputs, trendContinuationExecutionPlanInputs, type ExecutionPlanInput } from "@/lib/swingExecutionPlans";
 import ReadySignalHistory from "@/components/screener/ReadySignalHistory";
+import StaleScanNotice from "@/components/screener/StaleScanNotice";
 import { getTodayReadySignalHistory } from "@/lib/candidateSignalHistory";
 
 export const dynamic = "force-dynamic";
@@ -72,6 +73,10 @@ export default async function StrongSwingPage({
 
   // Opened on-demand groups reload whenever the page re-renders with a recomputed scan.
   const scanVersion = Math.max(...[candidates, legacyMomentumIgnition, momentumIgnition, trendContinuation].map(displayScanComputedAt));
+  // The oldest of the four, not the newest: one stale scan must not hide behind three fresh ones.
+  const scanTimes = [candidates, legacyMomentumIgnition, momentumIgnition, trendContinuation]
+    .map(displayScanComputedAt).filter((at) => at > 0);
+  const oldestScanAt = scanTimes.length ? Math.min(...scanTimes) : 0;
 
   return (
     <AppShell
@@ -92,6 +97,7 @@ export default async function StrongSwingPage({
           ? <>Buy &amp; Track is enabled only for green Execution Ready setups and records the frozen plan in your ledger. Breeze currently supplies live market data; it does not place the broker order, so confirm exchange restrictions in ICICI Direct before buying.</>
           : <>Buy &amp; Track is enabled only for green Execution Ready setups and records the frozen plan in your ledger. US setups use end-of-day and delayed quotes: there is no live quote, spread or circuit check, so confirm the live price and spread with your broker before buying.</>}
       </div>
+      <StaleScanNotice computedAt={oldestScanAt} staleAfterMs={DISPLAY_SCAN_TTL_MS * 3} />
       <ReadySignalHistory rows={readyHistory} market={market} />
       <LazyGroupsVersion value={scanVersion}>
       <section id="strong-swing" className="scroll-mt-6">
