@@ -35,11 +35,27 @@ export default async function StrongSwingPage({
   if (!user) redirect("/login");
 
   const settings = await getUserSwingSettings();
+
+  // One scan that has never completed in this process must not take the whole
+  // screen down. Before this, a single failing scan made the render throw, and
+  // on a loaded host that is exactly when the other three were worth seeing.
+  // A missing section is named below rather than silently rendering as empty.
+  const unavailable: string[] = [];
+  const orEmpty = <T,>(label: string, value: T) => (error: unknown): T => {
+    unavailable.push(label);
+    console.error(
+      `[strong-swing] ${label} unavailable:`,
+      error instanceof Error ? error.message : error,
+    );
+    return value;
+  };
+  const emptyMomentum = { market, universeScanned: 0, detailedAssessments: 0, candidates: [] };
+
   const [candidates, legacyMomentumIgnition, momentumIgnition, trendContinuation, readyHistory, trendTotals, strategyRecord] = await Promise.all([
-    displayStrongSwing(market, settings),
-    displayLegacyMomentum(market, settings),
-    displayMomentumV2(market, settings),
-    displayTrendContinuation(market),
+    displayStrongSwing(market, settings).catch(orEmpty("Strong Swing Confirmation", [])),
+    displayLegacyMomentum(market, settings).catch(orEmpty("Momentum Ignition (legacy)", emptyMomentum)),
+    displayMomentumV2(market, settings).catch(orEmpty("Momentum Ignition V2", emptyMomentum)),
+    displayTrendContinuation(market).catch(orEmpty("Trend Continuation", [])),
     getTodayReadySignalHistory(user.id, market),
     getTrendContinuationStatusTotals(market).catch(() => undefined),
     loadStrategyRecord(market),
@@ -97,6 +113,13 @@ export default async function StrongSwingPage({
           ? <>Buy &amp; Track is enabled only for green Execution Ready setups and records the frozen plan in your ledger. Breeze currently supplies live market data; it does not place the broker order, so confirm exchange restrictions in ICICI Direct before buying.</>
           : <>Buy &amp; Track is enabled only for green Execution Ready setups and records the frozen plan in your ledger. US setups use end-of-day and delayed quotes: there is no live quote, spread or circuit check, so confirm the live price and spread with your broker before buying.</>}
       </div>
+      {unavailable.length > 0 && (
+        <div role="status" className="mb-6 rounded border border-rose-400/40 bg-rose-400/10 px-4 py-3 text-sm text-rose-200">
+          <span className="font-bold">Not available right now: {unavailable.join(", ")}.</span>{" "}
+          Those sections are missing from this page, not empty — do not read them as &ldquo;no setups&rdquo;.
+          Everything else below is unaffected. Reload in a minute.
+        </div>
+      )}
       <StaleScanNotice computedAt={oldestScanAt} staleAfterMs={DISPLAY_SCAN_MAX_AGE_MS} />
       <ReadySignalHistory rows={readyHistory} market={market} />
       <LazyGroupsVersion value={scanVersion}>

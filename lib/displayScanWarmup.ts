@@ -49,22 +49,36 @@ export async function warmupSettings(): Promise<SwingSettings[]> {
 export async function warmDisplayScans(): Promise<{ warmed: number; failed: number; ms: number }> {
   const started = Date.now();
   const settingsSets = await warmupSettings();
-  const jobs: Array<() => Promise<unknown>> = [];
+  const jobs: Array<[string, () => Promise<unknown>]> = [];
   for (const market of MARKETS) {
     for (const settings of settingsSets) {
       jobs.push(
-        () => displayStrongSwing(market, settings),
-        () => displayLegacyMomentum(market, settings),
-        () => displayMomentumV2(market, settings),
-        () => displayArmedSwing(market, settings),
+        [`strong:${market}`, () => displayStrongSwing(market, settings)],
+        [`momentum-legacy:${market}`, () => displayLegacyMomentum(market, settings)],
+        [`momentum-v2:${market}`, () => displayMomentumV2(market, settings)],
+        [`armed:${market}`, () => displayArmedSwing(market, settings)],
       );
     }
-    jobs.push(() => displayTrendContinuation(market), () => displayMarketOverview(market));
+    jobs.push(
+      [`trend:${market}`, () => displayTrendContinuation(market)],
+      [`markets:${market}`, () => displayMarketOverview(market)],
+    );
   }
   let warmed = 0;
   let failed = 0;
-  for (const job of jobs) {
-    try { await job(); warmed++; } catch { failed++; }
+  for (const [key, job] of jobs) {
+    try {
+      await job();
+      warmed++;
+    } catch (error) {
+      failed++;
+      // Name it. A screen that never warms is one that blocks a reader, and a
+      // bare count gave no way to tell which.
+      console.warn(
+        `[display-scan] warm-up failed for ${key}:`,
+        error instanceof Error ? error.message : error,
+      );
+    }
   }
   return { warmed, failed, ms: Date.now() - started };
 }
