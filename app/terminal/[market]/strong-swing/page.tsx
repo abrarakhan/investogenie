@@ -8,7 +8,7 @@ import { loadStrategyRecord } from "@/lib/strategyRecord";
 import { getSessionUser } from "@/lib/auth";
 import { normalizeMarket } from "@/lib/markets";
 import { getUserSwingSettings } from "@/lib/settings";
-import { DISPLAY_SCAN_TTL_MS, displayLegacyMomentum, displayMomentumV2, displayScanComputedAt, displayStrongSwing, displayTrendContinuation } from "@/lib/displayScanCache";
+import { DISPLAY_SCAN_MAX_AGE_MS, displayLegacyMomentum, displayMomentumV2, displayScanComputedAt, displayStrongSwing, displayTrendContinuation } from "@/lib/displayScanCache";
 import { trimStrongSwingForDisplay } from "@/lib/candidateDisplay";
 import { splitForLazyDisplay } from "@/lib/lazyCandidateGroups";
 import { LazyGroupsVersion } from "@/components/screener/LazyCandidateGroup";
@@ -97,7 +97,7 @@ export default async function StrongSwingPage({
           ? <>Buy &amp; Track is enabled only for green Execution Ready setups and records the frozen plan in your ledger. Breeze currently supplies live market data; it does not place the broker order, so confirm exchange restrictions in ICICI Direct before buying.</>
           : <>Buy &amp; Track is enabled only for green Execution Ready setups and records the frozen plan in your ledger. US setups use end-of-day and delayed quotes: there is no live quote, spread or circuit check, so confirm the live price and spread with your broker before buying.</>}
       </div>
-      <StaleScanNotice computedAt={oldestScanAt} staleAfterMs={DISPLAY_SCAN_TTL_MS * 3} />
+      <StaleScanNotice computedAt={oldestScanAt} staleAfterMs={DISPLAY_SCAN_MAX_AGE_MS} />
       <ReadySignalHistory rows={readyHistory} market={market} />
       <LazyGroupsVersion value={scanVersion}>
       <section id="strong-swing" className="scroll-mt-6">

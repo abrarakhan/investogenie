@@ -21,9 +21,9 @@ import "server-only";
  *  - When it turns 60 s old, it is recomputed in the background as long as
  *    someone read it within KEEP_WARM_MS, so active screens never wait for a
  *    scan. Served results are normally at most ~60 s + one scan old.
- *  - Readers keep getting the previous result for up to DISPLAY_SCAN_MAX_AGE_MS
- *    while a refresh runs (or if one fails). Past that, or for a screen nobody
- *    has opened recently, the reader waits for a fresh scan.
+ *  - Readers keep getting the previous result while a refresh runs, or if one
+ *    fails, however old it is. Only a screen that has never been computed in
+ *    this process makes the reader wait.
  *
  * Not used by alerts, auto-buy or the email digest, which keep computing fresh.
  * Concurrent requests share one in-flight computation; a failure is never
@@ -53,7 +53,7 @@ const getMomentumIgnitionCandidates = getMomentumV2Candidates;
 const getLegacyMomentumIgnitionCandidates = getMomentumLegacyCandidates;
 
 export const DISPLAY_SCAN_TTL_MS = 60_000;
-/** Oldest result served while a background refresh runs or after it failed. */
+/** Age at which a screen must tell the viewer its figures are not current. */
 export const DISPLAY_SCAN_MAX_AGE_MS = 3 * 60_000;
 /** Keep refreshing a screen in the background for this long after its last read. */
 export const DISPLAY_SCAN_KEEP_WARM_MS = 5 * 60_000;
@@ -127,11 +127,20 @@ export async function cachedForDisplay<T>(key: string, compute: () => Promise<T>
   if (entry.hasValue) {
     const age = now() - entry.at;
     if (age < DISPLAY_SCAN_TTL_MS) return entry.value as T;
-    if (age < DISPLAY_SCAN_MAX_AGE_MS) {
-      // Serve the previous result immediately; the next read gets the new one.
-      refresh(key, entry, now).catch(() => {});
-      return entry.value as T;
-    }
+    // Serve the previous result immediately, however old, and refresh behind
+    // it. A page render must never block on a market scan: on a loaded host a
+    // scan outlives the browser's patience, and the reader then gets
+    // ERR_CONNECTION_ABORTED rather than a screen, while the abandoned scan
+    // keeps running. Anything past DISPLAY_SCAN_MAX_AGE_MS is labelled on the
+    // screen as not current.
+    refresh(key, entry, now).catch((error) => {
+      // Still report it: nothing downstream awaits this refresh any more.
+      console.warn(
+        `[display-scan] refresh failed for ${key.split(":", 2).join(":")}; serving the previous result:`,
+        error instanceof Error ? error.message : error,
+      );
+    });
+    return entry.value as T;
   }
   try {
     return (await refresh(key, entry, now)) as T;

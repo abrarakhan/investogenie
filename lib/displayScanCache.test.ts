@@ -68,13 +68,22 @@ describe("cachedForDisplay", () => {
     expect(calls).toBe(refreshes);
   });
 
-  it("makes the reader wait for a fresh scan once the result is too old", async () => {
+  it("never makes the reader wait when any previous result exists", async () => {
+    // The page render must not block on a market scan. A slow scan used to make
+    // the browser give up (nginx 499) while the scan kept running.
     let calls = 0;
-    const compute = async () => ++calls;
+    let release!: () => void;
+    const compute = async () => {
+      calls++;
+      if (calls > 1) await new Promise<void>((resolve) => { release = resolve; });
+      return calls;
+    };
     await cachedForDisplay("k", compute);
     vi.clearAllTimers(); // age the result without keep-warm refreshes
-    vi.setSystemTime(Date.now() + DISPLAY_SCAN_MAX_AGE_MS);
-    expect(await cachedForDisplay("k", compute)).toBe(2);
+    vi.setSystemTime(Date.now() + DISPLAY_SCAN_MAX_AGE_MS * 10);
+    expect(await cachedForDisplay("k", compute)).toBe(1);
+    expect(calls).toBe(2); // and a refresh was started behind it
+    release();
   });
 
   it("shares one in-flight computation between concurrent requests", async () => {
@@ -106,7 +115,7 @@ describe("cachedForDisplay", () => {
     warn.mockRestore();
   });
 
-  it("serves the last good result when a refresh fails past the max age", async () => {
+  it("serves the last good result when a refresh fails, and still reports it", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     let calls = 0;
     const compute = async () => {
@@ -115,11 +124,10 @@ describe("cachedForDisplay", () => {
       return "good";
     };
     expect(await cachedForDisplay("k", compute)).toBe("good");
-    // Past MAX_AGE the reader waits for a fresh scan; when that scan fails it
-    // must still get a screen, or every reload recomputes on a dying host.
     vi.setSystemTime(Date.now() + DISPLAY_SCAN_MAX_AGE_MS + 1);
     expect(await cachedForDisplay("k", compute)).toBe("good");
     expect(calls).toBe(2);
+    await vi.advanceTimersByTimeAsync(0); // let the background refresh reject
     expect(warn).toHaveBeenCalled();
     warn.mockRestore();
   });

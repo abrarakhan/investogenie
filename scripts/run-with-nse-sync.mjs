@@ -1,10 +1,35 @@
 import { spawn } from "node:child_process";
+import { setPriority } from "node:os";
 import { existsSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { isMarketOpenNow, isTradingDay, latestExpectedSessionDate, marketHolidayDates, refreshMarketHolidays } from "../lib/market-calendar.mjs";
 import { startEodScheduler } from "./eod-scheduler.mjs";
 import { startMlSnapshotScheduler } from "./ml-snapshot-scheduler.mjs";
 import { runForwardTestStage } from "./forward-test-scheduler.mjs";
+
+/**
+ * Push a bulk data pipeline down the CPU scheduler.
+ *
+ * This host has two vCPUs. During market hours the quote syncs run almost
+ * continuously (india_quotes_sync repeatedly logs "still running" past its own
+ * two-minute interval), and they were competing on equal terms with the
+ * strategy-math engine that a page render waits on. The engine then overran
+ * PYTHON_ENGINE_TIMEOUT_MS and was killed, so the screen failed.
+ *
+ * Nothing here changes what a pipeline computes or when it is scheduled; it
+ * only yields the CPU to interactive work when both want it. Deliberately not
+ * applied to the Breeze market daemon (live ticks), account reconciliation or
+ * auto-buy, which are latency- or money-sensitive.
+ */
+function deprioritize(child, label) {
+  if (!child?.pid) return child;
+  try {
+    setPriority(child.pid, Number(process.env.BULK_PIPELINE_NICE ?? 10));
+  } catch (error) {
+    console.warn(`[${label}] could not lower CPU priority: ${error.message}`);
+  }
+  return child;
+}
 
 const mode = process.argv[2];
 if (mode !== "dev" && mode !== "start") {
@@ -640,11 +665,11 @@ function runIndiaLiveQuoteSync(trigger) {
 
   return new Promise((resolveRun, rejectRun) => {
     console.log(`[india-live-quotes] starting ${trigger} batched NSE/BSE Yahoo refresh`);
-    indiaLiveQuoteChild = spawn(python, args, {
+    indiaLiveQuoteChild = deprioritize(spawn(python, args, {
       cwd: root,
       env: process.env,
       stdio: "inherit",
-    });
+    }), "india-live-quotes");
     indiaLiveQuoteChild.once("error", rejectRun);
     indiaLiveQuoteChild.once("close", (code, signal) => {
       indiaLiveQuoteChild = null;
@@ -815,9 +840,9 @@ async function runTrendContinuation(trigger) {
   if (trendContinuationDisabled || !isIndiaMarketOpen()) return;
   if (trendContinuationPromise) return trendContinuationPromise;
   trendContinuationPromise = new Promise((resolveRun, rejectRun) => {
-    const child = spawn(python, [trendContinuationPipeline, "--market", "IN"], {
+    const child = deprioritize(spawn(python, [trendContinuationPipeline, "--market", "IN"], {
       cwd: root, env: process.env, stdio: "inherit", timeout: trendContinuationTimeoutMs,
-    });
+    }), "trend-continuation");
     trendContinuationChild = child;
     child.once("error", rejectRun);
     child.once("close", (code, signal) => {
@@ -1077,11 +1102,11 @@ function runYahooNseSync(trigger) {
   if (process.env.NSE_SYNC_SYMBOLS) args.push("--symbols", process.env.NSE_SYNC_SYMBOLS);
   if (process.env.NSE_SYNC_LIMIT) args.push("--limit", process.env.NSE_SYNC_LIMIT);
   if (process.env.NSE_SYNC_DRY_RUN === "1") args.push("--dry-run");
-  syncChild = spawn(
+  syncChild = deprioritize(spawn(
     python,
     args,
     { cwd: root, env: process.env, stdio: "inherit" },
-  );
+  ), "nse-sync");
   syncChild.on("error", (error) => {
     console.error(`[nse-sync] unable to start: ${error.message}`);
   });
