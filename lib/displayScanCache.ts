@@ -5,9 +5,16 @@ import "server-only";
  * News & AI).
  *
  * The scans are server-authoritative and identical for every viewer with the
- * same risk settings, yet each page view re-ranked ~420 days of bars for the
- * whole market (6–13 s on production). Formulas, gates and rankings are
- * untouched; this only decides when they are recomputed.
+ * same risk settings, yet each page view re-ranks ~420 days of bars for the
+ * whole market. Formulas, gates and rankings are untouched; this only decides
+ * when they are recomputed.
+ *
+ * Cost of one such scan, measured on production (2 vCPU) during market hours
+ * on 2026-11-18: ~20 s warm, ~53 s cold. The 6–13 s this comment used to quote
+ * no longer held — daily_ohlcv had grown to ~9.1M rows and the planner was
+ * seq-scanning it because random_page_cost was still 4 on SSD storage (now 1.1
+ * for the app role, which cut a warm scan from ~80 s to ~20 s). Re-measure
+ * before assuming a scan is cheap enough to run per request.
  *
  * Stale-while-revalidate with keep-warm:
  *  - A result is fresh for DISPLAY_SCAN_TTL_MS (60 s).
