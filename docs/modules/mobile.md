@@ -1,16 +1,5 @@
 # Mobile client module
 
-The mobile client is a React Native application that consumes versioned server APIs. It is
-deliberately thin: it must never calculate eligibility, ranking, trade levels, P&L, ROI or XIRR. Every
-number it shows was computed on the server, so the phone and the web page cannot disagree.
-
-Most read-only screens use a generic server-driven card contract - the server serializes cards and the
-client renders them - which means a new screen can be added without shipping a native release.
-Mutation-heavy features such as the ledger use dedicated views. Pages are 20 cards deep with private
-ETags, so unchanged polling returns 304 rather than a payload.
-
-## Boundaries and invariants
-
 - Owns native navigation, authentication, cache, presentation, charts, mutations, push and biometrics.
 - Client shell: `mobile/App.tsx`; lazy features: `mobile/src/features/`; shared presentation and formatting: `mobile/src/ui.tsx` and `mobile/src/format.ts`; server APIs: `/api/v1/mobile/`; screen serializer: `lib/mobileScreens.ts`.
 - Mobile must not calculate eligibility, ranking, levels, P&L, ROI or XIRR.

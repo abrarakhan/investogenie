@@ -21,7 +21,7 @@ from breeze_market_daemon import IST, database_url, decrypt_credential, env, is_
 
 # Must equal STRONG_SWING_MODEL_VERSION in lib/analytics/strongSwing.ts. A capture written by
 # any other calculation (the minutes around a deploy) is never bought from.
-STRONG_SWING_MODEL_VERSION = "strong-swing-v8-entry-open"
+STRONG_SWING_MODEL_VERSION = "strong-swing-v6-session-reversal"
 
 
 def round_limit(value: Decimal) -> Decimal:

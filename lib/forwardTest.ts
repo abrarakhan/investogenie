@@ -158,9 +158,7 @@ export async function enrollCohort(market: MarketId): Promise<EnrollSummary> {
     displayStrongSwing(market, DEFAULT_SETTINGS),
     displayLegacyMomentum(market, DEFAULT_SETTINGS),
     displayMomentumV2(market, DEFAULT_SETTINGS),
-    // Forward observation must enrol every qualified Mid-Way variant, not only
-    // the 40 cards rendered on the page.
-    displayTrendContinuation(market, 500),
+    displayTrendContinuation(market),
     displayArmedSwing(market, DEFAULT_SETTINGS),
   ]);
   // One live call per method and stock: re-enrolling a stock that is still
@@ -191,11 +189,7 @@ export async function enrollCohort(market: MarketId): Promise<EnrollSummary> {
       projected_prob_up_pct: null,
       projected_p5_pct: null,
       projected_p95_pct: null,
-      projection: JSON.stringify({
-        engine: call.method, status: call.status,
-        featureVersion: call.featureVersion,
-        evidence: call.evidence ?? undefined,
-      }),
+      projection: JSON.stringify({ engine: call.method, status: call.status }),
     });
     (byMethod[call.method] ??= []).push(call.ticker);
   }

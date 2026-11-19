@@ -81,8 +81,6 @@ ranked as (
     t.sma_100_vs_150_pct,t.sma_100_vs_200_pct,t.sma_150_vs_200_pct,
     t.rsi_14,t.atr_pct_14,t.volume_ratio_20,
     t.return_5d,t.return_20d,t.return_63d,
-    t.deliv_pct,t.rel_deliv_20d,t.nifty_alpha_1d,t.ibs_close,t.tod_rvol,
-    t.days_since_results,t.setup_variant,t.catalyst_tag,
     row_number() over (
       partition by a.country, upper(a.ticker)
       order by (w.asset_id is not null) desc,   -- has 52w / OHLC history first
@@ -118,9 +116,7 @@ insert into public.stock_snapshot (
   distance_ema_20_pct,distance_ema_50_pct,
   sma_20_vs_50_pct,sma_20_vs_100_pct,sma_20_vs_150_pct,sma_20_vs_200_pct,
   sma_50_vs_100_pct,sma_50_vs_150_pct,sma_50_vs_200_pct,sma_100_vs_150_pct,sma_100_vs_200_pct,sma_150_vs_200_pct,
-  rsi_14,atr_pct_14,volume_ratio_20,return_5d,return_20d,return_63d,
-  deliv_pct,rel_deliv_20d,nifty_alpha_1d,ibs_close,tod_rvol,days_since_results,setup_variant,catalyst_tag,
-  refreshed_at
+  rsi_14,atr_pct_14,volume_ratio_20,return_5d,return_20d,return_63d,refreshed_at
 )
 select
   asset_id, symbol, name, sector, country, exchange, currency,
@@ -138,9 +134,7 @@ select
   distance_ema_20_pct,distance_ema_50_pct,
   sma_20_vs_50_pct,sma_20_vs_100_pct,sma_20_vs_150_pct,sma_20_vs_200_pct,
   sma_50_vs_100_pct,sma_50_vs_150_pct,sma_50_vs_200_pct,sma_100_vs_150_pct,sma_100_vs_200_pct,sma_150_vs_200_pct,
-  rsi_14,atr_pct_14,volume_ratio_20,return_5d,return_20d,return_63d,
-  deliv_pct,rel_deliv_20d,nifty_alpha_1d,ibs_close,tod_rvol,days_since_results,setup_variant,catalyst_tag,
-  now()
+  rsi_14,atr_pct_14,volume_ratio_20,return_5d,return_20d,return_63d,now()
 from deduped
 `;
 

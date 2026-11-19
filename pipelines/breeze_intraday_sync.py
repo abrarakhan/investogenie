@@ -39,8 +39,6 @@ from breeze_market_daemon import (  # noqa: E402
 )
 
 SOURCE = "BREEZE_HISTORICAL"
-# Written by intraday_replay_backfill.py, which this sync must never prune.
-REPLAY_SOURCE = "BREEZE_REPLAY"
 CLOSE_GRACE = dt.timedelta(minutes=5)
 MAX_CONSECUTIVE_FAILURES = 25
 
@@ -237,13 +235,7 @@ def main() -> int:
         pruned = 0
         if not args.dry_run and args.retention_days > 0:
             with conn.cursor() as cur:
-                # Research history fetched by intraday_replay_backfill.py is deliberately
-                # older than any operational retention window and costs days of Breeze
-                # allowance to rebuild, so the prune is scoped to what this sync wrote.
-                cur.execute(
-                    "delete from public.intraday_bars where bar_time < %s and source <> %s",
-                    (now - dt.timedelta(days=args.retention_days), REPLAY_SOURCE),
-                )
+                cur.execute("delete from public.intraday_bars where bar_time < %s", (now - dt.timedelta(days=args.retention_days),))
                 pruned = cur.rowcount
             conn.commit()
 

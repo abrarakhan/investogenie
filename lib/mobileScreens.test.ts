@@ -148,8 +148,7 @@ describe("momentumIgnitionCard", () => {
 describe("trendContinuationCard", () => {
   const continuation = {
     assetId: "a3", ticker: "SAREGAMA", name: "Saregama", status: "TREND_CONTINUATION_READY", ready: true, observationOnly: true,
-    score: 100, entry: 536, stop: 507.5, target: 593, currentPrice: 538, todRvol: null,
-    asOfMarketDate: "2026-10-29", computedAt: "", reasons: ["Range breakout ignited."],
+    score: 100, entry: 536, stop: 507.5, target: 593, currentPrice: 538, asOfMarketDate: "2026-10-29", computedAt: "", reasons: ["Range breakout ignited."],
     executionEligible: false, executionBlockers: ["A fresh Breeze quote is required."],
     metrics: { breakout_level: 519.35, ignition_gain_atr: 1.77, volume_ratios: [1.05, 2.98] },
   } as TrendContinuationCandidate;

@@ -4,11 +4,10 @@ import MomentumIgnitionCandidates from "@/components/screener/MomentumIgnitionCa
 import MomentumIgnitionLegacyCandidates from "@/components/screener/MomentumIgnitionLegacyCandidates";
 import TrendContinuationCandidates from "@/components/screener/TrendContinuationCandidates";
 import StrongSwingCandidates from "@/components/screener/StrongSwingCandidates";
-import { loadStrategyRecord } from "@/lib/strategyRecord";
 import { getSessionUser } from "@/lib/auth";
 import { normalizeMarket } from "@/lib/markets";
 import { getUserSwingSettings } from "@/lib/settings";
-import { DISPLAY_SCAN_MAX_AGE_MS, displayLegacyMomentum, displayMomentumV2, displayScanComputedAt, displayStrongSwing, displayTrendContinuation } from "@/lib/displayScanCache";
+import { displayLegacyMomentum, displayMomentumV2, displayScanComputedAt, displayStrongSwing, displayTrendContinuation } from "@/lib/displayScanCache";
 import { trimStrongSwingForDisplay } from "@/lib/candidateDisplay";
 import { splitForLazyDisplay } from "@/lib/lazyCandidateGroups";
 import { LazyGroupsVersion } from "@/components/screener/LazyCandidateGroup";
@@ -18,7 +17,6 @@ import { zonedMarketClock } from "@/lib/market-calendar.mjs";
 import { getTrendContinuationStatusTotals } from "@/features/trend-continuation/service";
 import { captureExecutionPlans, momentumExecutionPlanInputs, strongSwingExecutionPlanInputs, trendContinuationExecutionPlanInputs, type ExecutionPlanInput } from "@/lib/swingExecutionPlans";
 import ReadySignalHistory from "@/components/screener/ReadySignalHistory";
-import StaleScanNotice from "@/components/screener/StaleScanNotice";
 import { getTodayReadySignalHistory } from "@/lib/candidateSignalHistory";
 
 export const dynamic = "force-dynamic";
@@ -35,30 +33,13 @@ export default async function StrongSwingPage({
   if (!user) redirect("/login");
 
   const settings = await getUserSwingSettings();
-
-  // One scan that has never completed in this process must not take the whole
-  // screen down. Before this, a single failing scan made the render throw, and
-  // on a loaded host that is exactly when the other three were worth seeing.
-  // A missing section is named below rather than silently rendering as empty.
-  const unavailable: string[] = [];
-  const orEmpty = <T,>(label: string, value: T) => (error: unknown): T => {
-    unavailable.push(label);
-    console.error(
-      `[strong-swing] ${label} unavailable:`,
-      error instanceof Error ? error.message : error,
-    );
-    return value;
-  };
-  const emptyMomentum = { market, universeScanned: 0, detailedAssessments: 0, candidates: [] };
-
-  const [candidates, legacyMomentumIgnition, momentumIgnition, trendContinuation, readyHistory, trendTotals, strategyRecord] = await Promise.all([
-    displayStrongSwing(market, settings).catch(orEmpty("Strong Swing Confirmation", [])),
-    displayLegacyMomentum(market, settings).catch(orEmpty("Momentum Ignition (legacy)", emptyMomentum)),
-    displayMomentumV2(market, settings).catch(orEmpty("Momentum Ignition V2", emptyMomentum)),
-    displayTrendContinuation(market).catch(orEmpty("Trend Continuation", [])),
+  const [candidates, legacyMomentumIgnition, momentumIgnition, trendContinuation, readyHistory, trendTotals] = await Promise.all([
+    displayStrongSwing(market, settings),
+    displayLegacyMomentum(market, settings),
+    displayMomentumV2(market, settings),
+    displayTrendContinuation(market),
     getTodayReadySignalHistory(user.id, market),
     getTrendContinuationStatusTotals(market).catch(() => undefined),
-    loadStrategyRecord(market),
   ]);
   const executionPlans: ExecutionPlanInput[] = [
     ...strongSwingExecutionPlanInputs(candidates),
@@ -89,10 +70,6 @@ export default async function StrongSwingPage({
 
   // Opened on-demand groups reload whenever the page re-renders with a recomputed scan.
   const scanVersion = Math.max(...[candidates, legacyMomentumIgnition, momentumIgnition, trendContinuation].map(displayScanComputedAt));
-  // The oldest of the four, not the newest: one stale scan must not hide behind three fresh ones.
-  const scanTimes = [candidates, legacyMomentumIgnition, momentumIgnition, trendContinuation]
-    .map(displayScanComputedAt).filter((at) => at > 0);
-  const oldestScanAt = scanTimes.length ? Math.min(...scanTimes) : 0;
 
   return (
     <AppShell
@@ -113,14 +90,6 @@ export default async function StrongSwingPage({
           ? <>Buy &amp; Track is enabled only for green Execution Ready setups and records the frozen plan in your ledger. Breeze currently supplies live market data; it does not place the broker order, so confirm exchange restrictions in ICICI Direct before buying.</>
           : <>Buy &amp; Track is enabled only for green Execution Ready setups and records the frozen plan in your ledger. US setups use end-of-day and delayed quotes: there is no live quote, spread or circuit check, so confirm the live price and spread with your broker before buying.</>}
       </div>
-      {unavailable.length > 0 && (
-        <div role="status" className="mb-6 rounded border border-rose-400/40 bg-rose-400/10 px-4 py-3 text-sm text-rose-200">
-          <span className="font-bold">Not available right now: {unavailable.join(", ")}.</span>{" "}
-          Those sections are missing from this page, not empty — do not read them as &ldquo;no setups&rdquo;.
-          Everything else below is unaffected. Reload in a minute.
-        </div>
-      )}
-      <StaleScanNotice computedAt={oldestScanAt} staleAfterMs={DISPLAY_SCAN_MAX_AGE_MS} />
       <ReadySignalHistory rows={readyHistory} market={market} />
       <LazyGroupsVersion value={scanVersion}>
       <section id="strong-swing" className="scroll-mt-6">
@@ -129,7 +98,7 @@ export default async function StrongSwingPage({
           <h2 className="mt-1 text-2xl font-black">Strong Swing Confirmation</h2>
           <p className="mt-1 text-sm text-white/45">The same base Swing signals are re-ranked only after the two-close confirmation and execution-safety gates.</p>
         </div>
-        <StrongSwingCandidates candidates={strongShown} counts={strongDisplay.counts} planIds={Object.fromEntries(planIds)} market={market} record={strategyRecord} />
+        <StrongSwingCandidates candidates={strongShown} counts={strongDisplay.counts} planIds={Object.fromEntries(planIds)} market={market} />
       </section>
       <section id="momentum-ignition" className="mt-12 scroll-mt-6 border-t border-white/10 pt-8">
         <MomentumIgnitionLegacyCandidates result={{ ...legacyMomentumIgnition, candidates: legacyShown.shown }} counts={legacyShown.counts} ranks={legacyShown.ranks} lazy planIds={Object.fromEntries(planIds)} />

@@ -110,12 +110,10 @@ def main() -> int:
         results = [assess_trend_execution(item) for item in inputs]
         statuses = {"TREND_CONTINUATION_READY": 0, "CONTINUATION_WATCH": 1, "IMPULSE_DETECTED": 2, "EXTENDED_RISK": 3}
         order = sorted(range(len(results)), key=lambda index: (
-            -int(bool(results[index].get("effectiveReady"))),
+            -int(bool(inputs[index]["candidate"]["ready"])),
             -int(inputs[index]["candidate"].get("metrics", {}).get("developing_staircase") is True),
-            statuses[results[index].get("effectiveStatus", inputs[index]["candidate"]["status"])],
+            statuses[inputs[index]["candidate"]["status"]],
             -float(inputs[index]["candidate"]["score"]),
-            -int(inputs[index]["candidate"].get("metrics", {}).get("catalyst_tag") == "EP"),
-            str(inputs[index]["candidate"].get("ticker") or ""),
         ))
         for rank, index in enumerate(order, 1):
             results[index]["pythonRank"] = rank

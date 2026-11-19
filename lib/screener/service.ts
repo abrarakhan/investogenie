@@ -64,9 +64,6 @@ export interface ScreenerStock {
   sma_50_vs_200_pct: number | null; sma_100_vs_150_pct: number | null; sma_100_vs_200_pct: number | null;
   sma_150_vs_200_pct: number | null; rsi_14: number | null;
   atr_pct_14: number | null; volume_ratio_20: number | null; return_5d: number | null;
-  deliv_pct: number | null; rel_deliv_20d: number | null; nifty_alpha_1d: number | null;
-  ibs_close: number | null; tod_rvol: number | null; days_since_results: number | null;
-  setup_variant: string | null; catalyst_tag: string | null;
   return_20d: number | null; return_63d: number | null;
   refreshed_at: string;
 }
@@ -110,7 +107,6 @@ const NUMERIC_COLS: (keyof ScreenerStock)[] = [
   "sma_20_vs_100_pct", "sma_20_vs_150_pct", "sma_20_vs_200_pct", "sma_50_vs_100_pct",
   "sma_50_vs_150_pct", "sma_50_vs_200_pct", "sma_100_vs_150_pct", "sma_100_vs_200_pct",
   "sma_150_vs_200_pct", "rsi_14", "atr_pct_14", "volume_ratio_20", "return_5d", "return_20d", "return_63d",
-  "deliv_pct", "rel_deliv_20d", "nifty_alpha_1d", "ibs_close", "tod_rvol", "days_since_results",
 ];
 
 function coerce(row: Record<string, unknown>): ScreenerStock {
@@ -137,9 +133,7 @@ const SELECT_COLS = `
   s.sma_20_vs_50_pct,s.sma_20_vs_100_pct,s.sma_20_vs_150_pct,s.sma_20_vs_200_pct,
   s.sma_50_vs_100_pct,s.sma_50_vs_150_pct,s.sma_50_vs_200_pct,s.sma_100_vs_150_pct,s.sma_100_vs_200_pct,s.sma_150_vs_200_pct,
   s.rsi_14,s.atr_pct_14,s.volume_ratio_20,
-  s.return_5d,s.return_20d,s.return_63d,
-  s.deliv_pct,s.rel_deliv_20d,s.nifty_alpha_1d,s.ibs_close,s.tod_rvol,s.days_since_results,
-  s.setup_variant,s.catalyst_tag,s.refreshed_at`;
+  s.return_5d,s.return_20d,s.return_63d,s.refreshed_at`;
 
 /** Run a screen: filter + sort + paginate. Filters are validated up front so a
  *  malformed clause fails fast with a clear message rather than a SQL error. */

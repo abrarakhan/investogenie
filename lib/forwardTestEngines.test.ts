@@ -84,21 +84,4 @@ describe("forward-test engine calls", () => {
       [ENGINE_METHODS.TREND_DAY_TWO_WATCH, "WATCH", 50],
     ]);
   });
-
-  it("enrols every qualified Mid-Way candidate in a variant-specific method", () => {
-    const trend = ["A", "B", "C"].map((ticker) => ({
-      assetId: `id-${ticker}`, ticker, status: "CONTINUATION_WATCH",
-      entry: 100, target: 112, stop: 94,
-      metrics: { setup_variant: "STAGE2_IMPULSE", expected_holding_days: 5, deliv_pct: 70 },
-      featureVersion: "trend_continuation_v8_midway",
-    }));
-    const calls = selectEngineCalls({ ...empty, trend }, 1);
-    expect(calls.map((call) => [call.method, call.ticker])).toEqual([
-      [ENGINE_METHODS.MIDWAY_STAGE2, "A"],
-      [ENGINE_METHODS.MIDWAY_STAGE2, "B"],
-      [ENGINE_METHODS.MIDWAY_STAGE2, "C"],
-    ]);
-    expect(calls[0].evidence).toMatchObject({ setup_variant: "STAGE2_IMPULSE", deliv_pct: 70 });
-    expect(calls[0].featureVersion).toBe("trend_continuation_v8_midway");
-  });
 });

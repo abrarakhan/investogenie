@@ -2,19 +2,10 @@ import unittest
 from datetime import date
 import pandas as pd
 
-from screener_technical_features import (
-    bounded_nifty_alpha,
-    compute_features,
-    compute_fundamental_features,
-    history_start_date,
-)
+from screener_technical_features import compute_features, compute_fundamental_features, history_start_date
 
 
 class ScreenerTechnicalFeatureTests(unittest.TestCase):
-    def test_impossible_provider_discontinuity_does_not_abort_alpha_snapshot(self):
-        self.assertEqual(bounded_nifty_alpha(4.5, 1.25), 3.25)
-        self.assertIsNone(bounded_nifty_alpha(10001, 0.5))
-
     def test_incremental_history_is_bounded_but_keeps_indicator_lookback(self):
         today = date(2026, 10, 27)
         self.assertEqual((today - history_start_date(today, 5, True)).days, 440)

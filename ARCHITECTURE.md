@@ -1,8 +1,6 @@
 # InvestoGenie Architecture
 
-_Source and production baseline reviewed 17 November 2026 through deployed revision `784f894`._
-
-This document is written to be read without the repository. [CAPABILITIES.md](CAPABILITIES.md) describes what the system does; this describes how it is built and why it is shaped as it is.
+_Source and production baseline reviewed 14 November 2026 through deployed revision `f33f256`._
 
 ## System flow
 
@@ -32,12 +30,11 @@ The web stack is Next.js 16.4.2 App Router, React 19.2.4 and TypeScript. Postgre
 | `lib/cas/`, `lib/funds/`, `lib/gmail/` | Portfolio parsing, identifiers, snapshots and disclosure processing |
 | `lib/breeze/` | Broker integration and execution safety |
 | `lib/backfill/` | Persistent OHLCV repair |
-| `lib/help/` | The 23-article in-app help library, authored as typed React content |
 | `lib/mobile*.ts` | Sessions, ledger API support and notifications |
 | `pipelines/`, `workers/` | Python ingestion and broker workers |
 | `pipelines/ml/` | Deterministic ML feature collection and labels |
 | `scripts/` | Scheduling, ingestion and operational checks |
-| `db/migrations/` | Ordered schema through 0083, 102 tables |
+| `db/migrations/` | Ordered schema through 0079 |
 | `mobile/` | Isolated React Native client |
 | `deploy/` | macOS and Ubuntu service/deployment packages |
 
@@ -48,14 +45,6 @@ The [README route table](README.md#workspaces) maps each workspace. In particula
 Trading strategy mathematics is Python-authoritative. `pipelines/strategy_math/swing_scan.py` owns Base Swing discovery, cross-sectional ranks, the five named strategy detectors and their live levels; the scan and screen TypeScript modules only collect raw inputs and persist/render its results. Strong Swing and Armed Swing now expose TypeScript contracts only—the duplicate calculation oracles were retired. News & AI overlays and ledger projections use the same Python batch boundary. Remaining legacy TypeScript formula modules are migration-test debt and are not production authorities.
 
 Momentum Ignition legacy and V2 remain separate models but share the Python batch boundary, which also applies the V2 timing veto to legacy execution. Armed Swing is a separate screen whose loader scans market-relative strength and near-pivot candidates, then sends at most 250 shortlisted stocks, raw calendar evidence and live execution inputs to the Python engine. It excludes the in-progress bar from base construction and uses live volume only for breakout pace.
-
-Strong Swing is at model `strong-swing-v8-entry-open`, 28 gates, of which three are advisory and
-report without vetoing - market regime, session hold and intraday reversal - and the rest blocking. Its status ladder runs `INVALIDATED`,
-`RISK_OFF`, `UNVERIFIED`, `WAIT_FOR_ENTRY`, `EXECUTION_READY`, `WATCHLIST`. Model versions are pinned
-in five independent places - the Python engine, the TypeScript contract, the auto-buy worker, the
-readiness audit and a test - so a bump that misses one is caught rather than silently mixing rules.
-Stored captures record the version they were written under, and the parity checker reproduces
-whichever rule set a capture used rather than the current one.
 
 Trend Continuation is a separate Python-owned observation engine (`pipelines/trend_continuation.py`). It detects persistent 3–5 session impulses, validates continuation or extension risk, and stores versioned results in `trend_continuation_signals`. Its quote freshness, spread, circuit room, results blackout, price-band and plan-freshness gates are also evaluated in Python by `pipelines/strategy_math/trend_execution.py`. Observation-only candidates have no auto-buy path.
 
@@ -111,48 +100,6 @@ Web sessions use signed HTTP-only cookies. Credentials use AES-256-GCM with a sc
 Migration 0051 defines snapshots, labels, models, promotion evidence, serving pointers and monitoring records. Node captures canonical Strong Swing candidates and invokes Python feature collection. Python implements features and first-touch labels with golden vectors.
 
 Training, calibration, inference, model promotion and drift-response automation are specified in [the methodology contract](docs/ml-methodology.md), but complete runtime pipelines are not present. Schema existence does not establish an active model or monitoring service.
-
-## Measurement subsystem
-
-The replay harness exists because gate agreement is not evidence that a setup works, and until it
-existed that was all the screen could offer a reader.
-
-`pipelines/strong_swing_replay.py` drives the production engine over `daily_ohlcv` rather than
-reimplementing it, which is the property that makes its output meaningful: a replay that reimplements
-the strategy measures the reimplementation. No bar after the signal date reaches the engine, and a
-test asserts that against a real scan instead of trusting the code's shape. Results land in
-`strong_swing_replay_runs` and `strong_swing_replay_signals` (migrations 0082/0083); nothing there
-feeds the live screen except the summary note rendered beside the Buy button, read by
-`lib/strategyRecord.ts`, which computes every statistic in SQL and degrades to no note at all if the
-tables are absent.
-
-The harness has several decision modes. The one the stored record comes from judges and enters at the
-next session's open, handing the engine a session carrying only its opening price - which is both the
-decision price and all the v8 `entry_open` gate needs, while leaving the advisory session gates out of
-view. Other modes exist to run controlled A/B arms that differ in exactly one variable, which is how
-the v6 session gates were retired and the v7 entry band chosen.
-
-`pipelines/intraday_entry_study.py` re-grades a stored run from one-minute Breeze candles in
-`intraday_bars` under source `BREEZE_REPLAY`. Those bars are deliberately older than any operational
-retention window and cost days of Breeze allowance to rebuild, so the daily intraday sync's prune is
-scoped to exclude them. Because `daily_ohlcv` is split- and dividend-adjusted while Breeze returns raw
-traded prices, each session is converted by a single ratio taken at its close and then checked against
-its own daily bar; sessions that will not reconcile are counted out rather than silently included.
-
-## Runtime capacity
-
-Production is a two-vCPU host, and this is a design constraint rather than an operational footnote.
-Scheduled Python work and request-path rendering compete for the same CPUs, so a recurring job that
-cannot finish inside its own timeout does not merely fail: it restarts, holds a CPU continuously, and
-starves page renders whose own engine batches are then killed in turn. On 17 November 2026 this made
-the Strong Swing page unrenderable for a full session, visible only as nginx 499s and aborted
-connections in the browser - no crash, no restart, no OOM.
-
-Consequently: a recurring job's interval must exceed its real runtime, and its timeout must allow a
-run to finish. The trend-continuation scan assesses roughly 2,940 stocks every 15 minutes with a 600s
-cap. Request-path engine batches are capped at 90s (`PYTHON_ENGINE_TIMEOUT_MS`), while nginx allows
-300s upstream, so the application cap rather than the proxy is the binding limit. Heavy jobs share the
-web service process tree unless separately managed.
 
 ## Deployment and verification
 

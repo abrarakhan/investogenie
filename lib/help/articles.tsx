@@ -1294,7 +1294,7 @@ const tradableStocks: HelpArticle = {
       <H2>Tier 2 — next in line (watch, prepare orders)</H2>
       <UL>
         <LI><strong>Armed Swing · Armed</strong> — place a buy-stop limit order in advance; it only fills if the breakout happens.</LI>
-        <LI><strong>Strong Swing · Pullback candidate</strong> — confirmed, but price is outside the buy zone — either still hugging the entry, or run more than 0.75 ATR past it — or today&apos;s <em>open</em> was outside that band, or it sits more than 15% above its 20-day average. Don&apos;t chase, and don&apos;t buy a trigger that was only just cleared. A pullback does not reactivate it automatically; it needs a fresh confirmed breakout.</LI>
+        <LI><strong>Strong Swing · Pullback candidate</strong> — confirmed, but price has run more than 0.5 ATR past the entry or sits more than 15% above its 20-day average. Don&apos;t chase. A pullback does not reactivate it automatically; it needs a fresh confirmed breakout.</LI>
         <LI><strong>Momentum Ignition V2 · Pre-ignition / First thrust / Retest setup</strong> — within 3% of the trigger, or broken out but still missing volume or a strong close.</LI>
         <LI><strong>Trend Continuation · Impulse detected</strong> — a heavy-volume range breakout on day one. It is re-checked after 10:15 IST on day two and may turn <strong>Continuation ready</strong>. Only the confirmed day-two breakout path can unlock a protected manual plan; auto-buy remains disabled.</LI>
       </UL>
@@ -1355,8 +1355,7 @@ const strongSwingArticle: HelpArticle = {
       <H2>Execution safety</H2>
       <SpecTable
         rows={[
-          { k: "Entry discipline", v: "Live price between 0.25 and 0.75 ATR above the entry — otherwise Pullback candidate. A purchase outside that band is refused." },
-          { k: "Opening price", v: "Today's open also between 0.25 and 0.75 ATR above the entry. The band only pays on days that gapped into it: over a decade of one-minute paths, days opening in the band returned +0.40% per trade while the 730 that walked in later returned -0.15%. Outside an open session there is no open to read, and the gate stands aside." },
+          { k: "Entry discipline", v: "Live price at the entry and no more than 0.5 ATR above it — otherwise Pullback candidate. A purchase outside that zone is refused." },
           { k: "Results blackout (India)", v: "A verified results calendar with no company results within three sessions. In the US the calendar has no coverage, so the check is shown but does not block." },
           { k: "Extension", v: "5-session return ≤ 30%, 10-session ≤ 50%, ≤ 15% above the 20-day average." },
           { k: "Volatility / stop risk", v: "ATR ≤ 5% of price; stop no more than 7% away." },
@@ -1379,8 +1378,7 @@ ATR            = average of the last 14 true ranges (completed sessions)
 entry          = breakout level + 0.25 × ATR
 stop           = entry − 1.5 × ATR          (your stop multiple)
 target         = entry + 2 × (entry − stop)  (your target multiple)
-buy zone       = entry + 0.25 × ATR to entry + 0.75 × ATR
-                 read against BOTH the live price and today's open
+buy zone       = entry to entry + 0.5 × ATR, tested against the live price
 invalidated    = latest close below breakout level − 1 × ATR`}</Formula>
       <H2>What the stock is doing</H2>
       <P>
@@ -1394,7 +1392,7 @@ invalidated    = latest close below breakout level − 1 × ATR`}</Formula>
       <H2>Statuses</H2>
       <UL>
         <LI><strong>Execution ready</strong> — every blocking gate passes; a plan is frozen when you log the trade.</LI>
-        <LI><strong>Pullback candidate</strong> — technically confirmed but outside the buy zone (above it, or not yet a quarter-ATR clear of the entry) or more than 15% above its 20-day average. Not buyable. A later pullback does not reactivate it automatically: Execution ready still needs a current breakout with two confirming closes.</LI>
+        <LI><strong>Pullback candidate</strong> — technically confirmed but outside the buy zone (above it, or trading below the entry) or more than 15% above its 20-day average. Not buyable. A later pullback does not reactivate it automatically: Execution ready still needs a current breakout with two confirming closes.</LI>
         <LI><strong>Awaiting confirmation</strong> — some technical gates still fail.</LI>
         <LI><strong>Risk off</strong> — an extension, volatility, stop-width, liquidity, circuit, results or live-data check failed.</LI>
         <LI><strong>Invalidated</strong> — the unfilled setup failed a full ATR below its breakout level. Stops activate only after a purchase is recorded in the ledger.</LI>

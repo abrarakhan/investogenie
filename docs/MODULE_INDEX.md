@@ -2,10 +2,6 @@
 
 Use this file as the first routing step for focused work. Read only the linked module guide, its named entry points, and directly referenced dependencies. Do not scan the repository to rediscover these boundaries.
 
-Each module guide now opens with a plain-language description of what that module does and why it is shaped that way, followed by the boundaries and invariants that constrain changes to it. A reader without the checkout can use the first part; an agent working in the repository needs both.
-
-If you are reading this system without the source code, start instead with [CAPABILITIES.md](../CAPABILITIES.md) and [ARCHITECTURE.md](../ARCHITECTURE.md), which are written to stand alone.
-
 | Module | Web entry | Server entry | Calculation owner | Guide |
 | --- | --- | --- | --- | --- |
 | Market dashboard | `app/terminal/[market]/page.tsx` | `lib/marketOverview.ts`, `lib/engines-runtime.ts` | Stored market data; Python Swing levels | [market](modules/market.md) |
@@ -17,9 +13,9 @@ If you are reading this system without the source code, start instead with [CAPA
 | Trend Continuation | Swing page section | `lib/trendContinuation.ts` | Python continuation engines | [trend-continuation](modules/trend-continuation.md) |
 | Trade Ledger | `app/terminal/[market]/trade-ledger/page.tsx` | `lib/swingTradeLedger*.ts` | Python `ledger.py` | [ledger](modules/ledger.md) |
 | News & AI | `app/terminal/[market]/news-swing/page.tsx` | `lib/newsSwing.ts`, `lib/news/` | Python overlay; provider ingestion | [news](modules/news.md) |
-| Long-Term | `app/terminal/[market]/long-term/page.tsx` | `lib/long-term-*.ts` | Python `long_term.py` | [long-term](modules/long-term.md) |
-| Probability | `app/terminal/[market]/probability/page.tsx` | `lib/probability-runtime.ts` | Python `probability.py` | [probability](modules/probability.md) |
-| Adaptive Allocation | `app/terminal/[market]/adaptive-allocation/page.tsx` | `lib/adaptiveAllocation.ts` | Python `adaptive_allocation.py` | [adaptive-allocation](modules/adaptive-allocation.md) |
+| Long-Term | `app/terminal/[market]/long-term/page.tsx` | `lib/long-term-*.ts` | TypeScript, pending Python migration | [long-term](modules/long-term.md) |
+| Probability | `app/terminal/[market]/probability/page.tsx` | `lib/probability-runtime.ts` | TypeScript, pending Python migration | [probability](modules/probability.md) |
+| Adaptive Allocation | `app/terminal/[market]/adaptive-allocation/page.tsx` | `lib/adaptiveAllocation.ts` | TypeScript, pending Python migration | [adaptive-allocation](modules/adaptive-allocation.md) |
 | Portfolio & funds | Portfolio routes and `/terminal/in/cas` | `lib/portfolio*`, `lib/funds/`, `lib/cas/` | Server data services | [portfolio-funds](modules/portfolio-funds.md) |
 | Notifications | Settings and browser/mobile delivery | `lib/mobileAlerts.ts`, notification routes | Server state transitions | [notifications](modules/notifications.md) |
 | Mobile client | `mobile/App.tsx` | `/api/v1/mobile/`, `lib/mobileScreens.ts` | Server-authoritative | [mobile](modules/mobile.md) |

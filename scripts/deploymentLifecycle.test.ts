@@ -13,18 +13,6 @@ describe("production deployment lifecycle", () => {
     expect(release).toContain("refusing to deploy");
   });
 
-  it("releases database readers before migrations and restores services on failure", () => {
-    const release = readFileSync(`${root}/deploy/oracle/deploy-release.sh`, "utf8");
-    const stop = release.indexOf("systemctl stop investogenie.service investogenie-breeze.service");
-    const migrate = release.indexOf("node scripts/apply-production-migrations.mjs");
-    const restart = release.indexOf("systemctl restart investogenie");
-    expect(stop).toBeGreaterThan(0);
-    expect(stop).toBeLessThan(migrate);
-    expect(migrate).toBeLessThan(restart);
-    expect(release).toContain("trap restore_services EXIT");
-    expect(release).toContain("trap - EXIT");
-  });
-
   it("terminates every long-running child and exits after Next.js closes", () => {
     const wrapper = readFileSync(`${root}/scripts/run-with-nse-sync.mjs`, "utf8");
     for (const child of [

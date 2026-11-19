@@ -1,16 +1,7 @@
 /** Strong Swing contract. All decision mathematics lives in Python. */
 import type { OHLCV } from "@/lib/types";
 
-export const STRONG_SWING_MODEL_VERSION = "strong-swing-v8-entry-open";
-/**
- * The actionable band above the confirmed entry, in ATR, mirrored from the Python engine's
- * ENTRY_BAND_MIN_ATR / ENTRY_BAND_MAX_ATR. These are not a second opinion about the
- * strategy: purchase validation has to admit exactly what the entry_zone gate admitted, or
- * the screen offers a plan the ledger then refuses. Changing them means changing the engine
- * and re-running pipelines/strong_swing_replay.py, not editing this line.
- */
-export const STRONG_SWING_ENTRY_BAND_MIN_ATR = 0.25;
-export const STRONG_SWING_ENTRY_BAND_MAX_ATR = 0.75;
+export const STRONG_SWING_MODEL_VERSION = "strong-swing-v6-session-reversal";
 export const STRONG_SWING_TRAILING_POLICY_VERSION = "strong-swing-ledger-trailing-v2-post-entry-next-bar";
 export type StrongSwingStatus = "EXECUTION_READY" | "UNVERIFIED" | "WAIT_FOR_ENTRY" | "WATCHLIST" | "RISK_OFF" | "INVALIDATED";
 export interface StrongSwingGate { key: string; label: string; passed: boolean; detail: string; category: "technical" | "execution"; blocking: boolean }
@@ -25,7 +16,7 @@ export interface StrongSwingInput {
    * completed bars; this is how the open session's direction reaches them, rather than only
    * its last price.
    */
-  session?: { date: string; open: number; high: number; low: number } | null;
+  session?: { date: string; high: number; low: number } | null;
   results?: { verified: boolean; sessionsToNext: number | null; nextDate: string | null; detail: string; source?: string | null; sourceAsOf?: string | null; coverageFrom?: string | null; coverageThrough?: string | null } | null;
 }
 export interface StrongSwingAssessment {

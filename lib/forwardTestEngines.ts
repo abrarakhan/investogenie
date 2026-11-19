@@ -9,9 +9,6 @@ export const ENGINE_METHODS = {
   TREND_CONTINUATION: "ENGINE:TREND_CONTINUATION",
   TREND_DAY_TWO: "ENGINE:TREND_DAY_TWO",
   TREND_DAY_TWO_WATCH: "ENGINE:TREND_DAY_TWO_WATCH",
-  MIDWAY_STAGE2: "ENGINE:MIDWAY_STAGE2",
-  MIDWAY_EP_REBOUND: "ENGINE:MIDWAY_EP_REBOUND",
-  MIDWAY_STAIR_STEP: "ENGINE:MIDWAY_STAIR_STEP",
   ARMED_SWING: "ENGINE:ARMED_SWING",
 } as const;
 
@@ -25,9 +22,6 @@ export const ENROLLABLE_STATUSES: Record<keyof typeof ENGINE_METHODS, readonly s
   // ones held back, so the gates themselves are tested against what happens next.
   TREND_DAY_TWO: ["TREND_CONTINUATION_READY"],
   TREND_DAY_TWO_WATCH: ["IMPULSE_DETECTED"],
-  MIDWAY_STAGE2: ["CONTINUATION_WATCH", "TREND_CONTINUATION_READY"],
-  MIDWAY_EP_REBOUND: ["CONTINUATION_WATCH", "TREND_CONTINUATION_READY"],
-  MIDWAY_STAIR_STEP: ["CONTINUATION_WATCH", "TREND_CONTINUATION_READY"],
   ARMED_SWING: ["ARMED", "BUY_ZONE", "TRIGGERED_UNCONFIRMED"],
 };
 
@@ -40,8 +34,6 @@ export interface EngineCall {
   target: number;
   stop: number;
   horizonDays: number;
-  evidence?: Record<string, unknown>;
-  featureVersion?: string;
 }
 
 export interface EngineCandidates {
@@ -50,7 +42,7 @@ export interface EngineCandidates {
   momentumV2: Array<{ assetId: string; ticker: string; status: string; projectedEntry: number; projectedTarget: number; projectedStop: number; projectedDays: number }>;
   trend: Array<{
     assetId: string; ticker: string; status: string; entry: number | null; target: number | null; stop: number | null;
-    currentPrice?: number | null; metrics?: Record<string, unknown>; featureVersion?: string;
+    currentPrice?: number | null; metrics?: Record<string, unknown>;
   }>;
   armed: Array<{ assetId: string; ticker: string; status: string; plan: { trigger: number; target: number; stop: number; expectedDays: number } }>;
 }
@@ -64,7 +56,6 @@ function horizon(days: number | null | undefined): number {
 }
 
 const isStaircase = (c: { metrics?: Record<string, unknown> }) => c.metrics?.developing_staircase === true;
-const midwayVariant = (c: { metrics?: Record<string, unknown> }) => String(c.metrics?.setup_variant ?? "");
 
 /**
  * The first `limit` rows with distinct keys, in the order given. A stock can
@@ -118,25 +109,7 @@ export function selectEngineCalls(
       assetId: c.assetId, ticker: c.ticker, status: c.status,
       entry: c.projectedEntry, target: c.projectedTarget, stop: c.projectedStop, horizonDays: horizon(c.projectedDays),
     }))],
-    ["MIDWAY_STAGE2", candidates.trend.filter((c) => midwayVariant(c) === "STAGE2_IMPULSE").map((c) => ({
-      assetId: c.assetId, ticker: c.ticker, status: c.status,
-      entry: c.entry ?? NaN, target: c.target ?? NaN, stop: c.stop ?? NaN,
-      horizonDays: horizon(Number(c.metrics?.expected_holding_days ?? 5)), evidence: c.metrics,
-      featureVersion: c.featureVersion,
-    }))],
-    ["MIDWAY_EP_REBOUND", candidates.trend.filter((c) => midwayVariant(c) === "EP_REBOUND").map((c) => ({
-      assetId: c.assetId, ticker: c.ticker, status: c.status,
-      entry: c.entry ?? NaN, target: c.target ?? NaN, stop: c.stop ?? NaN,
-      horizonDays: horizon(Number(c.metrics?.expected_holding_days ?? 5)), evidence: c.metrics,
-      featureVersion: c.featureVersion,
-    }))],
-    ["MIDWAY_STAIR_STEP", candidates.trend.filter((c) => midwayVariant(c) === "STAIR_STEP").map((c) => ({
-      assetId: c.assetId, ticker: c.ticker, status: c.status,
-      entry: c.entry ?? NaN, target: c.target ?? NaN, stop: c.stop ?? NaN,
-      horizonDays: horizon(Number(c.metrics?.expected_holding_days ?? 10)), evidence: c.metrics,
-      featureVersion: c.featureVersion,
-    }))],
-    ["TREND_CONTINUATION", candidates.trend.filter((c) => !isStaircase(c) && !midwayVariant(c)).map((c) => ({
+    ["TREND_CONTINUATION", candidates.trend.filter((c) => !isStaircase(c)).map((c) => ({
       assetId: c.assetId, ticker: c.ticker, status: c.status,
       entry: c.entry ?? NaN, target: c.target ?? NaN, stop: c.stop ?? NaN, horizonDays: DEFAULT_HORIZON_DAYS,
     }))],
@@ -161,9 +134,8 @@ export function selectEngineCalls(
     const allowed = ENROLLABLE_STATUSES[engine];
     let taken = 0;
     const seen = new Set<string>();
-    const limit = engine.startsWith("MIDWAY_") ? Number.POSITIVE_INFINITY : perMethod;
     for (const call of pool) {
-      if (taken >= limit) break;
+      if (taken >= perMethod) break;
       if (!allowed.includes(call.status)) continue;
       if (!validLongLevels(call.entry, call.target, call.stop)) continue;
       if (active.has(`${method}|${call.assetId}`) || seen.has(call.assetId)) continue;

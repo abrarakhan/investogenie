@@ -5,42 +5,24 @@ import "server-only";
  * News & AI).
  *
  * The scans are server-authoritative and identical for every viewer with the
- * same risk settings, yet each page view re-ranks ~420 days of bars for the
- * whole market. Formulas, gates and rankings are untouched; this only decides
- * when they are recomputed.
- *
- * Cost of one such scan, measured on production (2 vCPU) during market hours
- * on 2026-11-18: ~20 s warm, ~53 s cold. The 6–13 s this comment used to quote
- * no longer held — daily_ohlcv had grown to ~9.1M rows and the planner was
- * seq-scanning it because random_page_cost was still 4 on SSD storage (now 1.1
- * for the app role, which cut a warm scan from ~80 s to ~20 s). Re-measure
- * before assuming a scan is cheap enough to run per request.
+ * same risk settings, yet each page view re-ranked ~420 days of bars for the
+ * whole market (6–13 s on production). Formulas, gates and rankings are
+ * untouched; this only decides when they are recomputed.
  *
  * Stale-while-revalidate with keep-warm:
  *  - A result is fresh for DISPLAY_SCAN_TTL_MS (60 s).
  *  - When it turns 60 s old, it is recomputed in the background as long as
  *    someone read it within KEEP_WARM_MS, so active screens never wait for a
  *    scan. Served results are normally at most ~60 s + one scan old.
- *  - Readers keep getting the previous result while a refresh runs, or if one
- *    fails, however old it is. Only a screen that has never been computed in
- *    this process makes the reader wait.
+ *  - Readers keep getting the previous result for up to DISPLAY_SCAN_MAX_AGE_MS
+ *    while a refresh runs (or if one fails). Past that, or for a screen nobody
+ *    has opened recently, the reader waits for a fresh scan.
  *
  * Not used by alerts, auto-buy or the email digest, which keep computing fresh.
  * Concurrent requests share one in-flight computation; a failure is never
  * cached. Cached values are shared, so callers must not mutate them (current
  * callers copy before sorting).
- *
- * Two properties keep a slow host from turning a slow screen into a dead one:
- *  - Scans run on the capped display pool, so a render the browser abandoned
- *    stops costing database CPU instead of running to completion unread.
- *  - When a refresh fails and a previous result exists, that result is served
- *    rather than throwing. Without this a failed scan left nothing cached, so
- *    the next reader recomputed everything from scratch on an already
- *    overloaded host and failed in turn. Callers must surface the age: the
- *    served result can be older than DISPLAY_SCAN_MAX_AGE_MS, and
- *    displayScanComputedAt reports when it was actually computed.
  */
-import { runOnDisplayPool } from "@/lib/db";
 import type { SwingSettings } from "@/lib/settings";
 import { getStrongSwingCandidates } from "@/features/strong-swing/service";
 import { getMomentumLegacyCandidates, getMomentumV2Candidates } from "@/features/momentum/service";
@@ -53,7 +35,7 @@ const getMomentumIgnitionCandidates = getMomentumV2Candidates;
 const getLegacyMomentumIgnitionCandidates = getMomentumLegacyCandidates;
 
 export const DISPLAY_SCAN_TTL_MS = 60_000;
-/** Age at which a screen must tell the viewer its figures are not current. */
+/** Oldest result served while a background refresh runs or after it failed. */
 export const DISPLAY_SCAN_MAX_AGE_MS = 3 * 60_000;
 /** Keep refreshing a screen in the background for this long after its last read. */
 export const DISPLAY_SCAN_KEEP_WARM_MS = 5 * 60_000;
@@ -82,7 +64,7 @@ export function displayScanComputedAt(value: unknown): number {
 
 function refresh(key: string, entry: Entry, now: () => number): Promise<unknown> {
   if (entry.pending) return entry.pending;
-  const pending = runOnDisplayPool(() => entry.compute()).then(
+  const pending = entry.compute().then(
     (value) => {
       entry.value = value;
       entry.hasValue = true;
@@ -127,34 +109,13 @@ export async function cachedForDisplay<T>(key: string, compute: () => Promise<T>
   if (entry.hasValue) {
     const age = now() - entry.at;
     if (age < DISPLAY_SCAN_TTL_MS) return entry.value as T;
-    // Serve the previous result immediately, however old, and refresh behind
-    // it. A page render must never block on a market scan: on a loaded host a
-    // scan outlives the browser's patience, and the reader then gets
-    // ERR_CONNECTION_ABORTED rather than a screen, while the abandoned scan
-    // keeps running. Anything past DISPLAY_SCAN_MAX_AGE_MS is labelled on the
-    // screen as not current.
-    refresh(key, entry, now).catch((error) => {
-      // Still report it: nothing downstream awaits this refresh any more.
-      console.warn(
-        `[display-scan] refresh failed for ${key.split(":", 2).join(":")}; serving the previous result:`,
-        error instanceof Error ? error.message : error,
-      );
-    });
-    return entry.value as T;
-  }
-  try {
-    return (await refresh(key, entry, now)) as T;
-  } catch (error) {
-    // A stale result beats no screen at all; the caller shows how old it is.
-    if (entry.hasValue && entries.get(key) === entry) {
-      console.warn(
-        `[display-scan] serving stale result for ${key.split(":", 2).join(":")}:`,
-        error instanceof Error ? error.message : error,
-      );
+    if (age < DISPLAY_SCAN_MAX_AGE_MS) {
+      // Serve the previous result immediately; the next read gets the new one.
+      refresh(key, entry, now).catch(() => {});
       return entry.value as T;
     }
-    throw error;
   }
+  return refresh(key, entry, now) as Promise<T>;
 }
 
 function evictOverflow(): void {

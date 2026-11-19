@@ -25,9 +25,8 @@ from typing import Iterable
 
 import psycopg2
 from psycopg2.extras import execute_values
-from strategy_math.armed_swing import expected_volume_share, valid_session_volume_curve
 
-FEATURE_VERSION = "trend_continuation_v8_midway"
+FEATURE_VERSION = "trend_continuation_v7"
 IST = timezone(timedelta(hours=5, minutes=30))
 SESSION_MINUTES = 375  # 09:15-15:30 IST
 CONFIRMATION_MINUTES = 60  # day-two confirmation opens at 10:15 IST
@@ -108,425 +107,6 @@ def _atr(bars: list[Bar], period: int = 14) -> float:
     for item in ranges[period:]:
         value = ((period - 1) * value + item) / period
     return value
-
-
-# --- Mid-way momentum and institutional accumulation (v2) ---------------------
-#
-# The engine above finds continuation after a move is established. These rules aim
-# at days 2 to 4 of a 3-5 session move: late enough that the move has proved itself
-# with volume and delivery, early enough that it has not yet exhausted.
-#
-# Every threshold here is a stated rule of the strategy, not a fitted parameter. None
-# of them has been measured against outcomes by a replay the way the Strong Swing
-# entry band was; until that exists they should be read as a specification being
-# tested, not as a measured edge.
-
-# Turnover required on the ignition bar itself. The quiet base days before a breakout
-# are deliberately not held to this: a stock trading Rs 3 crore while it coils and
-# Rs 40 crore when it breaks out is the normal shape of the setup, and applying the
-# ignition floor to the base would reject exactly the stocks worth finding.
-IGNITION_MIN_TURNOVER = 1e8  # Rs 10 crore
-
-# Deliverable quantity is what separates positional accumulation from intraday churn.
-# Either a high share of the day's volume was actually delivered, or far more stock was
-# delivered than on a normal day for this stock.
-ACCUMULATION_MIN_DELIV_PCT = 55.0
-ACCUMULATION_MIN_REL_DELIV = 2.5
-# A rebound against the trend has to clear a higher delivery bar, because the trend
-# itself is not supporting the case.
-EP_MIN_DELIV_PCT = 65.0
-EP_MAX_DAYS_SINCE_RESULTS = 7
-
-# Path A takes one decisive bar; Path B takes three ordinary ones. The stair-step
-# average is lower because three consecutive strong closes are themselves the evidence.
-PATH_A_MIN_RVOL = 2.5
-PATH_B_MIN_AVG_RVOL = 1.6
-PATH_B_SESSIONS = 3
-
-# Internal bar strength: where the close sat in the bar's range. A move that closes at
-# its low on heavy volume is distribution wearing a breakout's clothes.
-MIN_IBS = 0.75
-
-# Anti-chasing. Past these the move is not mid-way, whatever else it looks like.
-EXHAUSTION_5D_GAIN_PCT = 22.0
-EXHAUSTION_RSI = 80.0
-
-# Strength shown on a day the index fell is worth more than the same strength on a day
-# everything rose. These bounds define "the index was red and this stock was not".
-RED_INDEX_RETURN_PCT = -0.3
-RED_INDEX_STOCK_RETURN_PCT = 3.0
-RED_INDEX_SCORE_BOOST = 5
-
-SETUP_STAGE2 = "STAGE2_IMPULSE"
-SETUP_EP_REBOUND = "EP_REBOUND"
-SETUP_STAIR_STEP = "STAIR_STEP"
-CATALYST_EP = "EP"
-CATALYST_TECH = "TECH"
-
-
-@dataclass(frozen=True)
-class DeliveryDay:
-    """One session's deliverable-quantity evidence, as the exchange reported it."""
-    deliv_pct: float | None = None
-    deliv_qty: float | None = None
-    turnover: float | None = None
-
-
-@dataclass(frozen=True)
-class DeliveryHistory:
-    """Delivery by session date, with the 20-session baseline the ratio is taken against."""
-    by_date: dict[str, DeliveryDay]
-    avg_deliv_qty_20d: float | None = None
-
-    def day(self, date_value: str) -> DeliveryDay:
-        return self.by_date.get(date_value, DeliveryDay())
-
-    def baseline_before(self, date_value: str) -> float | None:
-        """Twenty reported delivery sessions preceding the bar being judged."""
-        values = [day.deliv_qty for key, day in sorted(self.by_date.items())
-                  if key < date_value and day.deliv_qty is not None]
-        window = values[-20:]
-        if len(window) < 20:
-            return self.avg_deliv_qty_20d
-        return sum(window) / len(window)
-
-
-def _rsi(closes: list[float], period: int = 14) -> float | None:
-    """Wilder's RSI. None when there is not enough history to compute it honestly."""
-    if len(closes) <= period:
-        return None
-    gains = 0.0
-    losses = 0.0
-    for index in range(1, period + 1):
-        change = closes[index] - closes[index - 1]
-        gains += max(change, 0.0)
-        losses += max(-change, 0.0)
-    avg_gain = gains / period
-    avg_loss = losses / period
-    for index in range(period + 1, len(closes)):
-        change = closes[index] - closes[index - 1]
-        avg_gain = (avg_gain * (period - 1) + max(change, 0.0)) / period
-        avg_loss = (avg_loss * (period - 1) + max(-change, 0.0)) / period
-    if avg_loss <= 0:
-        return 100.0 if avg_gain > 0 else None
-    rs = avg_gain / avg_loss
-    return 100.0 - (100.0 / (1.0 + rs))
-
-
-def internal_bar_strength(bar: Bar) -> float | None:
-    """Where the close sat within the bar's range, 0 at the low and 1 at the high."""
-    span = bar.high - bar.low
-    if not math.isfinite(span) or span <= 0:
-        return None
-    return max(0.0, min(1.0, (bar.close - bar.low) / span))
-
-
-def relative_delivery(deliv_qty: float | None, baseline: float | None) -> float | None:
-    """How many times the normal day's deliverable quantity changed hands."""
-    if deliv_qty is None or baseline is None or baseline <= 0:
-        return None
-    return deliv_qty / baseline
-
-
-def accumulation_confirmed(deliv_pct: float | None, rel_deliv: float | None) -> bool:
-    """Either a high delivery share, or far more delivered stock than usual."""
-    return ((deliv_pct is not None and deliv_pct >= ACCUMULATION_MIN_DELIV_PCT)
-            or (rel_deliv is not None and rel_deliv >= ACCUMULATION_MIN_REL_DELIV))
-
-
-def trend_regime_ok(close: float, ema20: float | None, sma50: float | None,
-                    sma200: float | None) -> bool:
-    """The default regime: above the short and medium averages, in a rising structure.
-
-    This is what blocks counter-trend rebounds from being treated as continuation.
-    """
-    if ema20 is None or sma50 is None or sma200 is None:
-        return False
-    return close > ema20 and close > sma50 and sma50 > sma200
-
-
-def ep_rebound_ok(close: float, ema20: float | None, ema20_previous: float | None,
-                  deliv_pct: float | None, days_since_results: int | None,
-                  catalyst_tag: str | None = None) -> bool:
-    """The one way a stock below its longer averages may still qualify.
-
-    A company that has just reported can begin a move from below its 50- or 200-day
-    average, and refusing those on regime alone misses the strongest single catalyst
-    there is. The exception is narrow on purpose: a verified recent event, delivery
-    above the ordinary accumulation bar, and a reclaimed 20-day EMA that is itself
-    rising. Any one of those alone is a falling stock having a good day.
-    """
-    recent_results = (days_since_results is not None
-                      and 0 <= days_since_results <= EP_MAX_DAYS_SINCE_RESULTS)
-    if not recent_results and catalyst_tag != CATALYST_EP:
-        return False
-    if deliv_pct is None or deliv_pct < EP_MIN_DELIV_PCT:
-        return False
-    if ema20 is None or ema20_previous is None:
-        return False
-    return close > ema20 and ema20 > ema20_previous
-
-
-def red_index_alpha(stock_return_1d: float | None, benchmark_return_1d: float | None) -> float | None:
-    """One session of relative performance, in percentage points."""
-    if stock_return_1d is None or benchmark_return_1d is None:
-        return None
-    return stock_return_1d - benchmark_return_1d
-
-
-def red_index_boost(stock_return_1d: float | None, benchmark_return_1d: float | None) -> int:
-    """A deterministic ranking boost for rising while the index fell."""
-    if stock_return_1d is None or benchmark_return_1d is None:
-        return 0
-    if benchmark_return_1d < RED_INDEX_RETURN_PCT and stock_return_1d > RED_INDEX_STOCK_RETURN_PCT:
-        return RED_INDEX_SCORE_BOOST
-    return 0
-
-
-def exhaustion(series: list[Bar]) -> tuple[bool, float | None, float | None]:
-    """Whether the move has already run too far to be entered mid-way.
-
-    Returns the verdict with the two numbers behind it, so the reason given to a reader
-    is the same one the gate used.
-    """
-    closes = [bar.close for bar in series]
-    rsi = _rsi(closes[-60:]) if len(closes) >= 15 else None
-    gain_5d = None
-    if len(closes) >= 6 and closes[-6] > 0:
-        gain_5d = (closes[-1] / closes[-6] - 1.0) * 100.0
-    spent = ((gain_5d is not None and gain_5d > EXHAUSTION_5D_GAIN_PCT)
-             or (rsi is not None and rsi >= EXHAUSTION_RSI))
-    return spent, gain_5d, rsi
-
-
-def _ignition_turnover_ok(series: list[Bar], delivery: DeliveryHistory) -> bool:
-    """Rs 10 crore on the day-1 or day-2 impulse bar, not on the base before it."""
-    for bar in series[-2:]:
-        turnover = delivery.day(bar.date).turnover
-        if turnover is None:
-            # Turnover is absent for sessions the exchange did not report or that fell
-            # under the base floor; fall back to the bar's own traded value rather than
-            # failing a stock because one optional column was missing.
-            turnover = bar.close * bar.volume
-        if turnover >= IGNITION_MIN_TURNOVER:
-            return True
-    return False
-
-
-def _volume_ratio(series: list[Bar], index: int, lookback: int = 20) -> float | None:
-    window = [bar.volume for bar in series[max(0, index - lookback):index]]
-    if len(window) < 5:
-        return None
-    base = sum(window) / len(window)
-    return None if base <= 0 else series[index].volume / base
-
-
-def stair_step_qualified(series: list[Bar]) -> bool:
-    """Three consecutive strong green closes on sustained above-average volume."""
-    if len(series) < PATH_B_SESSIONS + 1:
-        return False
-    ratios: list[float] = []
-    for offset in range(PATH_B_SESSIONS):
-        index = len(series) - 1 - offset
-        bar = series[index]
-        previous = series[index - 1]
-        if not (bar.close > bar.open and bar.close > previous.close):
-            return False
-        ibs = internal_bar_strength(bar)
-        if ibs is None or ibs < MIN_IBS:
-            return False
-        ratio = _volume_ratio(series, index)
-        if ratio is None:
-            return False
-        ratios.append(ratio)
-    return sum(ratios) / len(ratios) >= PATH_B_MIN_AVG_RVOL
-
-
-def breakout_levels(series: list[Bar]) -> dict:
-    """The price levels today's entry must clear, frozen with the signal.
-
-    Computed here, during the scheduled scan, rather than in the request path: the host
-    has two CPUs and a page render that recomputes levels for every candidate competes
-    with the scan that produced them. Freezing them also means the level a buy is judged
-    against is the one the signal was published with.
-
-    The last bar is today (live during a session), so the prior completed session is the
-    one before it. An inside day is a session whose whole range sat within the previous
-    session's, which is why a day-three entry uses day two's high rather than day one's.
-    """
-    if len(series) < 4:
-        return {}
-    previous = series[-2]
-    before = series[-3]
-    inside_day = previous.high <= before.high and previous.low >= before.low
-    steps = series[-4:-1]
-    return {
-        "previousSessionHigh": previous.high,
-        "insideDay": inside_day,
-        "stairStepHigh": max(bar.high for bar in steps),
-    }
-
-
-def midway_breakout_levels(completed: list[Bar], variant: str, setup_age: int) -> dict:
-    """Freeze the live entry level from completed sessions only.
-
-    A one-bar impulse is entered on day two through the impulse high. It survives
-    into day three only when day two was an inside day, in which case day two's high
-    is the level. A three-day stair is entered on day four through the stair high.
-    """
-    setup_index = len(completed) - 1 - setup_age
-    if setup_index < 0:
-        return {}
-    if variant == SETUP_STAIR_STEP:
-        if setup_age != 0 or setup_index < 2:
-            return {}
-        return {"stairStepHigh": max(bar.high for bar in completed[setup_index - 2:setup_index + 1])}
-    ignition = completed[setup_index]
-    if setup_age == 0:
-        return {"previousSessionHigh": ignition.high, "insideDay": False}
-    if setup_age == 1:
-        inside = completed[setup_index + 1]
-        is_inside = inside.high <= ignition.high and inside.low >= ignition.low
-        return {"previousSessionHigh": inside.high, "insideDay": True} if is_inside else {}
-    return {}
-
-
-def midway_geometry(completed: list[Bar], variant: str, setup_age: int,
-                    levels: dict) -> tuple[float | None, float | None, float | None, float | None]:
-    """Frozen 2R plan geometry for a qualified EOD setup.
-
-    The live worker may confirm the entry but must never invent its stop or target.
-    Impulses use the ignition low; stair-steps use the first step's low. The same
-    maximum-risk conventions as the established continuation paths apply.
-    """
-    setup_index = len(completed) - 1 - setup_age
-    prior = completed[:setup_index]
-    atr14 = _atr(prior) if len(prior) >= 15 else math.nan
-    if setup_index < 0 or not math.isfinite(atr14) or atr14 <= 0:
-        return None, None, None, None
-    if variant == SETUP_STAIR_STEP:
-        entry = levels.get("stairStepHigh")
-        first_index = setup_index - 2
-        if first_index < 0:
-            return None, None, None, atr14
-        anchor_low = completed[first_index].low
-        max_risk = STAIRCASE_MAX_RISK
-    else:
-        entry = levels.get("previousSessionHigh")
-        anchor_low = completed[setup_index].low
-        max_risk = 0.06
-    if entry is None:
-        return None, None, None, atr14
-    stop = anchor_low - 0.10 * atr14
-    risk = entry - stop
-    if risk <= 0 or risk / entry > max_risk:
-        return None, None, None, atr14
-    return entry, stop, entry + 2.0 * risk, atr14
-
-
-def assess_midway(
-    series: list[Bar],
-    delivery: DeliveryHistory | None = None,
-    *,
-    ema20: float | None = None,
-    ema20_previous: float | None = None,
-    sma50: float | None = None,
-    sma200: float | None = None,
-    benchmark_return_1d: float | None = None,
-    days_since_results: int | None = None,
-    catalyst_tag: str | None = None,
-) -> dict:
-    """Which mid-way path, if any, this stock is on, and the evidence for it.
-
-    Returns the features unconditionally so a signal can record them even when no
-    variant qualified: an audit of false positives needs the near misses too.
-    """
-    delivery = delivery or DeliveryHistory({})
-    features: dict = {
-        "setup_variant": None, "deliv_pct": None, "rel_deliv_20d": None, "ibs_close": None,
-        "nifty_alpha_1d": None, "catalyst_tag": catalyst_tag, "days_since_results": days_since_results,
-        "exhausted": False, "exhaustion_gain_5d": None, "exhaustion_rsi_14": None,
-        "midway_score_boost": 0, "midway_reasons": [], "breakout_levels": {},
-    }
-    if len(series) < PATH_B_SESSIONS + 2:
-        return features
-
-    current = series[-1]
-    today = delivery.day(current.date)
-    rel_deliv = relative_delivery(today.deliv_qty, delivery.baseline_before(current.date))
-    ibs = internal_bar_strength(current)
-    previous_close = series[-2].close
-    stock_return_1d = ((current.close / previous_close - 1.0) * 100.0) if previous_close > 0 else None
-    features.update(
-        deliv_pct=today.deliv_pct, rel_deliv_20d=rel_deliv, ibs_close=ibs,
-        nifty_alpha_1d=red_index_alpha(stock_return_1d, benchmark_return_1d),
-        breakout_levels=breakout_levels(series),
-    )
-
-    spent, gain_5d, rsi = exhaustion(series)
-    features.update(exhausted=spent, exhaustion_gain_5d=gain_5d, exhaustion_rsi_14=rsi)
-    if spent:
-        detail = []
-        if gain_5d is not None and gain_5d > EXHAUSTION_5D_GAIN_PCT:
-            detail.append(f"{gain_5d:.1f}% over five sessions, above the {EXHAUSTION_5D_GAIN_PCT:.0f}% ceiling")
-        if rsi is not None and rsi >= EXHAUSTION_RSI:
-            detail.append(f"14-day RSI {rsi:.0f}, at or above {EXHAUSTION_RSI:.0f}")
-        features["midway_reasons"] = [
-            "The move has already run: " + "; ".join(detail) + ". Mid-way entries are closed."
-        ]
-        return features
-
-    if not accumulation_confirmed(today.deliv_pct, rel_deliv):
-        return features
-    if not _ignition_turnover_ok(series, delivery):
-        return features
-
-    in_trend = trend_regime_ok(current.close, ema20, sma50, sma200)
-    rebound = (not in_trend) and ep_rebound_ok(
-        current.close, ema20, ema20_previous, today.deliv_pct, days_since_results, catalyst_tag)
-    if not in_trend and not rebound:
-        return features
-
-    rvol = _volume_ratio(series, len(series) - 1)
-    strong_close = ibs is not None and ibs >= MIN_IBS
-    # Path A takes one decisive bar. A rebound may substitute its catalyst candle's
-    # delivery for the volume expansion, because the event is the ignition.
-    path_a = strong_close and (
-        (rvol is not None and rvol >= PATH_A_MIN_RVOL)
-        or (rebound and today.deliv_pct is not None and today.deliv_pct >= EP_MIN_DELIV_PCT)
-    )
-    variant = None
-    if path_a:
-        variant = SETUP_EP_REBOUND if rebound else SETUP_STAGE2
-    elif in_trend and stair_step_qualified(series):
-        # The stair-step is a trend-following shape by construction; a rebound that has
-        # not reclaimed its averages has no stair to step on.
-        variant = SETUP_STAIR_STEP
-    if variant is None:
-        return features
-
-    boost = red_index_boost(stock_return_1d, benchmark_return_1d)
-    reasons = []
-    if variant == SETUP_STAIR_STEP:
-        reasons.append(
-            f"Three consecutive strong closes on {PATH_B_MIN_AVG_RVOL:.1f}x+ average volume.")
-    elif variant == SETUP_EP_REBOUND:
-        reasons.append(
-            f"Event rebound: results {days_since_results} session(s) ago, "
-            f"{today.deliv_pct:.0f}% delivery and a reclaimed rising 20-day EMA.")
-    else:
-        reasons.append(
-            f"Stage-2 impulse: {rvol:.1f}x volume closing in the top "
-            f"{(1 - MIN_IBS) * 100:.0f}% of the bar." if rvol is not None else
-            "Stage-2 impulse with a decisive close.")
-    if today.deliv_pct is not None:
-        reasons.append(f"{today.deliv_pct:.0f}% deliverable"
-                       + (f", {rel_deliv:.1f}x the 20-session average." if rel_deliv else "."))
-    if boost:
-        reasons.append(
-            f"Rose {stock_return_1d:.1f}% while the index fell {abs(benchmark_return_1d):.1f}%.")
-    features.update(setup_variant=variant, midway_score_boost=boost, midway_reasons=reasons)
-    return features
 
 
 def session_volume_share(minutes: float, session_duration: float = SESSION_MINUTES) -> float:
@@ -853,147 +433,7 @@ def _reversed_today(series: list[Bar]) -> bool:
     return current.close < previous.close and close_location < 0.5
 
 
-def _simple_average(values: list[float], period: int) -> float | None:
-    window = values[-period:]
-    return sum(window) / len(window) if len(window) >= period else None
-
-
 def assess_trend_continuation(
-    bars: Iterable[Bar], benchmark_closes: list[float] | None = None, session_minutes: float | None = None,
-    context: MarketContext | None = None, delivery: DeliveryHistory | None = None,
-    days_since_results: int | None = None, catalyst_tag: str | None = None,
-) -> dict:
-    """The established continuation paths, then the mid-way rules applied over them.
-
-    The two are kept apart deliberately. The continuation engine below is unchanged and
-    still decides every case it already decided; the mid-way layer can only add a watch
-    candidate the engine did not find, or close entries on a move that has already run.
-    A new rule set that could silently remove the existing one's candidates would be
-    impossible to attribute when the signal list changed.
-    """
-    series = list(bars)
-    result = _assess_trend_continuation_core(series, benchmark_closes, session_minutes, context)
-    projected = _project_live_volume(series, session_minutes)
-    # Delivery is an EOD fact. During the live session the last daily bar is partial
-    # and deliberately has no delivery row, so judging it here made yesterday's valid
-    # setup disappear exactly when it was supposed to be confirmed. Search the latest
-    # two completed endpoints: day two through an impulse high, or day three through
-    # an inside-day high. Stair-steps remain a day-four entry.
-    completed = projected[:-1] if session_minutes is not None else projected
-    benchmark_return_1d = None
-    if benchmark_closes and len(benchmark_closes) >= 2 and benchmark_closes[-2] > 0:
-        benchmark_return_1d = (benchmark_closes[-1] / benchmark_closes[-2] - 1.0) * 100.0
-    midway = None
-    for setup_age in (0, 1):
-        endpoint = completed[:len(completed) - setup_age] if setup_age else completed
-        if not endpoint:
-            continue
-        closes = [bar.close for bar in endpoint]
-        candidate = assess_midway(
-            endpoint, delivery,
-            ema20=_ema(closes[-50:], 20) if len(closes) >= 20 else None,
-            ema20_previous=_ema(closes[-51:-1], 20) if len(closes) >= 21 else None,
-            sma50=_simple_average(closes, 50), sma200=_simple_average(closes, 200),
-            benchmark_return_1d=benchmark_return_1d, days_since_results=days_since_results,
-            catalyst_tag=catalyst_tag,
-        )
-        variant = candidate.get("setup_variant")
-        if variant is None:
-            if midway is None:
-                midway = candidate
-            continue
-        levels = midway_breakout_levels(completed, variant, setup_age)
-        if not levels:
-            continue
-        entry, stop, target, atr14 = midway_geometry(completed, variant, setup_age, levels)
-        candidate.update(
-            setup_age_sessions=setup_age,
-            breakout_levels=levels,
-            planned_entry=entry, planned_stop=stop, planned_target=target,
-            planned_atr14=atr14,
-        )
-        midway = candidate
-        break
-    if midway is None:
-        midway = assess_midway([], delivery)
-
-    # Exhaustion is judged as of the latest completed close, even when the qualifying
-    # impulse was one session earlier. A day-three candidate cannot escape the ceiling
-    # by replaying only its day-one endpoint.
-    spent, gain_5d, rsi14 = exhaustion(completed)
-    midway.update(exhausted=spent, exhaustion_gain_5d=gain_5d, exhaustion_rsi_14=rsi14)
-    if spent and midway.get("setup_variant") is not None:
-        midway["midway_reasons"] = [
-            "The move has already run beyond the five-session or RSI exhaustion ceiling. Mid-way entries are closed."
-        ]
-    return _apply_midway(result, midway, projected)
-
-
-def _apply_midway(result: dict, midway: dict, series: list[Bar]) -> dict:
-    """Fold the mid-way verdict into a continuation result.
-
-    Three effects, in order of precedence:
-
-    1. An exhausted move cannot be entered. This overrides a ready state the
-       continuation engine granted, which is the whole point of an anti-chasing rule.
-    2. A qualifying variant can raise a stock the engine did not qualify to a watch
-       candidate. It never grants ready on its own: that still requires the live
-       execution gates in trend_execution.py.
-    3. The evidence is recorded either way, including on stocks that qualified for
-       nothing, so false positives can be audited per variant rather than in aggregate.
-    """
-    features = {key: midway[key] for key in
-                ("setup_variant", "deliv_pct", "rel_deliv_20d", "ibs_close",
-                 "nifty_alpha_1d", "catalyst_tag", "days_since_results")}
-    metrics = {**result.get("metrics", {}), **features,
-               "breakout_levels": midway.get("breakout_levels"),
-               "setup_age_sessions": midway.get("setup_age_sessions"),
-               "midway_exhausted": midway["exhausted"],
-               "midway_gain_5d": midway["exhaustion_gain_5d"],
-               "midway_rsi_14": midway["exhaustion_rsi_14"]}
-
-    # Exhaustion can only take a candidate away, never create one. A stock the engine
-    # did not qualify and the mid-way rules did not either is simply not a candidate:
-    # promoting it to EXTENDED_RISK would persist a row for every quiet stock whose RSI
-    # happened to drift over the ceiling.
-    already_a_candidate = result.get("status") not in ("NOT_QUALIFIED", "INVALID_DATA", None)
-    if midway["exhausted"] and (already_a_candidate or midway["setup_variant"] is not None):
-        return {**result, "status": "EXTENDED_RISK", "ready": False, "entry": None,
-                "metrics": metrics,
-                "reasons": [*result.get("reasons", []), *midway["midway_reasons"]],
-                "asof_market_date": result.get("asof_market_date") or (series[-1].date if series else None),
-                "score": max(0, result.get("score", 0) - 20)}
-
-    if midway["setup_variant"] is None:
-        return {**result, "metrics": metrics}
-
-    boosted = min(100, result.get("score", 0) + midway["midway_score_boost"])
-    entry, stop, target = (midway.get("planned_entry"), midway.get("planned_stop"),
-                           midway.get("planned_target"))
-    if midway.get("planned_atr14") is not None:
-        metrics["atr14"] = midway["planned_atr14"]
-    metrics["expected_holding_days"] = (STAIRCASE_HOLDING_DAYS
-                                        if midway["setup_variant"] == SETUP_STAIR_STEP else 5)
-    if result.get("status") in ("NOT_QUALIFIED", None):
-        # The engine found nothing; the mid-way rules did. Scored from its own evidence
-        # rather than inheriting a zero, and watch-only until execution gates pass.
-        return {
-            "status": "CONTINUATION_WATCH", "ready": False,
-            "score": min(100, 55 + midway["midway_score_boost"]),
-            "entry": entry, "stop": stop, "target": target,
-            "asof_market_date": series[-1].date if series else None,
-            "metrics": metrics, "reasons": list(midway["midway_reasons"]),
-        }
-    # A mid-way setup is EOD-qualified but never EOD-ready. The live Python execution
-    # engine alone promotes it after price, pace, quote, spread, circuit and results
-    # gates pass. Keep its frozen geometry available for that decision.
-    return {**result, "status": "CONTINUATION_WATCH", "ready": False,
-            "entry": entry, "stop": stop, "target": target,
-            "score": boosted, "metrics": metrics,
-            "reasons": [*result.get("reasons", []), *midway["midway_reasons"]]}
-
-
-def _assess_trend_continuation_core(
     bars: Iterable[Bar], benchmark_closes: list[float] | None = None, session_minutes: float | None = None,
     context: MarketContext | None = None,
 ) -> dict:
@@ -1235,105 +675,6 @@ def _rows_to_bars(rows) -> list[Bar]:
     return [Bar(str(row[1]), *[float(value) if value is not None else math.nan for value in row[2:]]) for row in rows]
 
 
-
-def load_delivery(cur, asset_ids: list[str], sessions: int = 40) -> dict[str, DeliveryHistory]:
-    """Recent deliverable-quantity rows per asset, with their 20-session baseline.
-
-    ETF, REIT and InvIT rows are excluded here as well as at ingestion. They settle at
-    or near 100% delivery by construction, so including them would mark every one of
-    them as maximum institutional conviction on every single session.
-    """
-    cur.execute(
-        """select asset_id::text,date::text,deliv_pct,deliv_qty,turnover from (
-             select d.*,row_number() over(partition by asset_id order by date desc) rn
-               from public.daily_delivery_metrics d
-              where asset_id = any(%s::uuid[]) and not is_etf
-           ) ranked where rn <= %s order by asset_id,date""",
-        (asset_ids, sessions),
-    )
-    by_asset: dict[str, list[tuple]] = {}
-    for row in cur.fetchall():
-        by_asset.setdefault(row[0], []).append(row)
-    out: dict[str, DeliveryHistory] = {}
-    for asset_id, rows in by_asset.items():
-        days = {
-            row[1]: DeliveryDay(
-                deliv_pct=None if row[2] is None else float(row[2]),
-                deliv_qty=None if row[3] is None else float(row[3]),
-                turnover=None if row[4] is None else float(row[4]),
-            )
-            for row in rows
-        }
-        # The baseline is the twenty sessions *before* the most recent one. Including
-        # the ignition day in its own baseline would damp the ratio it is measured by,
-        # which is the one number meant to show the day was abnormal.
-        prior = [row[3] for row in rows[:-1] if row[3] is not None][-20:]
-        baseline = sum(float(value) for value in prior) / 20.0 if len(prior) == 20 else None
-        out[asset_id] = DeliveryHistory(days, baseline)
-    return out
-
-
-# Filing subjects that mark a move as event-driven rather than purely technical. Matched
-# against recent headlines for the candidate itself; a sector-wide story is not a catalyst
-# for one stock, which is why the match goes through news_impacts.asset_id rather than
-# through a text search over every article.
-CATALYST_KEYWORDS = ("financial result", "quarterly result", "order", "capacity",
-                     "expansion", "debt", "rating")
-CATALYST_NEWS_DAYS = 7
-
-
-def load_news_catalysts(cur, asset_ids: list[str], today: str) -> set[str]:
-    """Assets with a recent headline on one of the catalyst subjects.
-
-    Deliberately narrow. News may mark a move as event-driven and rank it ahead of a
-    purely technical one; it may never create a setup, so nothing here can qualify a
-    stock that the price and delivery rules rejected.
-    """
-    cur.execute(
-        """select distinct i.asset_id::text
-             from public.news_impacts i
-             join public.news_articles a on a.id=i.article_id
-            where i.asset_id = any(%s::uuid[])
-              and i.verified_evidence
-              and a.published_at >= %s::date - make_interval(days => %s)
-              and (%s)""" % ("%s", "%s", "%s",
-                             " or ".join(["lower(a.title || ' ' || coalesce(a.description,'')) like %s"] * len(CATALYST_KEYWORDS))),
-        (asset_ids, today, CATALYST_NEWS_DAYS, *[f"%{word}%" for word in CATALYST_KEYWORDS]),
-    )
-    return {row[0] for row in cur.fetchall()}
-
-
-def load_recent_results(cur, asset_ids: list[str], session_dates: list[str],
-                        today: str) -> dict[str, int]:
-    """Trading sessions since the most recent declared result, per asset.
-
-    Counted in sessions actually present in the price history rather than calendar
-    days, so exchange holidays do not make a result look older than it is.
-    """
-    cur.execute(
-        """select asset_id::text,max(event_date)::text from public.corporate_events
-            where asset_id = any(%s::uuid[]) and event_type='RESULTS' and event_date <= %s::date
-              and event_date >= %s::date - interval '40 days'
-            group by asset_id""",
-        (asset_ids, today, today),
-    )
-    sessions_by_date = {value: index for index, value in enumerate(session_dates)}
-    latest_index = len(session_dates) - 1
-    out: dict[str, int] = {}
-    for asset_id, event_date in cur.fetchall():
-        if event_date is None:
-            continue
-        index = sessions_by_date.get(event_date)
-        if index is None:
-            # The result fell on a non-trading day; count from the next session that did trade.
-            later = [value for value in session_dates if value >= event_date]
-            if not later:
-                continue
-            index = sessions_by_date[later[0]]
-        out[asset_id] = max(0, latest_index - index)
-    return out
-
-
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--market", choices=("IN",), default="IN")
@@ -1359,27 +700,11 @@ def main() -> None:
             cur.execute("""select asset_id::text,source,updated_at from public.latest_quotes
                 where asset_id = any(%s::uuid[])""", (asset_ids,))
             quote_rows = cur.fetchall()
-            cur.execute("""with chosen as (
-                  select a.id from public.assets a
-                   where a.country='IN' and a.ticker in ('NIFTY','NIFTY 50','NIFTYBEES')
-                   order by (select max(x.date) from public.daily_ohlcv x where x.asset_id=a.id) desc nulls last,
-                            (select count(*) from public.daily_ohlcv x where x.asset_id=a.id) desc,
-                            case a.ticker when 'NIFTY' then 0 when 'NIFTY 50' then 1 else 2 end
-                   limit 1
-                )
-                select o.asset_id::text,o.date,o.open,o.high,o.low,o.close,o.volume
-                  from public.daily_ohlcv o join chosen c on c.id=o.asset_id
-                 order by o.date desc limit 260""")
+            cur.execute("""select o.asset_id::text,o.date,o.open,o.high,o.low,o.close,o.volume
+                from public.daily_ohlcv o where o.asset_id in (
+                  select id from public.assets where country='IN' and ticker in ('NIFTY','NIFTY 50')
+                ) order by o.date desc limit 80""")
             benchmark_rows = list(reversed(cur.fetchall()))
-            delivery_by_asset = load_delivery(cur, asset_ids)
-            cur.execute("""select version,sample_sessions,points
-                from public.market_volume_curves
-                where market='IN' and active and sample_sessions >= 40
-                order by generated_at desc limit 1""")
-            curve_row = cur.fetchone()
-            volume_curve = ({"market": "IN", "version": curve_row[0],
-                             "sampleSessions": int(curve_row[1]), "points": curve_row[2]}
-                            if curve_row else None)
         benchmark = [float(row[5]) for row in benchmark_rows]
         history_by_asset = {}
         for row in history_rows:
@@ -1389,16 +714,6 @@ def main() -> None:
         bars_by_asset = {asset_id: _rows_to_bars(rows) for asset_id, rows in history_by_asset.items()}
         today = now.astimezone(IST).date().isoformat()
         live_date = today if india_session_minutes(today, now) is not None else None
-        session_dates = sorted({str(row[1]) for row in history_rows})
-        with conn.cursor() as cur:
-            results_by_asset = load_recent_results(cur, asset_ids, session_dates, today)
-            try:
-                news_catalysts = load_news_catalysts(cur, asset_ids, today)
-            except psycopg2.Error:
-                # News is supporting evidence for ranking, never a gate. A provider outage
-                # or a missing table must not stop the scan or change any technical verdict.
-                conn.rollback()
-                news_catalysts = set()
         regime, contexts = build_market_contexts(bars_by_asset, live_date)
         payload = []
         assessed_dates = set()
@@ -1410,30 +725,11 @@ def main() -> None:
             asset_bars = bars_by_asset.get(asset_id, [])[-80:]
             session_minutes = india_session_minutes(asset_bars[-1].date, now) if asset_bars else None
             context = contexts.get(asset_id, MarketContext(regime, None, None))
-            days_since_results = results_by_asset.get(asset_id)
-            recent_results = (days_since_results is not None
-                              and days_since_results <= EP_MAX_DAYS_SINCE_RESULTS)
-            catalyst_tag = (CATALYST_EP if recent_results or asset_id in news_catalysts
-                            else CATALYST_TECH)
-            result = assess_trend_continuation(
-                asset_bars, benchmark, session_minutes, context,
-                delivery=delivery_by_asset.get(asset_id),
-                days_since_results=days_since_results, catalyst_tag=catalyst_tag)
+            result = assess_trend_continuation(asset_bars, benchmark, session_minutes, context)
             result.setdefault("metrics", {}).update(
                 market_regime_positive=context.regime_positive, strength_rank_120=context.strength_rank,
                 avg_traded_value_20=context.avg_traded_value,
             )
-            tod_rvol = None
-            if (session_minutes is not None and valid_session_volume_curve(volume_curve, "IN")
-                    and len(asset_bars) >= 21):
-                completed = asset_bars[:-1]
-                average_volume = sum(bar.volume for bar in completed[-20:]) / 20.0
-                open_minutes, close_minutes = india_session_bounds(asset_bars[-1].date)
-                progress = min(1.0, max(0.0, session_minutes / (close_minutes - open_minutes)))
-                share = expected_volume_share(volume_curve, progress)
-                if average_volume > 0 and share > 0:
-                    tod_rvol = asset_bars[-1].volume / (average_volume * share)
-            result["metrics"]["tod_rvol"] = tod_rvol
             source, quote_time = quotes.get(asset_id, (None, None))
             execution_verified = execution_data_verified(source, quote_time, now)
             result.setdefault("metrics", {})["execution_data_verified"] = execution_verified
@@ -1444,30 +740,20 @@ def main() -> None:
                 result["reasons"].append("Ready state withheld until a fresh Breeze quote verifies the live session.")
             if result["status"] in ("NOT_QUALIFIED", "INVALID_DATA"):
                 continue
-            metrics = result["metrics"]
             payload.append((asset_id, ticker, name, result["asof_market_date"], result["status"], result.get("ready", False),
                             result["score"], result.get("entry"), result.get("stop"), result.get("target"),
-                            json.dumps(metrics), json.dumps(result["reasons"]), FEATURE_VERSION,
-                            metrics.get("setup_variant"), metrics.get("deliv_pct"),
-                            metrics.get("rel_deliv_20d"), metrics.get("ibs_close"),
-                            metrics.get("nifty_alpha_1d"), tod_rvol, metrics.get("catalyst_tag"),
-                            metrics.get("days_since_results")))
+                            json.dumps(result["metrics"]), json.dumps(result["reasons"]), FEATURE_VERSION))
         with conn.cursor() as cur:
             cur.execute("""delete from public.trend_continuation_signals s using public.assets a
                 where s.asset_id=a.id and (a.exchange <> 'NSE' or s.asof_market_date=any(%s::date[]))""",
                 (sorted(assessed_dates),))
             if payload:
                 execute_values(cur, """insert into public.trend_continuation_signals
-                    (asset_id,ticker,name,asof_market_date,status,ready,score,entry,stop,target,metrics,reasons,feature_version,
-                     setup_variant,deliv_pct,rel_deliv_20d,ibs_close,nifty_alpha_1d,tod_rvol,catalyst_tag,days_since_results)
+                    (asset_id,ticker,name,asof_market_date,status,ready,score,entry,stop,target,metrics,reasons,feature_version)
                     values %s on conflict(asset_id,asof_market_date,feature_version) do update set
                     ticker=excluded.ticker,name=excluded.name,status=excluded.status,ready=excluded.ready,
                     score=excluded.score,entry=excluded.entry,stop=excluded.stop,target=excluded.target,
-                    metrics=excluded.metrics,reasons=excluded.reasons,computed_at=now(),
-                    setup_variant=excluded.setup_variant,deliv_pct=excluded.deliv_pct,
-                    rel_deliv_20d=excluded.rel_deliv_20d,ibs_close=excluded.ibs_close,
-                    nifty_alpha_1d=excluded.nifty_alpha_1d,tod_rvol=excluded.tod_rvol,catalyst_tag=excluded.catalyst_tag,
-                    days_since_results=excluded.days_since_results""", payload, page_size=500)
+                    metrics=excluded.metrics,reasons=excluded.reasons,computed_at=now()""", payload, page_size=500)
         conn.commit()
         print(f"[trend-continuation] assessed={len(assets)} stored={len(payload)} regime_positive={regime} version={FEATURE_VERSION}")
     finally:

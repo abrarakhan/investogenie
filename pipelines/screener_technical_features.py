@@ -22,13 +22,6 @@ INCREMENTAL_WRITE_DAYS = 120
 # 320 calendar days comfortably contains the 200 completed trading sessions
 # needed by the longest indicator, including weekends and exchange holidays.
 INCREMENTAL_LOOKBACK_DAYS = 320
-MAX_STORED_ALPHA_ABS = 10000.0
-
-
-def bounded_nifty_alpha(stock_change: float, benchmark_change: float) -> float | None:
-    """Reject provider discontinuities that cannot fit the persisted alpha contract."""
-    alpha = stock_change - benchmark_change
-    return None if abs(alpha) >= MAX_STORED_ALPHA_ABS else round(alpha, 2)
 
 
 def history_start_date(today: date, years: int, incremental: bool) -> date:
@@ -135,86 +128,6 @@ def compute_fundamental_features(reports: pd.DataFrame) -> list[tuple]:
             metrics["historyYears"], FUNDAMENTAL_FEATURE_VERSION,
         ))
     return payload
-
-
-def write_midway_columns(cur, since: str | None) -> int:
-    """Fill the mid-way evidence columns on the screener's point-in-time rows.
-
-    Done as two set-based statements rather than inside the pandas feature pass. The
-    inputs live in other tables and the work is a join plus one window function, which
-    Postgres does far more cheaply than a per-row Python loop -- and on a two-CPU host
-    this job shares its CPUs with page rendering.
-
-    Delivery is matched per session so a historical row keeps the delivery that session
-    actually had; backfilling today's figure across history would make every backtest of
-    these filters wrong in the same flattering direction.
-    """
-    bounds = ("and d.date >= %s::date", (since,)) if since else ("", ())
-    cur.execute(
-        f"""
-        with delivery as (
-          select m.asset_id, m.date, m.deliv_pct, m.deliv_qty,
-                 avg(m.deliv_qty) over (
-                   partition by m.asset_id order by m.date
-                   rows between 20 preceding and 1 preceding
-                 ) baseline
-            from public.daily_delivery_metrics m
-           where not m.is_etf
-        )
-        update public.screener_technical_daily d
-           set deliv_pct = delivery.deliv_pct,
-               rel_deliv_20d = case
-                 when delivery.baseline is null or delivery.baseline <= 0 then null
-                 else round((delivery.deliv_qty / delivery.baseline)::numeric, 2) end
-          from delivery
-         where delivery.asset_id = d.asset_id and delivery.date = d.date {bounds[0]}
-        """,
-        bounds[1],
-    )
-    delivery_rows = cur.rowcount
-    # One session of relative performance against the index. change_pct_1d is already on
-    # the row, so this only needs the benchmark's own move for the same date.
-    cur.execute(
-        f"""
-        with benchmark as (
-          select o.date,
-                 (o.close / nullif(lag(o.close) over (order by o.date), 0) - 1) * 100 change_pct
-            from public.daily_ohlcv o
-           where o.asset_id in (
-             select id from public.assets where country='IN' and ticker in ('NIFTY','NIFTY 50')
-           )
-        )
-        update public.screener_technical_daily d
-           set nifty_alpha_1d = case
-                 -- Corporate actions and unadjusted provider discontinuities can create
-                 -- impossible one-day returns.  They are not relative-strength evidence,
-                 -- and must not abort the entire point-in-time feature rebuild.
-                 when abs(d.change_pct_1d - benchmark.change_pct) >= {MAX_STORED_ALPHA_ABS} then null
-                 else round((d.change_pct_1d - benchmark.change_pct)::numeric, 2)
-               end
-          from benchmark
-         where benchmark.date = d.date and d.change_pct_1d is not null
-           and benchmark.change_pct is not null {bounds[0]}
-        """,
-        bounds[1],
-    )
-    alpha_rows = cur.rowcount
-    # The variant and catalyst are the scan's verdict, not a feature of the bar, so they
-    # are carried over rather than recomputed; a second implementation would drift.
-    cur.execute(
-        f"""
-        update public.screener_technical_daily d
-           set setup_variant = t.setup_variant,
-               catalyst_tag = t.catalyst_tag,
-               days_since_results = t.days_since_results,
-               ibs_close = t.ibs_close,
-               tod_rvol = t.tod_rvol
-          from public.trend_continuation_signals t
-         where t.asset_id = d.asset_id and t.asof_market_date = d.date {bounds[0]}
-        """,
-        bounds[1],
-    )
-    return delivery_rows + alpha_rows + cur.rowcount
 
 
 def main() -> None:
@@ -326,12 +239,8 @@ def main() -> None:
                     fundamental_payload,
                     page_size=2000,
                 )
-            # India-only inputs; the statements are no-ops elsewhere because the joins
-            # find nothing, so there is no need to branch on market here.
-            midway = write_midway_columns(cur, write_since)
         conn.commit()
-        print(f"[screener-features] wrote {written} rows, {midway} mid-way column updates "
-              f"({args.market or 'ALL'}, {'incremental' if incremental else 'full'})")
+        print(f"[screener-features] wrote {written} rows ({args.market or 'ALL'}, {'incremental' if incremental else 'full'})")
     finally:
         conn.close()
 

@@ -5,20 +5,6 @@ import { resolve } from "node:path";
 const root = process.cwd();
 const worker = resolve(root, "pipelines/strategy_math_worker.py");
 
-/**
- * How long one engine batch may take before it is killed.
- *
- * This was 30s, which a batch of a few thousand stocks could not meet whenever it had to
- * share the box's two CPUs. The engine was SIGTERMed, the page it was rendering failed, and
- * the browser aborted waiting -- the nginx 499s on /terminal/in/strong-swing. Killing the
- * work early does not make a slow page fast; it only turns it into a broken one.
- *
- * nginx allows 300s upstream, so 90s is well inside what the proxy will wait for while still
- * bounding a stuck worker. The contention itself is addressed separately, by the recurring
- * trend scan in scripts/run-with-nse-sync.mjs no longer holding a CPU continuously.
- */
-const ENGINE_TIMEOUT_MS = Number(process.env.PYTHON_ENGINE_TIMEOUT_MS ?? 90_000);
-
 function pythonBin(): string {
   // The service wrapper sets PYTHON_BIN to the release venv. Do not inspect the
   // local .venv here: Turbopack follows that symlink during builds, and on macOS
@@ -44,7 +30,7 @@ export async function runPythonStrategyBatch<TInput, TResult>(
     });
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
-    const timer = setTimeout(() => child.kill("SIGTERM"), ENGINE_TIMEOUT_MS);
+    const timer = setTimeout(() => child.kill("SIGTERM"), 30_000);
     child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
     child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
     child.once("error", (error) => {

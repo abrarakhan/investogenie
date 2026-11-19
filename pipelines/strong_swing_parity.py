@@ -165,8 +165,7 @@ HARD_RISK_GATES = {
 # The session gates belong here too: they are decided by the live session's high and the quote
 # at the time, and this check replays from completed bars with no session at all, so a replay
 # passes them whatever the capture recorded.
-TIME_VARYING_GATES = {"live_quote", "live_spread", "live_circuit", "session_hold",
-                      "session_reversal", "entry_open"}
+TIME_VARYING_GATES = {"live_quote", "live_spread", "live_circuit", "session_hold", "session_reversal"}
 
 
 def bar_gates(bars: list[Bar], market: str = "IN", stop_mult: float = 1.5) -> dict[str, bool]:
@@ -227,15 +226,11 @@ def expected_status(gates: list[dict], failed: bool) -> str:
     hard_gates = HARD_RISK_GATES if benchmark_ok else HARD_RISK_GATES - {"freshness", "market_shock"}
     hard_risk = any(not ok for key, ok in passed.items() if key in hard_gates and key not in advisory)
     extension = not passed.get("sma20_extension", True)
-    # v8 added entry_open beside entry_zone; both only say where the price is, so both lead to
-    # WAIT_FOR_ENTRY. Captures from before it existed default to passing, which reproduces the
-    # engine's v7 behaviour for them.
-    entry_zone = not passed.get("entry_zone", True) or not passed.get("entry_open", True)
-    # The session gates were blocking in v6 and advisory from v7, and this checker has to
-    # reproduce whichever rule the capture was written under. The capture itself says which:
-    # a gate recorded as non-blocking cannot have moved its own status. Captures from before
+    entry_zone = not passed.get("entry_zone", True)
+    # Slipping below the last completed close only waits; handing back more than the entry
+    # zone's own width is a hard risk, handled by HARD_RISK_GATES above. Captures from before
     # these gates existed default to passing, reproducing the older behaviour for them.
-    session_hold = not passed.get("session_hold", True) and "session_hold" not in advisory
+    session_hold = not passed.get("session_hold", True)
     blocking = [gate for gate in gates if gate.get("blocking", True)]
     technical = all(gate.get("passed") for gate in blocking if gate.get("category") == "technical")
     if failed:

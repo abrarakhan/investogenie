@@ -37,13 +37,9 @@ describe("protected swing execution plans", () => {
     expect(validateExecutionPlanPurchase(plan({ status: "WAIT_FOR_ENTRY" }), purchase)).toMatch(/not execution ready/);
     expect(validateExecutionPlanPurchase(plan(), { ...purchase, nowMs: purchase.nowMs + 31 * 60_000 })).toMatch(/stale/);
     expect(validateExecutionPlanPurchase(plan(), { ...purchase, buyPrice: 98 })).toMatch(/confirmed entry/);
-    // Entry 100 with ATR 2: the buy zone is the band 100.50 to 101.50. It has a floor as
-    // well as a ceiling, and the floor must refuse the trigger-hugging fills the engine's
-    // entry_zone gate now refuses — otherwise the two disagree about the same trade.
-    expect(validateExecutionPlanPurchase(plan(), { ...purchase, buyPrice: 100.2 })).toMatch(/at or above/);
-    expect(validateExecutionPlanPurchase(plan(), { ...purchase, buyPrice: 100.6 })).toBeNull();
+    // Entry 100 with ATR 2: the buy zone ends at 101.
     expect(validateExecutionPlanPurchase(plan(), { ...purchase, buyPrice: 101 })).toBeNull();
-    expect(validateExecutionPlanPurchase(plan(), { ...purchase, buyPrice: 102 })).toMatch(/at or below/);
+    expect(validateExecutionPlanPurchase(plan(), { ...purchase, buyPrice: 101.5 })).toMatch(/buy zone/);
   });
 
   it("protects subsequent edits without affecting manual trades", () => {

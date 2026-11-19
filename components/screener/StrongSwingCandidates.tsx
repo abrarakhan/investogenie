@@ -1,19 +1,12 @@
 "use client";
 
-import { createContext, useContext } from "react";
 import Link from "next/link";
 import type { StrongSwingCandidate } from "@/features/strong-swing/contracts";
-import StrategyRecordNote from "@/components/screener/StrategyRecordNote";
-import type { StrategyRecord } from "@/lib/strategyRecord";
 import type { StrongSwingStatus } from "@/lib/analytics/strongSwing";
 import { STRONG_SWING_BLOCKED_BUY_LABEL, STRONG_SWING_STATUS_LABEL } from "@/lib/candidateStatusCopy";
 import TradingViewChartModal, { useTradingViewChart, type ChartGestureProps, type ChartSymbol } from "@/components/charts/TradingViewChartModal";
 import LazyCandidateGroup, { type LazySource } from "@/components/screener/LazyCandidateGroup";
 import { LAZY_STATUSES } from "@/lib/lazyCandidateGroups";
-
-/** The record is one measurement for the whole strategy, so every card reads the same
- *  value rather than each group passing it down a prop chain it has no other use for. */
-const RecordContext = createContext<StrategyRecord | null>(null);
 
 const STATUS_STYLE: Record<StrongSwingStatus, string> = {
   EXECUTION_READY: "border-emerald-400/35 bg-emerald-400/10 text-emerald-300",
@@ -50,7 +43,6 @@ function rankReason(candidate: StrongSwingCandidate): string {
 }
 
 function CandidateCard({ candidate, planId, chartGesture }: { candidate: StrongSwingCandidate; planId: string | null; chartGesture: ChartGestureProps }) {
-  const record = useContext(RecordContext);
   const passed = candidate.gates.filter((gate) => gate.passed).length;
   const ledgerParams = new URLSearchParams({
     assetId: candidate.assetId,
@@ -155,8 +147,6 @@ function CandidateCard({ candidate, planId, chartGesture }: { candidate: StrongS
           <p className="mt-2 text-[11px] leading-relaxed text-white/38">
             Records your purchase against this frozen plan. Broker order placement is not connected yet.
           </p>
-          {/* Beside the button, because this is the moment the number is worth knowing. */}
-          <StrategyRecordNote record={record} />
           </>
         ) : (
           <>
@@ -225,7 +215,7 @@ function CandidateGroup({
   );
 }
 
-export default function StrongSwingCandidates({ candidates, counts, planIds, market, record = null }: {
+export default function StrongSwingCandidates({ candidates, counts, planIds, market }: {
   /** Cards for groups open by default; collapsed groups load on demand when `market` is set. */
   candidates: StrongSwingCandidate[];
   /** Exact per-status totals when the server trimmed `candidates` to the rendered cards. */
@@ -233,8 +223,6 @@ export default function StrongSwingCandidates({ candidates, counts, planIds, mar
   planIds: Record<string, string>;
   /** Enables on-demand loading of the collapsed groups for this market. */
   market?: string;
-  /** What the strategy has actually done, from the historical replay. */
-  record?: StrategyRecord | null;
 }) {
   const { chart, closeChart, bindChartGesture } = useTradingViewChart();
   const ranked = candidates;
@@ -247,10 +235,9 @@ export default function StrongSwingCandidates({ candidates, counts, planIds, mar
   const executionReady = of("EXECUTION_READY");
 
   return (
-    <RecordContext.Provider value={record}>
     <div className="space-y-8">
       <div className="rounded-lg border border-cyan-400/15 bg-cyan-400/[0.035] px-4 py-3 text-xs leading-relaxed text-cyan-50/65">
-        Strong Swing starts with the same base Swing classifier. Every base Swing setup is assessed; base rank is its position in that list. Pullback candidates are confirmed breakouts whose live price sits outside the buy zone — the band from 0.25 to 0.75 ATR above the confirmed entry — or whose session opened outside it, or that sit more than 15% above the 20-day average. The zone has a floor as well as a ceiling: across a decade of replayed signals, fills in the first quarter-ATR above the trigger lost money while the rest of the band made it. The session&rsquo;s open has to be in the band too, because the one-minute paths of those signals show the band only pays on days that gapped into it — days that drift in later lose money whichever side they come from. They are not buyable, and a later pullback does not reactivate them automatically: Execution ready still needs a current breakout with two confirming closes, so most re-qualify only by setting up again. Strong rank is recalculated after confirmation, liquidity, volatility, circuit-behaviour and entry-safety gates.
+        Strong Swing starts with the same base Swing classifier. Every base Swing setup is assessed; base rank is its position in that list. Pullback candidates are confirmed breakouts that are above the buy zone (confirmed entry + 0.50 ATR) or more than 15% above the 20-day average. They are not buyable, and a later pullback does not reactivate them automatically: Execution ready still needs a current breakout with two confirming closes, so most re-qualify only by setting up again. Strong rank is recalculated after confirmation, liquidity, volatility, circuit-behaviour and entry-safety gates.
         <span className="mt-2 block text-white/45">Double-click a stock card, or long-press it on mobile, to open its interactive chart.</span>
       </div>
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6 sm:gap-3">
@@ -268,10 +255,6 @@ export default function StrongSwingCandidates({ candidates, counts, planIds, mar
           </div>
         ))}
       </div>
-
-      {/* Also at the top, because on most days no card is buyable and the record would
-          otherwise be invisible on exactly the days it most needs reading. */}
-      <StrategyRecordNote record={record} />
 
       {total("EXECUTION_READY") === 0 && (
         <div className="rounded-lg border border-amber-400/20 bg-amber-400/[0.04] px-4 py-5 text-sm text-amber-100/75">
@@ -305,6 +288,5 @@ export default function StrongSwingCandidates({ candidates, counts, planIds, mar
       />
       <TradingViewChartModal chart={chart} onClose={closeChart} />
     </div>
-    </RecordContext.Provider>
   );
 }

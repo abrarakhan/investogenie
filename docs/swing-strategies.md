@@ -80,60 +80,23 @@ session hold     live price ≥ the newest completed close      → otherwise WA
 session reversal today's high − live price ≤ 0.50 × ATR(14)    → otherwise RISK_OFF
 ```
 
-The entry band (v7) has a floor as well as a ceiling: the live price must sit between
-0.25 and 0.75 ATR above the confirmed entry. The old rule was a ceiling alone, on the
-reasoning that nearer the trigger is a better price. The historical replay
-(`pipelines/strong_swing_replay.py`) says the reverse, in both halves of a decade split
-before the thresholds were chosen: fills in the first 0.25 ATR returned -0.41% per trade
-in 2017-22 and -0.32% in 2023-26, against +0.68% and +0.87% for 0.25-0.75 ATR, and those
-flat fills were 44% of every signal. A trigger only just exceeded is not a cheap entry,
-it is an unconvincing one. The ceiling moved to 0.75 ATR because the effect holds there
-and collapses beyond it on a sample too thin to read. The buy-zone check in
-`lib/swingExecutionPlans.ts` mirrors both edges; they must not drift apart.
+Before these rules the session reached the gates only as the live price, tested for its
+distance from the entry trigger but never for direction. A stock could gap up, fail at the
+high and hand the whole move back while still sitting above the trigger, and every gate
+passed: MEESHO did this on 2026-11-16 and ranked first, EXECUTION_READY, through the morning
+(open 259.00, high 261.10, back to 255.63 against Friday's close of 257.07, with the entry at
+252.96 never breached). The give-back ceiling is deliberately the entry zone's own 0.50 ATR
+width rather than a second tuned number: a give-back wider than the whole actionable zone is
+no longer the setup the completed bars described. Both rules are inert outside a live session,
+and a session dated at the newest completed bar is not a live session — that comparison would
+be circular. `pipelines/testdata/meesho_2026_11_16.json` holds the bars that produced the
+defect, replayed by `pipelines/test_strong_swing_session.py`.
 
-The opening price (v8) is held to the same band. The band's edge belongs specifically to
-days that *gapped* into it. One-minute paths for 1,295 entries over the decade
-(`pipelines/intraday_entry_study.py`) separate the cases:
+Blocking execution gates: fresh data; price ≥ ₹20 / $2; 20-session traded value ≥ ₹1 crore / $1M; live price ≥ entry × 0.999 and ≤ entry + 0.5 ATR; 5-session return ≤ 30%; 10-session ≤ 50%; ≤ 15% above SMA20; ATR ≤ 5%; stop ≤ 7%; fewer than two circuit-like sessions in 20; benchmark not down 4% in two sessions; India: verified results calendar with no results within three sessions; India live session: Breeze quote ≤ 5 min, spread ≤ 0.75%, ≥ 3% above the lower circuit when the band is known. Advisory: market regime (benchmark above a rising SMA50), and the results check in the US, where the calendar has no coverage.
 
-```
-opened inside the band             565 trades   48.8% win   +0.40% avg
-opened below the floor, rose in    247 trades   41.7% win   -0.25% avg
-opened above the ceiling, fell in  483 trades   48.0% win   -0.09% avg
-```
+Status order: `INVALIDATED` (latest close < level − 1 ATR) → `RISK_OFF` (hard execution gate, results and intraday reversal included) → `UNVERIFIED` (benchmark absent, behind the market or too short for its 50-SMA) → `WAIT_FOR_ENTRY` (technically confirmed, but outside the buy zone, above the SMA20 limit, or below the newest completed close) → `EXECUTION_READY` → `WATCHLIST`. A reversal therefore outranks a mere slip below the prior close.
 
-Both of the later-entry halves lose, and it is not a timing effect: they are worse in
-every part of the session, the opening minute included. The screen re-reads the band
-against the live quote every minute, so before v8 it offered all three sets and the
-per-trade edge was +0.09% rather than +0.40%. The `entry_open` gate requires the session's
-own open to be in the band as well, which removes 730 of those 1,295 entries.
-
-Two limits are deliberate. Outside an open session there is no next open to read, so the
-gate stands aside exactly as the `live_*` gates do rather than making nothing actionable
-out of hours. And a dated session whose opening price is missing *fails*: passing would
-restore the v7 behaviour invisibly, on a data gap rather than a decision. The gate also
-does not claim gapped-in days always work — that population still wins only 48.8% of the
-time, and MEESHO on 2026-11-16 opened inside the band at 0.69 ATR and reversed anyway
-(pinned in `pipelines/test_strong_swing_session.py`).
-
-The session rules (`session_hold`, `session_reversal`) are advisory from v7. They were
-added in v6 because the session reached the gates only as the live price, tested for its
-distance from the trigger but never for direction: MEESHO gapped up on 2026-11-16, failed
-at the high and handed the move back while still sitting above a trigger it never
-breached, and ranked first as EXECUTION_READY through the morning. A controlled replay
-then measured them — one arm withholding the session, one not, identical in every other
-respect — and found an identical 47.3% win rate while the gates removed four of every
-five signals. They are reported, in plain sight, and no longer decide. A MEESHO-shaped
-setup reads EXECUTION_READY again with both gates failing on screen; that is the
-deliberate trade. Both are inert outside a live session, and a session dated at the newest
-completed bar is not a live session — that comparison would be circular.
-`pipelines/testdata/meesho_2026_11_16.json` holds the bars, replayed by
-`pipelines/test_strong_swing_session.py`.
-
-Blocking execution gates: fresh data; price >= Rs 20 / $2; 20-session traded value >= Rs 1 crore / $1M; live price between entry + 0.25 ATR and entry + 0.75 ATR; 5-session return <= 30%; 10-session <= 50%; <= 15% above SMA20; ATR <= 5%; stop <= 7%; fewer than two circuit-like sessions in 20; benchmark not down 4% in two sessions; India: verified results calendar with no results within three sessions; India live session: Breeze quote <= 5 min, spread <= 0.75%, >= 3% above the lower circuit when the band is known. Advisory: market regime (benchmark above a rising SMA50), the two session rules, and the results check in the US, where the calendar has no coverage.
-
-Status order: `INVALIDATED` (latest close < level - 1 ATR) -> `RISK_OFF` (hard execution gate, results included) -> `UNVERIFIED` (benchmark absent, behind the market or too short for its 50-SMA) -> `WAIT_FOR_ENTRY` (technically confirmed, but the live price or the session's open is outside the entry band, or it is above the SMA20 limit) -> `EXECUTION_READY` -> `WATCHLIST`.
-
-Purchase validation refuses a fill outside the entry band (below entry + 0.25 ATR, above entry + 0.75 ATR) or at/above the target. Auto-buy additionally requires the market-regime gate to pass and the current model version.
+Purchase validation refuses a fill below entry × 0.999, above entry + 0.5 ATR, or at/above the target. Auto-buy additionally requires the market-regime gate to pass and the current model version.
 
 ## 3. Armed Strong Swing (`/terminal/[market]/armed-swing`)
 
@@ -167,8 +130,7 @@ The review found no arithmetic error. The findings were places where the rules, 
 | 4 | Qullamaggie and Darvas tags vanished on the breakout, with no volume test. | The breakout day keeps the tag with a triggered state, its volume ratio and a confirmed flag; shown on the Swing page. |
 | 5 | Darvas and PTJ stops had no width limit (average 25% and 11%). | Darvas boxes over 15% are not tagged; PTJ's 15% is measured from the entry; every strategy stop is capped from the price paid. |
 | 6 | Strong Swing had no results-date gate. | Results blackout gate, blocking in India. |
-| 7 | Strong Swing stayed ready below its entry; purchases had no upper bound short of the target. | Outside the entry band is `WAIT_FOR_ENTRY`; purchases outside entry + 0.25 to 0.75 ATR are refused. |
-| 8 | The screen read the band against the live quote all session, so it also offered the 730 days that walked into the band rather than opening in it — measured at -0.15% per trade against +0.40%. | `entry_open` holds the session's open to the same band; outside an open session it stands aside. |
+| 7 | Strong Swing stayed ready below its entry; purchases had no upper bound short of the target. | Below the entry is `WAIT_FOR_ENTRY`; purchases above entry + 0.5 ATR are refused. |
 | 8 | Strong Swing trend did not require SMA50 > SMA200; market regime blocked nothing. | SMA50 > SMA200 required. Regime stays advisory for manual entries; auto-buy requires it. |
 | 9 | Minervini: 8% cap from the pivot, no breakout volume, unbounded first contraction. | Cap from the price paid; above-average volume once through the pivot; contractions ≤ 35%. |
 | 10 | Armed: looser trend, advisory dry-up, no pivot age. | Full 50 > 150 > 200 stack with close above the 50-day; dry-up required; pivot ≥ 3 sessions old. |

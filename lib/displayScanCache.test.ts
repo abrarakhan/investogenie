@@ -68,22 +68,13 @@ describe("cachedForDisplay", () => {
     expect(calls).toBe(refreshes);
   });
 
-  it("never makes the reader wait when any previous result exists", async () => {
-    // The page render must not block on a market scan. A slow scan used to make
-    // the browser give up (nginx 499) while the scan kept running.
+  it("makes the reader wait for a fresh scan once the result is too old", async () => {
     let calls = 0;
-    let release!: () => void;
-    const compute = async () => {
-      calls++;
-      if (calls > 1) await new Promise<void>((resolve) => { release = resolve; });
-      return calls;
-    };
+    const compute = async () => ++calls;
     await cachedForDisplay("k", compute);
     vi.clearAllTimers(); // age the result without keep-warm refreshes
-    vi.setSystemTime(Date.now() + DISPLAY_SCAN_MAX_AGE_MS * 10);
-    expect(await cachedForDisplay("k", compute)).toBe(1);
-    expect(calls).toBe(2); // and a refresh was started behind it
-    release();
+    vi.setSystemTime(Date.now() + DISPLAY_SCAN_MAX_AGE_MS);
+    expect(await cachedForDisplay("k", compute)).toBe(2);
   });
 
   it("shares one in-flight computation between concurrent requests", async () => {
@@ -113,43 +104,6 @@ describe("cachedForDisplay", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(await cachedForDisplay("k", compute)).toBe("good");
     warn.mockRestore();
-  });
-
-  it("serves the last good result when a refresh fails, and still reports it", async () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    let calls = 0;
-    const compute = async () => {
-      calls++;
-      if (calls > 1) throw new Error("Python momentum engine failed (SIGTERM)");
-      return "good";
-    };
-    expect(await cachedForDisplay("k", compute)).toBe("good");
-    vi.setSystemTime(Date.now() + DISPLAY_SCAN_MAX_AGE_MS + 1);
-    expect(await cachedForDisplay("k", compute)).toBe("good");
-    expect(calls).toBe(2);
-    await vi.advanceTimersByTimeAsync(0); // let the background refresh reject
-    expect(warn).toHaveBeenCalled();
-    warn.mockRestore();
-  });
-
-  it("reports the true age of a stale result so the screen can say so", async () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const computedAt = Date.now();
-    let calls = 0;
-    const compute = async () => {
-      calls++;
-      if (calls > 1) throw new Error("boom");
-      return { scan: 1 };
-    };
-    await cachedForDisplay("k", compute);
-    vi.setSystemTime(computedAt + DISPLAY_SCAN_MAX_AGE_MS + 1);
-    const served = await cachedForDisplay("k", compute);
-    expect(displayScanComputedAt(served)).toBe(computedAt);
-    warn.mockRestore();
-  });
-
-  it("still throws when a scan fails and there is nothing to fall back on", async () => {
-    await expect(cachedForDisplay("k", async () => { throw new Error("boom"); })).rejects.toThrow("boom");
   });
 
   it("records when each result was computed", async () => {
