@@ -6,6 +6,7 @@ import json
 import math
 import sys
 
+from strategy_math.common import Bar
 from strategy_math.strong_swing import assess as assess_strong_swing
 from strategy_math.momentum import assess_both as assess_momentum
 from strategy_math.trend_execution import assess as assess_trend_execution
@@ -37,8 +38,13 @@ def main() -> int:
     request = json.load(sys.stdin)
     engine = request.get("engine")
     inputs = request.get("inputs")
+    shared = request.get("shared")
     if not isinstance(inputs, list):
         raise ValueError("inputs must be a list")
+    if isinstance(shared, dict) and shared:
+        if isinstance(shared.get("benchmarkBars"), list):
+            shared = {**shared, "benchmarkBars": [Bar.from_json(item) for item in shared["benchmarkBars"]]}
+        inputs = [{**shared, **item} if isinstance(item, dict) else item for item in inputs]
     if engine == "strong_swing":
         results = [assess_strong_swing(item) for item in inputs]
         status_order = {"EXECUTION_READY": 0, "WAIT_FOR_ENTRY": 1, "WATCHLIST": 2, "UNVERIFIED": 3, "RISK_OFF": 4, "INVALIDATED": 5}

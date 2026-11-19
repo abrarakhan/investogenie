@@ -12,9 +12,8 @@ import { query } from "@/lib/db";
 import { DEFAULT_SETTINGS, type SwingSettings } from "@/lib/settings";
 import {
   displayArmedSwing,
-  displayLegacyMomentum,
   displayMarketOverview,
-  displayMomentumV2,
+  displayMomentumBoth,
   displayStrongSwing,
   displayTrendContinuation,
 } from "@/lib/displayScanCache";
@@ -54,12 +53,12 @@ export async function warmDisplayScans(): Promise<{ warmed: number; failed: numb
     for (const settings of settingsSets) {
       jobs.push(
         () => displayStrongSwing(market, settings),
-        () => displayLegacyMomentum(market, settings),
-        () => displayMomentumV2(market, settings),
+        () => displayMomentumBoth(market, settings),
         () => displayArmedSwing(market, settings),
       );
     }
-    jobs.push(() => displayTrendContinuation(market), () => displayMarketOverview(market));
+    if (market === "IN") jobs.push(() => displayTrendContinuation(market));
+    jobs.push(() => displayMarketOverview(market));
   }
   let warmed = 0;
   let failed = 0;

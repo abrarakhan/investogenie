@@ -1755,6 +1755,7 @@ const stopEodScheduler = startEodScheduler({
       "--google-fallback-limit", usGoogleFallbackLimit, "--sleep", usSyncSleep]);
     await run([usHistoryPipeline, "--all-active", "--limit", "100000", "--stale-days", "0",
       "--min-bars", usHistoryMinBars, "--sleep", usHistorySleep]);
+    await refreshTechnicalScreener("US");
     await runSignalScan();
     await refreshStrategyRetrospective("US");
   },

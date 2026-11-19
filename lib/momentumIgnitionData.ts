@@ -1,6 +1,6 @@
 import { cache } from "react";
 import { query } from "@/lib/db";
-import { chosenBenchmarkSql } from "@/lib/benchmarkSql";
+import { loadBenchmarkBarsCached, loadUniverseCountCached } from "@/lib/marketContextCache";
 
 export interface MomentumPreliminaryRow {
   asset_id: string;
@@ -91,32 +91,16 @@ export const loadMomentumPreliminaryBundle = cache(async (
   preliminaryLiquidityFloor: number,
   benchmarkTickersKey: string,
 ) => {
-  const universeWhere = market === "IN"
-    ? "a.country='IN' and a.exchange='NSE'"
-    : "a.country='US' and a.exchange in ('NASDAQ','NYSE','AMEX','NYSEARCA','NYSEAMERICAN')";
   const benchmarkTickers = JSON.parse(benchmarkTickersKey) as string[];
-  const [countRows, preliminary, benchmarkRows] = await Promise.all([
-    query<{ count: string | number }>(
-      `select count(*) count from public.assets a where ${universeWhere}
-        and a.asset_class='STOCK' and a.is_active
-        and not exists (select 1 from public.asset_tracking_exclusions x where x.asset_id=a.id)`,
-    ),
+  const [universeCount, preliminary, benchmarkRows] = await Promise.all([
+    loadUniverseCountCached(market),
     query<MomentumPreliminaryRow>(preliminarySql(market), [
       expectedSessionDate, marketOpen, priceFloor, preliminaryLiquidityFloor, market,
       marketOpen, sessionDate,
     ]),
-    query<MomentumBarRow>(
-      `with chosen as (
-         ${chosenBenchmarkSql("$1", "$2")}
-       )
-       select o.asset_id,o.date::text date,o.open,o.high,o.low,o.close,o.volume,o.open_interest
-         from public.daily_ohlcv o join chosen c on c.id=o.asset_id
-        where not ($3::boolean and o.date >= $4::date)
-        order by o.date desc limit 260`,
-      [market, benchmarkTickers, marketOpen, sessionDate],
-    ),
+    loadBenchmarkBarsCached(market, benchmarkTickers, marketOpen, sessionDate),
   ]);
-  return { countRows, preliminary, benchmarkRows };
+  return { countRows: [{ count: universeCount }], preliminary, benchmarkRows };
 });
 
 /** Request-scoped reuse for the identical 260-bar histories consumed by both models. */

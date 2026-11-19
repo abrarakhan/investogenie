@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 from typing import Any
 
+from .armed_swing import results_calendar_coverage
 from .common import Bar, average_true_range, js_round, mean, pct_change, round2, sma, structural_breakout
 
 MODEL_VERSION = "strong-swing-v6-session-reversal"
@@ -180,6 +181,19 @@ def assess(raw: dict[str, Any]) -> dict[str, Any]:
     # Company results. India has an authoritative calendar, so an unverified or imminent date
     # blocks the entry; elsewhere the check is reported but cannot block on missing coverage.
     results = raw.get("results") or None
+    evidence = raw.get("resultsEvidence") or None
+    if results is None and evidence:
+        coverage = results_calendar_coverage(evidence)
+        results = {
+            "verified": bool(coverage["verified"]),
+            "detail": coverage["detail"],
+            "nextDate": evidence.get("nextDate"),
+            "sessionsToNext": evidence.get("sessionsToNext"),
+            "source": evidence.get("authoritativeSource"),
+            "sourceAsOf": evidence.get("authoritativeAsOf"),
+            "coverageFrom": evidence.get("authoritativeCoverageFrom"),
+            "coverageThrough": evidence.get("authoritativeCoverageThrough"),
+        }
     results_required = market == "IN"
     results_verified = bool(results and results.get("verified"))
     sessions_to_results = results.get("sessionsToNext") if results else None

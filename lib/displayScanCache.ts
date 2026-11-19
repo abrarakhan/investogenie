@@ -24,15 +24,13 @@ import "server-only";
  * callers copy before sorting).
  */
 import type { SwingSettings } from "@/lib/settings";
-import { getStrongSwingCandidates } from "@/features/strong-swing/service";
-import { getMomentumLegacyCandidates, getMomentumV2Candidates } from "@/features/momentum/service";
-import { getTrendContinuationCandidates } from "@/features/trend-continuation/service";
+import { getStrongSwingCandidates, type StrongSwingCandidate } from "@/features/strong-swing/service";
+import { getMomentumBothCandidates, type MomentumBothResult } from "@/features/momentum/service";
+import { getTrendContinuationCandidates, type TrendContinuationCandidate } from "@/features/trend-continuation/service";
 import { getArmedSwingCandidates } from "@/features/armed-swing/service";
+import { getSwingScreenBundle } from "@/features/swing/service";
 import { getMarketOverview } from "@/lib/marketOverview";
 import type { MarketId } from "@/lib/types";
-
-const getMomentumIgnitionCandidates = getMomentumV2Candidates;
-const getLegacyMomentumIgnitionCandidates = getMomentumLegacyCandidates;
 
 export const DISPLAY_SCAN_TTL_MS = 60_000;
 /** Oldest result served while a background refresh runs or after it failed. */
@@ -133,18 +131,69 @@ export function resetDisplayScanCache(): void {
   entries.clear();
 }
 
-const settingsKey = (settings: SwingSettings) =>
+/** Canonical key for grouping identical SwingSettings across caches and scheduled jobs. */
+export const swingSettingsKey = (settings: SwingSettings) =>
   JSON.stringify(Object.keys(settings).sort().map((key) => [key, settings[key as keyof SwingSettings]]));
+
+const settingsKey = swingSettingsKey;
+
+/**
+ * Prime an existing or new display cache entry with a freshly computed result (for example
+ * from the 2-minute alert cron). Does not start a standing keep-warm timer on its own, so
+ * idle screens stay quiet while active screens immediately receive the fresh scan.
+ */
+export function seedDisplayScanCache<T>(key: string, value: T, now: () => number = Date.now): void {
+  const at = now();
+  let entry = entries.get(key);
+  if (!entry) {
+    entry = { at, hasValue: true, value, compute: async () => value, lastRead: 0 };
+    entries.set(key, entry);
+    evictOverflow();
+  } else {
+    entry.value = value;
+    entry.hasValue = true;
+    entry.at = at;
+  }
+  if (typeof value === "object" && value !== null) computedAt.set(value, at);
+}
+
+function tagMomentumComputedAt(both: MomentumBothResult): MomentumBothResult {
+  const at = displayScanComputedAt(both);
+  if (at > 0) {
+    computedAt.set(both.legacy, at);
+    computedAt.set(both.v2, at);
+  }
+  return both;
+}
 
 export const displayStrongSwing = (market: MarketId, settings: SwingSettings) =>
   cachedForDisplay(`strong:${market}:${settingsKey(settings)}`, () => getStrongSwingCandidates(market, settings));
-export const displayLegacyMomentum = (market: MarketId, settings: SwingSettings) =>
-  cachedForDisplay(`momentum-legacy:${market}:${settingsKey(settings)}`, () => getLegacyMomentumIgnitionCandidates(market, settings));
-export const displayMomentumV2 = (market: MarketId, settings: SwingSettings) =>
-  cachedForDisplay(`momentum-v2:${market}:${settingsKey(settings)}`, () => getMomentumIgnitionCandidates(market, settings));
+export const displayMomentumBoth = async (market: MarketId, settings: SwingSettings): Promise<MomentumBothResult> =>
+  tagMomentumComputedAt(await cachedForDisplay(
+    `momentum-both:${market}:${settingsKey(settings)}`,
+    () => getMomentumBothCandidates(market, settings),
+  ));
+export const displayLegacyMomentum = async (market: MarketId, settings: SwingSettings) =>
+  (await displayMomentumBoth(market, settings)).legacy;
+export const displayMomentumV2 = async (market: MarketId, settings: SwingSettings) =>
+  (await displayMomentumBoth(market, settings)).v2;
 export const displayTrendContinuation = (market: MarketId, limit?: number) =>
-  cachedForDisplay(`trend:${market}:${limit ?? "default"}`, () => getTrendContinuationCandidates(market, limit));
+  market !== "IN"
+    ? Promise.resolve([] as TrendContinuationCandidate[])
+    : cachedForDisplay(`trend:${market}:${limit ?? "default"}`, () => getTrendContinuationCandidates(market, limit));
 export const displayArmedSwing = (market: MarketId, settings: SwingSettings) =>
   cachedForDisplay(`armed:${market}:${settingsKey(settings)}`, () => getArmedSwingCandidates(market, settings));
+export const displaySwingBundle = (market: MarketId, settings: SwingSettings) =>
+  cachedForDisplay(`swing:${market}:${settingsKey(settings)}`, () => getSwingScreenBundle(market, settings));
 export const displayMarketOverview = (market: MarketId) =>
   cachedForDisplay(`markets:${market}`, () => getMarketOverview(market));
+
+export const seedStrongSwing = (market: MarketId, settings: SwingSettings, value: StrongSwingCandidate[]) =>
+  seedDisplayScanCache(`strong:${market}:${settingsKey(settings)}`, value);
+export const seedMomentumBoth = (market: MarketId, settings: SwingSettings, value: MomentumBothResult) => {
+  seedDisplayScanCache(`momentum-both:${market}:${settingsKey(settings)}`, value);
+  tagMomentumComputedAt(value);
+};
+export const seedTrendContinuation = (market: MarketId, value: TrendContinuationCandidate[]) => {
+  if (market === "IN") seedDisplayScanCache(`trend:${market}:default`, value);
+};

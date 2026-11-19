@@ -111,4 +111,68 @@ describe("Python strategy authority", () => {
       expect(gateMap(legacy), input.ticker).toHaveProperty("freshness");
     });
   });
+
+  it("short-circuits empty batches and produces identical outputs when benchmarkBars and resultsEvidence are hoisted", async () => {
+    expect(await runPythonStrategyBatch("strong_swing", [])).toEqual([]);
+
+    const stock = bars(240);
+    stock.at(-2)!.close = stock.at(-2)!.high = 190;
+    stock.at(-1)!.close = stock.at(-1)!.high = 194;
+    stock.at(-2)!.volume = 3_000_000;
+    stock.at(-1)!.volume = 3_200_000;
+    const benchmark = bars(240, 200, 0.2);
+
+    const evidence = {
+      today: "2026-11-15",
+      lastSuccessAt: "2026-11-15T06:00:00Z",
+      nextDate: "2026-11-17",
+      lastPastDate: "2026-08-14",
+      sessionsToNext: 2,
+      authoritativeSource: "NSE_CALENDAR",
+      authoritativeAsOf: "2026-11-15",
+      authoritativeCoverageFrom: "2026-11-16",
+      authoritativeCoverageThrough: "2026-11-18",
+      requiredCoverageFrom: "2026-11-16",
+      requiredCoverageThrough: "2026-11-18",
+    };
+    const [coverage] = await runPythonStrategyBatch<typeof evidence, { verified: boolean; detail: string }>(
+      "results_coverage", [evidence],
+    );
+    const precomputedResults = {
+      verified: coverage.verified,
+      detail: coverage.detail,
+      nextDate: evidence.nextDate,
+      sessionsToNext: evidence.sessionsToNext,
+      source: evidence.authoritativeSource,
+      sourceAsOf: evidence.authoritativeAsOf,
+      coverageFrom: evidence.authoritativeCoverageFrom,
+      coverageThrough: evidence.authoritativeCoverageThrough,
+    };
+
+    const inlineInput = {
+      market: "IN" as const, verdict: "LONG_BREAKOUT", currentPrice: 194,
+      stopAtrMult: 1.5, targetRR: 2, trailAtrMult: 3, bars: stock, benchmarkBars: benchmark,
+      requireLiveExecutionData: false, results: precomputedResults,
+    };
+    const hoistedInput = {
+      market: "IN" as const, verdict: "LONG_BREAKOUT", currentPrice: 194,
+      stopAtrMult: 1.5, targetRR: 2, trailAtrMult: 3, bars: stock,
+      requireLiveExecutionData: false, resultsEvidence: evidence,
+    };
+    const [fromInline] = await runPythonStrategyBatch("strong_swing", [inlineInput]);
+    const [fromHoisted] = await runPythonStrategyBatch("strong_swing", [hoistedInput], { benchmarkBars: benchmark });
+    expect(fromHoisted).toEqual(fromInline);
+
+    const momInline = {
+      currentPrice: stock.at(-1)!.close, bars: stock, benchmarkBars: benchmark,
+      currentSessionVolume: false, sessionProgressFraction: 1, benchmarkLabel: "Nifty",
+      liquidityFloor: 50_000_000, liquidityRequirementLabel: "INR 5 crore", priceFloor: 20,
+      marketOpen: false, liveDataVerified: true, stopAtrMult: 1.5, targetRR: 2, trailAtrMult: 3,
+    };
+    const { benchmarkBars: _omit, ...momHoisted } = momInline;
+    void _omit;
+    const [momFromInline] = await runPythonStrategyBatch("momentum", [momInline]);
+    const [momFromHoisted] = await runPythonStrategyBatch("momentum", [momHoisted], { benchmarkBars: benchmark });
+    expect(momFromHoisted).toEqual(momFromInline);
+  });
 });

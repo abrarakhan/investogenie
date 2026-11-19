@@ -24,17 +24,31 @@ type ResultsRow = {
   authoritative_coverage_through: string | null;
 };
 
+export interface ResultsEvidence {
+  today: string;
+  lastSuccessAt: string | null;
+  nextDate: string | null;
+  lastPastDate: string | null;
+  sessionsToNext: number | null;
+  authoritativeSource: string | null;
+  authoritativeAsOf: string | null;
+  authoritativeCoverageFrom: string | null;
+  authoritativeCoverageThrough: string | null;
+  requiredCoverageFrom: string | null;
+  requiredCoverageThrough: string | null;
+}
+
 /**
- * Company-results check for each asset on `sessionDate`, under the same coverage policy the
- * Armed screen uses. An asset absent from the map has no calendar row at all; a missing
- * calendar table leaves every asset absent (fail closed), not "no results".
+ * Load raw corporate-results evidence for Python strategy engines so coverage can be
+ * evaluated inside the strategy worker batch without spawning a separate `results_coverage`
+ * process. A missing calendar table leaves every asset absent (fail closed).
  */
-export async function loadResultsChecks(
+export async function loadResultsEvidence(
   market: "IN" | "US",
   sessionDate: string,
   assetIds: string[],
-): Promise<Map<string, ResultsCheck>> {
-  const out = new Map<string, ResultsCheck>();
+): Promise<Map<string, ResultsEvidence>> {
+  const out = new Map<string, ResultsEvidence>();
   if (!assetIds.length) return out;
   const rows = await query<ResultsRow>(
     `select a.id asset_id,
@@ -55,33 +69,53 @@ export async function loadResultsChecks(
   });
   const requiredCoverageFrom = tradingDayOffset(market, sessionDate, 1);
   const requiredCoverageThrough = tradingDayOffset(market, sessionDate, 3);
-  const evidence = rows.map((row) => ({
+  for (const row of rows) {
+    out.set(row.asset_id, {
       today: sessionDate,
       lastSuccessAt: row.last_success_at,
       nextDate: row.next_date,
       lastPastDate: row.last_past_date,
+      sessionsToNext: row.next_date ? tradingSessionLag(market, sessionDate, row.next_date) : null,
       authoritativeSource: row.authoritative_source,
       authoritativeAsOf: row.authoritative_as_of,
       authoritativeCoverageFrom: row.authoritative_coverage_from,
       authoritativeCoverageThrough: row.authoritative_coverage_through,
       requiredCoverageFrom,
       requiredCoverageThrough,
-  }));
-  const coverageRows = await runPythonStrategyBatch<typeof evidence[number], { verified: boolean; detail: string }>(
-    "results_coverage", evidence,
+    });
+  }
+  return out;
+}
+
+/**
+ * Company-results check for each asset on `sessionDate`, under the same coverage policy the
+ * Armed screen uses. An asset absent from the map has no calendar row at all; a missing
+ * calendar table leaves every asset absent (fail closed), not "no results".
+ */
+export async function loadResultsChecks(
+  market: "IN" | "US",
+  sessionDate: string,
+  assetIds: string[],
+): Promise<Map<string, ResultsCheck>> {
+  const out = new Map<string, ResultsCheck>();
+  if (!assetIds.length) return out;
+  const evidenceByAsset = await loadResultsEvidence(market, sessionDate, assetIds);
+  const entries = [...evidenceByAsset.entries()];
+  const coverageRows = await runPythonStrategyBatch<ResultsEvidence, { verified: boolean; detail: string }>(
+    "results_coverage", entries.map(([, item]) => item),
   );
-  for (let index = 0; index < rows.length; index++) {
-    const row = rows[index];
+  for (let index = 0; index < entries.length; index++) {
+    const [assetId, item] = entries[index];
     const coverage = coverageRows[index];
-    out.set(row.asset_id, {
+    out.set(assetId, {
       verified: coverage.verified,
       detail: coverage.detail,
-      nextDate: row.next_date,
-      sessionsToNext: row.next_date ? tradingSessionLag(market, sessionDate, row.next_date) : null,
-      source: row.authoritative_source,
-      sourceAsOf: row.authoritative_as_of,
-      coverageFrom: row.authoritative_coverage_from,
-      coverageThrough: row.authoritative_coverage_through,
+      nextDate: item.nextDate,
+      sessionsToNext: item.sessionsToNext,
+      source: item.authoritativeSource,
+      sourceAsOf: item.authoritativeAsOf,
+      coverageFrom: item.authoritativeCoverageFrom,
+      coverageThrough: item.authoritativeCoverageThrough,
     });
   }
   return out;

@@ -1,13 +1,16 @@
 import { query } from "@/lib/db";
-import { getMomentumLegacyCandidates, getMomentumV2Candidates } from "@/features/momentum/service";
-import { getUserSwingSettings } from "@/lib/settings";
-import { getStrongSwingCandidates } from "@/features/strong-swing/service";
+import { getMomentumBothCandidates, type MomentumBothResult } from "@/features/momentum/service";
+import { getUserSwingSettings, type SwingSettings } from "@/lib/settings";
+import { getStrongSwingCandidates, type StrongSwingCandidate } from "@/features/strong-swing/service";
 import { getSwingTradeLedger, type SwingLedgerTrade } from "@/lib/swingTradeLedger";
 import { markLiveMarketTargets } from "@/lib/liveMarketTargets";
-import { getTrendContinuationCandidates } from "@/features/trend-continuation/service";
-
-const getMomentumIgnitionCandidates = getMomentumV2Candidates;
-const getLegacyMomentumIgnitionCandidates = getMomentumLegacyCandidates;
+import { getTrendContinuationCandidates, type TrendContinuationCandidate } from "@/features/trend-continuation/service";
+import {
+  seedMomentumBoth,
+  seedStrongSwing,
+  seedTrendContinuation,
+  swingSettingsKey,
+} from "@/lib/displayScanCache";
 
 export function tradeAlertSignature(trade: SwingLedgerTrade): string | null {
   if (trade.status !== "OPEN" || trade.risk.recommendation === "STAY") return null;
@@ -82,14 +85,53 @@ async function recordDisabledTokens(tokens: PushTokenRow[], receipts: Array<{ st
   return { sentCount, failedCount };
 }
 
-async function candidateSignals(market: "IN" | "US", userId: string): Promise<CandidateSignal[]> {
-  const settings = await getUserSwingSettings(userId);
-  const [strong, legacy, v2, continuation] = await Promise.all([
-    getStrongSwingCandidates(market, settings),
-    getLegacyMomentumIgnitionCandidates(market, settings),
-    getMomentumIgnitionCandidates(market, settings),
-    getTrendContinuationCandidates(market),
+interface AlertRunCache {
+  strong: Map<string, Promise<StrongSwingCandidate[]>>;
+  momentum: Map<string, Promise<MomentumBothResult>>;
+  trend: Map<string, Promise<TrendContinuationCandidate[]>>;
+}
+
+function createAlertRunCache(): AlertRunCache {
+  return { strong: new Map(), momentum: new Map(), trend: new Map() };
+}
+
+function cachedByKey<T>(map: Map<string, Promise<T>>, key: string, compute: () => Promise<T>): Promise<T> {
+  const existing = map.get(key);
+  if (existing) return existing;
+  const pending = compute();
+  map.set(key, pending);
+  return pending;
+}
+
+async function candidateSignals(
+  market: "IN" | "US",
+  userId: string,
+  runCache?: AlertRunCache,
+): Promise<CandidateSignal[]> {
+  const settings: SwingSettings = await getUserSwingSettings(userId);
+  const sKey = `${market}:${swingSettingsKey(settings)}`;
+  const computeStrong = async () => {
+    const value = await getStrongSwingCandidates(market, settings);
+    seedStrongSwing(market, settings, value);
+    return value;
+  };
+  const computeMomentum = async () => {
+    const value = await getMomentumBothCandidates(market, settings);
+    seedMomentumBoth(market, settings, value);
+    return value;
+  };
+  const computeTrend = async () => {
+    if (market !== "IN") return [] as TrendContinuationCandidate[];
+    const value = await getTrendContinuationCandidates(market);
+    seedTrendContinuation(market, value);
+    return value;
+  };
+  const [strong, momentumBoth, continuation] = await Promise.all([
+    runCache ? cachedByKey(runCache.strong, sKey, computeStrong) : computeStrong(),
+    runCache ? cachedByKey(runCache.momentum, sKey, computeMomentum) : computeMomentum(),
+    runCache ? cachedByKey(runCache.trend, market, computeTrend) : computeTrend(),
   ]);
+  const { legacy, v2 } = momentumBoth;
   const signals: CandidateSignal[] = [
     ...strong.map((candidate) => ({
       assetId: candidate.assetId, ticker: candidate.ticker, engine: "STRONG_SWING" as const,
@@ -115,8 +157,13 @@ async function candidateSignals(market: "IN" | "US", userId: string): Promise<Ca
   return signals;
 }
 
-async function dispatchCandidateAlerts(userId: string, tokens: PushTokenRow[], market: "IN" | "US") {
-  const candidates = await candidateSignals(market, userId);
+async function dispatchCandidateAlerts(
+  userId: string,
+  tokens: PushTokenRow[],
+  market: "IN" | "US",
+  runCache: AlertRunCache,
+) {
+  const candidates = await candidateSignals(market, userId, runCache);
   const readyByEngine = new Map<CandidateEngine, string[]>();
   for (const engine of ["STRONG_SWING", "MOMENTUM_IGNITION", "MOMENTUM_IGNITION_V2", "TREND_CONTINUATION"] as const) {
     readyByEngine.set(engine, candidates.filter((candidate) => candidate.engine === engine && candidate.ready).map((candidate) => candidate.assetId));
@@ -232,9 +279,10 @@ export async function dispatchMobileTradeAlerts(markets: Array<"IN" | "US">) {
   let candidateEvaluated = 0;
   let candidateAlerts = 0;
   let candidateDelivered = 0;
+  const runCache = createAlertRunCache();
   for (const [userId, userTokens] of byUser) {
     for (const market of markets) {
-      const candidateSummary = await dispatchCandidateAlerts(userId, userTokens, market);
+      const candidateSummary = await dispatchCandidateAlerts(userId, userTokens, market, runCache);
       candidateEvaluated += candidateSummary.evaluated;
       candidateAlerts += candidateSummary.alerts;
       candidateDelivered += candidateSummary.delivered;

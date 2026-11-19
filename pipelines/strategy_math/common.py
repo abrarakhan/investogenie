@@ -16,7 +16,9 @@ class Bar:
     open_interest: float | None = None
 
     @classmethod
-    def from_json(cls, value: dict[str, Any]) -> "Bar":
+    def from_json(cls, value: dict[str, Any] | "Bar") -> "Bar":
+        if isinstance(value, cls):
+            return value
         oi = value.get("openInterest")
         return cls(
             date=str(value["date"])[:10],

@@ -69,7 +69,10 @@ export async function enrollCohort(market: MarketId): Promise<EnrollSummary> {
   let skipped = 0;
 
   // --- Swing: one bucket per legendary strategy -----------------------------
-  const rows = await runScreener(country);
+  const rows = await runScreener(country, DEFAULT_SETTINGS, {
+    strategyMatches: true,
+    includeFundamentals: false,
+  });
   const byStrategy = new Map<string, typeof rows>();
   for (const row of rows) {
     // A strategy match is its own setup: the default classifier's verdict does not gate it.

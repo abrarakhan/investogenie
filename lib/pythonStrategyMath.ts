@@ -20,7 +20,9 @@ function pythonBin(): string {
 export async function runPythonStrategyBatch<TInput, TResult>(
   engine: string,
   inputs: readonly TInput[],
+  shared?: Record<string, unknown>,
 ): Promise<TResult[]> {
+  if (inputs.length === 0) return [];
   if (!existsSync(worker)) throw new Error(`Python strategy worker is unavailable: ${worker}`);
   return new Promise<TResult[]>((resolveRun, rejectRun) => {
     const child = spawn(/* turbopackIgnore: true */ pythonBin(), [worker], {
@@ -53,6 +55,7 @@ export async function runPythonStrategyBatch<TInput, TResult>(
         rejectRun(error);
       }
     });
-    child.stdin.end(JSON.stringify({ engine, inputs }));
+    const payload = shared && Object.keys(shared).length > 0 ? { engine, inputs, shared } : { engine, inputs };
+    child.stdin.end(JSON.stringify(payload));
   });
 }

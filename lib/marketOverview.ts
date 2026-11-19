@@ -382,6 +382,7 @@ export async function getMarketOverview(market: MarketId): Promise<MarketOvervie
       runScreener(cfg.country, { ...DEFAULT_SETTINGS, includeShort: false }, {
         exchange: primaryExchange,
         limit: 6,
+        includeFundamentals: false,
       }),
     ]);
 

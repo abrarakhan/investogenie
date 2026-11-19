@@ -15,7 +15,7 @@ vi.mock("@/lib/market-calendar.mjs", () => ({
   refreshMarketHolidays: async () => true,
 }));
 
-import { runScreener } from "@/lib/screener";
+import { getSwingScreenBundle, runScreener } from "@/lib/screener";
 import { DEFAULT_SETTINGS } from "@/lib/settings";
 
 describe("runScreener selection", () => {
@@ -62,5 +62,24 @@ describe("runScreener selection", () => {
 
     const [sql] = mocks.query.mock.calls[0];
     expect(sql).not.toContain("bias <> 'SHORT'");
+  });
+
+  it("skips fundamentals when includeFundamentals is false", async () => {
+    await runScreener("IN", { ...DEFAULT_SETTINGS, includeShort: false }, {
+      exchange: "NSE", setupsOnly: true, includeLevels: false, includeFundamentals: false,
+    });
+
+    expect(mocks.getQuotesByAssetIds).toHaveBeenCalledTimes(1);
+    expect(mocks.getFundamentalsByAssetIds).not.toHaveBeenCalled();
+  });
+
+  it("loads base setups and strategy matches in a single combined query via getSwingScreenBundle", async () => {
+    await getSwingScreenBundle("IN", DEFAULT_SETTINGS);
+
+    expect(mocks.query).toHaveBeenCalledTimes(1);
+    const [sql] = mocks.query.mock.calls[0];
+    expect(sql).toContain("verdict <> 'NO_SETUP'");
+    expect(sql).toContain("s.value->>'dir' = 'LONG'");
+    expect(sql).toContain(" or ");
   });
 });

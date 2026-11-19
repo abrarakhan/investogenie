@@ -5,6 +5,7 @@
  * are transitional adapters that load inputs and call the Python strategy
  * bridge; consumers should import this feature service instead of those files.
  */
+export { getMomentumBothCandidates, type MomentumBothResult } from "@/lib/momentumIgnitionBoth";
 export { getMomentumIgnitionCandidates as getMomentumV2Candidates } from "@/lib/momentumIgnition";
 export { getMomentumIgnitionCandidates as getMomentumLegacyCandidates } from "@/lib/momentumIgnitionLegacy";
 export type {

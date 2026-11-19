@@ -1,5 +1,11 @@
 import { NextResponse } from "next/server";
-import { claimEmailDigest, finishEmailDigest, getEnabledEmailPreferences, sendEmailDigest } from "@/lib/email-digest.server";
+import {
+  claimEmailDigest,
+  createEmailDigestBatchCache,
+  finishEmailDigest,
+  getEnabledEmailPreferences,
+  sendEmailDigest,
+} from "@/lib/email-digest.server";
 import { logCronRun } from "@/lib/ingest/cronLog";
 import { zonedMarketClock } from "@/lib/market-calendar.mjs";
 
@@ -26,6 +32,7 @@ export async function GET(request: Request) {
 
   try {
     const enabledUsers = await getEnabledEmailPreferences();
+    const batchCache = createEmailDigestBatchCache();
 
     for (const user of enabledUsers) {
       if (!(await claimEmailDigest(user.userId, marketDate))) {
@@ -33,7 +40,7 @@ export async function GET(request: Request) {
         continue;
       }
       try {
-        await sendEmailDigest(user.userId);
+        await sendEmailDigest(user.userId, batchCache);
         await finishEmailDigest(user.userId, marketDate, "SENT");
         sentCount++;
       } catch (err) {

@@ -37,9 +37,9 @@ export default async function StrongSwingPage({
     displayStrongSwing(market, settings),
     displayLegacyMomentum(market, settings),
     displayMomentumV2(market, settings),
-    displayTrendContinuation(market),
+    market === "IN" ? displayTrendContinuation(market) : Promise.resolve([]),
     getTodayReadySignalHistory(user.id, market),
-    getTrendContinuationStatusTotals(market).catch(() => undefined),
+    market === "IN" ? getTrendContinuationStatusTotals(market).catch(() => undefined) : Promise.resolve(undefined),
   ]);
   const executionPlans: ExecutionPlanInput[] = [
     ...strongSwingExecutionPlanInputs(candidates),

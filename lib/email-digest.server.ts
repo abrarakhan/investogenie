@@ -9,8 +9,18 @@ import { buildEmailHtml, type EmailDigestData } from "@/lib/email/digest-templat
 import { sendEmailWithConfig } from "@/lib/email/nodemailer-service";
 import { getProbabilitySummary } from "@/lib/probability-runtime";
 import { getUserSwingSettings } from "@/lib/settings";
-import { getStrongSwingCandidates } from "@/features/strong-swing/service";
+import { getStrongSwingCandidates, type StrongSwingCandidate } from "@/features/strong-swing/service";
+import { swingSettingsKey } from "@/lib/displayScanCache";
 import type { EmailPreferences } from "@/lib/email-actions";
+
+export interface EmailDigestBatchCache {
+  strongSwingBySettings: Map<string, Promise<StrongSwingCandidate[]>>;
+  probability?: Promise<Awaited<ReturnType<typeof getProbabilitySummary>>>;
+}
+
+export function createEmailDigestBatchCache(): EmailDigestBatchCache {
+  return { strongSwingBySettings: new Map() };
+}
 
 export async function claimEmailDigest(userId: string, marketDate: string): Promise<boolean> {
   const rows = await query<{ user_id: string }>(
@@ -70,7 +80,7 @@ export async function getEnabledEmailPreferences(): Promise<
 }
 
 /** Send email digest to a user. */
-export async function sendEmailDigest(userId: string): Promise<void> {
+export async function sendEmailDigest(userId: string, batchCache?: EmailDigestBatchCache): Promise<void> {
   const prefs = await queryOne<{
     id: string;
     user_id: string;
@@ -110,14 +120,29 @@ export async function sendEmailDigest(userId: string): Promise<void> {
   // Strong Swing candidates — the same server-authoritative source, user risk
   // settings, confirmation gates, and order as the Strong Swing screen.
   const settings = await getUserSwingSettings(userId);
+  const loadStrong = () => {
+    if (!batchCache) return getStrongSwingCandidates("IN", settings);
+    const key = swingSettingsKey(settings);
+    let pending = batchCache.strongSwingBySettings.get(key);
+    if (!pending) {
+      pending = getStrongSwingCandidates("IN", settings);
+      batchCache.strongSwingBySettings.set(key, pending);
+    }
+    return pending;
+  };
   const strongSwingCandidates = prefs.include_swing_candidates
-    ? (await getStrongSwingCandidates("IN", settings)).slice(0, 5)
+    ? (await loadStrong()).slice(0, 5)
     : [];
 
   // Probability forecasts — the SAME source as the Probability screen:
   // getProbabilitySummary(), already ranked by probability of an up move.
+  const loadProbability = () => {
+    if (!batchCache) return getProbabilitySummary("IN");
+    batchCache.probability ??= getProbabilitySummary("IN");
+    return batchCache.probability;
+  };
   const probabilityCandidates = prefs.include_probability
-    ? (await getProbabilitySummary("IN")).rows.slice(0, 5)
+    ? (await loadProbability()).rows.slice(0, 5)
     : [];
 
   const digestData: EmailDigestData = {

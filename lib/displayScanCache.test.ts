@@ -6,6 +6,7 @@ import {
   cachedForDisplay,
   displayScanComputedAt,
   resetDisplayScanCache,
+  seedDisplayScanCache,
 } from "@/lib/displayScanCache";
 
 describe("cachedForDisplay", () => {
@@ -117,6 +118,19 @@ describe("cachedForDisplay", () => {
     expect(await cachedForDisplay("strong:IN:a", async () => "in")).toBe("in");
     expect(await cachedForDisplay("strong:US:a", async () => "us")).toBe("us");
     expect(await cachedForDisplay("strong:IN:b", async () => "in-b")).toBe("in-b");
+  });
+
+  it("serves seeded values immediately without recomputing", async () => {
+    let calls = 0;
+    const seeded = { scan: "fresh-from-cron" };
+    seedDisplayScanCache("strong:IN:seeded", seeded);
+    expect(displayScanComputedAt(seeded)).toBe(Date.now());
+    const read = await cachedForDisplay("strong:IN:seeded", async () => {
+      calls++;
+      return { scan: "recomputed" };
+    });
+    expect(read).toBe(seeded);
+    expect(calls).toBe(0);
   });
 });
 

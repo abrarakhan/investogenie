@@ -81,14 +81,16 @@ export async function getTrendContinuationCandidates(market: "IN" | "US", limit 
   const inputs = rows.map((row) => ({
     candidate: row,
     execution: executionByAsset.get(row.asset_id) ?? null,
+  }));
+  const shared = {
     now,
     sessionDate,
     marketOpen,
     holidays: marketHolidayDates(market),
     specialTradingDates: Object.keys(SPECIAL_SESSIONS.IN),
-  }));
+  };
   const assessments = await runPythonStrategyBatch<(typeof inputs)[number], Pick<TrendContinuationCandidate,
-    "executionEligible" | "executionBlockers" | "observationOnly" | "currentPrice"> & { pythonRank: number }>("trend_execution", inputs);
+    "executionEligible" | "executionBlockers" | "observationOnly" | "currentPrice"> & { pythonRank: number }>("trend_execution", inputs, shared);
   return rows.map((row, index) => {
     const assessment = assessments[index];
     const entry = row.entry === null ? null : Number(row.entry);

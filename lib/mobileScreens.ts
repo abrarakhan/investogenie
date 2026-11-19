@@ -1,5 +1,5 @@
 import type { ArmedSwingCandidate } from "@/features/armed-swing/contracts";
-import { displayArmedSwing, displayLegacyMomentum, displayMomentumV2, displayStrongSwing, displayTrendContinuation } from "@/lib/displayScanCache";
+import { displayArmedSwing, displayLegacyMomentum, displayMomentumV2, displayStrongSwing, displaySwingBundle, displayTrendContinuation } from "@/lib/displayScanCache";
 import { ARMED_STATUS_LABEL, ARMED_WHEN_TO_ENTER } from "@/lib/armedSwingCopy";
 import type { ArmedSwingStatus } from "@/lib/analytics/armedSwing";
 import { rankSwingCandidates, swingDisplayScore } from "@/lib/analytics/candidateRanking";
@@ -11,7 +11,7 @@ import { STRATEGY_META, type StrategyKey } from "@/lib/analytics/legendaryStrate
 import { LONG_TERM_STRATEGY_META, type LongTermStrategyKey } from "@/lib/analytics/longTermStrategies";
 import { getLongTermCandidates } from "@/lib/long-term-actions";
 import { markLiveMarketTargets } from "@/lib/liveMarketTargets";
-import { runScreener, type ScreenRow } from "@/features/swing/service";
+import type { ScreenRow } from "@/features/swing/service";
 import { getScreenerResults, getSectors, getUniverses, type ScreenerStock } from "@/lib/screener/service";
 import type { Filter, SortSpec } from "@/lib/screener/filterEngine";
 import { PRESETS, PRESET_BY_KEY } from "@/lib/screener/presets";
@@ -393,10 +393,7 @@ async function swingCandidates(market: MobileMarket, params: URLSearchParams, us
   // Same queries as the web Swing Candidates page: buy-side only; the default view is every
   // NSE setup for India, while a strategy view takes every buy match of that strategy.
   const buyOnly = { ...settings, includeShort: false };
-  const [rows, strategyRows] = await Promise.all([
-    runScreener(market, buyOnly, isUS ? {} : { exchange: "NSE", setupsOnly: true }),
-    runScreener(market, buyOnly, isUS ? { strategyMatches: true } : { exchange: "NSE", strategyMatches: true }),
-  ]);
+  const { rows, strategyRows } = await displaySwingBundle(market, buyOnly);
   const isBuyMatch = (row: ScreenRow, key: StrategyKey) => row.strategyTags.includes(key) && row.strategyLevels[key]?.direction === "LONG";
   const setups = rows.filter((row) => row.verdict !== "NO_SETUP");
   const strategyCount = (key: StrategyKey) => strategyRows.filter((row) => isBuyMatch(row, key)).length;

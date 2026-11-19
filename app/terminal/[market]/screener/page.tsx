@@ -1,11 +1,11 @@
 import { notFound, redirect } from "next/navigation";
-import { runScreener } from "@/features/swing/service";
+import { displaySwingBundle } from "@/lib/displayScanCache";
 import { getUserSwingSettings } from "@/lib/settings";
 import ScreenerTable from "@/components/screener/ScreenerTable";
 import AppShell from "@/components/app/AppShell";
 import MarketDataAutoRefresh from "@/components/app/MarketDataAutoRefresh";
 import { getSessionUser } from "@/lib/auth";
-import { MARKET_COUNTRY, normalizeMarket } from "@/lib/markets";
+import { normalizeMarket } from "@/lib/markets";
 import { markLiveMarketTargets } from "@/lib/liveMarketTargets";
 
 export const dynamic = "force-dynamic";
@@ -18,7 +18,6 @@ export default async function TerminalScreener({
   const { market: marketParam } = await params;
   const marketId = normalizeMarket(marketParam);
   if (!marketId) notFound();
-  const country = MARKET_COUNTRY[marketId];
   const user = await getSessionUser();
   if (!user) redirect("/login");
 
@@ -29,10 +28,7 @@ export default async function TerminalScreener({
   // score and then by normalized breakout quality.
   // Strategy views are selected from each strategy's own buy matches, uncapped,
   // so a match the default classifier ranks low (or flags no setup) still shows.
-  const [rows, strategyRows] = await Promise.all([
-    runScreener(country, buyOnlySettings, isUS ? {} : { exchange: "NSE", setupsOnly: true }),
-    runScreener(country, buyOnlySettings, isUS ? { strategyMatches: true } : { exchange: "NSE", strategyMatches: true }),
-  ]);
+  const { rows, strategyRows } = await displaySwingBundle(marketId, buyOnlySettings);
   // Every listed match joins the bounded live WebSocket feed, which keeps its quote fresh
   // enough to pass the screener's intraday freshness gate.
   await markLiveMarketTargets([...rows, ...strategyRows].map((row) => row.assetId), "swing");

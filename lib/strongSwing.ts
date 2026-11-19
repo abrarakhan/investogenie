@@ -5,8 +5,8 @@ import { runPythonStrategyBatch } from "@/lib/pythonStrategyMath";
 import type { SwingSettings } from "@/lib/settings";
 import type { MarketId, OHLCV } from "@/lib/types";
 import { isMarketOpenNow, refreshMarketHolidays, zonedMarketClock } from "@/lib/market-calendar.mjs";
-import { chosenBenchmarkSql } from "@/lib/benchmarkSql";
-import { loadResultsChecks } from "@/lib/resultsCalendar";
+import { loadBenchmarkBarsCached } from "@/lib/marketContextCache";
+import { loadResultsEvidence } from "@/lib/resultsCalendar";
 
 interface BarRow {
   asset_id: string;
@@ -226,7 +226,10 @@ export async function getStrongSwingCandidates(
     { ...settings, includeShort: false },
     // Every classifier setup is assessed. A fixed top-N pool let score ties —
     // decided by ticker name — choose which breakouts Strong Swing ever saw.
-    market === "IN" ? { exchange: "NSE", setupsOnly: true, alsoAssetIds } : { setupsOnly: true, alsoAssetIds },
+    // Strong Swing computes its own completed-bar levels and never renders fundamentals.
+    market === "IN"
+      ? { exchange: "NSE", setupsOnly: true, alsoAssetIds, includeLevels: false, includeFundamentals: false }
+      : { setupsOnly: true, alsoAssetIds, includeLevels: false, includeFundamentals: false },
   );
   if (!base.length) return [];
 
@@ -235,7 +238,7 @@ export async function getStrongSwingCandidates(
   const baseRankByAsset = new Map(base.map((row, index) => [row.assetId, index + 1]));
 
   const ids = base.map((row) => row.assetId);
-  const [barRows, contexts, benchmarkRows, resultsByAsset, sessionRows] = await Promise.all([
+  const [barRows, contexts, benchmarkRows, resultsEvidenceByAsset, sessionRows] = await Promise.all([
     query<BarRow>(
       `select asset_id,date::text date,open,high,low,close,volume,open_interest
          from (
@@ -253,17 +256,8 @@ export async function getStrongSwingCandidates(
       `select q.asset_id,q.best_bid,q.best_ask,q.lower_circuit,q.updated_at::text quote_updated_at,q.source quote_source from public.latest_quotes q where q.asset_id = any($1::uuid[])`,
       [ids],
     ),
-    query<BarRow>(
-      `with chosen as (
-         ${chosenBenchmarkSql("$1", "$2")}
-       )
-       select o.asset_id,o.date::text date,o.open,o.high,o.low,o.close,o.volume,o.open_interest
-         from public.daily_ohlcv o join chosen c on c.id=o.asset_id
-        where not ($3::boolean and o.date >= $4::date)
-        order by o.date desc limit 260`,
-      [country, market === "IN" ? ["NIFTY", "NIFTYBEES"] : ["SPY"], marketOpen, marketDate],
-    ),
-    loadResultsChecks(market, marketDate, ids),
+    loadBenchmarkBarsCached(country, market === "IN" ? ["NIFTY", "NIFTYBEES"] : ["SPY"], marketOpen, marketDate),
+    loadResultsEvidence(market, marketDate, ids),
     // The open session's own bar — the partial row the completed-bar filter above removes.
     // The gates need its high to tell a move that is holding from one that has been handed
     // back; the last price alone cannot distinguish them.
@@ -315,9 +309,8 @@ export async function getStrongSwingCandidates(
       ticker: row.ticker,
       baseScore: row.score,
       rankScore: row.rankScore,
-      benchmarkBars,
       requireLiveExecutionData: market === "IN" && marketOpen,
-      results: resultsByAsset.get(row.assetId) ?? null,
+      resultsEvidence: resultsEvidenceByAsset.get(row.assetId) ?? null,
       session: sessionByAsset.get(row.assetId) ?? null,
       microstructure: context?.quote_source === "BREEZE_LIVE" ? {
         bestBid: context.best_bid === null ? null : Number(context.best_bid),
@@ -330,6 +323,7 @@ export async function getStrongSwingCandidates(
   const assessments = await runPythonStrategyBatch<(typeof work)[number]["input"], PythonStrongAssessment>(
     "strong_swing",
     work.map((item) => item.input),
+    { benchmarkBars },
   );
   for (let index = 0; index < work.length; index++) {
     const { row } = work[index];

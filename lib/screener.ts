@@ -115,11 +115,19 @@ export async function runScreener(
     setupsOnly?: boolean;
     /** Assets kept even when the classifier calls them NO_SETUP (used with setupsOnly). */
     alsoAssetIds?: string[];
+    /** Skip the Python `swing_levels` call when the caller computes its own levels (e.g., Strong Swing). */
+    includeLevels?: boolean;
+    /** Skip the `latest_financials` query when the caller does not read fundamentals. */
+    includeFundamentals?: boolean;
+    /** Internal union mode used by `getSwingScreenBundle` to load base setups + strategy matches in one pass. */
+    includeStrategyMatches?: boolean;
   } = {},
 ): Promise<ScreenRow[]> {
   if (country === "IN") await refreshMarketHolidays("IN");
   const market = country === "IN" || country === "US" ? country : null;
   const marketOpen = market ? isMarketOpenNow(market) : false;
+  const includeLevels = opts.includeLevels !== false;
+  const includeFundamentals = opts.includeFundamentals !== false;
   const params: unknown[] = [];
   const conds: string[] = [
     `exists (select 1 from public.assets a where a.id = swing_signals.asset_id and a.is_active)`,
@@ -145,10 +153,17 @@ export async function runScreener(
   }
   if (country) { params.push(country); conds.push(`country = $${params.length}`); }
   if (opts.exchange) { params.push(opts.exchange); conds.push(`exchange = $${params.length}`); }
+  const strategyClause = settings.includeShort
+    ? `cardinality(strategy_tags) > 0`
+    : `exists (select 1 from jsonb_each(strategy_scores) s where s.value->>'dir' = 'LONG')`;
   if (opts.strategyMatches) {
-    conds.push(settings.includeShort
-      ? `cardinality(strategy_tags) > 0`
-      : `exists (select 1 from jsonb_each(strategy_scores) s where s.value->>'dir' = 'LONG')`);
+    conds.push(strategyClause);
+  } else if (opts.includeStrategyMatches) {
+    const baseClauses: string[] = [];
+    if (opts.setupsOnly) baseClauses.push(`verdict <> 'NO_SETUP'`);
+    if (!settings.includeShort) baseClauses.push(`bias <> 'SHORT'`);
+    const baseExpr = baseClauses.length ? `(${baseClauses.join(" and ")})` : "true";
+    conds.push(`(${baseExpr} or ${strategyClause})`);
   } else {
     if (opts.setupsOnly && opts.alsoAssetIds?.length) {
       params.push(opts.alsoAssetIds);
@@ -167,7 +182,7 @@ export async function runScreener(
   const scoresByAsset = new Map<string, Record<string, StrategyScore>>();
 
   const out: ScreenRow[] = raw
-    .filter((r) => opts.strategyMatches || settings.includeShort || (r.bias as string) !== "SHORT")
+    .filter((r) => opts.strategyMatches || opts.includeStrategyMatches || settings.includeShort || (r.bias as string) !== "SHORT")
     .map((r) => {
       const direction: TradeDirection = (r.bias as string) === "SHORT" ? "SHORT" : "LONG";
       const setup: SwingSetup = {
@@ -244,7 +259,7 @@ export async function runScreener(
   const assetIds = rows.map((r) => r.assetId);
   const [quotes, fundamentals] = await Promise.all([
     getQuotesByAssetIds(assetIds),
-    getFundamentalsByAssetIds(assetIds),
+    includeFundamentals ? getFundamentalsByAssetIds(assetIds) : Promise.resolve(new Map()),
   ]);
   const levelWork: Array<{ row: ScreenRow; input: { setup: SwingSetup; direction: TradeDirection; risk: SwingSettings; scores: Record<string, StrategyScore>; noSetup: boolean } }> = [];
   for (const r of rows) {
@@ -252,11 +267,13 @@ export async function runScreener(
     if (q) {
       r.lastQuote = q.price;
       r.quoteChangePct = q.changePct;
-      const setup = setupByAsset.get(r.assetId);
-      if (setup) {
-        const liveSetup = { ...setup, currentPrice: q.price };
-        levelWork.push({ row: r, input: { setup: liveSetup, direction: r.direction, risk: settings,
-          scores: scoresByAsset.get(r.assetId) ?? {}, noSetup: r.verdict === "NO_SETUP" } });
+      if (includeLevels) {
+        const setup = setupByAsset.get(r.assetId);
+        if (setup) {
+          const liveSetup = { ...setup, currentPrice: q.price };
+          levelWork.push({ row: r, input: { setup: liveSetup, direction: r.direction, risk: settings,
+            scores: scoresByAsset.get(r.assetId) ?? {}, noSetup: r.verdict === "NO_SETUP" } });
+        }
       }
     } else {
       r.entry = null;
@@ -268,28 +285,60 @@ export async function runScreener(
       r.strategyLevels = {};
     }
   }
-  const levelResults = await runPythonStrategyBatch<(typeof levelWork)[number]["input"], {
-    default: { entry: number; target: number; stopLoss: number; trailingStop: number; riskRewardRatio: number; expectedDays: number };
-    entryState: EntryState | null; strategies: Record<string, StrategyLevel>;
-  }>("swing_levels", levelWork.map((item) => item.input));
-  levelWork.forEach(({ row }, index) => {
-    const calculated = levelResults[index];
-    row.entry = calculated.default.entry; row.target = calculated.default.target;
-    row.stopLoss = calculated.default.stopLoss; row.trailingStop = calculated.default.trailingStop;
-    row.riskReward = calculated.default.riskRewardRatio; row.expectedDays = calculated.default.expectedDays;
-    row.entryState = calculated.entryState; row.strategyLevels = calculated.strategies;
-  });
-  for (const r of rows) {
-    const f = fundamentals.get(r.assetId);
-    if (f) {
-      r.peRatio = f.peRatio;
-      r.marketCap = f.marketCap;
-      r.financialCurrency = f.currency;
-      r.roce = f.roce;
-      r.profitVarYoY = f.profitVarianceYoY;
-      r.salesVarYoY = f.salesVarianceYoY;
-      r.fundamentalsAsOf = f.periodEndDate || null;
+  if (includeLevels && levelWork.length) {
+    const levelResults = await runPythonStrategyBatch<(typeof levelWork)[number]["input"], {
+      default: { entry: number; target: number; stopLoss: number; trailingStop: number; riskRewardRatio: number; expectedDays: number };
+      entryState: EntryState | null; strategies: Record<string, StrategyLevel>;
+    }>("swing_levels", levelWork.map((item) => item.input));
+    levelWork.forEach(({ row }, index) => {
+      const calculated = levelResults[index];
+      row.entry = calculated.default.entry; row.target = calculated.default.target;
+      row.stopLoss = calculated.default.stopLoss; row.trailingStop = calculated.default.trailingStop;
+      row.riskReward = calculated.default.riskRewardRatio; row.expectedDays = calculated.default.expectedDays;
+      row.entryState = calculated.entryState; row.strategyLevels = calculated.strategies;
+    });
+  }
+  if (includeFundamentals) {
+    for (const r of rows) {
+      const f = fundamentals.get(r.assetId);
+      if (f) {
+        r.peRatio = f.peRatio;
+        r.marketCap = f.marketCap;
+        r.financialCurrency = f.currency;
+        r.roce = f.roce;
+        r.profitVarYoY = f.profitVarianceYoY;
+        r.salesVarYoY = f.salesVarianceYoY;
+        r.fundamentalsAsOf = f.periodEndDate || null;
+      }
     }
   }
   return rows;
+}
+
+export interface SwingScreenBundle {
+  rows: ScreenRow[];
+  strategyRows: ScreenRow[];
+}
+
+/**
+ * Load both the base Swing setups and the buy-side legendary strategy matches in a single
+ * SQL query, single quote/fundamentals batch, and single Python `swing_levels` call.
+ */
+export async function getSwingScreenBundle(
+  country: "IN" | "US",
+  settings: SwingSettings = DEFAULT_SETTINGS,
+): Promise<SwingScreenBundle> {
+  const isUS = country === "US";
+  const buyOnly = { ...settings, includeShort: false };
+  const combined = await runScreener(country, buyOnly, {
+    ...(isUS ? {} : { exchange: "NSE", setupsOnly: true }),
+    includeStrategyMatches: true,
+  });
+  const rows = isUS
+    ? combined.filter((row) => row.direction !== "SHORT")
+    : combined.filter((row) => row.verdict !== "NO_SETUP" && row.direction !== "SHORT");
+  const strategyRows = combined.filter((row) =>
+    Object.values(row.strategyLevels).some((level) => level.direction === "LONG"),
+  );
+  return { rows, strategyRows };
 }

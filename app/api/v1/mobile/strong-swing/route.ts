@@ -18,9 +18,11 @@ export async function GET(request: NextRequest) {
   const limit = Number.isFinite(requestedLimit) ? Math.min(50, Math.max(1, Math.trunc(requestedLimit))) : 30;
   const settings = await getUserSwingSettings(user.id);
   const [strongSwing, trendContinuation] = await Promise.all([
-    displayStrongSwing(market, settings), displayTrendContinuation(market, limit),
+    displayStrongSwing(market, settings),
+    market === "IN" ? displayTrendContinuation(market) : Promise.resolve([]),
   ]);
   const candidates = strongSwing.slice(0, limit);
+  const trendCandidates = trendContinuation.slice(0, limit);
   // Record the server-held plan for each actionable candidate; a mobile purchase references it by
   // id and the server reads every level from it, exactly as on the web.
   const planIds = await captureExecutionPlans(
@@ -34,6 +36,6 @@ export async function GET(request: NextRequest) {
       ...candidate,
       planId: planIds.get(executionPlanKey("STRONG_SWING", candidate.status, candidate.assetId)) ?? null,
     })),
-    trendContinuation: { observationOnly: true, candidates: trendContinuation },
+    trendContinuation: { observationOnly: true, candidates: trendCandidates },
   });
 }

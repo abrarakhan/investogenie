@@ -16,7 +16,7 @@ import {
 } from "@/lib/market-calendar.mjs";
 import type { SwingSettings } from "@/lib/settings";
 import type { OHLCV } from "@/lib/types";
-import { chosenBenchmarkSql } from "@/lib/benchmarkSql";
+import { loadBenchmarkBarsCached, loadUniverseCountCached } from "@/lib/marketContextCache";
 
 /** What the Python engine returns: the assessment plus the rank it assigned to the batch. */
 type PythonArmedAssessment = ArmedSwingAssessment & { pythonRank: number };
@@ -112,12 +112,8 @@ export async function getArmedSwingCandidates(
   const progress = Math.max(0, Math.min(1,
     (clock.minutes - config.openMinutes) / (config.closeMinutes - config.openMinutes)));
 
-  const [countRows, shortlist, benchmarkRows, curveRows] = await Promise.all([
-    query<{ count: string }>(
-      `select count(*)::text count from public.assets a
-        where ${config.universeWhere} and a.asset_class='STOCK' and a.is_active
-          and not exists (select 1 from public.asset_tracking_exclusions x where x.asset_id=a.id)`,
-    ),
+  const [universeCount, shortlist, benchmarkRows, curveRows] = await Promise.all([
+    loadUniverseCountCached(market),
     query<ShortlistRow>(
       `with universe as materialized (
          select a.id,a.ticker,a.name,a.exchange from public.assets a
@@ -167,16 +163,7 @@ export async function getArmedSwingCandidates(
         limit ${SHORTLIST_LIMIT}`,
       [marketOpen, sessionDate, expectedSession, config.priceFloor, config.liquidityFloor],
     ),
-    query<BarRow>(
-      `with chosen as (
-         ${chosenBenchmarkSql("$1", "$2")}
-       )
-       select o.asset_id,o.date::text date,o.open,o.high,o.low,o.close,o.volume,o.open_interest
-         from public.daily_ohlcv o join chosen c on c.id=o.asset_id
-        where not ($3::boolean and o.date >= $4::date)
-        order by o.date desc limit 260`,
-      [market, config.benchmarkTickers, marketOpen, sessionDate],
-    ),
+    loadBenchmarkBarsCached(market, config.benchmarkTickers, marketOpen, sessionDate),
     query<{ version: string; sample_sessions: number; points: unknown }>(
       `select version,sample_sessions,points from public.market_volume_curves
         where market=$1 and active and sample_sessions >= 40
@@ -244,7 +231,7 @@ export async function getArmedSwingCandidates(
   }
 
   const assessed: Omit<ArmedSwingCandidate, "rank">[] = [];
-  const work: { meta: { assetId: string; ticker: string; name: string | null; exchange: string; currentPrice: number }; input: ArmedSwingInput & { ticker: string } }[] = [];
+  const work: { meta: { assetId: string; ticker: string; name: string | null; exchange: string; currentPrice: number }; input: Omit<ArmedSwingInput, "benchmarkBars" | "volumeCurve"> & { ticker: string } }[] = [];
   let resultsVerifiedCount = 0;
   const requiredCoverageFrom = tradingDayOffset(market, sessionDate, 1);
   const requiredCoverageThrough = tradingDayOffset(market, sessionDate, 3);
@@ -280,13 +267,11 @@ export async function getArmedSwingCandidates(
       ticker: row.ticker,
       market,
       bars,
-      benchmarkBars,
       currentPrice,
       rsPercentile: row.rs_percentile === null ? null : Number(row.rs_percentile),
       liveSession: marketOpen && liveVolume.has(row.asset_id)
         ? { volume: liveVolume.get(row.asset_id)!, progress }
         : null,
-      volumeCurve,
       expectedSessionLag: tradingSessionLag(market, bars.at(-1)!.date, expectedSession),
       execution: {
         quoteFresh: marketOpen && authoritative && quoteAgeMinutes !== null
@@ -311,6 +296,7 @@ export async function getArmedSwingCandidates(
     ? await runPythonStrategyBatch<(typeof work)[number]["input"], PythonArmedAssessment>(
       "armed_swing",
       work.map((item) => item.input),
+      { benchmarkBars, volumeCurve },
     )
     : [];
 
@@ -334,7 +320,7 @@ export async function getArmedSwingCandidates(
     .map((candidate, index) => ({ ...candidate, rank: index + 1 }));
   return {
     candidates,
-    universeCount: Number(countRows[0]?.count ?? 0),
+    universeCount,
     scannedCount: shortlist.length,
     marketOpen,
     sessionDate,

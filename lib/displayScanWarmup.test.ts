@@ -11,7 +11,7 @@ vi.mock("@/lib/displayScanCache", () => {
     return [];
   };
   return {
-    displayStrongSwing: record("strong"), displayLegacyMomentum: record("legacy"), displayMomentumV2: record("v2"),
+    displayStrongSwing: record("strong"), displayMomentumBoth: record("momentum-both"),
     displayArmedSwing: record("armed"), displayTrendContinuation: record("trend"), displayMarketOverview: record("markets"),
   };
 });
@@ -35,9 +35,9 @@ describe("display scan warm-up", () => {
     query.mockResolvedValue([]);
     const result = await warmDisplayScans();
     expect(calls).toEqual([
-      "strong:IN:1.5", "legacy:IN:1.5", "v2:IN:1.5", "armed:IN:1.5", "trend:IN", "markets:IN",
-      "strong:US:1.5", "legacy:US:1.5", "v2:US:1.5", "armed:US:1.5", "trend:US", "markets:US",
+      "strong:IN:1.5", "momentum-both:IN:1.5", "armed:IN:1.5", "trend:IN", "markets:IN",
+      "strong:US:1.5", "momentum-both:US:1.5", "armed:US:1.5", "markets:US",
     ]);
-    expect(result).toMatchObject({ warmed: 11, failed: 1 });
+    expect(result).toMatchObject({ warmed: 8, failed: 1 });
   });
 });
