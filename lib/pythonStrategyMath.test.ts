@@ -175,4 +175,25 @@ describe("Python strategy authority", () => {
     const [momFromHoisted] = await runPythonStrategyBatch("momentum", [momHoisted], { benchmarkBars: benchmark });
     expect(momFromHoisted).toEqual(momFromInline);
   });
+
+  it("reuses resident workers across concurrent calls and recovers cleanly from an engine error", async () => {
+    const stock = bars(240);
+    const benchmark = bars(240, 200, 0.2);
+    const input = {
+      market: "IN" as const, verdict: "LONG_BREAKOUT", currentPrice: stock.at(-1)!.close,
+      stopAtrMult: 1.5, targetRR: 2, trailAtrMult: 3, bars: stock,
+      requireLiveExecutionData: false,
+    };
+    const [r1, r2, r3] = await Promise.all([
+      runPythonStrategyBatch("strong_swing", [input], { benchmarkBars: benchmark }),
+      runPythonStrategyBatch("strong_swing", [input], { benchmarkBars: benchmark }),
+      runPythonStrategyBatch("strong_swing", [input], { benchmarkBars: benchmark }),
+    ]);
+    expect(r1).toEqual(r2);
+    expect(r2).toEqual(r3);
+
+    await expect(runPythonStrategyBatch("nonexistent_engine", [{}])).rejects.toThrow(/unsupported strategy engine/);
+    const [afterError] = await runPythonStrategyBatch("strong_swing", [input], { benchmarkBars: benchmark });
+    expect(afterError).toEqual(r1[0]);
+  });
 });

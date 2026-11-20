@@ -16,6 +16,7 @@ import {
 } from "@/lib/market-calendar.mjs";
 import type { SwingSettings } from "@/lib/settings";
 import type { OHLCV } from "@/lib/types";
+import { ensureEodAssetFeaturesReady } from "@/lib/eodAssetFeatures";
 import { loadBenchmarkBarsCached, loadUniverseCountCached } from "@/lib/marketContextCache";
 
 /** What the Python engine returns: the assessment plus the rank it assigned to the batch. */
@@ -111,58 +112,81 @@ export async function getArmedSwingCandidates(
   const expectedSession = latestSignalSessionDate(market);
   const progress = Math.max(0, Math.min(1,
     (clock.minutes - config.openMinutes) / (config.closeMinutes - config.openMinutes)));
+  const eodReady = await ensureEodAssetFeaturesReady(market, marketOpen, sessionDate, expectedSession);
 
   const [universeCount, shortlist, benchmarkRows, curveRows] = await Promise.all([
     loadUniverseCountCached(market),
-    query<ShortlistRow>(
-      `with universe as materialized (
-         select a.id,a.ticker,a.name,a.exchange from public.assets a
+    eodReady
+      ? query<ShortlistRow>(
+        `select a.id asset_id,a.ticker,a.name,a.exchange,
+                coalesce(q.price,f.last_close) current_price,f.armed_rs_percentile rs_percentile,
+                q.best_bid,q.best_ask,q.lower_circuit,q.upper_circuit,
+                q.source quote_source,q.updated_at::text quote_updated_at
+           from public.assets a
+           join public.eod_asset_features f on f.asset_id=a.id and f.market=$4
+           left join public.latest_quotes q on q.asset_id=a.id
           where ${config.universeWhere} and a.asset_class='STOCK' and a.is_active
             and not exists (select 1 from public.asset_tracking_exclusions x where x.asset_id=a.id)
-       ), ranked as materialized (
-         select o.asset_id,o.date,o.close,o.high,o.volume,
-                row_number() over(partition by o.asset_id order by o.date desc) rn
-           from public.daily_ohlcv o join universe u on u.id=o.asset_id
-          where o.date >= current_date - interval '420 days'
-            and not ($1::boolean and o.date >= $2::date)
-       ), stats as materialized (
-         select asset_id,
-                max(date) filter(where rn=1) latest_date,
-                max(close) filter(where rn=1) last_close,
-                max(close) filter(where rn=64) c63,
-                max(close) filter(where rn=127) c126,
-                max(close) filter(where rn=190) c189,
-                max(close) filter(where rn=253) c252,
-                max(high) filter(where rn<=20) pivot,
-                avg(close*volume) filter(where rn<=20) traded_value20,
-                count(*) history_count
-           from ranked where rn<=253 group by asset_id
-       ), rs as (
-         select asset_id,
-                100 * percent_rank() over(order by
-                  0.4*(last_close/c63-1) + 0.2*(last_close/c126-1) + 0.2*(last_close/c189-1) + 0.2*(last_close/c252-1)
-                ) rs_percentile
-           from stats where c252 > 0 and c189 > 0 and c126 > 0 and c63 > 0
-       )
-       select u.id asset_id,u.ticker,u.name,u.exchange,
-              coalesce(q.price,st.last_close) current_price,rs.rs_percentile,
-              q.best_bid,q.best_ask,q.lower_circuit,q.upper_circuit,
-              q.source quote_source,q.updated_at::text quote_updated_at
-         from universe u
-         join stats st on st.asset_id=u.id
-         left join rs on rs.asset_id=u.id
-         left join public.latest_quotes q on q.asset_id=u.id
-        where st.history_count >= 60
-          and st.latest_date >= $3::date
-          and coalesce(q.price,st.last_close) >= $4
-          and st.traded_value20 >= $5
-          and coalesce(q.price,st.last_close) between st.pivot*0.90 and st.pivot*1.05
-        order by rs.rs_percentile desc nulls last,
-                 abs(coalesce(q.price,st.last_close)/st.pivot - 1),
-                 u.ticker
-        limit ${SHORTLIST_LIMIT}`,
-      [marketOpen, sessionDate, expectedSession, config.priceFloor, config.liquidityFloor],
-    ),
+            and f.history_count_253 >= 60
+            and f.latest_date >= $1::date
+            and coalesce(q.price,f.last_close) >= $2
+            and f.traded_value20 >= $3
+            and coalesce(q.price,f.last_close) between f.high20*0.90 and f.high20*1.05
+          order by f.armed_rs_percentile desc nulls last,
+                   abs(coalesce(q.price,f.last_close)/f.high20 - 1),
+                   a.ticker
+          limit ${SHORTLIST_LIMIT}`,
+        [expectedSession, config.priceFloor, config.liquidityFloor, market],
+      )
+      : query<ShortlistRow>(
+        `with universe as materialized (
+           select a.id,a.ticker,a.name,a.exchange from public.assets a
+            where ${config.universeWhere} and a.asset_class='STOCK' and a.is_active
+              and not exists (select 1 from public.asset_tracking_exclusions x where x.asset_id=a.id)
+         ), ranked as materialized (
+           select o.asset_id,o.date,o.close,o.high,o.volume,
+                  row_number() over(partition by o.asset_id order by o.date desc) rn
+             from public.daily_ohlcv o join universe u on u.id=o.asset_id
+            where o.date >= current_date - interval '420 days'
+              and not ($1::boolean and o.date >= $2::date)
+         ), stats as materialized (
+           select asset_id,
+                  max(date) filter(where rn=1) latest_date,
+                  max(close) filter(where rn=1) last_close,
+                  max(close) filter(where rn=64) c63,
+                  max(close) filter(where rn=127) c126,
+                  max(close) filter(where rn=190) c189,
+                  max(close) filter(where rn=253) c252,
+                  max(high) filter(where rn<=20) pivot,
+                  avg(close*volume) filter(where rn<=20) traded_value20,
+                  count(*) history_count
+             from ranked where rn<=253 group by asset_id
+         ), rs as (
+           select asset_id,
+                  100 * percent_rank() over(order by
+                    0.4*(last_close/c63-1) + 0.2*(last_close/c126-1) + 0.2*(last_close/c189-1) + 0.2*(last_close/c252-1)
+                  ) rs_percentile
+             from stats where c252 > 0 and c189 > 0 and c126 > 0 and c63 > 0
+         )
+         select u.id asset_id,u.ticker,u.name,u.exchange,
+                coalesce(q.price,st.last_close) current_price,rs.rs_percentile,
+                q.best_bid,q.best_ask,q.lower_circuit,q.upper_circuit,
+                q.source quote_source,q.updated_at::text quote_updated_at
+           from universe u
+           join stats st on st.asset_id=u.id
+           left join rs on rs.asset_id=u.id
+           left join public.latest_quotes q on q.asset_id=u.id
+          where st.history_count >= 60
+            and st.latest_date >= $3::date
+            and coalesce(q.price,st.last_close) >= $4
+            and st.traded_value20 >= $5
+            and coalesce(q.price,st.last_close) between st.pivot*0.90 and st.pivot*1.05
+          order by rs.rs_percentile desc nulls last,
+                   abs(coalesce(q.price,st.last_close)/st.pivot - 1),
+                   u.ticker
+          limit ${SHORTLIST_LIMIT}`,
+        [marketOpen, sessionDate, expectedSession, config.priceFloor, config.liquidityFloor],
+      ),
     loadBenchmarkBarsCached(market, config.benchmarkTickers, marketOpen, sessionDate),
     query<{ version: string; sample_sessions: number; points: unknown }>(
       `select version,sample_sessions,points from public.market_volume_curves

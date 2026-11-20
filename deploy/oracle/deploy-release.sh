@@ -55,6 +55,9 @@ sudo -u "${APP_USER}" bash -lc \
 sudo -u "${APP_USER}" bash -lc \
   "set -a; source /etc/investogenie/investogenie.env; set +a; cd '${APP_DIR}' && node scripts/verify-production-schema.mjs"
 
+sudo -u "${APP_USER}" bash -lc \
+  "set -a; source /etc/investogenie/investogenie.env; set +a; cd '${APP_DIR}' && node --import ./scripts/ts-alias-hook.mjs --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/refresh-eod-features.mjs ALL"
+
 install -m 0644 "${APP_DIR}/deploy/oracle/investogenie.service" \
   /etc/systemd/system/investogenie.service
 install -m 0644 "${APP_DIR}/deploy/oracle/investogenie-breeze.service" \

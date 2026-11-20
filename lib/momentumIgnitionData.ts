@@ -1,5 +1,6 @@
 import { cache } from "react";
 import { query } from "@/lib/db";
+import { ensureEodAssetFeaturesReady } from "@/lib/eodAssetFeatures";
 import { loadBenchmarkBarsCached, loadUniverseCountCached } from "@/lib/marketContextCache";
 
 export interface MomentumPreliminaryRow {
@@ -81,6 +82,38 @@ const preliminarySql = (market: "IN" | "US") => {
    limit 350`;
 };
 
+const preliminaryFastSql = (market: "IN" | "US") => {
+  const universe = market === "IN"
+    ? "a.country='IN' and a.exchange='NSE'"
+    : "a.country='US' and a.exchange in ('NASDAQ','NYSE','AMEX','NYSEARCA','NYSEAMERICAN')";
+  return `
+  select a.id asset_id,a.ticker,a.name,a.exchange,
+         q.price current_price,q.change_pct quote_change_pct,q.as_of::text quote_as_of,
+         q.source quote_source,q.updated_at::text quote_updated_at,
+         f.latest_date::text latest_date,s.score base_score,s.verdict base_verdict,
+         strong.status strong_status,strong.captured_at::text strong_captured_at
+    from public.assets a
+    join public.eod_asset_features f on f.asset_id=a.id and f.market=$5
+    join public.latest_quotes q on q.asset_id=a.id
+    left join public.swing_signals s on s.asset_id=a.id and s.as_of >= $1::date
+    left join lateral (
+      select ss.status,ss.captured_at from public.strong_swing_snapshots ss
+       where ss.asset_id=a.id and ss.market=$5 and ss.latest_bar_date >= $1::date
+       order by ss.captured_at desc limit 1
+    ) strong on true
+   where ${universe} and a.asset_class='STOCK' and a.is_active
+     and not exists (select 1 from public.asset_tracking_exclusions x where x.asset_id=a.id)
+     and f.history_count_200>=10 and q.price>=$3
+     and ((f.history_count_200>=200 and q.price>f.sma20 and f.sma20>f.sma50 and f.sma50>f.sma200)
+       or (f.history_count_200<200 and q.price>f.sma20))
+     and q.price>=f.high20*0.90 and f.traded_value20>=$4
+     and f.latest_date >= $1::date and q.as_of::date >= $1::date
+     and (not $2::boolean or q.updated_at >= now() - interval '7 minutes')
+   order by case when q.price>=f.high20 then 0 else 1 end,
+     abs((q.price/f.high20)-1),coalesce(s.score,0) desc,a.ticker
+   limit 350`;
+};
+
 /** Request-scoped reuse for the identical legacy/V2 market scan. */
 export const loadMomentumPreliminaryBundle = cache(async (
   market: "IN" | "US",
@@ -92,12 +125,17 @@ export const loadMomentumPreliminaryBundle = cache(async (
   benchmarkTickersKey: string,
 ) => {
   const benchmarkTickers = JSON.parse(benchmarkTickersKey) as string[];
+  const eodReady = await ensureEodAssetFeaturesReady(market, marketOpen, sessionDate, expectedSessionDate);
   const [universeCount, preliminary, benchmarkRows] = await Promise.all([
     loadUniverseCountCached(market),
-    query<MomentumPreliminaryRow>(preliminarySql(market), [
-      expectedSessionDate, marketOpen, priceFloor, preliminaryLiquidityFloor, market,
-      marketOpen, sessionDate,
-    ]),
+    eodReady
+      ? query<MomentumPreliminaryRow>(preliminaryFastSql(market), [
+        expectedSessionDate, marketOpen, priceFloor, preliminaryLiquidityFloor, market,
+      ])
+      : query<MomentumPreliminaryRow>(preliminarySql(market), [
+        expectedSessionDate, marketOpen, priceFloor, preliminaryLiquidityFloor, market,
+        marketOpen, sessionDate,
+      ]),
     loadBenchmarkBarsCached(market, benchmarkTickers, marketOpen, sessionDate),
   ]);
   return { countRows: [{ count: universeCount }], preliminary, benchmarkRows };

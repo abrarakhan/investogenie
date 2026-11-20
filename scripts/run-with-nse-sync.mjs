@@ -38,6 +38,7 @@ const shareholdingPipeline = resolve(root, "pipelines/shareholding_sync.py");
 const trendContinuationPipeline = resolve(root, "pipelines/trend_continuation.py");
 const strategyRetrospectivePipeline = resolve(root, "pipelines/strategy_retrospective.py");
 const screenerRefreshScript = resolve(root, "scripts/refresh-screener.mjs");
+const eodFeaturesRefreshScript = resolve(root, "scripts/refresh-eod-features.mjs");
 const pythonCandidates = [
   process.env.PYTHON_BIN,
   resolve(root, ".venv/bin/python"),
@@ -1695,6 +1696,17 @@ console.log(`[market-calendar] NSE capital-market holidays ${refreshedNseCalenda
 scheduleDailySync();
 scheduleShareholdingSync();
 if (!startupSyncDisabled) setTimeout(() => runShareholdingSync("startup"), 60_000);
+async function refreshEodFeatures(market) {
+  await new Promise((resolveRun, rejectRun) => {
+    const child = spawn(
+      process.execPath,
+      ["--import", resolve(root, "scripts/ts-alias-hook.mjs"), "--disable-warning=MODULE_TYPELESS_PACKAGE_JSON", eodFeaturesRefreshScript, market],
+      { cwd: root, env: process.env, stdio: "inherit", timeout: 10 * 60_000 },
+    );
+    child.once("error", rejectRun);
+    child.once("close", (code, signal) => (code === 0 && !signal ? resolveRun() : rejectRun(new Error(`eod features (${market}) exited ${signal ?? code}`))));
+  });
+}
 async function refreshTechnicalScreener(market) {
   const run = (command, args) => new Promise((resolveRun, rejectRun) => {
     const child = spawn(command, args, { cwd: root, env: process.env, stdio: "inherit", timeout: 30 * 60_000 });
@@ -1743,6 +1755,7 @@ const stopEodScheduler = startEodScheduler({
   runIndia: async () => {
     if (syncDisabled) throw new Error("NSE_SYNC_DISABLED disables India EOD updates");
     if (!await runBhavcopyNseSync("exchange-close")) throw new Error("India EOD update failed");
+    await refreshEodFeatures("IN");
     await refreshTechnicalScreener("IN");
     await runSignalScan();
     await refreshStrategyRetrospective("IN");
@@ -1755,6 +1768,7 @@ const stopEodScheduler = startEodScheduler({
       "--google-fallback-limit", usGoogleFallbackLimit, "--sleep", usSyncSleep]);
     await run([usHistoryPipeline, "--all-active", "--limit", "100000", "--stale-days", "0",
       "--min-bars", usHistoryMinBars, "--sleep", usHistorySleep]);
+    await refreshEodFeatures("US");
     await refreshTechnicalScreener("US");
     await runSignalScan();
     await refreshStrategyRetrospective("US");
@@ -1764,6 +1778,7 @@ const stopEodScheduler = startEodScheduler({
     // --limit: the script's default cap (250) is for the hourly rotation, not this pass.
     await runEodPython([usHistoryPipeline, "--behind-session", session, "--limit", "100000",
       "--require-session-complete", "--min-bars", usHistoryMinBars, "--sleep", usHistorySleep]);
+    await refreshEodFeatures("US");
     await runSignalScan();
   },
 });

@@ -34,8 +34,7 @@ def _json_safe(value):
     return value
 
 
-def main() -> int:
-    request = json.load(sys.stdin)
+def _dispatch(request: dict) -> dict:
     engine = request.get("engine")
     inputs = request.get("inputs")
     shared = request.get("shared")
@@ -135,7 +134,28 @@ def main() -> int:
         results = [adaptive_backtest(item) for item in inputs]
     else:
         raise ValueError(f"unsupported strategy engine: {engine}")
-    json.dump({"engine": engine, "results": _json_safe(results)}, sys.stdout, allow_nan=False, separators=(",", ":"))
+    return {"engine": engine, "results": _json_safe(results)}
+
+
+def main() -> int:
+    if "--serve" in sys.argv[1:]:
+        for line in sys.stdin:
+            text = line.strip()
+            if not text:
+                continue
+            req_id = None
+            try:
+                request = json.loads(text)
+                req_id = request.get("id")
+                payload = _dispatch(request)
+                response = {"id": req_id, "ok": True, **payload}
+            except Exception as exc:
+                response = {"id": req_id, "ok": False, "error": str(exc)}
+            sys.stdout.write(json.dumps(response, allow_nan=False, separators=(",", ":")) + "\n")
+            sys.stdout.flush()
+        return 0
+    payload = _dispatch(json.load(sys.stdin))
+    json.dump(payload, sys.stdout, allow_nan=False, separators=(",", ":"))
     sys.stdout.write("\n")
     return 0
 

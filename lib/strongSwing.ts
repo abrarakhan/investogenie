@@ -4,7 +4,8 @@ import { STRONG_SWING_MODEL_VERSION, type CompletedBarStrongSwingAssessment } fr
 import { runPythonStrategyBatch } from "@/lib/pythonStrategyMath";
 import type { SwingSettings } from "@/lib/settings";
 import type { MarketId, OHLCV } from "@/lib/types";
-import { isMarketOpenNow, refreshMarketHolidays, zonedMarketClock } from "@/lib/market-calendar.mjs";
+import { isMarketOpenNow, latestSignalSessionDate, refreshMarketHolidays, zonedMarketClock } from "@/lib/market-calendar.mjs";
+import { ensureEodAssetFeaturesReady } from "@/lib/eodAssetFeatures";
 import { loadBenchmarkBarsCached } from "@/lib/marketContextCache";
 import { loadResultsEvidence } from "@/lib/resultsCalendar";
 
@@ -202,24 +203,36 @@ export async function getStrongSwingCandidates(
   await refreshMarketHolidays(market);
   const marketOpen = isMarketOpenNow(market);
   const marketDate = zonedMarketClock(market).date;
+  const expectedSession = latestSignalSessionDate(market);
+  const eodReady = await ensureEodAssetFeaturesReady(market, marketOpen, marketDate, expectedSession);
   // A breakout that held for a second close is exactly what Strong Swing confirms, but on the
   // hold day the base scan usually reports NO_SETUP (no new high, no squeeze). Those stocks are
   // found here from completed bars and assessed alongside the base setups.
-  const holding = await query<{ asset_id: string }>(
-    `with ranked as (
-       select o.asset_id,o.close,o.high,row_number() over(partition by o.asset_id order by o.date desc) rn
-         from public.daily_ohlcv o join public.assets a on a.id=o.asset_id
-        where a.country=$1 and a.is_active and a.asset_class='STOCK'
-          and ($2::text is null or a.exchange=$2)
-          and o.date >= $4::date - interval '60 days'
-          and not ($3::boolean and o.date >= $4::date)
-     )
-     select asset_id from ranked where rn <= 22 group by asset_id
-     having count(*) = 22
-        and max(close) filter (where rn=1) > max(high) filter (where rn between 3 and 22)
-        and max(close) filter (where rn=2) > max(high) filter (where rn between 3 and 22)`,
-    [country, market === "IN" ? "NSE" : null, marketOpen, marketDate],
-  );
+  const holding = eodReady
+    ? await query<{ asset_id: string }>(
+      `select f.asset_id
+         from public.eod_asset_features f
+         join public.assets a on a.id = f.asset_id
+        where f.market = $1 and f.two_close_hold
+          and a.is_active and a.asset_class = 'STOCK'
+          and ($2::text is null or a.exchange = $2)`,
+      [country, market === "IN" ? "NSE" : null],
+    )
+    : await query<{ asset_id: string }>(
+      `with ranked as (
+         select o.asset_id,o.close,o.high,row_number() over(partition by o.asset_id order by o.date desc) rn
+           from public.daily_ohlcv o join public.assets a on a.id=o.asset_id
+          where a.country=$1 and a.is_active and a.asset_class='STOCK'
+            and ($2::text is null or a.exchange=$2)
+            and o.date >= $4::date - interval '60 days'
+            and not ($3::boolean and o.date >= $4::date)
+       )
+       select asset_id from ranked where rn <= 22 group by asset_id
+       having count(*) = 22
+          and max(close) filter (where rn=1) > max(high) filter (where rn between 3 and 22)
+          and max(close) filter (where rn=2) > max(high) filter (where rn between 3 and 22)`,
+      [country, market === "IN" ? "NSE" : null, marketOpen, marketDate],
+    );
   const alsoAssetIds = holding.map((row) => row.asset_id);
   const base = await runScreener(
     country,
