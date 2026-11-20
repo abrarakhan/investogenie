@@ -189,20 +189,27 @@ export async function computeSignals(databaseUrl: string): Promise<ScanSummary> 
     // asset's performance before any batch is evaluated. Only the six closes they use
     // are read (the last ~13 months bound the window scan).
     const { rows: rsRows } = await client.query<{ asset_id: string; peer_group: string } & Record<"c0" | "c21" | "c63" | "c126" | "c189" | "c252", string | null>>(
-      `select x.asset_id, a.country || ':' || a.asset_class peer_group,
+      `select x.asset_id, x.peer_group,
               max(x.close) filter (where x.rn = 1) c0, max(x.close) filter (where x.rn = 22) c21,
               max(x.close) filter (where x.rn = 64) c63,
               max(x.close) filter (where x.rn = 127) c126, max(x.close) filter (where x.rn = 190) c189,
               max(x.close) filter (where x.rn = 253) c252
          from (
-           select o.asset_id, o.close, row_number() over (partition by o.asset_id order by o.date desc) rn
+           select o.asset_id, a.country || ':' || a.asset_class peer_group, o.close,
+                  row_number() over (partition by o.asset_id order by o.date desc) rn
              from public.daily_ohlcv o
-            where o.asset_id = any($1) and o.close > 0 and o.date >= current_date - 400
+             join public.assets a on a.id = o.asset_id
+            where o.asset_id = any($1)
+              and o.open > 0 and o.high > 0 and o.low > 0 and o.close > 0
+              and o.date >= current_date - 400
+              and o.date <= case
+                when a.country = 'IN' then $2::date
+                when a.country = 'US' then $3::date
+                else current_date end
          ) x
-         join public.assets a on a.id = x.asset_id
         where x.rn in (1, 22, 64, 127, 190, 253)
-        group by x.asset_id, a.country, a.asset_class`,
-      [assets.map((a) => a.id)],
+        group by x.asset_id, x.peer_group`,
+      [assets.map((a) => a.id), indiaSignalSession, usSignalSession],
     );
     const crossSectionByPeerGroup = new Map<string, Array<{ id: string; closes: Record<string, number | null> }>>();
     const toNum = (v: string | null) => (v === null ? null : Number(v));

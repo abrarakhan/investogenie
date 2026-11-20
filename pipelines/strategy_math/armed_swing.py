@@ -285,6 +285,9 @@ def assess(payload: dict[str, Any]) -> dict[str, Any]:
     if live and average20 > 0 and curve:
         progress = max(R["minSessionProgress"], min(1.0, float(live.get("progress") or 0)))
         volume_pace = float(live.get("volume") or 0) / (average20 * expected_volume_share(curve, progress))
+    raw_session_high = live.get("high") if live else None
+    session_high = float(raw_session_high) if raw_session_high is not None and float(raw_session_high) > 0 else None
+    give_back_atr = (session_high - current_price) / atr if session_high is not None and atr > 0 else 0.0
 
     # --- Market and execution context -------------------------------------------------------
     benchmark_closes = [bar.close for bar in benchmark_bars]
@@ -325,7 +328,7 @@ def assess(payload: dict[str, Any]) -> dict[str, Any]:
     lower_circuit = exec_data.get("lowerCircuit") if exec_data else None
     upper_circuit = exec_data.get("upperCircuit") if exec_data else None
     depth_present = bool(exec_data and best_bid is not None and best_ask is not None
-                         and float(best_bid) > 0 and float(best_ask) > 0)
+                         and float(best_bid) > 0 and float(best_ask) >= float(best_bid))
     bands_present = bool(exec_data and lower_circuit is not None and upper_circuit is not None
                          and float(lower_circuit) > 0 and float(upper_circuit) > 0)
     spread_pct = ((float(best_ask) - float(best_bid)) / float(best_ask)) * 100 if depth_present else None
@@ -440,6 +443,11 @@ def assess(payload: dict[str, Any]) -> dict[str, Any]:
                     f"{js_to_fixed(float(upper_circuit), 2)}." if not limit_inside_band
                else f"{js_to_fixed(lower_room_pct, 1)}% above lower circuit (requires "
                     f"{_trim(R['minLowerCircuitRoomPct'])}%); limit inside the upper band."), "execution"),
+        _gate("session_reversal", "Intraday reversal",
+              session_high is None or give_back_atr <= 0.50,
+              "No live session high beyond the latest completed bar." if session_high is None
+              else f"{js_to_fixed(give_back_atr, 2)} ATR handed back from today's high {js_to_fixed(session_high, 2)}; maximum 0.50.",
+              "execution"),
     ]
 
     blocking = [item for item in gates if item["blocking"]]

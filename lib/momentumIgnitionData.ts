@@ -125,15 +125,16 @@ export const loadMomentumPreliminaryBundle = cache(async (
   benchmarkTickersKey: string,
 ) => {
   const benchmarkTickers = JSON.parse(benchmarkTickersKey) as string[];
+  const enforceLiveQuote = marketOpen && market === "IN";
   const eodReady = await ensureEodAssetFeaturesReady(market, marketOpen, sessionDate, expectedSessionDate);
   const [universeCount, preliminary, benchmarkRows] = await Promise.all([
     loadUniverseCountCached(market),
     eodReady
       ? query<MomentumPreliminaryRow>(preliminaryFastSql(market), [
-        expectedSessionDate, marketOpen, priceFloor, preliminaryLiquidityFloor, market,
+        expectedSessionDate, enforceLiveQuote, priceFloor, preliminaryLiquidityFloor, market,
       ])
       : query<MomentumPreliminaryRow>(preliminarySql(market), [
-        expectedSessionDate, marketOpen, priceFloor, preliminaryLiquidityFloor, market,
+        expectedSessionDate, enforceLiveQuote, priceFloor, preliminaryLiquidityFloor, market,
         marketOpen, sessionDate,
       ]),
     loadBenchmarkBarsCached(market, benchmarkTickers, marketOpen, sessionDate),

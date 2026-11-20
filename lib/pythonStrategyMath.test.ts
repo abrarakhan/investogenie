@@ -196,4 +196,39 @@ describe("Python strategy authority", () => {
     const [afterError] = await runPythonStrategyBatch("strong_swing", [input], { benchmarkBars: benchmark });
     expect(afterError).toEqual(r1[0]);
   });
+
+  it("blocks Armed Swing on crossed quotes or >0.50 ATR intraday reversal from session high", async () => {
+    const stock = bars(240, 100, 0.2);
+    const benchmark = bars(240, 200, 0.15);
+    const current = stock.at(-1)!.close;
+    const baseInput = {
+      market: "IN" as const,
+      bars: stock,
+      currentPrice: current,
+      rsPercentile: 90,
+      execution: {
+        quoteFresh: true, quoteAgeMinutes: 1,
+        bestBid: current - 0.1, bestAsk: current + 0.1,
+        lowerCircuit: current * 0.85, upperCircuit: current * 1.15,
+      },
+      results: { verified: true, sessionsToNext: null, nextDate: null, detail: "Clear" },
+      risk: { targetRR: 2, trailAtrMult: 1.5 },
+    };
+    const [crossed, reversed] = await runPythonStrategyBatch<
+      Record<string, unknown>,
+      { status: string; gates: Array<{ key: string; passed: boolean }> }
+    >("armed_swing", [
+      {
+        ...baseInput,
+        execution: { ...baseInput.execution, bestBid: current + 1, bestAsk: current - 1 },
+      },
+      {
+        ...baseInput,
+        liveSession: { volume: 1_500_000, progress: 0.5, high: current + 5 },
+      },
+    ], { benchmarkBars: benchmark });
+    expect(gateMap(crossed).live_spread).toBe(false);
+    expect(gateMap(reversed).session_reversal).toBe(false);
+    expect(reversed.status).toBe("RISK_OFF");
+  });
 });

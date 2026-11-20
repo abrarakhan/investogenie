@@ -196,5 +196,36 @@ class MeeshoRegression(unittest.TestCase):
         self.assertAlmostEqual(result["sessionGiveBackAtr"], .62, places=2)
 
 
+class LiveMicrostructureAndHoldHardening(unittest.TestCase):
+    def test_crossed_bid_ask_fails_live_spread(self):
+        price = ready_price()
+        result = assess({
+            "market": "IN", "verdict": "BREAKOUT", "currentPrice": price,
+            "stopAtrMult": 1.5, "targetRR": 2.0, "trailAtrMult": 1.5,
+            "bars": holding_breakout(), "benchmarkBars": slow_benchmark(),
+            "requireLiveExecutionData": True,
+            "microstructure": {"quoteFresh": True, "bestBid": price + 0.5, "bestAsk": price - 0.5},
+            "results": RESULTS_CLEAR,
+        })
+        self.assertFalse(gate(result, "live_spread")["passed"])
+        self.assertEqual(result["status"], "RISK_OFF")
+
+    def test_live_session_hold_enforced_even_before_intraday_bar_lands(self):
+        bars = holding_breakout()
+        prior_close = bars[-1]["close"]
+        price = prior_close - 0.05
+        result = assess({
+            "market": "IN", "verdict": "BREAKOUT", "currentPrice": price,
+            "stopAtrMult": 1.5, "targetRR": 2.0, "trailAtrMult": 1.5,
+            "bars": bars, "benchmarkBars": slow_benchmark(),
+            "requireLiveExecutionData": True,
+            "microstructure": {"quoteFresh": True, "bestBid": price - 0.05, "bestAsk": price + 0.05},
+            "session": None,
+            "results": RESULTS_CLEAR,
+        })
+        self.assertFalse(gate(result, "session_hold")["passed"])
+        self.assertEqual(result["status"], "WAIT_FOR_ENTRY")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -108,10 +108,16 @@ def classify(bars: list[Bar]) -> dict[str, Any]:
         bias, verdict, score, reason = "NONE", "NO_SETUP", max(long_score, short_score), "No structural trigger on the latest bar."
     elif short_verdict != "NO_SETUP" and short_score > long_score:
         bias, verdict, score = "SHORT", short_verdict, min(1, short_score)
-        reason = f"Price {last.close:.2f} broke Donchian low {donchian_low:.2f} / lower band {lower:.2f}"
+        if breakdown:
+            reason = f"Price {last.close:.2f} broke Donchian low {donchian_low:.2f} / lower band {lower:.2f}"
+        else:
+            reason = f"Bollinger bandwidth {bandwidth * 100:.2f}% sits in the lowest 25% of its history (volatility compression) with short build-up"
     else:
         bias, verdict, score = "LONG", long_verdict, min(1, long_score)
-        reason = f"Price {last.close:.2f} cleared Donchian high {donchian_high:.2f} / upper band {upper:.2f}"
+        if breakout:
+            reason = f"Price {last.close:.2f} cleared Donchian high {donchian_high:.2f} / upper band {upper:.2f}"
+        else:
+            reason = f"Bollinger bandwidth {bandwidth * 100:.2f}% sits in the lowest 25% of its history (volatility compression) with long build-up"
     recent_closes = closes[-21:]
     velocity = mean([abs(recent_closes[i] - recent_closes[i - 1]) for i in range(1, len(recent_closes))])
     setup = {"currentPrice": last.close, "atr": atr(bars), "longTrigger": max(donchian_high, upper),
@@ -202,17 +208,27 @@ def detect_minervini(bars: list[Bar], rating: float | None) -> dict[str, Any]:
     narrowing = narrowing and recent[-1] <= .15 and max(recent) <= .35
     pivot = highs[pivot_idx] if pivot_idx is not None else max(highs[-10:])
     near = pivot*.95 <= close <= pivot*1.05
-    final_start = pivot_idx+1 if pivot_idx is not None and last-pivot_idx>=3 else last-4
-    dry = mean(volumes[final_start:]) < mean(volumes[-50:])
-    breakout_idx = next((i for i,b in enumerate(bars) if pivot_idx is not None and i>pivot_idx and b.close>pivot), -1)
-    volume_idx = breakout_idx if breakout_idx>=0 else last
-    avg50 = mean(volumes[max(0,volume_idx-50):volume_idx])
-    volume_ok = breakout_idx<0 or (avg50>0 and volumes[breakout_idx]>avg50)
-    vcp=[narrowing,near,dry and volume_ok]; matched=all(template) and all(vcp)
-    final_low=min(lows[pivot_idx+1:]) if pivot_idx is not None and pivot_idx<last else math.nan
-    stop=max(final_low,pivot*.92) if math.isfinite(final_low) and final_low<pivot else pivot*.92
-    return result("MINERVINI",matched,(sum(template)/8)*.7+sum(vcp)*.1,"LONG",pivot,stop,None,max(stop,ma50),
-                  "Minervini VCP." if matched else f"Trend Template {sum(template)}/8 — not a full VCP.",max_risk=.08,scale=.5)
+    breakout_idx = next((i for i, b in enumerate(bars) if pivot_idx is not None and i > pivot_idx and b.close > pivot), -1)
+    final_start = pivot_idx + 1 if pivot_idx is not None and last - pivot_idx >= 3 else last - 4
+    dry_end = breakout_idx if breakout_idx > final_start else len(volumes)
+    dry = mean(volumes[final_start:dry_end]) < mean(volumes[max(0, dry_end - 50):dry_end])
+    volume_idx = breakout_idx if breakout_idx >= 0 else last
+    avg50 = mean(volumes[max(0, volume_idx - 50):volume_idx])
+    volume_ok = breakout_idx < 0 or (avg50 > 0 and volumes[breakout_idx] > avg50)
+    vcp = [narrowing, near, dry and volume_ok]
+    matched = all(template) and all(vcp)
+    final_low = min(lows[pivot_idx + 1:]) if pivot_idx is not None and pivot_idx < last else math.nan
+    stop = max(final_low, pivot * .92) if math.isfinite(final_low) and final_low < pivot else pivot * .92
+    out = result("MINERVINI", matched, (sum(template) / 8) * .7 + sum(vcp) * .1, "LONG", pivot, stop, None, max(stop, ma50),
+                 "Minervini VCP." if matched else f"Trend Template {sum(template)}/8 — not a full VCP.", max_risk=.08, scale=.5)
+    if matched and breakout_idx == last and avg50 > 0:
+        ratio = volumes[last] / avg50
+        out.update({
+            "triggered": True,
+            "breakoutVolumeRatio": round2(ratio),
+            "breakoutConfirmed": close >= pivot and ratio >= 1.5,
+        })
+    return out
 
 
 def detect_darvas(bars: list[Bar], tick: float) -> dict[str, Any]:
@@ -345,34 +361,71 @@ def strategy_trade_levels(setup:dict[str,float], score:dict[str,Any], risk:dict[
     stop=float(structural) if capped is None else max(float(structural),capped) if direction=="LONG" else min(float(structural),capped)
     unit=sign*(entry-stop)
     if not unit>0:return fallback
-    own=score.get("target");target=float(own) if own is not None and sign*(float(own)-entry)>0 else max(0,entry+sign*risk["targetRR"]*unit)
-    line=float(score.get("trail") if score.get("trail") is not None else stop)
-    trail=min(entry,max(stop,line)) if direction=="LONG" else max(entry,min(stop,line))
-    distance=abs(target-entry);days=min(60,max(1,js_round(distance/setup["dailyVelocity"]))) if setup["dailyVelocity"]>0 else 0
-    return {"direction":direction,"currentPrice":fallback["currentPrice"],"entry":entry,"target":round2(target),
-            "stopLoss":round2(stop),"trailingStop":round2(trail),"atr":fallback["atr"],
-            "riskRewardRatio":round2(distance/unit),"expectedDays":days}
+    own = score.get("target")
+    has_own = own is not None and math.isfinite(float(own))
+    target = float(own) if has_own else max(0, entry + sign * risk["targetRR"] * unit)
+    line = float(score.get("trail") if score.get("trail") is not None else stop)
+    trail = min(entry, max(stop, line)) if direction == "LONG" else max(entry, min(stop, line))
+    reward = max(0.0, sign * (target - entry))
+    days = min(60, max(1, js_round(reward / setup["dailyVelocity"]))) if reward > 0 and setup["dailyVelocity"] > 0 else 0
+    return {"direction": direction, "currentPrice": fallback["currentPrice"], "entry": entry, "target": round2(target),
+            "stopLoss": round2(stop), "trailingStop": round2(trail), "atr": fallback["atr"],
+            "riskRewardRatio": round2(reward / unit), "expectedDays": days}
 
 
-def entry_state(direction:str,price:float,trigger:float|None,stop:float|None,atr_value:float,triggered:bool=False,confirmed:bool=False)->str|None:
-    sign=1 if direction=="LONG" else -1
-    if stop is not None and math.isfinite(stop) and sign*(price-stop)<=0:return "BELOW_STOP"
-    if trigger is not None and atr_value>0 and sign*(price-trigger)>atr_value:return "EXTENDED"
-    if triggered:return "BREAKOUT_CONFIRMED" if confirmed else "BREAKOUT_UNCONFIRMED"
-    if trigger is not None and sign*(price-trigger)>=0:return "BREAKOUT_UNCONFIRMED"
+def entry_state(direction: str, price: float, trigger: float | None, stop: float | None, atr_value: float,
+                triggered: bool = False, confirmed: bool = False, *,
+                mean_reversion: bool = False, target: float | None = None) -> str | None:
+    sign = 1 if direction == "LONG" else -1
+    if stop is not None and math.isfinite(stop) and sign * (price - stop) <= 0:
+        return "BELOW_STOP"
+    if mean_reversion and target is not None and math.isfinite(target) and sign * (price - target) >= 0:
+        return "EXTENDED"
+    if trigger is not None and atr_value > 0 and sign * (price - trigger) > atr_value:
+        return "EXTENDED"
+    if mean_reversion:
+        return None
+    if triggered:
+        return "BREAKOUT_CONFIRMED" if confirmed else "BREAKOUT_UNCONFIRMED"
+    if trigger is not None and sign * (price - trigger) >= 0:
+        return "BREAKOUT_UNCONFIRMED"
     return None
 
 
-def levels_for_screen(payload:dict[str,Any])->dict[str,Any]:
-    setup=payload["setup"];risk=payload["risk"];direction=payload.get("direction") or "LONG"
-    default=derive_levels(setup,direction,risk)
-    default_state=None if payload.get("noSetup") else entry_state(direction,setup["currentPrice"],setup["shortTrigger"] if direction=="SHORT" else setup["longTrigger"],None,setup["atr"])
-    strategies={}
-    for key,score in (payload.get("scores") or {}).items():
-        levels=strategy_trade_levels(setup,score,risk)
-        strategies[key]={"state":entry_state(levels["direction"],setup["currentPrice"],score.get("entry"),levels["stopLoss"],setup["atr"],bool(score.get("triggered")),bool(score.get("confirmed"))),
-                         "breakoutVolumeRatio":score.get("volumeRatio") if score.get("triggered") else None,
-                         "direction":levels["direction"],"entry":levels["entry"],"target":levels["target"],
-                         "stopLoss":levels["stopLoss"],"trailingStop":levels["trailingStop"],
-                         "riskReward":levels["riskRewardRatio"],"expectedDays":levels["expectedDays"],"score":float(score.get("score") or 0)}
-    return {"default":default,"entryState":default_state,"strategies":strategies}
+def levels_for_screen(payload: dict[str, Any]) -> dict[str, Any]:
+    setup = payload["setup"]
+    risk = payload["risk"]
+    direction = payload.get("direction") or "LONG"
+    default = derive_levels(setup, direction, risk)
+    default_state = None if payload.get("noSetup") else entry_state(
+        direction,
+        setup["currentPrice"],
+        setup["shortTrigger"] if direction == "SHORT" else setup["longTrigger"],
+        default["stopLoss"],
+        setup["atr"],
+        bool(payload.get("triggered")),
+        bool(payload.get("confirmed")),
+    )
+    strategies = {}
+    for key, score in (payload.get("scores") or {}).items():
+        levels = strategy_trade_levels(setup, score, risk)
+        is_reversion = key == "SIMONS"
+        strategies[key] = {
+            "state": entry_state(
+                levels["direction"],
+                setup["currentPrice"],
+                score.get("entry"),
+                levels["stopLoss"],
+                setup["atr"],
+                bool(score.get("triggered")),
+                bool(score.get("confirmed")),
+                mean_reversion=is_reversion,
+                target=score.get("target"),
+            ),
+            "breakoutVolumeRatio": score.get("volumeRatio") if score.get("triggered") else None,
+            "direction": levels["direction"], "entry": levels["entry"], "target": levels["target"],
+            "stopLoss": levels["stopLoss"], "trailingStop": levels["trailingStop"],
+            "riskReward": levels["riskRewardRatio"], "expectedDays": levels["expectedDays"],
+            "score": float(score.get("score") or 0),
+        }
+    return {"default": default, "entryState": default_state, "strategies": strategies}

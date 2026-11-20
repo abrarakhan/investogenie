@@ -75,7 +75,7 @@ const CONFIG = {
   US: {
     universeWhere: "a.country='US' and a.exchange in ('NASDAQ','NYSE','AMEX','NYSEARCA','NYSEAMERICAN')",
     benchmarkTickers: ["SPY"],
-    priceFloor: 5,
+    priceFloor: 2,
     liquidityFloor: 1_000_000,
     openMinutes: 9 * 60 + 30,
     closeMinutes: 16 * 60,
@@ -164,9 +164,12 @@ export async function getArmedSwingCandidates(
          ), rs as (
            select asset_id,
                   100 * percent_rank() over(order by
-                    0.4*(last_close/c63-1) + 0.2*(last_close/c126-1) + 0.2*(last_close/c189-1) + 0.2*(last_close/c252-1)
+                    case
+                      when c252 > 0 then 0.4*(last_close/c63-1) + 0.2*(last_close/c126-1) + 0.2*(last_close/c189-1) + 0.2*(last_close/c252-1)
+                      else (0.4*(last_close/c63-1) + 0.2*(last_close/c126-1) + 0.2*(last_close/c189-1)) / 0.8
+                    end
                   ) rs_percentile
-             from stats where c252 > 0 and c189 > 0 and c126 > 0 and c63 > 0
+             from stats where c189 > 0 and c126 > 0 and c63 > 0
          )
          select u.id asset_id,u.ticker,u.name,u.exchange,
                 coalesce(q.price,st.last_close) current_price,rs.rs_percentile,
@@ -216,8 +219,8 @@ export async function getArmedSwingCandidates(
       [ids, marketOpen, sessionDate],
     ),
     marketOpen
-      ? query<{ asset_id: string; volume: string | number | null }>(
-        `select asset_id,volume from public.daily_ohlcv where asset_id=any($1::uuid[]) and date=$2::date`,
+      ? query<{ asset_id: string; volume: string | number | null; high: string | number | null }>(
+        `select asset_id,volume,high from public.daily_ohlcv where asset_id=any($1::uuid[]) and date=$2::date`,
         [ids, sessionDate],
       )
       : Promise.resolve([]),
@@ -248,7 +251,15 @@ export async function getArmedSwingCandidates(
     list.push(toBar(row));
     barsByAsset.set(row.asset_id, list);
   }
-  const liveVolume = new Map(liveRows.map((row) => [row.asset_id, Number(row.volume ?? 0)]));
+  const liveSessionData = new Map(
+    liveRows.map((row) => [
+      row.asset_id,
+      {
+        volume: Number(row.volume ?? 0),
+        high: row.high === null || row.high === undefined ? null : Number(row.high),
+      },
+    ]),
+  );
   const benchmarkBars = benchmarkRows.map(toBar).reverse();
   if (!benchmarkBars.length) {
     console.warn(`[armed-swing] benchmark ${config.benchmarkTickers.join("/")} has no bars for ${market}`);
@@ -293,8 +304,12 @@ export async function getArmedSwingCandidates(
       bars,
       currentPrice,
       rsPercentile: row.rs_percentile === null ? null : Number(row.rs_percentile),
-      liveSession: marketOpen && liveVolume.has(row.asset_id)
-        ? { volume: liveVolume.get(row.asset_id)!, progress }
+      liveSession: marketOpen && liveSessionData.has(row.asset_id)
+        ? {
+          volume: liveSessionData.get(row.asset_id)!.volume,
+          high: liveSessionData.get(row.asset_id)!.high,
+          progress,
+        }
         : null,
       expectedSessionLag: tradingSessionLag(market, bars.at(-1)!.date, expectedSession),
       execution: {

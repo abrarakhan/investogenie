@@ -78,8 +78,18 @@ describe("runScreener selection", () => {
 
     expect(mocks.query).toHaveBeenCalledTimes(1);
     const [sql] = mocks.query.mock.calls[0];
+    expect(sql).toContain("as_of::text as as_of");
     expect(sql).toContain("verdict <> 'NO_SETUP'");
     expect(sql).toContain("s.value->>'dir' = 'LONG'");
     expect(sql).toContain(" or ");
+  });
+
+  it("uses setupsOnly for US without enforcing the 7-minute Breeze live quote gate", async () => {
+    await getSwingScreenBundle("US", DEFAULT_SETTINGS);
+
+    expect(mocks.query).toHaveBeenCalledTimes(1);
+    const [sql] = mocks.query.mock.calls[0];
+    expect(sql).toContain("verdict <> 'NO_SETUP'");
+    expect(sql).not.toContain("q.updated_at >= now() - interval '7 minutes'");
   });
 });

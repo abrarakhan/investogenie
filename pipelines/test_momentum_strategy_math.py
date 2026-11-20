@@ -75,6 +75,28 @@ class MomentumGoldenVectorTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "at least 10 bars"):
             assess_both(payload(9))
 
+    def test_new_listing_rejects_repeat_circuits_and_excludes_current_bar_from_accumulation(self):
+        raw = payload(45)
+        stock = raw["bars"]
+        # Create two 10% upper-circuit-like closes inside the lookback window.
+        for idx in (-8, -5):
+            prev_close = stock[idx - 1]["close"]
+            c = round(prev_close * 1.10, 2)
+            stock[idx]["open"] = c
+            stock[idx]["low"] = c
+            stock[idx]["high"] = c
+            stock[idx]["close"] = c
+        # Make current bar a huge volume up-day while prior bars stay flat volume.
+        for b in stock[:-1]:
+            b["volume"] = 1_000_000
+        stock[-1]["close"] = stock[-2]["close"] * 1.03
+        stock[-1]["high"] = stock[-1]["close"]
+        stock[-1]["volume"] = 5_000_000
+        raw["currentPrice"] = stock[-1]["close"]
+        res = assess_both(raw)["legacy"]
+        self.assertFalse(res["qualifies"])
+        self.assertEqual(res["accumulationDays10"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()

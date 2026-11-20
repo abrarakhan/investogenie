@@ -7,7 +7,7 @@ export interface ArmedSwingGate { key: string; label: string; passed: boolean; d
 export interface SessionVolumeCurve { market: "IN" | "US"; version: string; sampleSessions: number; points: ReadonlyArray<readonly [number, number]> }
 export interface ArmedSwingInput {
   market: "IN" | "US"; bars: OHLCV[]; benchmarkBars: OHLCV[]; currentPrice: number; rsPercentile: number | null;
-  liveSession?: { volume: number; progress: number } | null; volumeCurve?: SessionVolumeCurve | null; expectedSessionLag?: number | null;
+  liveSession?: { volume: number; progress: number; high?: number | null } | null; volumeCurve?: SessionVolumeCurve | null; expectedSessionLag?: number | null;
   execution?: { quoteFresh: boolean; quoteAgeMinutes: number | null; bestBid: number | null; bestAsk: number | null; lowerCircuit: number | null; upperCircuit: number | null } | null;
   results?: { verified: boolean; sessionsToNext: number | null; nextDate: string | null; detail: string } | null;
   resultsEvidence?: { today: string; lastSuccessAt: string | null; nextDate: string | null; lastPastDate: string | null; authoritativeSource: string | null; authoritativeAsOf: string | null; authoritativeCoverageFrom: string | null; authoritativeCoverageThrough: string | null; requiredCoverageFrom: string | null; requiredCoverageThrough: string | null; blackoutSessionDates: string[] } | null;

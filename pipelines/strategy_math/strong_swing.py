@@ -164,7 +164,9 @@ def assess(raw: dict[str, Any]) -> dict[str, Any]:
     lower = micro.get("lowerCircuit")
     quote_fresh = bool(micro.get("quoteFresh"))
     live_not_required = market != "IN" or not require_live
-    spread_pct = ((float(ask) - float(bid)) / float(ask)) * 100 if bid and ask else None
+    bid_val = float(bid) if bid is not None else None
+    ask_val = float(ask) if ask is not None else None
+    spread_pct = ((ask_val - bid_val) / ask_val) * 100 if (bid_val is not None and ask_val is not None and bid_val > 0 and ask_val >= bid_val) else None
     at_entry = current_price >= round2(entry) * ENTRY_TOLERANCE
     # Today's session. Until now the open session reached the gates only as `current_price`,
     # and was tested for distance from the entry but never for direction: a stock could gap up,
@@ -176,6 +178,7 @@ def assess(raw: dict[str, Any]) -> dict[str, Any]:
     # The session counts only once it is beyond the last completed bar. Otherwise the "session"
     # is the very bar the rest of the gates are built from, and comparing them is circular.
     session_live = session_high is not None and session_high > 0 and str(session.get("date") or "") > latest.date
+    hold_active = session_live or (require_live and market == "IN")
     give_back_atr = (session_high - current_price) / atr if session_live and atr > 0 else 0.0
     holds_prior_close = current_price >= latest.close
     # Company results. India has an authoritative calendar, so an unverified or imminent date
@@ -218,8 +221,8 @@ def assess(raw: dict[str, Any]) -> dict[str, Any]:
         _gate("market_shock", "Market shock", not market_shock, "Two-session benchmark move unavailable." if bench_two_day is None else f"{bench_two_day:.1f}% over two sessions; entries stop at -4%.", "execution"),
         _gate("confirmation", "OI build-up" if has_oi else "Cash-equity confirmation", bool(oi_confirmed if has_oi else cash_confirmed), f"{(oi_change or 0):.1f}% OI change over five sessions." if has_oi else f"{volume_trend5:.2f}x five-session volume vs the 20-session base, price {(price_change5 or 0):.1f}% over five sessions; requires 1.20x and a rise."),
         _gate("entry_zone", "Entry discipline", extension_atr <= .5 and at_entry, f"{extension_atr:.2f} ATR above confirmed entry {entry:.2f}; maximum 0.50 ATR." if at_entry else f"Price {current_price:.2f} is below the confirmed entry {entry:.2f}; wait for it to trade back at the entry.", "execution"),
-        _gate("session_hold", "Session hold", (not session_live) or holds_prior_close,
-              "No live session beyond the latest completed bar." if not session_live
+        _gate("session_hold", "Session hold", (not hold_active) or holds_prior_close,
+              "No live session beyond the latest completed bar." if not hold_active
               else f"Live {current_price:.2f} holds at or above the {latest.date} close {latest.close:.2f}." if holds_prior_close
               else f"Live {current_price:.2f} is below the {latest.date} close {latest.close:.2f}; wait for the breakout to hold.", "execution"),
         _gate("session_reversal", "Intraday reversal", (not session_live) or give_back_atr <= SESSION_GIVE_BACK_ATR,

@@ -61,7 +61,10 @@ def compute_features(frame: pd.DataFrame) -> pd.DataFrame:
     gain = delta.clip(lower=0).ewm(alpha=1 / 14, adjust=False, min_periods=14).mean()
     loss = (-delta.clip(upper=0)).ewm(alpha=1 / 14, adjust=False, min_periods=14).mean()
     rs = gain / loss.replace(0, np.nan)
-    df["rsi_14"] = 100 - 100 / (1 + rs)
+    rsi = 100 - 100 / (1 + rs)
+    rsi = rsi.where(~((loss == 0) & (gain > 0)), 100.0)
+    rsi = rsi.where(~((loss == 0) & (gain == 0)), 50.0)
+    df["rsi_14"] = rsi
     prev_close = close.shift(1)
     true_range = pd.concat([(high - low), (high - prev_close).abs(), (low - prev_close).abs()], axis=1).max(axis=1)
     atr = true_range.ewm(alpha=1 / 14, adjust=False, min_periods=14).mean()

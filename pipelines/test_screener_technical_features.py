@@ -28,7 +28,16 @@ class ScreenerTechnicalFeatureTests(unittest.TestCase):
         self.assertGreater(out.iloc[220]["sma_20_vs_200_pct"], 0)
         self.assertGreater(out.iloc[220]["distance_ema_50_pct"], 0)
         self.assertAlmostEqual(out.iloc[220]["volume_ratio_20"], 1.0)
+        self.assertAlmostEqual(out.iloc[200]["rsi_14"], 100.0)
         self.assertAlmostEqual(out.iloc[200]["forward_return_20d"], (221 / 201 - 1) * 100)
+
+    def test_flat_series_rsi_is_fifty_not_nan(self):
+        df = pd.DataFrame({
+            "date": pd.date_range("2025-01-01", periods=30, freq="B").date,
+            "open": 100.0, "high": 101.0, "low": 99.0, "close": 100.0, "volume": 1000,
+        })
+        out = compute_features(df)
+        self.assertAlmostEqual(out.iloc[25]["rsi_14"], 50.0)
 
     def test_no_future_data_in_current_features(self):
         base = pd.DataFrame({"date": pd.date_range("2025-01-01", periods=220, freq="B").date,

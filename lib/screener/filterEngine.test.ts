@@ -132,9 +132,11 @@ describe("toSqlWhere", () => {
     expect(params).toEqual([15]);
   });
 
-  it("neq tolerates NULL columns in SQL just like the JS evaluator", () => {
-    const { clauses } = toSqlWhere([{ field: "sector", op: "neq", value: "IT" }], 1);
-    expect(clauses[0]).toBe("(s.sector is null or s.sector <> $1)");
+  it("neq tolerates NULL enum columns and excludes NULL numeric columns just like the JS evaluator", () => {
+    const enumSql = toSqlWhere([{ field: "sector", op: "neq", value: "IT" }], 1);
+    expect(enumSql.clauses[0]).toBe("(s.sector is null or s.sector <> $1)");
+    const numSql = toSqlWhere([{ field: "pe_ratio", op: "neq", value: 20 }], 1);
+    expect(numSql.clauses[0]).toBe("s.pe_ratio is not null and s.pe_ratio <> $1");
   });
 });
 

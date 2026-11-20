@@ -26,11 +26,13 @@ export const EXTENDED_ATR = 1;
 
 export function entryState(input: {
   direction: TradeDirection; price: number; trigger: number | null; stop: number | null; atr: number;
-  triggered?: boolean; confirmed?: boolean;
+  triggered?: boolean; confirmed?: boolean; meanReversion?: boolean; target?: number | null;
 }): EntryState | null {
   const sign = input.direction === "LONG" ? 1 : -1;
   if (input.stop !== null && Number.isFinite(input.stop) && sign * (input.price - input.stop) <= 0) return "BELOW_STOP";
+  if (input.meanReversion && input.target !== null && input.target !== undefined && Number.isFinite(input.target) && sign * (input.price - input.target) >= 0) return "EXTENDED";
   if (input.trigger !== null && input.atr > 0 && sign * (input.price - input.trigger) > EXTENDED_ATR * input.atr) return "EXTENDED";
+  if (input.meanReversion) return null;
   if (input.triggered) return input.confirmed ? "BREAKOUT_CONFIRMED" : "BREAKOUT_UNCONFIRMED";
   if (input.trigger !== null && sign * (input.price - input.trigger) >= 0) return "BREAKOUT_UNCONFIRMED";
   return null;
@@ -99,7 +101,7 @@ export interface ScreenRow {
 }
 
 const SELECT =
-  "asset_id,ticker,country,exchange,asset_class,verdict,score,last_close,bandwidth_pct,is_squeeze,is_breakout,is_long_buildup,reason,as_of,bias,current_price,atr,long_trigger,short_trigger,hh22,ll22,daily_velocity,strategy_tags,strategy_scores,buildup_source,participation_ratio,volume_expansion,breakout_clearance_atr,rs_rating,rank_score";
+  "asset_id,ticker,country,exchange,asset_class,verdict,score,last_close,bandwidth_pct,is_squeeze,is_breakout,is_long_buildup,reason,as_of::text as as_of,bias,current_price,atr,long_trigger,short_trigger,hh22,ll22,daily_velocity,strategy_tags,strategy_scores,buildup_source,participation_ratio,volume_expansion,breakout_clearance_atr,rs_rating,rank_score";
 
 export async function runScreener(
   country?: string,
@@ -144,7 +146,7 @@ export async function runScreener(
       select 1 from public.latest_quotes q
        where q.asset_id=swing_signals.asset_id
          and q.as_of::date >= ${expectedSessionParam}
-         ${marketOpen ? "and q.updated_at >= now() - interval '7 minutes'" : ""}
+         ${marketOpen && market === "IN" ? "and q.updated_at >= now() - interval '7 minutes'" : ""}
     )`);
   } else {
     conds.push(`swing_signals.as_of >= current_date - interval '4 days'`);
@@ -261,7 +263,7 @@ export async function runScreener(
     getQuotesByAssetIds(assetIds),
     includeFundamentals ? getFundamentalsByAssetIds(assetIds) : Promise.resolve(new Map()),
   ]);
-  const levelWork: Array<{ row: ScreenRow; input: { setup: SwingSetup; direction: TradeDirection; risk: SwingSettings; scores: Record<string, StrategyScore>; noSetup: boolean } }> = [];
+  const levelWork: Array<{ row: ScreenRow; input: { setup: SwingSetup; direction: TradeDirection; risk: SwingSettings; scores: Record<string, StrategyScore>; noSetup: boolean; triggered: boolean; confirmed: boolean } }> = [];
   for (const r of rows) {
     const q = quotes.get(r.assetId);
     if (q) {
@@ -272,7 +274,8 @@ export async function runScreener(
         if (setup) {
           const liveSetup = { ...setup, currentPrice: q.price };
           levelWork.push({ row: r, input: { setup: liveSetup, direction: r.direction, risk: settings,
-            scores: scoresByAsset.get(r.assetId) ?? {}, noSetup: r.verdict === "NO_SETUP" } });
+            scores: scoresByAsset.get(r.assetId) ?? {}, noSetup: r.verdict === "NO_SETUP",
+            triggered: r.isBreakout, confirmed: r.isBreakout && (r.volumeExpansion ?? 0) >= 1.5 } });
         }
       }
     } else {
@@ -331,12 +334,10 @@ export async function getSwingScreenBundle(
   const isUS = country === "US";
   const buyOnly = { ...settings, includeShort: false };
   const combined = await runScreener(country, buyOnly, {
-    ...(isUS ? {} : { exchange: "NSE", setupsOnly: true }),
+    ...(isUS ? { setupsOnly: true } : { exchange: "NSE", setupsOnly: true }),
     includeStrategyMatches: true,
   });
-  const rows = isUS
-    ? combined.filter((row) => row.direction !== "SHORT")
-    : combined.filter((row) => row.verdict !== "NO_SETUP" && row.direction !== "SHORT");
+  const rows = combined.filter((row) => row.verdict !== "NO_SETUP" && row.direction !== "SHORT");
   const strategyRows = combined.filter((row) =>
     Object.values(row.strategyLevels).some((level) => level.direction === "LONG"),
   );

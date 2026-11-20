@@ -7,6 +7,7 @@ import MarketDataAutoRefresh from "@/components/app/MarketDataAutoRefresh";
 import { getSessionUser } from "@/lib/auth";
 import { normalizeMarket } from "@/lib/markets";
 import { markLiveMarketTargets } from "@/lib/liveMarketTargets";
+import { isMarketOpenNow } from "@/lib/market-calendar.mjs";
 
 export const dynamic = "force-dynamic";
 
@@ -22,6 +23,7 @@ export default async function TerminalScreener({
   if (!user) redirect("/login");
 
   const isUS = marketId === "US";
+  const marketOpen = isMarketOpenNow(marketId);
   const settings = await getUserSwingSettings();
   const buyOnlySettings = { ...settings, includeShort: false };
   // India: NSE only, every buy-side classifier setup (no row cap), ranked by
@@ -47,10 +49,11 @@ export default async function TerminalScreener({
         <p className="max-w-2xl text-white/50">
             {isUS ? (
               <>
-                Buy-side swing candidates, precomputed nightly across the S&P 100
-                subset. Breakouts and volatility squeezes are flagged, with any
-                OI build-up shown as supporting evidence. These are discovery
-                signals; execution readiness is decided on Strong Swing.
+                Buy-side swing setups across active US equities (NASDAQ, NYSE,
+                AMEX), ranked by score and normalized breakout quality. Breakouts
+                and volatility squeezes are flagged with five-session volume
+                participation as supporting evidence. These are discovery signals,
+                not buy calls — execution readiness is decided on Strong Swing.
               </>
             ) : (
               <>
@@ -66,15 +69,9 @@ export default async function TerminalScreener({
               </>
             )}
         </p>
-        {isUS && (
-          <p className="mt-2 text-xs text-amber-300/70">
-            Note: US bars are an anchored demo feed (free US EOD providers block
-            scripted access here).
-          </p>
-        )}
       </div>
 
-      <ScreenerTable rows={rows} strategyRows={strategyRows} scoped />
+      <ScreenerTable rows={rows} strategyRows={strategyRows} scoped marketOpen={marketOpen} />
     </AppShell>
   );
 }

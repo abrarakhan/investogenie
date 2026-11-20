@@ -37,9 +37,13 @@ sudo -u "${APP_USER}" bash -lc \
   "set -a; source /etc/investogenie/investogenie.env; set +a; cd '${APP_DIR}' && node scripts/check-deploy-env.mjs"
 
 sudo -u "${APP_USER}" bash -lc \
-  "set -a; source /etc/investogenie/investogenie.env; set +a; cd '${APP_DIR}' && npm ci --include=dev && npm audit --omit=dev --audit-level=high && npm run build"
+  "set -a; source /etc/investogenie/investogenie.env; set +a; cd '${APP_DIR}' && npm ci --include=dev && npm audit --omit=dev --audit-level=high && CI=1 npm run build < /dev/null"
 sudo -u "${APP_USER}" "${APP_DIR}/.venv/bin/pip" install -r "${APP_DIR}/pipelines/requirements.txt"
 sudo -u "${APP_USER}" "${APP_DIR}/.venv/bin/pip" install -r "${APP_DIR}/workers/requirements.txt"
+
+# Stop live app and Breeze workers before running schema migrations so DDL
+# statements never deadlock on table locks held by active scan queries.
+systemctl stop investogenie investogenie-breeze.service || true
 
 sudo -u "${APP_USER}" bash -lc \
   "set -a; source /etc/investogenie/investogenie.env; set +a; cd '${APP_DIR}' && node scripts/apply-production-migrations.mjs"

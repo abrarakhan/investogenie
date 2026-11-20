@@ -157,13 +157,21 @@ export async function refreshEodAssetFeatures(
          ), armed_rs as (
            select asset_id,
                   100 * percent_rank() over(order by
-                    0.4 * (last_close / c63 - 1)
-                    + 0.2 * (last_close / c126 - 1)
-                    + 0.2 * (last_close / c189 - 1)
-                    + 0.2 * (last_close / c252 - 1)
+                    case
+                      when c252 > 0 then
+                        0.4 * (last_close / c63 - 1)
+                        + 0.2 * (last_close / c126 - 1)
+                        + 0.2 * (last_close / c189 - 1)
+                        + 0.2 * (last_close / c252 - 1)
+                      else (
+                        0.4 * (last_close / c63 - 1)
+                        + 0.2 * (last_close / c126 - 1)
+                        + 0.2 * (last_close / c189 - 1)
+                      ) / 0.8
+                    end
                   ) as armed_rs_percentile
              from stats
-            where armed_eligible and c252 > 0 and c189 > 0 and c126 > 0 and c63 > 0
+            where armed_eligible and c189 > 0 and c126 > 0 and c63 > 0
          ), written as (
            insert into public.eod_asset_features (
              asset_id, market, latest_date, last_close,

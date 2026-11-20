@@ -150,7 +150,10 @@ export function toSqlWhere(filters: Filter[], startIndex = 1): SqlWhere {
       case "lt": clauses.push(`${col} < $${i++}`); params.push(filter.value); break;
       case "lte": clauses.push(`${col} <= $${i++}`); params.push(filter.value); break;
       case "eq": clauses.push(`${col} = $${i++}`); params.push(filter.value); break;
-      case "neq": clauses.push(`(${col} is null or ${col} <> $${i++})`); params.push(filter.value); break;
+      case "neq":
+        clauses.push(def.type === "number" ? `${col} is not null and ${col} <> $${i++}` : `(${col} is null or ${col} <> $${i++})`);
+        params.push(filter.value);
+        break;
       case "between": {
         const [lo, hi] = filter.value as number[];
         clauses.push(`${col} between $${i++} and $${i++}`);

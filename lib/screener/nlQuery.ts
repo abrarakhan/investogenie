@@ -26,7 +26,7 @@ const MODEL = "claude-opus-4-8";
 export const MAX_QUERY_CHARS = 500;
 
 /** Money columns whose unit differs per market (Rs. Crore vs USD millions). */
-const MONEY_FIELDS = ["market_cap", "free_cash_flow", "trade_value"];
+const MONEY_FIELDS = ["market_cap", "free_cash_flow", "trade_value", "net_profit"];
 /** Percent-point columns — 15 means 15%, never 0.15. */
 const PERCENT_FIELDS = FIELDS.filter((f) => f.format === "percent").map((f) => f.key);
 

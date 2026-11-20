@@ -101,4 +101,34 @@ describe("Base Swing and named-strategy Python parity", () => {
     expect(python.strategies.MINERVINI).toMatchObject({ entry: expected.entry, target: expected.target, stopLoss: expected.stopLoss, trailingStop: expected.trailingStop });
     expect(python.strategies.MINERVINI.state).toBe(entryState({ direction: "LONG", price: 105, atr: 2, trigger: 100, stop: expected.stopLoss, triggered: true, confirmed: false }));
   });
+
+  it("handles default stop/confirmation states and Simons mean-reversion states consistently", async () => {
+    const risk = { stopAtrMult: 1.5, targetRR: 2, trailAtrMult: 3 };
+    const [confirmed, belowStop, simonsActive, simonsCrossed] = await runPythonStrategyBatch<
+      Record<string, unknown>,
+      { entryState: string | null; strategies: Record<string, { state: string | null; target: number }> }
+    >("swing_levels", [
+      {
+        setup: { currentPrice: 101, atr: 2, longTrigger: 100, shortTrigger: 90, hh22: 102, ll22: 88, dailyVelocity: 1 },
+        direction: "LONG", risk, scores: {}, noSetup: false, triggered: true, confirmed: true,
+      },
+      {
+        setup: { currentPrice: 95, atr: 2, longTrigger: 100, shortTrigger: 90, hh22: 102, ll22: 88, dailyVelocity: 1 },
+        direction: "LONG", risk, scores: {}, noSetup: false,
+      },
+      {
+        setup: { currentPrice: 91, atr: 2, longTrigger: 100, shortTrigger: 80, hh22: 102, ll22: 88, dailyVelocity: 1 },
+        direction: "LONG", risk, scores: { SIMONS: { score: 0.8, dir: "LONG", entry: 90, stop: 86, target: 98, trail: 86 } }, noSetup: true,
+      },
+      {
+        setup: { currentPrice: 99, atr: 2, longTrigger: 100, shortTrigger: 80, hh22: 102, ll22: 88, dailyVelocity: 1 },
+        direction: "LONG", risk, scores: { SIMONS: { score: 0.8, dir: "LONG", entry: 90, stop: 86, target: 98, trail: 86 } }, noSetup: true,
+      },
+    ]);
+    expect(confirmed.entryState).toBe("BREAKOUT_CONFIRMED");
+    expect(belowStop.entryState).toBe("BELOW_STOP");
+    expect(simonsActive.strategies.SIMONS.state).toBeNull();
+    expect(simonsCrossed.strategies.SIMONS.target).toBe(98);
+    expect(simonsCrossed.strategies.SIMONS.state).toBe("EXTENDED");
+  });
 });

@@ -119,7 +119,7 @@ def assess_legacy(raw: dict[str, Any]) -> dict[str, Any]:
         circuit_safe = circuits < 2
         spread = latest.high - latest.low
         close_location = max(0, min(1, (current - latest.low) / spread)) if spread > 0 else .5
-        accumulation_window = bars[-min(11, len(bars)):]
+        accumulation_window = bars[-min(11, len(bars)):-1]
         accumulation = sum(1 for a, b in zip(accumulation_window, accumulation_window[1:])
                            if b.close > a.close and b.volume >= avg_volume * 1.1)
         compressed, dry = compression <= .9, dry_up <= .85
@@ -141,7 +141,7 @@ def assess_legacy(raw: dict[str, Any]) -> dict[str, Any]:
             _gate("volatility", "New-listing volatility", volatility, f"ATR is {atr_pct:.1f}% of price; maximum 7%."),
             _gate("circuit", "Circuit behaviour", circuit_safe, f"{circuits} circuit-like sessions; maximum 1."),
         ]
-        qualifies = fresh and liquid and current >= price_floor and trend and rs_positive and near and score >= 55
+        qualifies = fresh and liquid and current >= price_floor and trend and rs_positive and near and circuit_safe and score >= 55
         model_type = "NEW_LISTING"
     else:
         ranges = [max(0, bar.high - bar.low) for bar in bars]

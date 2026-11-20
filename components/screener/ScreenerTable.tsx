@@ -147,14 +147,28 @@ function tradeLedgerHref(r: ScreenRow, levels: EffectiveLevels, strategy: Strate
 
 function ActionBadge({
   dir,
+  state,
+  noSetup = false,
   mobile = false,
 }: {
   dir: ScreenRow["direction"];
+  state?: ScreenRow["entryState"];
+  noSetup?: boolean;
   mobile?: boolean;
 }) {
+  const shape = mobile ? "inline-flex h-7 items-center rounded-full border px-2.5" : "rounded border px-1.5 py-0.5";
+  if (state === "BELOW_STOP") {
+    return <span className={`${shape} border-rose-500/30 bg-rose-500/15 text-[10px] font-bold text-rose-300`}>VOID</span>;
+  }
+  if (state === "EXTENDED") {
+    return <span className={`${shape} border-amber-500/30 bg-amber-500/15 text-[10px] font-bold text-amber-300`}>EXTENDED</span>;
+  }
+  if (noSetup) {
+    return <span className={`${shape} border-white/15 bg-white/5 text-[10px] font-bold text-white/50`}>WATCH</span>;
+  }
   return (
-    <span className={`${mobile ? "inline-flex h-7 items-center rounded-full border px-2.5" : "rounded px-1.5 py-0.5"} text-[10px] font-bold ${dir === "SHORT" ? "border-rose-500/30 bg-rose-500/20 text-rose-300" : "border-emerald-500/30 bg-emerald-500/20 text-emerald-300"}`}>
-      {dir === "SHORT" ? "SHORT" : "BUY"}
+    <span className={`${shape} text-[10px] font-bold ${dir === "SHORT" ? "border-rose-500/30 bg-rose-500/20 text-rose-300" : "border-emerald-500/30 bg-emerald-500/20 text-emerald-300"}`}>
+      {dir === "SHORT" ? "SHORT" : "LONG"}
     </span>
   );
 }
@@ -163,11 +177,13 @@ export default function ScreenerTable({
   rows,
   strategyRows = rows,
   scoped = false,
+  marketOpen = false,
 }: {
   rows: ScreenRow[];
   /** Rows a strategy filter selects from: every buy match of each strategy. */
   strategyRows?: ScreenRow[];
   scoped?: boolean;
+  marketOpen?: boolean;
 }) {
   const router = useRouter();
   const { chart, closeChart, bindChartGesture } = useTradingViewChart();
@@ -180,10 +196,10 @@ export default function ScreenerTable({
   const [maxPe, setMaxPe] = useState("");
   const activeStrategy: StrategyKey | null = strategy === "ALL" ? null : strategy;
 
-  // The server refreshes ranked India quotes every 5 minutes during market
-  // hours. Re-read that lightweight server snapshot while this page is open,
-  // and immediately after a mobile browser tab returns to the foreground.
+  // The server refreshes ranked quotes during live market hours. Poll the
+  // lightweight server snapshot only while the market is open.
   useEffect(() => {
+    if (!marketOpen) return;
     const refresh = () => router.refresh();
     const timer = window.setInterval(refresh, 60_000);
     const onVisibilityChange = () => {
@@ -194,7 +210,7 @@ export default function ScreenerTable({
       window.clearInterval(timer);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [router]);
+  }, [router, marketOpen]);
 
   const filtered = useMemo(() => {
     const needle = q.trim().toUpperCase();
@@ -215,7 +231,10 @@ export default function ScreenerTable({
     return rankSwingCandidates(matches, activeStrategy);
   }, [rows, strategyRows, q, market, setup, strategy, minRoce, maxPe, activeStrategy]);
 
-  const hasFundamentals = useMemo(() => rows.some((r) => r.roce !== null || r.peRatio !== null), [rows]);
+  const hasFundamentals = useMemo(
+    () => [...rows, ...strategyRows].some((r) => r.roce !== null || r.peRatio !== null),
+    [rows, strategyRows],
+  );
 
   // When a specific strategy is selected, surface its custom levels (entry line
   // mapped through the user's risk params) instead of the default swing levels.
@@ -444,7 +463,7 @@ export default function ScreenerTable({
                         Track purchased trade
                       </a>
                     </td>
-                    <td className="px-4 py-3"><ActionBadge dir={lv.dir} /></td>
+                    <td className="px-4 py-3"><ActionBadge dir={lv.dir} state={lv.state} noSetup={!activeStrategy && r.verdict === "NO_SETUP"} /></td>
                     <td className="px-4 py-3 text-right tabular-nums">
                       {fmt2(lv.current)}
                       {r.quoteChangePct !== null && (
@@ -523,7 +542,7 @@ export default function ScreenerTable({
                   </div>
                 </div>
                 <div className="flex shrink-0 items-center gap-1.5 max-[420px]:order-2 max-[420px]:basis-full">
-                  <ActionBadge dir={lv.dir} mobile />
+                  <ActionBadge dir={lv.dir} state={lv.state} noSetup={!activeStrategy && r.verdict === "NO_SETUP"} mobile />
                   {activeStrategy ? (
                     <span className="inline-flex h-7 items-center whitespace-nowrap rounded-full border border-[var(--ig-accent)]/40 bg-[var(--ig-accent)]/10 px-2.5 text-[10px] font-semibold text-[var(--ig-accent)]">
                       {STRATEGY_LABEL[activeStrategy]}

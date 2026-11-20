@@ -40,12 +40,17 @@ export async function runTechnicalBacktest(input: {
   params.push(...built.params);
   const clauses = built.clauses.map((clause) => clause.replaceAll("s.", "d."));
   const rows = await query<Record<string, string | number | null>>(
-    `with eligible as (
+    `with dedup_assets as (
+       select distinct on (a.country, upper(a.ticker)) a.id
+         from public.assets a
+        where a.country=$1 and a.is_active
+        order by a.country, upper(a.ticker), (a.exchange = 'NSE') desc, a.created_at asc
+     ), eligible as (
        select d.*,row_number() over(partition by d.asset_id,date_trunc('week',d.date) order by d.date desc) weekly_rank
        from public.screener_technical_daily d
-       join public.assets a on a.id=d.asset_id
+       join dedup_assets a on a.id=d.asset_id
        ${universeJoin}
-       where a.country=$1 and d.date >= current_date - ($2::int * interval '1 year')
+       where d.date >= current_date - ($2::int * interval '1 year')
      ), matched as (
        select * from eligible d where weekly_rank=1 and ${clauses.join(" and ")}
      ), outcomes as (

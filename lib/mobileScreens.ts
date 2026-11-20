@@ -389,7 +389,6 @@ async function swingCandidates(market: MobileMarket, params: URLSearchParams, us
   const strategyParam = pick(params.get("strategy"), SWING_STRATEGIES, "ALL");
   const strategy = strategyParam === "ALL" ? null : strategyParam;
   const settings = await getUserSwingSettings(userId);
-  const isUS = market === "US";
   // Same queries as the web Swing Candidates page: buy-side only; the default view is every
   // NSE setup for India, while a strategy view takes every buy match of that strategy.
   const buyOnly = { ...settings, includeShort: false };
@@ -409,7 +408,7 @@ async function swingCandidates(market: MobileMarket, params: URLSearchParams, us
     summary: strategy
       ? `${ranked.length} ${STRATEGY_META.find((meta) => meta.key === strategy)?.label ?? strategy} buy matches · ${matches.filter((row) => row.verdict !== "NO_SETUP").length} also flagged by the base classifier${shown.length < ranked.length ? ` · top ${shown.length} shown` : ""}`
       : `${rows.length} scanned · ${setups.length} buy candidates · ${rows.filter((row) => row.verdict === "LONG_BREAKOUT").length} breakouts with build-up${shown.length < ranked.length ? ` · top ${shown.length} shown` : ""}`,
-    notice: isUS ? "US bars are an anchored demo feed." : null,
+    notice: null,
     options: [{
       param: "strategy", label: "Strategy", value: strategyParam,
       choices: [

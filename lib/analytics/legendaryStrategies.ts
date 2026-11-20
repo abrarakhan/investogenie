@@ -48,7 +48,7 @@ export const STRATEGY_META: StrategyMeta[] = [
     key: "QULLAMAGGIE",
     label: "Qullamaggie Momentum",
     trader: "Kristjan Qullamaggie",
-    blurb: "Breakout setup on a top-2% momentum leader with a 4%+ daily range — a 30%+ move inside three months, then a 3–40 day orderly consolidation on drying volume, surfing the 10/20 EMAs. Stop one ATR under entry; trail on the 10-day EMA.",
+    blurb: "Breakout setup on a top-2% momentum leader with a 4%+ daily range — a 30%+ move inside three months, then a 10–40 day orderly consolidation on drying volume, surfing the 10/20 EMAs. Stop one ATR under entry; trail on the 10-day EMA.",
   },
   {
     key: "MINERVINI",
@@ -422,14 +422,18 @@ export function detectMinervini(bars: OHLCV[], rsRating: number | null = null): 
   const pivot = pivotIdx !== null ? highs[pivotIdx] : Math.max(...highs.slice(-10));
   const nearPivot = close >= pivot * (1 - MINERVINI_PIVOT_BAND) && close <= pivot * (1 + MINERVINI_PIVOT_BAND);
 
-  // Supply dries up in the final contraction: volume below its 50-day average.
+  // Supply dries up in the final contraction (strictly before any breakout bar so
+  // high-volume demand on breakout day does not disqualify the setup).
   const vols = bars.map((b) => b.volume);
+  const breakoutIdx = pivotIdx !== null
+    ? bars.findIndex((bar, index) => index > pivotIdx && bar.close > pivot)
+    : -1;
   const finalStart = pivotIdx !== null && lastIdx - pivotIdx >= 3 ? pivotIdx + 1 : lastIdx - 4;
-  const volumeDryUp = mean(vols.slice(finalStart)) < mean(vols.slice(-50));
+  const dryEnd = breakoutIdx > finalStart ? breakoutIdx : vols.length;
+  const volumeDryUp = mean(vols.slice(finalStart, dryEnd)) < mean(vols.slice(Math.max(0, dryEnd - 50), dryEnd));
 
   // Through the pivot is a breakout, and a breakout needs demand: volume above its 50-day
   // average on that bar. Below the pivot the stock is still setting up and this does not apply.
-  const breakoutIdx = bars.findIndex((bar, index) => index > pivotIdx! && bar.close > pivot);
   const volumeIdx = breakoutIdx >= 0 ? breakoutIdx : lastIdx;
   const average50 = mean(vols.slice(Math.max(0, volumeIdx - 50), volumeIdx));
   const breakoutVolumeOk = breakoutIdx < 0 || (average50 > 0 && vols[breakoutIdx] > average50);
@@ -446,6 +450,9 @@ export function detectMinervini(bars: OHLCV[], rsRating: number | null = null): 
     ? Math.max(finalLow, pivot * (1 - MINERVINI_MAX_RISK))
     : pivot * (1 - MINERVINI_MAX_RISK);
 
+  const triggeredToday = matched && breakoutIdx === lastIdx && average50 > 0;
+  const breakoutRatio = triggeredToday ? vols[lastIdx] / average50 : null;
+
   return {
     key: KEY,
     matched,
@@ -453,6 +460,11 @@ export function detectMinervini(bars: OHLCV[], rsRating: number | null = null): 
     direction: "LONG",
     entryTrigger: matched ? round2(pivot) : null,
     exit: matched ? { stop: round2(stop), target: null, trail: round2(Math.max(stop, sma50)), maxRisk: MINERVINI_MAX_RISK, scaleOutFraction: 0.5 } : null,
+    ...(triggeredToday && breakoutRatio !== null ? {
+      triggered: true,
+      breakoutVolumeRatio: round2(breakoutRatio),
+      breakoutConfirmed: close >= pivot && breakoutRatio >= BREAKOUT_MIN_VOLUME_RATIO,
+    } : {}),
     note: matched
       ? `Trend Template 8/8 with ${recent.length} narrowing contractions on drying volume (VCP). Pivot entry ${round2(pivot)}, stop ${round2(stop)}, trail the 50-day.`
       : `Trend Template ${passed}/8${recent.length >= 2 ? `, ${recent.length} contractions` : ""}${templateOk && narrowing && !nearPivot ? `, ${Math.round((close / pivot - 1) * 100)}% from the ${round2(pivot)} pivot` : ""}${templateOk && narrowing && nearPivot && !volumeDryUp ? ", volume not drying up" : ""}${templateOk && narrowing && nearPivot && volumeDryUp && !breakoutVolumeOk ? ", through the pivot on below-average volume" : ""} — not a full VCP.`,
@@ -794,7 +806,7 @@ export function strategyTradeLevels(
   const r = sign * (entry - stop);
   if (!(r > 0)) return atrPlan;
   const ownTarget = score.target ?? null;
-  const target = ownTarget !== null && sign * (ownTarget - entry) > 0
+  const target = ownTarget !== null && Number.isFinite(ownTarget)
     ? ownTarget
     : Math.max(0, entry + sign * risk.targetRR * r);
   const trailLine = score.trail ?? stop;
@@ -802,9 +814,9 @@ export function strategyTradeLevels(
   const trailingStop = dir === "LONG"
     ? Math.min(entry, Math.max(stop, trailLine))
     : Math.max(entry, Math.min(stop, trailLine));
-  const distance = Math.abs(target - entry);
-  const expectedDays = setup.dailyVelocity > 0
-    ? Math.min(60, Math.max(1, Math.round(distance / setup.dailyVelocity)))
+  const reward = Math.max(0, sign * (target - entry));
+  const expectedDays = reward > 0 && setup.dailyVelocity > 0
+    ? Math.min(60, Math.max(1, Math.round(reward / setup.dailyVelocity)))
     : 0;
   return {
     direction: dir,
@@ -814,7 +826,7 @@ export function strategyTradeLevels(
     stopLoss: round2(stop),
     trailingStop: round2(trailingStop),
     atr: atrPlan.atr,
-    riskRewardRatio: round2(distance / r),
+    riskRewardRatio: round2(reward / r),
     expectedDays,
   };
 }

@@ -235,6 +235,15 @@ describe("detectMinervini VCP", () => {
     const weakBreakoutLoudHold = [...base, [152, 149, 151, 100], [152, 150, 151, 2_000]] as Array<[number, number, number, number]>;
     expect(detectMinervini(series([...uptrend, ...weakBreakoutLoudHold]), 90).matched).toBe(false);
   });
+
+  it("does not let a high-volume breakout day disqualify pre-breakout dry-up and records breakout confirmation", () => {
+    const breakoutToday = [...base, [152.5, 149.2, 152, 5_000]] as Array<[number, number, number, number]>;
+    const res = detectMinervini(series([...uptrend, ...breakoutToday]), 90);
+    expect(res.matched).toBe(true);
+    expect(res.triggered).toBe(true);
+    expect(res.breakoutConfirmed).toBe(true);
+    expect(res.breakoutVolumeRatio).toBeGreaterThanOrEqual(1.5);
+  });
 });
 
 describe("evaluateLegendary", () => {
@@ -286,6 +295,11 @@ describe("strategyTradeLevels", () => {
     expect(atr).toMatchObject({ entry: 100, stopLoss: 97, target: 106 });
     const crossed = strategyTradeLevels({ ...setup, currentPrice: 90 }, { score: 1, dir: "SHORT", entry: 92, stop: 89, target: null, trail: 89 }, DEFAULT_RISK);
     expect(crossed.stopLoss).toBe(93);
+  });
+
+  it("keeps the strategy's own target even if live price already crossed past it", () => {
+    const lv = strategyTradeLevels({ ...setup, currentPrice: 105 }, { score: 1, dir: "LONG", entry: 98, stop: 94, target: 103, trail: 94 }, DEFAULT_RISK);
+    expect(lv).toMatchObject({ entry: 105, stopLoss: 94, target: 103, riskRewardRatio: 0, expectedDays: 0 });
   });
 
   it("mirrors levels for a short", () => {

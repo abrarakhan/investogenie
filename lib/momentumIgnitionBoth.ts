@@ -93,11 +93,12 @@ export async function getMomentumBothCandidates(
     };
   }
 
+  const requireLiveIntraday = market === "IN" && marketOpen;
   const ids = preliminary.map((row) => row.asset_id);
   const idsKey = JSON.stringify(ids);
   const [barRows, liveRows] = await Promise.all([
     loadMomentumBars(idsKey, marketOpen, session.date),
-    marketOpen ? loadMomentumLiveBars(idsKey, session.date) : Promise.resolve([]),
+    requireLiveIntraday ? loadMomentumLiveBars(idsKey, session.date) : Promise.resolve([]),
   ]);
   const barsByAsset = new Map<string, OHLCV[]>();
   for (const row of barRows) {
@@ -114,16 +115,16 @@ export async function getMomentumBothCandidates(
     const quoteAgeMs = Date.now() - Date.parse(row.quote_updated_at);
     const authoritativeQuote = market !== "IN" || row.quote_source === "BREEZE_LIVE";
     const liveRow = liveByAsset.get(row.asset_id);
-    const liveDataVerified = !marketOpen || Boolean(
+    const liveDataVerified = !requireLiveIntraday || Boolean(
       liveRow
-      && (market !== "IN" || liveRow.source === "BREEZE_LIVE")
+      && liveRow.source === "BREEZE_LIVE"
       && authoritativeQuote
       && Number.isFinite(quoteAgeMs)
       && quoteAgeMs >= 0
       && quoteAgeMs <= 5 * 60_000
       && Number(liveRow.volume) > 0,
     );
-    const bars = liveDataVerified && marketOpen && liveRow
+    const bars = liveDataVerified && requireLiveIntraday && liveRow
       ? [...completedBars, toBar(liveRow)]
       : completedBars;
     return [{
@@ -134,13 +135,13 @@ export async function getMomentumBothCandidates(
         baseScore: Number(row.base_score ?? 0),
         currentPrice: Number(row.current_price),
         bars,
-        currentSessionVolume: marketOpen && liveDataVerified,
+        currentSessionVolume: requireLiveIntraday && liveDataVerified,
         sessionProgressFraction: session.progress,
         benchmarkLabel: config.benchmarkLabel,
         liquidityFloor: config.liquidityFloor,
         liquidityRequirementLabel: config.liquidityRequirementLabel,
         priceFloor: config.priceFloor,
-        marketOpen,
+        marketOpen: requireLiveIntraday,
         liveDataVerified,
         stopAtrMult: settings.stopAtrMult,
         targetRR: settings.targetRR,

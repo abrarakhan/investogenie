@@ -40,6 +40,20 @@ function MiniRow({ row, market }: { row: ScreenerStock; market: Market }) {
   );
 }
 
+function formatUniverseLabel(universe: string, market: Market): string {
+  const labels: Record<string, string> = {
+    ALL: market === "US" ? "All US" : "All India",
+    NIFTY_50: "Nifty 50",
+    NIFTY_100: "Nifty 100",
+    NIFTY_200: "Nifty 200",
+    NIFTY_500: "Nifty 500",
+    SP_500: "S&P 500",
+    SP_100: "S&P 100",
+    NASDAQ_100: "Nasdaq 100",
+  };
+  return labels[universe] ?? universe.replaceAll("_", " ");
+}
+
 export default function ScreenerWidget({
   market = "IN", universe = "NIFTY_500",
 }: {
@@ -78,7 +92,7 @@ export default function ScreenerWidget({
       <div className="mb-3 flex items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <span className="text-sm font-semibold text-white/80">Screener</span>
-          <span className="text-[11px] text-white/30">Nifty 500</span>
+          <span className="text-[11px] text-white/30">{formatUniverseLabel(universe, market)}</span>
         </div>
         <select
           value={presetKey}
