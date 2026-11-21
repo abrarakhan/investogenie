@@ -148,13 +148,91 @@ function CardDetail({ card, market, onBack }: { card: ScreenCard; market: Market
   </ScrollView>;
 }
 
+const DAILY_RANGES = [
+  { key: "1M", days: 22 },
+  { key: "3M", days: 65 },
+  { key: "6M", days: 130 },
+  { key: "1Y", days: 252 },
+] as const;
+
+type DailyRangeKey = (typeof DAILY_RANGES)[number]["key"];
+
 function PriceChart({ market, ticker }: { market: Market; ticker: string }) {
+  const [range, setRange] = useState<DailyRangeKey>("3M");
   const [points, setPoints] = useState<CandlePoint[]>([]);
-  useEffect(() => { let active = true; getCandles(market, ticker).then((result) => { if (active) setPoints(result.candle?.points.slice(-50) ?? []); }).catch(() => undefined); return () => { active = false; }; }, [market, ticker]);
-  if (!points.length) return <View style={styles.chart}><ActivityIndicator color="#34d399" /></View>;
-  const low = Math.min(...points.map((point) => point.low)); const high = Math.max(...points.map((point) => point.high)); const span = Math.max(0.0001, high - low);
-  const width = 340; const height = 120; const step = width / points.length; const bodyWidth = Math.max(2, step * 0.58); const y = (price: number) => 8 + ((high - price) / span) * (height - 16);
-  return <View><View style={styles.chart}><Svg width="100%" height={height} viewBox={`0 0 ${width} ${height}`}>{points.map((point, index) => { const x = index * step + step / 2; const rising = point.close >= point.open; const color = rising ? "#34d399" : "#fb7185"; const top = y(Math.max(point.open, point.close)); const bottom = y(Math.min(point.open, point.close)); return <Fragment key={point.date}><Line x1={x} x2={x} y1={y(point.high)} y2={y(point.low)} stroke={color} strokeWidth="1" /><Rect x={x - bodyWidth / 2} y={top} width={bodyWidth} height={Math.max(1.5, bottom - top)} fill={color} /></Fragment>; })}</Svg></View><Text style={styles.chartCaption}>50-session OHLC candles · {money(low, market)} to {money(high, market)}</Text></View>;
+  const [loading, setLoading] = useState(true);
+  const spec = DAILY_RANGES.find((item) => item.key === range) ?? DAILY_RANGES[1];
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    getCandles(market, ticker, spec.days)
+      .then((result) => {
+        if (active) setPoints(result.candle?.points.slice(-spec.days) ?? []);
+      })
+      .catch(() => { if (active) setPoints([]); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [market, ticker, spec.days]);
+
+  const low = points.length ? Math.min(...points.map((point) => point.low)) : 0;
+  const high = points.length ? Math.max(...points.map((point) => point.high)) : 0;
+  const span = Math.max(0.0001, high - low);
+  const width = 340;
+  const height = 132;
+  const step = points.length ? width / points.length : width;
+  const bodyWidth = Math.max(1.5, Math.min(6, step * 0.58));
+  const y = (price: number) => 8 + ((high - price) / span) * (height - 16);
+
+  return (
+    <View style={styles.chartWrap}>
+      <View style={styles.rangeRow}>
+        {DAILY_RANGES.map((item) => {
+          const active = item.key === range;
+          return (
+            <Pressable
+              key={item.key}
+              onPress={() => {
+                if (!active) hapticSelection();
+                setRange(item.key);
+              }}
+              style={[styles.rangePill, active && styles.rangePillActive]}
+            >
+              <Text style={active ? styles.rangeTextActive : styles.rangeText}>{item.key}</Text>
+            </Pressable>
+          );
+        })}
+      </View>
+      <View style={styles.chart}>
+        {loading && !points.length ? (
+          <View style={styles.chartCenter}><ActivityIndicator color={colors.emerald} /></View>
+        ) : !points.length ? (
+          <View style={styles.chartCenter}><Text style={styles.chartCaption}>No candles available for {range}.</Text></View>
+        ) : (
+          <Svg width="100%" height={height} viewBox={`0 0 ${width} ${height}`}>
+            {points.map((point, index) => {
+              const x = index * step + step / 2;
+              const rising = point.close >= point.open;
+              const color = rising ? colors.emerald : colors.rose;
+              const top = y(Math.max(point.open, point.close));
+              const bottom = y(Math.min(point.open, point.close));
+              return (
+                <Fragment key={`${point.date}:${index}`}>
+                  <Line x1={x} x2={x} y1={y(point.high)} y2={y(point.low)} stroke={color} strokeWidth="1" />
+                  <Rect x={x - bodyWidth / 2} y={top} width={bodyWidth} height={Math.max(1.5, bottom - top)} fill={color} />
+                </Fragment>
+              );
+            })}
+          </Svg>
+        )}
+      </View>
+      {!!points.length && (
+        <Text style={styles.chartCaption}>
+          {range} · {points.length} sessions · {money(low, market)} to {money(high, market)}
+        </Text>
+      )}
+    </View>
+  );
 }
 
 function TradeEntrySheet({ visible, trade, market, onClose, onSaved }: { visible: boolean; trade: TradeAction; market: Market; onClose: () => void; onSaved: () => void }) {
@@ -205,8 +283,15 @@ const styles = StyleSheet.create({
   bad: { color: colors.amber, fontSize: 11, fontWeight: "900", width: 38 },
   rowValue: { color: colors.text, fontWeight: "800", ...tabularNums },
   link: { color: colors.link, fontWeight: "700" },
-  chart: { height: 120, marginTop: 18, backgroundColor: colors.surfaceInset, borderColor: colors.border, borderWidth: 1, borderRadius: radius.md, overflow: "hidden" },
-  chartCaption: { color: colors.textSubtle, fontSize: 10, marginTop: 6, ...tabularNums },
+  chartWrap: { marginTop: 16, gap: 8 },
+  rangeRow: { flexDirection: "row", gap: 6 },
+  rangePill: { borderRadius: radius.pill, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.surface, paddingHorizontal: 11, paddingVertical: 5 },
+  rangePillActive: { borderColor: colors.emeraldBorder, backgroundColor: colors.emeraldBg },
+  rangeText: { color: colors.textMuted, fontSize: 11, fontWeight: "800" },
+  rangeTextActive: { color: colors.emeraldText, fontSize: 11, fontWeight: "900" },
+  chart: { height: 132, backgroundColor: colors.surfaceInset, borderColor: colors.border, borderWidth: 1, borderRadius: radius.md, overflow: "hidden" },
+  chartCenter: { flex: 1, alignItems: "center", justifyContent: "center" },
+  chartCaption: { color: colors.textSubtle, fontSize: 10, ...tabularNums },
   modalBackdrop: { flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(0,0,0,0.72)" },
   sheet: { backgroundColor: colors.surface, borderTopLeftRadius: radius.lg, borderTopRightRadius: radius.lg, borderColor: colors.borderStrong, borderWidth: 1, padding: spacing.xl, paddingBottom: 36, gap: spacing.md },
 });

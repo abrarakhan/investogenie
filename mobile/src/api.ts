@@ -245,9 +245,9 @@ export function getLedger(market: Market) {
   );
 }
 
-export function getCandles(market: Market, ticker: string) {
+export function getCandles(market: Market, ticker: string, days = 90) {
   return request<{ candle: { ticker: string; points: CandlePoint[] } | null }>(
-    `/api/v1/mobile/candles?market=${market}&ticker=${encodeURIComponent(ticker)}&days=90`,
+    `/api/v1/mobile/candles?market=${market}&ticker=${encodeURIComponent(ticker)}&days=${days}`,
   );
 }
 
