@@ -122,7 +122,7 @@ function CandidateGroup({ title, candidates, source, totalCount, excludeIds, col
   />;
 }
 
-export default function TrendContinuationCandidates({ candidates, planIds, counts, ranks, market, midwayWatch = [], dayTwoWatch = [], regimePositive, scanTotals }: {
+export default function TrendContinuationCandidates({ candidates, planIds, counts, ranks, market, midwayWatch = [], regimePositive, scanTotals }: {
   /** EOD-qualified Mid-Way setups (Stage-2 Impulse, EP Rebound, 3D Stair-Step, VDU Pause); open by default. */
   midwayWatch?: TrendContinuationCandidate[];
   /** Second-day staircases still held back from entry. */
@@ -145,16 +145,14 @@ export default function TrendContinuationCandidates({ candidates, planIds, count
   const [view, setView] = useState<"ALL" | "MIDWAY">("ALL");
   const ranked = new Map(candidates.map((candidate, index) => [candidate.assetId, ranks?.[candidate.assetId] ?? index + 1]));
   const total = (status: TrendContinuationStatus, shown: number) => counts?.[status] ?? shown;
-  const highlightedWatch = [...midwayWatch, ...dayTwoWatch];
-  const highlightedIds = new Set(highlightedWatch.map((candidate) => candidate.assetId));
   const midwayWatchIds = new Set(midwayWatch.map((candidate) => candidate.assetId));
-  const highlightedCountByStatus = (status: TrendContinuationStatus) =>
-    highlightedWatch.filter((candidate) => candidate.status === status).length;
+  const midwayCountByStatus = (status: TrendContinuationStatus) =>
+    midwayWatch.filter((candidate) => candidate.status === status).length;
   const group = (status: TrendContinuationStatus, shown: TrendContinuationCandidate[]) => {
-    const remainingTotal = Math.max(0, total(status, shown.length) - highlightedCountByStatus(status));
+    const remainingTotal = Math.max(0, total(status, shown.length) - midwayCountByStatus(status));
     return market && LAZY_STATUSES.trend.has(status)
-      ? { source: { screen: "trend" as const, market, status }, totalCount: remainingTotal, excludeIds: highlightedIds }
-      : { candidates: shown, totalCount: remainingTotal, excludeIds: highlightedIds };
+      ? { source: { screen: "trend" as const, market, status }, totalCount: remainingTotal, excludeIds: midwayWatchIds }
+      : { candidates: shown, totalCount: remainingTotal, excludeIds: midwayWatchIds };
   };
   const candidateCount = counts ? Object.values(counts).reduce((sum, value) => sum + value, 0) : candidates.length;
   const ready = candidates.filter((candidate) => candidate.status === "TREND_CONTINUATION_READY");
@@ -210,12 +208,17 @@ export default function TrendContinuationCandidates({ candidates, planIds, count
 
     <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
       {[
-        ["Continuation ready", scanCount("TREND_CONTINUATION_READY", ready.length), "text-emerald-300"],
-        ["Continuation watch", scanCount("CONTINUATION_WATCH", watch.length), "text-amber-200"],
-        ["Impulse detected", scanCount("IMPULSE_DETECTED", impulse.length), "text-cyan-200"],
-        ["Extended risk", scanCount("EXTENDED_RISK", extended.length), "text-rose-200"],
-      ].map(([summaryLabel, count, color]) => <div key={String(summaryLabel)} className="border-b border-white/10 px-1 pb-2">
-        <div className={`font-mono text-xl font-bold ${color}`}>{count}</div>
+        ["Continuation ready", total("TREND_CONTINUATION_READY", ready.length), scanCount("TREND_CONTINUATION_READY", ready.length), "text-emerald-300"],
+        ["Continuation watch", total("CONTINUATION_WATCH", watch.length), scanCount("CONTINUATION_WATCH", watch.length), "text-amber-200"],
+        ["Impulse detected", total("IMPULSE_DETECTED", impulse.length), scanCount("IMPULSE_DETECTED", impulse.length), "text-cyan-200"],
+        ["Extended risk", total("EXTENDED_RISK", extended.length), scanCount("EXTENDED_RISK", extended.length), "text-rose-200"],
+      ].map(([summaryLabel, rankedCount, fullScanCount, color]) => <div key={String(summaryLabel)} className="border-b border-white/10 px-1 pb-2">
+        <div className="flex items-baseline gap-1.5">
+          <span className={`font-mono text-xl font-bold ${color}`}>{rankedCount}</span>
+          {Number(fullScanCount) > Number(rankedCount) && (
+            <span className="font-mono text-[10px] text-white/35">of {fullScanCount}</span>
+          )}
+        </div>
         <div className="text-[10px] uppercase tracking-wide text-white/35">{summaryLabel}</div>
       </div>)}
     </div>
@@ -226,7 +229,7 @@ export default function TrendContinuationCandidates({ candidates, planIds, count
     <div className="rounded-lg border border-violet-400/15 bg-violet-400/[0.035] px-4 py-3 text-xs leading-relaxed text-violet-100/65">
       A Mid-Way or day-two setup unlocks manual Buy &amp; Track after 10:15 IST only when price clears its frozen breakout / VDU ceiling on required live volume pace (2.5× impulse, 1.8× stair-step, 1.5× VDU pause) and fresh Breeze depth, spread, circuit room, and results-calendar checks pass. Auto-buy stays disabled.
       <span className="mt-2 block text-white/55">
-        Mid-Way variants are tracked per path under Strategy Tests (`ENGINE:MIDWAY_*`); size them as experimental until live forward evidence accumulates.
+        Mid-Way variants are tracked per path under Strategy Tests (<code className="font-mono text-white/75">ENGINE:MIDWAY_*</code>); size them as experimental until live forward evidence accumulates.
       </span>
       <span className="mt-2 block text-white/45">Double-click a stock card, or long-press it on mobile, to open its interactive chart.</span>
     </div>
@@ -243,8 +246,7 @@ export default function TrendContinuationCandidates({ candidates, planIds, count
       : <div className="space-y-3">
         <CandidateGroup title="Continuation ready" {...group("TREND_CONTINUATION_READY", ready)} ranked={ranked} planIds={planIds} color="text-emerald-300" defaultOpen bindChartGesture={bindChartGesture} />
         <CandidateGroup title="Mid-Way setups · Stage-2 / EP / Stair-Step / VDU" candidates={midwayWatch} ranked={ranked} planIds={planIds} color="text-emerald-200" defaultOpen bindChartGesture={bindChartGesture} />
-        <CandidateGroup title="Second-day movers · watch-only" candidates={dayTwoWatch} ranked={ranked} planIds={planIds} color="text-cyan-200" defaultOpen={midwayWatch.length === 0} bindChartGesture={bindChartGesture} />
-        <CandidateGroup title="Continuation watch" {...group("CONTINUATION_WATCH", watch)} ranked={ranked} planIds={planIds} color="text-amber-200" bindChartGesture={bindChartGesture} />
+        <CandidateGroup title="Continuation watch" {...group("CONTINUATION_WATCH", watch)} ranked={ranked} planIds={planIds} color="text-amber-200" defaultOpen={midwayWatch.length === 0} bindChartGesture={bindChartGesture} />
         <CandidateGroup title="Impulse detected" {...group("IMPULSE_DETECTED", impulse)} ranked={ranked} planIds={planIds} color="text-cyan-200" bindChartGesture={bindChartGesture} />
         <CandidateGroup title="Extended · do not chase" {...group("EXTENDED_RISK", extended)} ranked={ranked} planIds={planIds} color="text-rose-200" bindChartGesture={bindChartGesture} />
       </div>)}
