@@ -119,6 +119,7 @@ export default function ServerCardScreen({
     {!!error && <Banner>{error}</Banner>}
     {!screen && refreshing ? <CardListSkeleton count={4} /> : <FlatList data={screen?.cards ?? []} keyExtractor={(item) => item.id} removeClippedSubviews windowSize={7} initialNumToRender={10} onEndReached={loadMore} onEndReachedThreshold={0.4} ListFooterComponent={loadingMore ? <ActivityIndicator color={colors.emerald} /> : null} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={load} tintColor={colors.emerald} />} contentContainerStyle={styles.list} ListEmptyComponent={!refreshing ? <Empty>Nothing to show right now.</Empty> : null} renderItem={({ item }) => <Card onPress={() => setSelected(item)}>
       <View style={styles.rowBetween}><View style={styles.flex}><Text style={styles.ticker}>{item.title}</Text><Text numberOfLines={1} style={styles.meta}>{item.subtitle}</Text></View>{item.badge && <Pill label={item.badge.label} tone={item.badge.tone} />}{item.score !== null && <View style={styles.score}><Text style={styles.scoreText}>{item.score}</Text></View>}</View>
+      {!!item.pills?.length && <View style={styles.pillRow}>{item.pills.map((pill) => <Pill key={pill.label} label={pill.label} tone={pill.tone} compact />)}</View>}
       <View style={styles.metricRow}>{item.metrics.map((metric) => <Metric key={metric.label} label={metric.label} value={metric.value} positive={metric.tone === "positive"} negative={metric.tone === "negative"} />)}</View>
       {!!item.footer && <Text style={styles.cardFoot}>{item.footer}</Text>}
     </Card>} />}
@@ -130,7 +131,10 @@ function CardDetail({ card, market, onBack }: { card: ScreenCard; market: Market
   return <ScrollView contentContainerStyle={styles.detail}>
     <Pressable onPress={onBack}><Text style={styles.link}>Back</Text></Pressable>
     <Text style={styles.detailTicker}>{card.title}</Text><Text style={styles.meta}>{card.subtitle}</Text>
-    {card.badge && <View style={styles.detailBadge}><Pill label={card.badge.label} tone={card.badge.tone} /></View>}
+    {(card.badge || !!card.pills?.length) && <View style={styles.detailBadge}>
+      {card.badge && <Pill label={card.badge.label} tone={card.badge.tone} />}
+      {card.pills?.map((pill) => <Pill key={pill.label} label={pill.label} tone={pill.tone} compact />)}
+    </View>}
     {!!card.chartTicker && <PriceChart market={market} ticker={card.chartTicker} />}
     <View style={styles.metricGrid}>{card.metrics.map((metric) => <Metric key={metric.label} label={metric.label} value={metric.value} positive={metric.tone === "positive"} negative={metric.tone === "negative"} />)}{card.score !== null && <Metric label="SCORE" value={card.score} />}</View>
     {!!card.guidance && <Text style={styles.guidance}>{card.guidance}</Text>}
@@ -189,7 +193,8 @@ const styles = StyleSheet.create({
   metricGrid: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm, marginVertical: 18 },
   detail: { padding: spacing.xl, paddingBottom: 50 },
   detailTicker: { ...typography.detailTicker, marginTop: 22 },
-  detailBadge: { flexDirection: "row", marginTop: 10 },
+  detailBadge: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 10 },
+  pillRow: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
   guidance: { color: colors.textSecondary, backgroundColor: colors.surface, borderColor: colors.border, borderWidth: 1, borderRadius: radius.md, padding: spacing.md, lineHeight: 20, marginBottom: 6 },
   success: { color: colors.emeraldText, marginTop: spacing.md },
   sectionTitle: { ...typography.sectionTitle, marginTop: spacing.sm, marginBottom: 10 },

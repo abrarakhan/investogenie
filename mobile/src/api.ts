@@ -294,6 +294,7 @@ export interface ScreenCard {
   title: string;
   subtitle: string;
   badge: { label: string; tone: ScreenTone } | null;
+  pills?: Array<{ label: string; tone: ScreenTone }>;
   score: string | null;
   metrics: Array<{ label: string; value: string; tone?: ScreenTone }>;
   footer: string | null;

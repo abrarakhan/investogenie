@@ -46,11 +46,14 @@ export interface MobileCardSection { title: string; rows: MobileDetailRow[] }
 /** A purchase the app may log: it sends only this plan id and the server reads every level from it. */
 export interface MobileTradeAction { assetId: string; ticker: string; strategyKey: ProtectedSwingStrategy; planId: string; suggestedPrice: number }
 
+export interface MobilePill { label: string; tone: MobileTone }
+
 export interface MobileCard {
   id: string;
   title: string;
   subtitle: string;
   badge: { label: string; tone: MobileTone } | null;
+  pills?: MobilePill[];
   score: string | null;
   metrics: MobileMetric[];
   footer: string | null;
@@ -531,14 +534,55 @@ export function momentumIgnitionCard(
   };
 }
 
+const MIDWAY_VARIANT_LABEL: Record<string, string> = {
+  STAGE2_IMPULSE: "Stage-2 Impulse",
+  EP_REBOUND: "EP Rebound",
+  STAIR_STEP: "3D Stair-Step",
+};
+
+function trendContinuationPills(candidate: TrendContinuationCandidate): MobilePill[] {
+  const m = candidate.metrics;
+  const num = (k: string) => (typeof m[k] === "number" && Number.isFinite(m[k] as number) ? (m[k] as number) : null);
+  const pills: MobilePill[] = [];
+  const variant = typeof m.setup_variant === "string" ? m.setup_variant : null;
+  if (variant && MIDWAY_VARIANT_LABEL[variant]) pills.push({ label: MIDWAY_VARIANT_LABEL[variant], tone: "positive" });
+  const levels = typeof m.breakout_levels === "object" && m.breakout_levels !== null && !Array.isArray(m.breakout_levels)
+    ? (m.breakout_levels as Record<string, unknown>)
+    : null;
+  if (levels?.vduPause === true) {
+    const sessions = typeof levels.pauseSessions === "number" ? levels.pauseSessions : null;
+    pills.push({ label: sessions ? `VDU Pause · ${sessions}d` : "VDU Pause", tone: "positive" });
+  }
+  if (candidate.todRvol !== null && Number.isFinite(candidate.todRvol)) {
+    pills.push({ label: `RVOL ${candidate.todRvol.toFixed(1)}×`, tone: candidate.todRvol >= 1.8 ? "positive" : "neutral" });
+  }
+  const deliv = num("deliv_pct");
+  if (deliv !== null) {
+    const rel = num("rel_deliv_20d");
+    pills.push({
+      label: rel !== null ? `Deliv ${deliv.toFixed(0)}% · ${rel.toFixed(1)}×` : `Deliv ${deliv.toFixed(0)}%`,
+      tone: deliv >= 55 ? "positive" : "neutral",
+    });
+  }
+  const catalyst = typeof m.catalyst_tag === "string" ? m.catalyst_tag : null;
+  if (catalyst) pills.push({ label: catalyst, tone: catalyst === "EP" ? "positive" : "neutral" });
+  if (m.midway_exhausted === true) {
+    const rsi = num("midway_rsi_14");
+    pills.push({ label: rsi !== null && rsi >= 80 ? `RSI ${rsi.toFixed(0)} Exhausted` : "Exhausted", tone: "warning" });
+  }
+  return pills;
+}
+
 export function trendContinuationCard(candidate: TrendContinuationCandidate, market: MobileMarket, rank: number, planId: string | null = null): MobileCard {
   const metric = (key: string) => typeof candidate.metrics[key] === "number" ? candidate.metrics[key] as number : null;
   const volumes = Array.isArray(candidate.metrics.volume_ratios) ? candidate.metrics.volume_ratios.filter((item): item is number => typeof item === "number") : [];
+  const pills = trendContinuationPills(candidate);
   return {
     id: candidate.assetId,
     title: `#${rank} ${candidate.ticker}`,
     subtitle: [market === "IN" ? "NSE" : market, candidate.name].filter(Boolean).join(" · "),
     badge: { label: TREND_CONTINUATION_STATUS_LABEL[candidate.status], tone: TREND_TONE[candidate.status] },
+    ...(pills.length ? { pills } : {}),
     score: String(candidate.score),
     metrics: candidate.entry !== null
       ? [
