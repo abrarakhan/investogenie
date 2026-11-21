@@ -197,3 +197,17 @@ export const seedMomentumBoth = (market: MarketId, settings: SwingSettings, valu
 export const seedTrendContinuation = (market: MarketId, value: TrendContinuationCandidate[]) => {
   if (market === "IN") seedDisplayScanCache(`trend:${market}:default`, value);
 };
+
+/**
+ * Non-blocking read of an already-warm display scan cache entry.
+ * Never triggers a scan or background refresh when cold.
+ */
+export function peekDisplayScan<T>(key: string, now: () => number = Date.now): T | null {
+  const entry = entries.get(key);
+  if (!entry || !entry.hasValue) return null;
+  if (now() - entry.at > DISPLAY_SCAN_MAX_AGE_MS * 4) return null;
+  return entry.value as T;
+}
+
+export const peekStrongSwing = (market: MarketId, settings: SwingSettings) =>
+  peekDisplayScan<StrongSwingCandidate[]>(`strong:${market}:${settingsKey(settings)}`);

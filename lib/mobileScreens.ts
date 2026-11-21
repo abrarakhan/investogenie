@@ -1,5 +1,8 @@
 import type { ArmedSwingCandidate } from "@/features/armed-swing/contracts";
-import { displayArmedSwing, displayLegacyMomentum, displayMomentumV2, displayStrongSwing, displaySwingBundle, displayTrendContinuation } from "@/lib/displayScanCache";
+import {
+  displayArmedSwing, displayLegacyMomentum, displayMomentumV2, displayStrongSwing,
+  displaySwingBundle, displayTrendContinuation, peekStrongSwing,
+} from "@/lib/displayScanCache";
 import { ARMED_STATUS_LABEL, ARMED_WHEN_TO_ENTER } from "@/lib/armedSwingCopy";
 import type { ArmedSwingStatus } from "@/lib/analytics/armedSwing";
 import { rankSwingCandidates, swingDisplayScore } from "@/lib/analytics/candidateRanking";
@@ -766,7 +769,193 @@ async function longTerm(market: MobileMarket, params: URLSearchParams): Promise<
   };
 }
 
+async function homeScreen(market: MobileMarket, userId: string): Promise<MobileScreen> {
+  const country = market;
+  const exchanges = market === "IN" ? ["NSE"] : ["NASDAQ", "NYSE", "AMEX"];
+  const benchmarks = market === "IN" ? ["NIFTY", "SENSEX", "USDINR"] : ["AAPL", "MSFT", "NVDA"];
+  const primaryExchange = exchanges[0];
+
+  const [settings, benchmarkRows, breadthRows, trendRows] = await Promise.all([
+    getUserSwingSettings(userId).catch(() => null),
+    query<{ ticker: string; name: string | null; exchange: string; price: string; change_pct: string | null; as_of: string | Date | null }>(
+      `select a.ticker, a.name, a.exchange, q.price::text, q.change_pct::text, q.as_of
+         from public.assets a
+         join public.latest_quotes q on q.asset_id = a.id
+        where a.country = $1 and a.ticker = any($2)
+        order by array_position($2::text[], a.ticker),
+                 case when a.exchange = $3 then 0 else 1 end`,
+      [country, benchmarks, primaryExchange],
+    ),
+    query<{ advancers: string; decliners: string; unchanged: string; latest_as_of: string | null }>(
+      `select count(*) filter (where q.change_pct > 0)::text advancers,
+              count(*) filter (where q.change_pct < 0)::text decliners,
+              count(*) filter (where q.change_pct = 0 or q.change_pct is null)::text unchanged,
+              max(q.as_of)::text latest_as_of
+         from public.latest_quotes q
+         join public.assets a on a.id = q.asset_id
+        where a.country = $1 and a.exchange = any($2) and a.asset_class = 'STOCK'`,
+      [country, exchanges],
+    ),
+    market === "IN"
+      ? query<{
+          asset_id: string;
+          ticker: string;
+          name: string | null;
+          status: string;
+          score: number;
+          entry: string | null;
+          stop: string | null;
+          target: string | null;
+          asof_market_date: string;
+          setup_variant: string | null;
+          deliv_pct: string | null;
+        }>(
+          `select * from (
+             select distinct on (s.asset_id)
+                    s.asset_id, a.ticker, a.name, s.status, s.score,
+                    s.entry::text, s.stop::text, s.target::text,
+                    s.asof_market_date::text,
+                    s.metrics->>'setup_variant' setup_variant,
+                    s.metrics->>'deliv_pct' deliv_pct
+               from public.trend_continuation_signals s
+               join public.assets a on a.id = s.asset_id
+              where s.market = 'IN'
+                and s.status <> 'EXTENDED_RISK'
+                and s.asof_market_date >= (
+                  select max(asof_market_date) - interval '4 days'
+                    from public.trend_continuation_signals
+                   where market = 'IN'
+                )
+              order by s.asset_id, s.asof_market_date desc, s.computed_at desc
+           ) latest
+           order by
+             case when setup_variant is not null then 0 else 1 end,
+             case when status = 'TREND_CONTINUATION_READY' then 0
+                  when status = 'CONTINUATION_WATCH' then 1
+                  else 2 end,
+             score desc
+           limit 3`,
+        ).catch(() => [])
+      : Promise.resolve([]),
+  ]);
+
+  const breadth = breadthRows[0];
+  const advancers = Number(breadth?.advancers ?? 0);
+  const decliners = Number(breadth?.decliners ?? 0);
+  const latestQuoteDate = breadth?.latest_as_of?.slice(0, 10) ?? null;
+
+  const cards: MobileCard[] = [];
+
+  // 1. Market breadth & benchmarks card
+  const seenBench = new Set<string>();
+  const uniqueBench = benchmarkRows.filter((row) => {
+    if (seenBench.has(row.ticker)) return false;
+    seenBench.add(row.ticker);
+    return true;
+  });
+  cards.push({
+    id: `home:breadth:${market}`,
+    title: market === "IN" ? "India Market Pulse" : "US Market Pulse",
+    subtitle: latestQuoteDate ? `Latest persisted quotes · ${latestQuoteDate}` : "Persisted market snapshot",
+    badge: {
+      label: advancers >= decliners ? "Positive Breadth" : "Weak Breadth",
+      tone: advancers >= decliners ? "positive" : "warning",
+    },
+    score: null,
+    metrics: [
+      { label: "ADVANCERS", value: String(advancers), tone: "positive" },
+      { label: "DECLINERS", value: String(decliners), tone: "negative" },
+      ...(uniqueBench[0]
+        ? [{
+            label: uniqueBench[0].ticker,
+            value: formatPct(uniqueBench[0].change_pct === null ? null : Number(uniqueBench[0].change_pct)),
+            tone: toneOf(uniqueBench[0].change_pct === null ? null : Number(uniqueBench[0].change_pct)),
+          }]
+        : []),
+    ],
+    footer: uniqueBench.length
+      ? uniqueBench
+          .map((row) => `${row.ticker} ${formatMoney(Number(row.price), market)} (${formatPct(row.change_pct === null ? null : Number(row.change_pct))})`)
+          .join(" · ")
+      : null,
+    chartTicker: null,
+    guidance: "Summary built from persisted quotes and cached scan snapshots — open Strategies or Discover for full ranked lists.",
+    sections: uniqueBench.length
+      ? [{
+          title: "Benchmarks",
+          rows: uniqueBench.map((row) => ({
+            label: row.ticker,
+            value: formatMoney(Number(row.price), market),
+            detail: `${row.name ?? row.ticker} · ${formatPct(row.change_pct === null ? null : Number(row.change_pct))}`,
+          })),
+        }]
+      : [],
+  });
+
+  // 2. Top execution-ready setups from already-warm Strong Swing cache (never triggers a scan)
+  const warmStrong = settings ? peekStrongSwing(market, settings) : null;
+  const readyStrong = (warmStrong ?? [])
+    .filter((candidate) => candidate.status === "EXECUTION_READY")
+    .slice(0, 3);
+  for (const candidate of readyStrong) {
+    cards.push({
+      id: `home:ready:${candidate.assetId}`,
+      title: candidate.ticker,
+      subtitle: `Strong Swing · Execution Ready`,
+      badge: { label: "Execution Ready", tone: "positive" },
+      score: formatNumber(candidate.strengthScore, 0),
+      metrics: [
+        { label: "ENTRY", value: formatMoney(candidate.strongEntry, market) },
+        { label: "STOP", value: formatMoney(candidate.strongStop, market), tone: "negative" },
+        { label: "TARGET", value: formatMoney(candidate.strongTarget, market), tone: "positive" },
+      ],
+      footer: `Open Strategies → Strong Swing to inspect full execution gates and log a plan.`,
+      chartTicker: candidate.ticker,
+      guidance: null,
+      sections: [],
+    });
+  }
+
+  // 3. Top persisted Mid-Way / Trend Continuation setups (IN only)
+  for (const row of trendRows) {
+    const isMidway = typeof row.setup_variant === "string" && row.setup_variant.length > 0;
+    const deliv = row.deliv_pct !== null ? Number(row.deliv_pct) : null;
+    cards.push({
+      id: `home:trend:${row.asset_id}`,
+      title: row.ticker,
+      subtitle: [row.name, isMidway ? `Mid-Way · ${row.setup_variant}` : "Trend Continuation"].filter(Boolean).join(" · "),
+      badge: {
+        label: isMidway ? row.setup_variant!.replaceAll("_", " ") : row.status.replaceAll("_", " "),
+        tone: row.status === "TREND_CONTINUATION_READY" || isMidway ? "positive" : "warning",
+      },
+      score: String(Math.round(row.score)),
+      metrics: [
+        { label: "ENTRY", value: formatMoney(row.entry === null ? null : Number(row.entry), market) },
+        { label: "STOP", value: formatMoney(row.stop === null ? null : Number(row.stop), market), tone: "negative" },
+        { label: "DELIV %", value: deliv !== null && Number.isFinite(deliv) ? `${deliv.toFixed(0)}%` : nil, tone: deliv !== null && deliv >= 55 ? "positive" : "neutral" },
+      ],
+      footer: `Signal session ${row.asof_market_date} · open Strategies → Continuation for full gates.`,
+      chartTicker: row.ticker,
+      guidance: null,
+      sections: [],
+    });
+  }
+
+  return {
+    key: "home",
+    title: "Home",
+    subtitle: "Market pulse and top persisted opportunities.",
+    generatedAt: new Date().toISOString(),
+    summary: `${readyStrong.length} ready · ${trendRows.length} continuation highlights`,
+    notice: latestQuoteDate ? null : "Quote data has not synced yet for this market.",
+    options: [],
+    searchable: false,
+    cards,
+  };
+}
+
 const LOADERS: Record<string, (market: MobileMarket, params: URLSearchParams, userId: string) => Promise<MobileScreen>> = {
+  home: (market, _params, userId) => homeScreen(market, userId),
   market: (market) => marketOverview(market),
   "stock-screener": stockScreener,
   swing: swingCandidates,
