@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useEffect, useState, type ReactNode } from "react";
 import {
-  ActivityIndicator, FlatList, Modal, Pressable, RefreshControl, ScrollView,
+  ActivityIndicator, AppState, FlatList, Modal, Pressable, RefreshControl, ScrollView,
   StyleSheet, Text, TextInput, View,
 } from "react-native";
 import Svg, { Line, Rect } from "react-native-svg";
@@ -41,7 +41,17 @@ export default function ServerCardScreen({ screenKey, title, market }: { screenK
       .catch((cause) => setError(errorMessage(cause, `Could not load more ${title}`)))
       .finally(() => setLoadingMore(false));
   }, [loadingMore, market, params, screen?.pagination?.nextCursor, screenKey, title]);
-  useEffect(() => { const timer = setInterval(load, 300_000); return () => clearInterval(timer); }, [load]);
+  useEffect(() => {
+    let timer: ReturnType<typeof setInterval> | null = null;
+    const start = () => { if (!timer) timer = setInterval(load, 300_000); };
+    const stop = () => { if (timer) { clearInterval(timer); timer = null; } };
+    if (AppState.currentState === "active") start();
+    const sub = AppState.addEventListener("change", (state) => {
+      if (state === "active") start();
+      else stop();
+    });
+    return () => { stop(); sub.remove(); };
+  }, [load]);
   if (selected) return <CardDetail card={selected} market={market} onBack={() => setSelected(null)} />;
   const setParam = (param: string, value: string) => { setRefreshing(true); setError(""); setParams((current) => ({ ...current, [param]: value })); };
   return <View style={styles.flex}>
