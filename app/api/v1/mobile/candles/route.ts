@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getMobileSessionUser } from "@/lib/mobileAuth";
 import { getCandlesForTicker } from "@/lib/marketOverview";
 import { normalizeMarket } from "@/lib/markets";
+import { mobileJson } from "@/lib/mobileHttp";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -15,5 +16,5 @@ export async function GET(request: NextRequest) {
   const days = Number.isFinite(requestedDays) ? Math.min(260, Math.max(20, requestedDays)) : 90;
   if (!market || !ticker) return NextResponse.json({ error: "market and ticker are required" }, { status: 400 });
   const candle = await getCandlesForTicker(market, ticker, days);
-  return NextResponse.json({ candle });
+  return mobileJson(request, { candle });
 }
