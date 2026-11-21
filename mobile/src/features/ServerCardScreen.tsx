@@ -6,9 +6,12 @@ import {
 import Svg, { Line, Rect } from "react-native-svg";
 import {
   createMutationKey, createTrade, getCandles, getScreen, peekCachedScreen,
-  type CandlePoint, type Market, type MobileScreen, type ScreenCard, type ScreenTone, type TradeAction,
+  type CandlePoint, type Market, type MobileScreen, type ScreenCard, type TradeAction,
 } from "../api";
+import { Card } from "../design/Card";
+import { Pill } from "../design/Pill";
 import { CardListSkeleton } from "../design/Skeleton";
+import { colors, hapticSelection, hapticSuccess, radius, spacing, tabularNums, typography } from "../design/tokens";
 import { amount, errorMessage, marketDate, money } from "../format";
 import { Action, Banner, Empty, Metric, ScreenHead } from "../ui";
 
@@ -77,7 +80,12 @@ export default function ServerCardScreen({ screenKey, title, market }: { screenK
     return () => { stop(); sub.remove(); };
   }, [load]);
   if (selected) return <CardDetail card={selected} market={market} onBack={() => setSelected(null)} />;
-  const setParam = (param: string, value: string) => { setRefreshing(true); setError(""); setParams((current) => ({ ...current, [param]: value })); };
+  const setParam = (param: string, value: string) => {
+    hapticSelection();
+    setRefreshing(true);
+    setError("");
+    setParams((current) => ({ ...current, [param]: value }));
+  };
   const freshness = formatFreshness(updatedAt, fromCache);
   return <View style={styles.flex}>
     <ScreenHead title={screen?.title ?? title} subtitle={screen?.subtitle ?? "Loading from the server."} />
@@ -89,13 +97,13 @@ export default function ServerCardScreen({ screenKey, title, market }: { screenK
     {screen?.options.map((option) => <ScrollView key={option.param} horizontal showsHorizontalScrollIndicator={false} style={styles.chipBar} contentContainerStyle={styles.chips}>
       {option.choices.map((choice) => <Pressable key={choice.value} onPress={() => setParam(option.param, choice.value)} style={[styles.chip, (params[option.param] ?? option.value) === choice.value && styles.chipActive]}><Text style={(params[option.param] ?? option.value) === choice.value ? styles.chipTextActive : styles.chipText}>{choice.label}</Text></Pressable>)}
     </ScrollView>)}
-    {screen?.searchable && <View style={styles.searchRow}><TextInput style={styles.input} value={search} onChangeText={setSearch} onSubmitEditing={() => setParam("search", search.trim())} returnKeyType="search" placeholder="Search symbol or name" placeholderTextColor="#697078" autoCapitalize="characters" autoCorrect={false} /></View>}
+    {screen?.searchable && <View style={styles.searchRow}><TextInput style={styles.input} value={search} onChangeText={setSearch} onSubmitEditing={() => setParam("search", search.trim())} returnKeyType="search" placeholder="Search symbol or name" placeholderTextColor={colors.textSubtle} autoCapitalize="characters" autoCorrect={false} /></View>}
     {!!error && <Banner>{error}</Banner>}
-    {!screen && refreshing ? <CardListSkeleton count={4} /> : <FlatList data={screen?.cards ?? []} keyExtractor={(item) => item.id} onEndReached={loadMore} onEndReachedThreshold={0.4} ListFooterComponent={loadingMore ? <ActivityIndicator color="#34d399" /> : null} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={load} tintColor="#34d399" />} contentContainerStyle={styles.list} ListEmptyComponent={!refreshing ? <Empty>Nothing to show right now.</Empty> : null} renderItem={({ item }) => <Pressable onPress={() => setSelected(item)} style={styles.card}>
-      <View style={styles.rowBetween}><View style={styles.flex}><Text style={styles.ticker}>{item.title}</Text><Text numberOfLines={1} style={styles.meta}>{item.subtitle}</Text></View>{item.badge && <TonePill label={item.badge.label} tone={item.badge.tone} />}{item.score !== null && <View style={styles.score}><Text style={styles.scoreText}>{item.score}</Text></View>}</View>
+    {!screen && refreshing ? <CardListSkeleton count={4} /> : <FlatList data={screen?.cards ?? []} keyExtractor={(item) => item.id} removeClippedSubviews windowSize={7} initialNumToRender={10} onEndReached={loadMore} onEndReachedThreshold={0.4} ListFooterComponent={loadingMore ? <ActivityIndicator color={colors.emerald} /> : null} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={load} tintColor={colors.emerald} />} contentContainerStyle={styles.list} ListEmptyComponent={!refreshing ? <Empty>Nothing to show right now.</Empty> : null} renderItem={({ item }) => <Card onPress={() => setSelected(item)}>
+      <View style={styles.rowBetween}><View style={styles.flex}><Text style={styles.ticker}>{item.title}</Text><Text numberOfLines={1} style={styles.meta}>{item.subtitle}</Text></View>{item.badge && <Pill label={item.badge.label} tone={item.badge.tone} />}{item.score !== null && <View style={styles.score}><Text style={styles.scoreText}>{item.score}</Text></View>}</View>
       <View style={styles.metricRow}>{item.metrics.map((metric) => <Metric key={metric.label} label={metric.label} value={metric.value} positive={metric.tone === "positive"} negative={metric.tone === "negative"} />)}</View>
       {!!item.footer && <Text style={styles.cardFoot}>{item.footer}</Text>}
-    </Pressable>} />}
+    </Card>} />}
   </View>;
 }
 
@@ -104,7 +112,7 @@ function CardDetail({ card, market, onBack }: { card: ScreenCard; market: Market
   return <ScrollView contentContainerStyle={styles.detail}>
     <Pressable onPress={onBack}><Text style={styles.link}>Back</Text></Pressable>
     <Text style={styles.detailTicker}>{card.title}</Text><Text style={styles.meta}>{card.subtitle}</Text>
-    {card.badge && <View style={styles.detailBadge}><TonePill label={card.badge.label} tone={card.badge.tone} /></View>}
+    {card.badge && <View style={styles.detailBadge}><Pill label={card.badge.label} tone={card.badge.tone} /></View>}
     {!!card.chartTicker && <PriceChart market={market} ticker={card.chartTicker} />}
     <View style={styles.metricGrid}>{card.metrics.map((metric) => <Metric key={metric.label} label={metric.label} value={metric.value} positive={metric.tone === "positive"} negative={metric.tone === "negative"} />)}{card.score !== null && <Metric label="SCORE" value={card.score} />}</View>
     {!!card.guidance && <Text style={styles.guidance}>{card.guidance}</Text>}
@@ -114,7 +122,7 @@ function CardDetail({ card, market, onBack }: { card: ScreenCard; market: Market
       {row.passed !== undefined && <Text style={row.passed ? styles.good : styles.bad}>{row.passed ? "PASS" : "WAIT"}</Text>}
       <View style={styles.gateText}><View style={styles.rowBetween}><Text style={[styles.gateLabel, styles.flex]}>{row.label}</Text>{!!row.value && <Text style={styles.rowValue}>{row.value}</Text>}</View>{!!row.detail && <Text style={styles.muted}>{row.detail}</Text>}</View>
     </View>)}</View>)}
-    {card.trade && <TradeEntrySheet visible={buying} trade={card.trade} market={market} onClose={() => setBuying(false)} onSaved={() => { setBuying(false); setNotice("Trade recorded in your ledger with this frozen plan."); }} />}
+    {card.trade && <TradeEntrySheet visible={buying} trade={card.trade} market={market} onClose={() => setBuying(false)} onSaved={() => { hapticSuccess(); setBuying(false); setNotice("Trade recorded in your ledger with this frozen plan."); }} />}
   </ScrollView>;
 }
 
@@ -133,15 +141,49 @@ function TradeEntrySheet({ visible, trade, market, onClose, onSaved }: { visible
   return <Sheet visible={visible} title={`Log ${trade.ticker}`} onClose={onClose}><Field value={date} onChangeText={setDate} placeholder="Purchase date YYYY-MM-DD" /><Field value={price} onChangeText={setPrice} placeholder="Buy price" keyboard="decimal-pad" /><Field value={quantity} onChangeText={setQuantity} placeholder="Quantity" keyboard="decimal-pad" />{!!error && <Text style={styles.errorText}>{error}</Text>}<Action label="Freeze plan and log trade" busy={busy} onPress={save} /></Sheet>;
 }
 function Sheet({ visible, title, onClose, children }: { visible: boolean; title: string; onClose: () => void; children: ReactNode }) { return <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}><View style={styles.modalBackdrop}><View style={styles.sheet}><View style={styles.rowBetween}><Text style={styles.sectionTitle}>{title}</Text><Pressable onPress={onClose}><Text style={styles.link}>Close</Text></Pressable></View>{children}</View></View></Modal>; }
-function Field({ value, onChangeText, placeholder, keyboard }: { value: string; onChangeText: (value: string) => void; placeholder: string; keyboard?: "decimal-pad" }) { return <TextInput style={styles.input} value={value} onChangeText={onChangeText} placeholder={placeholder} placeholderTextColor="#697078" autoCapitalize="none" autoCorrect={false} keyboardType={keyboard} />; }
-const TonePill = ({ label, tone }: { label: string; tone: ScreenTone }) => <View style={[styles.statePill, tone === "positive" ? styles.stateFavored : tone === "negative" ? styles.stateRisk : tone === "warning" ? styles.stateCaution : null]}><Text style={styles.stateText}>{label.toUpperCase()}</Text></View>;
+function Field({ value, onChangeText, placeholder, keyboard }: { value: string; onChangeText: (value: string) => void; placeholder: string; keyboard?: "decimal-pad" }) { return <TextInput style={styles.input} value={value} onChangeText={onChangeText} placeholder={placeholder} placeholderTextColor={colors.textSubtle} autoCapitalize="none" autoCorrect={false} keyboardType={keyboard} />; }
 
 const styles = StyleSheet.create({
-  flex: { flex: 1 }, screenHead: { paddingHorizontal: 18, paddingTop: 8, paddingBottom: 12, gap: 5 }, title: { color: "#f7f8fa", fontSize: 27, fontWeight: "900" }, muted: { color: "#858c95", fontSize: 14, lineHeight: 21 }, metaBar: { flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between", alignItems: "center", paddingHorizontal: 18, paddingBottom: 8, gap: 8 }, summary: { color: "#697078", fontSize: 10 }, freshTag: { color: "#697078", fontSize: 10, fontWeight: "700" }, cachedTag: { color: "#fbbf24", fontSize: 10, fontWeight: "700" }, notice: { color: "#fbbf24", fontSize: 11, paddingHorizontal: 18, paddingBottom: 8 }, errorBanner: { color: "#fecdd3", backgroundColor: "#35131d", marginHorizontal: 18, marginBottom: 10, padding: 12, borderRadius: 7 }, errorText: { color: "#fb7185" },
-  chipBar: { flexGrow: 0, flexShrink: 0 }, chips: { paddingHorizontal: 14, paddingBottom: 8, gap: 8 }, chip: { borderWidth: 1, borderColor: "#252b33", borderRadius: 16, paddingHorizontal: 12, paddingVertical: 7 }, chipActive: { backgroundColor: "#102a22", borderColor: "#2b8c70" }, chipText: { color: "#858c95", fontSize: 12, fontWeight: "700" }, chipTextActive: { color: "#6ee7b7", fontSize: 12, fontWeight: "900" }, searchRow: { paddingHorizontal: 14, paddingBottom: 8 }, input: { color: "#f7f8fa", backgroundColor: "#0c1015", borderColor: "#242a32", borderWidth: 1, borderRadius: 8, paddingHorizontal: 15, height: 52 },
-  list: { padding: 14, gap: 10, paddingBottom: 28 }, empty: { padding: 50, alignItems: "center" }, card: { backgroundColor: "#0b0f14", borderColor: "#252b33", borderWidth: 1, borderRadius: 8, padding: 15, gap: 14 }, rowBetween: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 10 }, ticker: { color: "#f8fafc", fontSize: 19, fontWeight: "900" }, meta: { color: "#707780", fontSize: 12, marginTop: 3 }, score: { minWidth: 43, height: 32, paddingHorizontal: 8, alignItems: "center", justifyContent: "center", borderRadius: 16, backgroundColor: "#103126" }, scoreText: { color: "#6ee7b7", fontWeight: "900" }, cardFoot: { color: "#949ba4", fontSize: 12 },
-  metricRow: { flexDirection: "row", gap: 8 }, metricGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginVertical: 18 }, metric: { flex: 1, minWidth: 88, backgroundColor: "#080b0f", borderRadius: 6, padding: 10 }, metricLabel: { color: "#656c75", fontSize: 10, fontWeight: "700" }, metricValue: { color: "#e5e7eb", fontSize: 14, fontWeight: "800", marginTop: 5 }, goodValue: { color: "#34d399" }, badValue: { color: "#fb7185" },
-  detail: { padding: 20, paddingBottom: 50 }, detailTicker: { color: "#f8fafc", fontSize: 34, fontWeight: "900", marginTop: 22 }, detailBadge: { flexDirection: "row", marginTop: 10 }, guidance: { color: "#e5e7eb", backgroundColor: "#0b0f14", borderColor: "#252b33", borderWidth: 1, borderRadius: 7, padding: 12, lineHeight: 20, marginBottom: 6 }, success: { color: "#6ee7b7", marginTop: 12 }, sectionTitle: { color: "#f8fafc", fontSize: 18, fontWeight: "900", marginTop: 8, marginBottom: 10 }, gate: { flexDirection: "row", gap: 12, borderTopWidth: 1, borderTopColor: "#1c2229", paddingVertical: 13 }, gateText: { flex: 1 }, gateLabel: { color: "#e5e7eb", fontWeight: "800", marginBottom: 3 }, good: { color: "#34d399", fontSize: 11, fontWeight: "900", width: 38 }, bad: { color: "#fbbf24", fontSize: 11, fontWeight: "900", width: 38 }, rowValue: { color: "#e5e7eb", fontWeight: "800" },
-  statePill: { borderRadius: 12, borderWidth: 1, borderColor: "#343a43", paddingHorizontal: 8, paddingVertical: 5 }, stateFavored: { borderColor: "#23835f", backgroundColor: "#0d2c21" }, stateRisk: { borderColor: "#9f2942", backgroundColor: "#35131d" }, stateCaution: { borderColor: "#8a6417", backgroundColor: "#30250d" }, stateText: { color: "#d5dae0", fontSize: 9, fontWeight: "900" }, link: { color: "#5eead4", fontWeight: "700" }, chart: { height: 120, marginTop: 18, backgroundColor: "#080b0f", borderRadius: 8, overflow: "hidden" }, chartCaption: { color: "#646b74", fontSize: 10, marginTop: 6 },
-  primary: { backgroundColor: "#34d399", borderRadius: 8, minHeight: 52, alignItems: "center", justifyContent: "center", marginVertical: 4 }, primaryText: { color: "#04110d", fontSize: 15, fontWeight: "900" }, modalBackdrop: { flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(0,0,0,0.72)" }, sheet: { backgroundColor: "#0b0f14", borderTopLeftRadius: 12, borderTopRightRadius: 12, borderColor: "#2a3038", borderWidth: 1, padding: 20, paddingBottom: 36, gap: 12 },
+  flex: { flex: 1 },
+  muted: typography.muted,
+  metaBar: { flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between", alignItems: "center", paddingHorizontal: spacing.lg + 2, paddingBottom: spacing.sm, gap: spacing.sm },
+  summary: typography.caption,
+  freshTag: typography.caption,
+  cachedTag: { color: colors.amber, fontSize: 11, fontWeight: "700" },
+  notice: { color: colors.amber, fontSize: 11, paddingHorizontal: spacing.lg + 2, paddingBottom: spacing.sm },
+  errorText: { color: colors.rose },
+  chipBar: { flexGrow: 0, flexShrink: 0 },
+  chips: { paddingHorizontal: 14, paddingBottom: spacing.sm, gap: spacing.sm },
+  chip: { borderWidth: 1, borderColor: colors.borderStrong, borderRadius: radius.pill, paddingHorizontal: 12, paddingVertical: 7, backgroundColor: colors.surface },
+  chipActive: { backgroundColor: colors.emeraldBg, borderColor: colors.emeraldBorder },
+  chipText: { color: colors.textMuted, fontSize: 12, fontWeight: "700" },
+  chipTextActive: { color: colors.emeraldText, fontSize: 12, fontWeight: "900" },
+  searchRow: { paddingHorizontal: 14, paddingBottom: spacing.sm },
+  input: { color: colors.text, backgroundColor: colors.surface, borderColor: colors.borderStrong, borderWidth: 1, borderRadius: radius.md, paddingHorizontal: 15, height: 50 },
+  list: { padding: 14, gap: 10, paddingBottom: spacing.xxl },
+  rowBetween: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 10 },
+  ticker: typography.ticker,
+  meta: { color: colors.textSubtle, fontSize: 12, marginTop: 3 },
+  score: { minWidth: 42, height: 30, paddingHorizontal: 8, alignItems: "center", justifyContent: "center", borderRadius: radius.pill, backgroundColor: colors.surfaceRaised, borderWidth: 1, borderColor: colors.borderStrong },
+  scoreText: { color: colors.text, fontWeight: "900", ...tabularNums },
+  cardFoot: { color: colors.textMuted, fontSize: 12 },
+  metricRow: { flexDirection: "row", gap: spacing.sm },
+  metricGrid: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm, marginVertical: 18 },
+  detail: { padding: spacing.xl, paddingBottom: 50 },
+  detailTicker: { ...typography.detailTicker, marginTop: 22 },
+  detailBadge: { flexDirection: "row", marginTop: 10 },
+  guidance: { color: colors.textSecondary, backgroundColor: colors.surface, borderColor: colors.border, borderWidth: 1, borderRadius: radius.md, padding: spacing.md, lineHeight: 20, marginBottom: 6 },
+  success: { color: colors.emeraldText, marginTop: spacing.md },
+  sectionTitle: { ...typography.sectionTitle, marginTop: spacing.sm, marginBottom: 10 },
+  gate: { flexDirection: "row", gap: spacing.md, borderTopWidth: 1, borderTopColor: colors.border, paddingVertical: 13 },
+  gateText: { flex: 1 },
+  gateLabel: { color: colors.text, fontWeight: "800", marginBottom: 3 },
+  good: { color: colors.emerald, fontSize: 11, fontWeight: "900", width: 38 },
+  bad: { color: colors.amber, fontSize: 11, fontWeight: "900", width: 38 },
+  rowValue: { color: colors.text, fontWeight: "800", ...tabularNums },
+  link: { color: colors.link, fontWeight: "700" },
+  chart: { height: 120, marginTop: 18, backgroundColor: colors.surfaceInset, borderColor: colors.border, borderWidth: 1, borderRadius: radius.md, overflow: "hidden" },
+  chartCaption: { color: colors.textSubtle, fontSize: 10, marginTop: 6, ...tabularNums },
+  modalBackdrop: { flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(0,0,0,0.72)" },
+  sheet: { backgroundColor: colors.surface, borderTopLeftRadius: radius.lg, borderTopRightRadius: radius.lg, borderColor: colors.borderStrong, borderWidth: 1, padding: spacing.xl, paddingBottom: 36, gap: spacing.md },
 });
