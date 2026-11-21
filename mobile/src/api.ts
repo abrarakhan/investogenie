@@ -103,6 +103,14 @@ export interface LedgerTrade {
 
 export interface CandlePoint { date: string; open: number; high: number; low: number; close: number; volume: number | null }
 
+export interface MobileIntradaySeries {
+  ticker: string;
+  exchange: string;
+  provisional: boolean;
+  intervalMinutes: number;
+  bars: Array<{ time: number; open: number; high: number; low: number; close: number; volume: number | null }>;
+}
+
 export interface LedgerSummary {
   openCount: number;
   closedCount: number;
@@ -248,6 +256,12 @@ export function getLedger(market: Market) {
 export function getCandles(market: Market, ticker: string, days = 90) {
   return request<{ candle: { ticker: string; points: CandlePoint[] } | null }>(
     `/api/v1/mobile/candles?market=${market}&ticker=${encodeURIComponent(ticker)}&days=${days}`,
+  );
+}
+
+export function getIntraday(market: Market, ticker: string, range: "1D" | "5D") {
+  return request<{ series: MobileIntradaySeries | null }>(
+    `/api/v1/mobile/intraday?market=${market}&ticker=${encodeURIComponent(ticker)}&range=${range}`,
   );
 }
 

@@ -5,7 +5,7 @@ import {
 } from "react-native";
 import Svg, { Line, Rect } from "react-native-svg";
 import {
-  ApiError, createMutationKey, createTrade, getCandles, getScreen, peekCachedScreen,
+  ApiError, createMutationKey, createTrade, getCandles, getIntraday, getScreen, peekCachedScreen,
   type CandlePoint, type Market, type MobileScreen, type ScreenCard, type TradeAction,
 } from "../api";
 import { Card } from "../design/Card";
@@ -148,32 +148,62 @@ function CardDetail({ card, market, onBack }: { card: ScreenCard; market: Market
   </ScrollView>;
 }
 
-const DAILY_RANGES = [
-  { key: "1M", days: 22 },
-  { key: "3M", days: 65 },
-  { key: "6M", days: 130 },
-  { key: "1Y", days: 252 },
+const CHART_RANGES = [
+  { key: "1D", intraday: true, days: 1 },
+  { key: "5D", intraday: true, days: 5 },
+  { key: "1M", intraday: false, days: 22 },
+  { key: "3M", intraday: false, days: 65 },
+  { key: "6M", intraday: false, days: 130 },
+  { key: "1Y", intraday: false, days: 252 },
 ] as const;
 
-type DailyRangeKey = (typeof DAILY_RANGES)[number]["key"];
+type ChartRangeKey = (typeof CHART_RANGES)[number]["key"];
 
 function PriceChart({ market, ticker }: { market: Market; ticker: string }) {
-  const [range, setRange] = useState<DailyRangeKey>("3M");
+  const ranges = market === "IN" ? CHART_RANGES : CHART_RANGES.filter((item) => !item.intraday);
+  const [range, setRange] = useState<ChartRangeKey>("3M");
   const [points, setPoints] = useState<CandlePoint[]>([]);
+  const [captionMeta, setCaptionMeta] = useState("");
   const [loading, setLoading] = useState(true);
-  const spec = DAILY_RANGES.find((item) => item.key === range) ?? DAILY_RANGES[1];
+  const spec = ranges.find((item) => item.key === range) ?? ranges[0];
 
   useEffect(() => {
     let active = true;
-    setLoading(true);
-    getCandles(market, ticker, spec.days)
-      .then((result) => {
-        if (active) setPoints(result.candle?.points.slice(-spec.days) ?? []);
-      })
-      .catch(() => { if (active) setPoints([]); })
-      .finally(() => { if (active) setLoading(false); });
+    if (spec.intraday) {
+      getIntraday(market, ticker, spec.key as "1D" | "5D")
+        .then((result) => {
+          if (!active) return;
+          const series = result.series;
+          if (!series || !series.bars.length) {
+            setPoints([]);
+            setCaptionMeta("");
+            return;
+          }
+          setPoints(series.bars.map((bar) => ({
+            date: String(bar.time),
+            open: bar.open,
+            high: bar.high,
+            low: bar.low,
+            close: bar.close,
+            volume: bar.volume,
+          })));
+          setCaptionMeta(`${series.intervalMinutes}m bars${series.provisional ? " · live" : ""}`);
+        })
+        .catch(() => { if (active) { setPoints([]); setCaptionMeta(""); } })
+        .finally(() => { if (active) setLoading(false); });
+    } else {
+      getCandles(market, ticker, spec.days)
+        .then((result) => {
+          if (!active) return;
+          const sliced = result.candle?.points.slice(-spec.days) ?? [];
+          setPoints(sliced);
+          setCaptionMeta(`${sliced.length} sessions`);
+        })
+        .catch(() => { if (active) { setPoints([]); setCaptionMeta(""); } })
+        .finally(() => { if (active) setLoading(false); });
+    }
     return () => { active = false; };
-  }, [market, ticker, spec.days]);
+  }, [market, ticker, spec.days, spec.intraday, spec.key]);
 
   const low = points.length ? Math.min(...points.map((point) => point.low)) : 0;
   const high = points.length ? Math.max(...points.map((point) => point.high)) : 0;
@@ -187,14 +217,17 @@ function PriceChart({ market, ticker }: { market: Market; ticker: string }) {
   return (
     <View style={styles.chartWrap}>
       <View style={styles.rangeRow}>
-        {DAILY_RANGES.map((item) => {
-          const active = item.key === range;
+        {ranges.map((item) => {
+          const active = item.key === spec.key;
           return (
             <Pressable
               key={item.key}
               onPress={() => {
-                if (!active) hapticSelection();
-                setRange(item.key);
+                if (!active) {
+                  hapticSelection();
+                  setLoading(true);
+                  setRange(item.key);
+                }
               }}
               style={[styles.rangePill, active && styles.rangePillActive]}
             >
@@ -207,7 +240,11 @@ function PriceChart({ market, ticker }: { market: Market; ticker: string }) {
         {loading && !points.length ? (
           <View style={styles.chartCenter}><ActivityIndicator color={colors.emerald} /></View>
         ) : !points.length ? (
-          <View style={styles.chartCenter}><Text style={styles.chartCaption}>No candles available for {range}.</Text></View>
+          <View style={styles.chartCenter}>
+            <Text style={styles.chartCaption}>
+              {spec.intraday ? `No intraday bars stored for ${ticker} yet.` : `No candles available for ${spec.key}.`}
+            </Text>
+          </View>
         ) : (
           <Svg width="100%" height={height} viewBox={`0 0 ${width} ${height}`}>
             {points.map((point, index) => {
@@ -228,7 +265,7 @@ function PriceChart({ market, ticker }: { market: Market; ticker: string }) {
       </View>
       {!!points.length && (
         <Text style={styles.chartCaption}>
-          {range} · {points.length} sessions · {money(low, market)} to {money(high, market)}
+          {spec.key} · {captionMeta} · {money(low, market)} to {money(high, market)}
         </Text>
       )}
     </View>
