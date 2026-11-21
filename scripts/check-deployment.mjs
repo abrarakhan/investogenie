@@ -3,8 +3,8 @@ import { spawnSync } from "node:child_process";
 import pg from "pg";
 
 const target = process.argv[2] ?? "local";
-if (!new Set(["local", "oracle"]).has(target)) {
-  console.error("Usage: node scripts/check-deployment.mjs <local|oracle>");
+if (!new Set(["local", "prod", "lightsail", "oracle"]).has(target)) {
+  console.error("Usage: node scripts/check-deployment.mjs <local|prod|lightsail>");
   process.exit(2);
 }
 

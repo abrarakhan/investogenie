@@ -27,7 +27,7 @@ sudo -u "${APP_USER}" git -C "${APP_DIR}" pull --ff-only origin main
 # version once so newly added migrations and verification steps are used by
 # the same deployment instead of being deferred until the next release.
 if [[ "${INVESTOGENIE_DEPLOY_REEXEC:-0}" != "1" ]]; then
-  exec env INVESTOGENIE_DEPLOY_REEXEC=1 bash "${APP_DIR}/deploy/oracle/deploy-release.sh"
+  exec env INVESTOGENIE_DEPLOY_REEXEC=1 bash "${APP_DIR}/deploy/lightsail/deploy-release.sh"
 fi
 
 # Preflight before npm ci/build/migrations: a missing authorization setting
@@ -71,13 +71,13 @@ sudo -u "${APP_USER}" bash -lc \
 sudo -u "${APP_USER}" bash -lc \
   "set -a; source /etc/investogenie/investogenie.env; set +a; cd '${APP_DIR}' && node --import ./scripts/ts-alias-hook.mjs --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/refresh-eod-features.mjs ALL"
 
-install -m 0644 "${APP_DIR}/deploy/oracle/investogenie.service" \
+install -m 0644 "${APP_DIR}/deploy/lightsail/investogenie.service" \
   /etc/systemd/system/investogenie.service
-install -m 0644 "${APP_DIR}/deploy/oracle/investogenie-breeze.service" \
+install -m 0644 "${APP_DIR}/deploy/lightsail/investogenie-breeze.service" \
   /etc/systemd/system/investogenie-breeze.service
-install -m 0644 "${APP_DIR}/deploy/oracle/investogenie-backup.service" \
+install -m 0644 "${APP_DIR}/deploy/lightsail/investogenie-backup.service" \
   /etc/systemd/system/investogenie-backup.service
-install -m 0644 "${APP_DIR}/deploy/oracle/investogenie-backup.timer" \
+install -m 0644 "${APP_DIR}/deploy/lightsail/investogenie-backup.timer" \
   /etc/systemd/system/investogenie-backup.timer
 systemctl daemon-reload
 

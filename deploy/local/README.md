@@ -3,7 +3,7 @@
 _Source reconciled 14 November 2026 through deployed revision `f33f256`; this guide covers the local macOS package._
 
 Local mode is the development and data-workstation deployment. It uses the
-Mac's PostgreSQL instance and `.env.local`; it does not read Oracle production
+Mac's PostgreSQL instance and `.env.local`; it does not read AWS Lightsail production
 secrets or connect to the cloud database.
 
 ## First setup
@@ -155,11 +155,11 @@ credentials it waits quietly; after the API key, secret, and daily token are
 saved under **Settings > ICICI Breeze market data**, it connects within 30
 seconds. Set `BREEZE_WORKER_DISABLED=1` only when the feed should remain off.
 
-## Relationship to Oracle
+## Relationship to AWS Lightsail production
 
-- Local and Oracle use separate PostgreSQL databases.
-- Never expose Oracle port 5432 or point routine local development directly at it.
+- Local and production use separate PostgreSQL databases.
+- Never expose production port 5432 or point routine local development directly at it.
 - Move data using `pg_dump`/`pg_restore` over SSH when a snapshot is needed.
-- Do not run local and Oracle schedulers against the same database.
+- Do not run local and production schedulers against the same database.
 - When promoting a separate Ubuntu host to production, treat its database as authoritative and take a
   backup before replacing it with a local snapshot.

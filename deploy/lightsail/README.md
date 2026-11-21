@@ -1,23 +1,12 @@
-# InvestoGenie on AWS Lightsail or Oracle-compatible Ubuntu
-
-_Source and release behavior reconciled 14 November 2026 through deployed revision `f33f256`._
+# InvestoGenie on AWS Lightsail (Ubuntu)
 
 This deployment package runs Next.js, PostgreSQL, Nginx, and the existing Node/Python scheduler on
-one Ubuntu VM. The package supports AWS Lightsail and Oracle-compatible
-Ubuntu hosts; confirm actual production placement with the operator. PostgreSQL and port 3000 remain private; only SSH, HTTP, and HTTPS are exposed.
+one AWS Lightsail Ubuntu VM. PostgreSQL and port 3000 remain private; only SSH, HTTP, and HTTPS are exposed.
 
 ## 1. Create the VM
 
-For AWS Lightsail, create an Ubuntu instance with a static public IP,
+Create an AWS Lightsail Ubuntu 24.04 instance with a static public IP,
 SSH key authentication, and enough memory/storage for PostgreSQL, Next.js and ingestion workers.
-
-For Oracle Cloud, use the tenancy home region and create one `VM.Standard.A1.Flex` instance:
-
-- Ubuntu 24.04 aarch64 image
-- 2 OCPUs and 12 GB RAM
-- 100 GB boot volume
-- public subnet and public IPv4 address
-- SSH key authentication
 
 Reserve a public IP and assign it to the VM. This is required if a market-data
 provider allowlists a fixed source IP. In the subnet security list, allow:
@@ -42,7 +31,7 @@ Copy this directory to the VM if the deployment files are not pushed yet, then:
 ssh ubuntu@YOUR_RESERVED_IP
 sudo DOMAIN=investogenie.example.com \
   REPO_URL=https://github.com/abrarakhan/investogenie.git \
-  bash deploy/oracle/bootstrap-ubuntu.sh
+  bash deploy/lightsail/bootstrap-ubuntu.sh
 ```
 
 The script stores generated database and application secrets in the root-owned
@@ -112,7 +101,7 @@ sudo journalctl -u investogenie --since '30 minutes ago' --no-pager
 Deploy a pushed `main` revision:
 
 ```bash
-sudo bash /opt/investogenie/app/deploy/oracle/deploy-release.sh
+sudo bash /opt/investogenie/app/deploy/lightsail/deploy-release.sh
 ```
 
 The release script updates the checkout and re-executes the checked-out version once, then installs locked dependencies, builds Next.js, discovers and applies the ordered migrations
@@ -122,7 +111,7 @@ scheduler and Breeze services, and checks the local login endpoint.
 Install the local PostgreSQL backup job:
 
 ```bash
-sudo install -m 0755 /opt/investogenie/app/deploy/oracle/backup-postgres.sh \
+sudo install -m 0755 /opt/investogenie/app/deploy/lightsail/backup-postgres.sh \
   /usr/local/sbin/investogenie-backup
 echo '20 2 * * * root /usr/local/sbin/investogenie-backup' | \
   sudo tee /etc/cron.d/investogenie-backup

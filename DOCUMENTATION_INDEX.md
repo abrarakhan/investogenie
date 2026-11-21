@@ -21,7 +21,7 @@ Use [AI_REVIEW_HANDOFF.md](AI_REVIEW_HANDOFF.md) when handing the repository to 
 | `docs/QUICK_START_CREDENTIALS.md` | Short credential setup guide |
 | `docs/SECURE_CREDENTIALS.md` | Credential encryption and provider setup |
 | `deploy/local/README.md` | macOS local service installation |
-| `deploy/oracle/README.md` | AWS Lightsail/Ubuntu bootstrap and releases |
+| `deploy/lightsail/README.md` | AWS Lightsail/Ubuntu bootstrap and releases |
 | `mobile/README.md` | Mobile client development and distribution |
 | `mobile/PRIVACY.md` | Mobile data and notification privacy boundary |
 

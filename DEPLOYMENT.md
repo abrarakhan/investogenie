@@ -10,12 +10,11 @@ InvestoGenie supports local development/fallback and AWS production from the sam
 | macOS production rehearsal | `npm run build && npm start` | `.env.local` | Mac-local PostgreSQL | Verify the production build locally |
 | macOS personal server | `npm run service:install` | `.env.local` | Mac-local PostgreSQL | Always-on private access through Tailscale |
 | AWS Lightsail | systemd `investogenie.service` | `/etc/investogenie/investogenie.env` | VM-local PostgreSQL | Packaged production web service and scheduled ingestion |
-| Oracle-compatible Ubuntu | systemd `investogenie.service` | `/etc/investogenie/investogenie.env` | VM-local PostgreSQL | Alternate deployment package |
 
 Detailed instructions:
 
 - Local: [`deploy/local/README.md`](deploy/local/README.md)
-- AWS/Ubuntu production package: [`deploy/oracle/README.md`](deploy/oracle/README.md)
+- AWS Lightsail / Ubuntu production package: [`deploy/lightsail/README.md`](deploy/lightsail/README.md)
 
 ## Configuration isolation
 
@@ -26,7 +25,7 @@ The repository contains examples only. Real secrets remain outside Git:
 
 `CREDENTIAL_ENCRYPTION_KEY` is part of the data-encryption boundary. Preserve
 it when transferring a database that contains encrypted API or SMTP credentials.
-Local and Oracle may use different session/cron secrets, but restored encrypted
+Local and AWS Lightsail may use different session/cron secrets, but restored encrypted
 credentials require the original credential-encryption key.
 
 ## Promotion workflow
@@ -35,14 +34,13 @@ credentials require the original credential-encryption key.
 2. Run `npm test`, `npm run lint`, `npm run build`, and
    `npm run deploy:check:local`.
 3. Commit and push the tested revision.
-4. On AWS/Ubuntu, run `sudo deploy/oracle/deploy-release.sh`.
-5. Run `npm run deploy:check:oracle` with the production environment loaded (the command name is
-   retained for compatibility).
+4. On AWS Lightsail, run `sudo bash /opt/investogenie/app/deploy/lightsail/deploy-release.sh`.
+5. Run `npm run deploy:check:prod` with the production environment loaded.
 6. Verify HTTPS, Data Health, scheduler logs, and a fresh PostgreSQL backup.
 
 ## Database backups
 
-`investogenie-backup.timer` runs `deploy/oracle/backup-postgres.sh` daily at 01:30 host time,
+`investogenie-backup.timer` runs `deploy/lightsail/backup-postgres.sh` daily at 01:30 host time,
 installed and enabled by the release script. Each run writes a custom-format dump to
 `/var/backups/investogenie`, refuses a dump that is implausibly small or that `pg_restore`
 cannot list, and only then prunes dumps older than `KEEP_DAYS` (7), so a failing run cannot

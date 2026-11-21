@@ -103,7 +103,7 @@ Training, calibration, inference, model promotion and drift-response automation 
 
 ## Deployment and verification
 
-Ubuntu packages use systemd, Nginx, external environment configuration and private PostgreSQL. The historical `deploy/oracle/` path also supports AWS hosts. macOS uses launchd and optional Tailscale access.
+Ubuntu packages use systemd, Nginx, external environment configuration and private PostgreSQL under `deploy/lightsail/`. macOS uses launchd and optional Tailscale access.
 
 The release script fetches main, then re-executes the checked-out script once so the current release logic is used. It installs/audits/builds/prunes Node dependencies, installs Python requirements, discovers and applies migrations 0033 onward in filename order, verifies required schema including benchmark capture metadata and delivery/mutation idempotency, installs service units, restarts and checks login. It assumes the earlier schema and does not execute lint/tests.
 

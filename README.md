@@ -44,7 +44,7 @@ Breeze automatic buying is a separate, disabled-by-default, explicitly enabled p
 | Mobile | Expo ~57.0.24, React Native 0.86.3, React 19.2.3 |
 | Jobs | Node scheduler and Python pipelines/workers |
 | Credentials | AES-256-GCM per-user encrypted secrets |
-| Deployment package | macOS launchd or Ubuntu systemd/Nginx; Linux scripts support AWS/Oracle hosts |
+| Deployment package | macOS launchd or Ubuntu systemd/Nginx (`deploy/lightsail/`) |
 
 ## Local setup
 
@@ -82,6 +82,6 @@ npm run lint
 npm run build
 ```
 
-Database checks need a configured PostgreSQL instance. Linux releases use `deploy/oracle/deploy-release.sh`; it discovers and applies migrations from 0033 onward in filename order and assumes the earlier schema already exists. After updating the checkout, it re-executes the checked-out release script once so same-release migration additions are honored. It runs dependency audit/build/schema checks, but does not run the test suite.
+Database checks need a configured PostgreSQL instance. Linux releases use `deploy/lightsail/deploy-release.sh`; it discovers and applies migrations from 0033 onward in filename order and assumes the earlier schema already exists. After updating the checkout, it re-executes the checked-out release script once so same-release migration additions are honored. It runs dependency audit/build/schema checks, but does not run the test suite.
 
 See the [documentation index](DOCUMENTATION_INDEX.md), [AI review handoff](AI_REVIEW_HANDOFF.md), [architecture](ARCHITECTURE.md), [capabilities](CAPABILITIES.md), [status](STATUS.md), [deployment](DEPLOYMENT.md), [Stock Screener](README-screener.md), [email setup](docs/EMAIL_SETUP.md), and [mobile](mobile/README.md).

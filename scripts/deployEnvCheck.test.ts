@@ -15,7 +15,7 @@ describe("deployment authorization preflight", () => {
   });
 
   it("runs before build and migrations, and owner bootstrap runs before any restart", () => {
-    const release = readFileSync(`${root}/deploy/oracle/deploy-release.sh`, "utf8");
+    const release = readFileSync(`${root}/deploy/lightsail/deploy-release.sh`, "utf8");
     const at = (needle: string) => {
       const index = release.indexOf(needle);
       expect(index, needle).toBeGreaterThan(-1);
@@ -28,6 +28,6 @@ describe("deployment authorization preflight", () => {
   });
 
   it("matches the header the nginx template overwrites", () => {
-    expect(readFileSync(`${root}/deploy/oracle/nginx.conf.template`, "utf8")).toMatch(/proxy_set_header X-Real-IP \$remote_addr;/);
+    expect(readFileSync(`${root}/deploy/lightsail/nginx.conf.template`, "utf8")).toMatch(/proxy_set_header X-Real-IP \$remote_addr;/);
   });
 });

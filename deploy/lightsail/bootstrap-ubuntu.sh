@@ -87,16 +87,16 @@ EOF
   chmod 0640 "${ENV_FILE}"
 fi
 
-sed "s/__DOMAIN__/${DOMAIN}/g" "${APP_DIR}/deploy/oracle/nginx.conf.template" \
+sed "s/__DOMAIN__/${DOMAIN}/g" "${APP_DIR}/deploy/lightsail/nginx.conf.template" \
   >/etc/nginx/sites-available/investogenie
 ln -sfn /etc/nginx/sites-available/investogenie /etc/nginx/sites-enabled/investogenie
 rm -f /etc/nginx/sites-enabled/default
 nginx -t
 systemctl enable --now postgresql nginx
 
-install -m 0644 "${APP_DIR}/deploy/oracle/investogenie.service" \
+install -m 0644 "${APP_DIR}/deploy/lightsail/investogenie.service" \
   /etc/systemd/system/investogenie.service
-install -m 0644 "${APP_DIR}/deploy/oracle/investogenie-breeze.service" \
+install -m 0644 "${APP_DIR}/deploy/lightsail/investogenie-breeze.service" \
   /etc/systemd/system/investogenie-breeze.service
 systemctl daemon-reload
 systemctl enable --now investogenie-breeze.service

@@ -6,7 +6,7 @@ const root = fileURLToPath(new URL("..", import.meta.url));
 
 describe("production deployment lifecycle", () => {
   it("installs deterministically without a lockfile-mutating prune step", () => {
-    const release = readFileSync(`${root}/deploy/oracle/deploy-release.sh`, "utf8");
+    const release = readFileSync(`${root}/deploy/lightsail/deploy-release.sh`, "utf8");
     expect(release).toContain("npm ci --include=dev");
     expect(release).not.toMatch(/&& npm prune/);
     expect(release).toContain("git -C \"${APP_DIR}\" restore --worktree -- package-lock.json");
@@ -14,7 +14,7 @@ describe("production deployment lifecycle", () => {
   });
 
   it("releases database readers before migrations and restores services on failure", () => {
-    const release = readFileSync(`${root}/deploy/oracle/deploy-release.sh`, "utf8");
+    const release = readFileSync(`${root}/deploy/lightsail/deploy-release.sh`, "utf8");
     const stop = release.indexOf("systemctl stop investogenie.service investogenie-breeze.service");
     const migrate = release.indexOf("node scripts/apply-production-migrations.mjs");
     const restart = release.indexOf("systemctl restart investogenie");

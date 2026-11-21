@@ -1,7 +1,7 @@
 // Pure validation of deployment settings required by authorization. Kept
 // separate from the CLI so it can be unit tested without a database.
 
-/** nginx in deploy/oracle overwrites X-Real-IP with $remote_addr. */
+/** nginx in deploy/lightsail overwrites X-Real-IP with $remote_addr. */
 export const EXPECTED_PROXY_IP_HEADER = "x-real-ip";
 
 export function deploymentEnvErrors(env) {
