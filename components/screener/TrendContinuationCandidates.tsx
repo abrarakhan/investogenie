@@ -88,28 +88,37 @@ function CandidateCard({ candidate, rank, planId, chartGesture }: { candidate: T
   </article>;
 }
 
-function CandidateGroup({ title, candidates, source, totalCount, color, ranked, planIds, bindChartGesture, defaultOpen = false }: {
+function CandidateGroup({ title, candidates, source, totalCount, excludeIds, color, ranked, planIds, bindChartGesture, defaultOpen = false }: {
   title: string;
   /** Cards to render now; omit and pass `source` to load them when opened. */
   candidates?: TrendContinuationCandidate[];
   source?: LazySource;
   totalCount?: number;
+  excludeIds?: ReadonlySet<string>;
   color: string;
   ranked: Map<string, number>;
   planIds: Record<string, string>;
   bindChartGesture: (symbol: ChartSymbol) => ChartGestureProps;
   defaultOpen?: boolean;
 }) {
-  const count = totalCount ?? candidates?.length ?? 0;
+  const visibleCandidates = candidates && excludeIds?.size
+    ? candidates.filter((candidate) => !excludeIds.has(candidate.assetId))
+    : candidates;
+  const count = totalCount ?? visibleCandidates?.length ?? 0;
   if (!count) return null;
   return <LazyCandidateGroup<TrendContinuationCandidate>
     defaultOpen={defaultOpen}
-    items={candidates}
+    items={visibleCandidates}
     source={source}
     summary={<div className={`text-sm font-bold uppercase tracking-[0.18em] ${color}`}>
       {title} <span className="font-mono text-white/45">({count})</span>
     </div>}
-    render={(items, ranks) => items.map((candidate, index) => <CandidateCard key={candidate.assetId} candidate={candidate} rank={candidate.pythonRank ?? ranks[candidate.assetId] ?? ranked.get(candidate.assetId) ?? index + 1} planId={planIds[`TREND_CONTINUATION:${candidate.status}:${candidate.assetId}`] ?? null} chartGesture={bindChartGesture({ ticker: candidate.ticker, exchange: "NSE" })} />)}
+    render={(items, ranks) => {
+      const visible = excludeIds?.size
+        ? items.filter((candidate) => !excludeIds.has(candidate.assetId))
+        : items;
+      return visible.map((candidate, index) => <CandidateCard key={candidate.assetId} candidate={candidate} rank={candidate.pythonRank ?? ranks[candidate.assetId] ?? ranked.get(candidate.assetId) ?? index + 1} planId={planIds[`TREND_CONTINUATION:${candidate.status}:${candidate.assetId}`] ?? null} chartGesture={bindChartGesture({ ticker: candidate.ticker, exchange: "NSE" })} />);
+    }}
   />;
 }
 
@@ -136,12 +145,20 @@ export default function TrendContinuationCandidates({ candidates, planIds, count
   const [view, setView] = useState<"ALL" | "MIDWAY">("ALL");
   const ranked = new Map(candidates.map((candidate, index) => [candidate.assetId, ranks?.[candidate.assetId] ?? index + 1]));
   const total = (status: TrendContinuationStatus, shown: number) => counts?.[status] ?? shown;
-  const group = (status: TrendContinuationStatus, shown: TrendContinuationCandidate[]) => market && LAZY_STATUSES.trend.has(status)
-    ? { source: { screen: "trend" as const, market, status }, totalCount: total(status, shown.length) }
-    : { candidates: shown, totalCount: total(status, shown.length) };
+  const highlightedWatch = [...midwayWatch, ...dayTwoWatch];
+  const highlightedIds = new Set(highlightedWatch.map((candidate) => candidate.assetId));
+  const midwayWatchIds = new Set(midwayWatch.map((candidate) => candidate.assetId));
+  const highlightedCountByStatus = (status: TrendContinuationStatus) =>
+    highlightedWatch.filter((candidate) => candidate.status === status).length;
+  const group = (status: TrendContinuationStatus, shown: TrendContinuationCandidate[]) => {
+    const remainingTotal = Math.max(0, total(status, shown.length) - highlightedCountByStatus(status));
+    return market && LAZY_STATUSES.trend.has(status)
+      ? { source: { screen: "trend" as const, market, status }, totalCount: remainingTotal, excludeIds: highlightedIds }
+      : { candidates: shown, totalCount: remainingTotal, excludeIds: highlightedIds };
+  };
   const candidateCount = counts ? Object.values(counts).reduce((sum, value) => sum + value, 0) : candidates.length;
   const ready = candidates.filter((candidate) => candidate.status === "TREND_CONTINUATION_READY");
-  const midwayReady = ready.filter((candidate) => typeof candidate.metrics.setup_variant === "string");
+  const midwayReady = ready.filter((candidate) => typeof candidate.metrics.setup_variant === "string" && !midwayWatchIds.has(candidate.assetId));
   const midwayTotal = midwayReady.length + midwayWatch.length;
   const watch = candidates.filter((candidate) => candidate.status === "CONTINUATION_WATCH");
   const impulse = candidates.filter((candidate) => candidate.status === "IMPULSE_DETECTED");
