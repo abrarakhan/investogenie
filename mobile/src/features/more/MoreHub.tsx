@@ -5,6 +5,7 @@ import { Card } from "../../design/Card";
 import { Pill } from "../../design/Pill";
 import { colors, radius, spacing, typography } from "../../design/tokens";
 import { ScreenHead } from "../../ui";
+import { AlertsScreen } from "../alerts/AlertsScreen";
 import type { MobileFeatureEntry } from "../registry";
 
 const configuredWebUrl = (process.env.EXPO_PUBLIC_API_URL?.trim() || "").replace(/\/$/, "");
@@ -25,6 +26,18 @@ export function MoreHub({
   renderFeature: (feature: MobileFeatureEntry) => ReactNode;
 }) {
   const [openFeature, setOpenFeature] = useState<MobileFeatureEntry | null>(null);
+  const [alertsOpen, setAlertsOpen] = useState(false);
+
+  if (alertsOpen) {
+    return (
+      <View style={styles.flex}>
+        <Pressable onPress={() => setAlertsOpen(false)} style={styles.backBar}>
+          <Text style={styles.link}>‹ Back to More</Text>
+        </Pressable>
+        <AlertsScreen />
+      </View>
+    );
+  }
 
   if (openFeature) {
     return (
@@ -57,11 +70,16 @@ export function MoreHub({
           </View>
         </Card>
 
-        <Card>
-          <Text style={styles.cardTitle}>Notifications</Text>
-          <Text style={styles.muted}>
-            {notificationStatus || "Device push alerts are active for execution-ready signals and ledger events."}
-          </Text>
+        <Card onPress={() => setAlertsOpen(true)}>
+          <View style={styles.rowBetween}>
+            <View style={styles.flex}>
+              <Text style={styles.cardTitle}>Alert Preferences</Text>
+              <Text style={styles.muted}>
+                {notificationStatus || "Manage execution-ready, Mid-Way, and open-trade push alerts."}
+              </Text>
+            </View>
+            <Text style={styles.link}>Configure ›</Text>
+          </View>
         </Card>
 
         <Card onPress={/^https:\/\//.test(configuredWebUrl) ? openWebSettings : undefined}>

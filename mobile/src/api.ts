@@ -231,6 +231,23 @@ export async function logout(): Promise<void> {
   }
 }
 
+export interface MobileAlertPreferences {
+  executionReady: boolean;
+  midwaySetups: boolean;
+  ledgerRiskAlerts: boolean;
+  newsHighImpact: boolean;
+  quietHoursEnabled: boolean;
+  updatedAt: string | null;
+}
+
+export function getAlertPreferences() {
+  return request<{ preferences: MobileAlertPreferences }>("/api/v1/mobile/alerts");
+}
+
+export function updateAlertPreferences(patch: Partial<Omit<MobileAlertPreferences, "updatedAt">>) {
+  return mutation<{ preferences: MobileAlertPreferences }>("/api/v1/mobile/alerts", "PATCH", patch);
+}
+
 export function registerPushToken(token: string, platform: "android" | "ios") {
   return request<{ ok: true }>("/api/v1/mobile/push-token", {
     method: "POST", body: JSON.stringify({ token, platform }),
