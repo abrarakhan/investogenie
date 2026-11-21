@@ -112,8 +112,10 @@ function CandidateGroup({ title, candidates, source, totalCount, color, ranked, 
   />;
 }
 
-export default function TrendContinuationCandidates({ candidates, planIds, counts, ranks, market, dayTwoWatch = [], regimePositive, scanTotals }: {
-  /** Second-day staircases still held back from entry; always shown, open by default. */
+export default function TrendContinuationCandidates({ candidates, planIds, counts, ranks, market, midwayWatch = [], dayTwoWatch = [], regimePositive, scanTotals }: {
+  /** EOD-qualified Mid-Way setups (Stage-2 Impulse, EP Rebound, 3D Stair-Step, VDU Pause); open by default. */
+  midwayWatch?: TrendContinuationCandidate[];
+  /** Second-day staircases still held back from entry. */
   dayTwoWatch?: TrendContinuationCandidate[];
   /** Broad market above its 50-session average; undefined when unknown. */
   regimePositive?: boolean;
@@ -187,7 +189,8 @@ export default function TrendContinuationCandidates({ candidates, planIds, count
       ? <div className="rounded-lg border border-white/10 px-4 py-8 text-center text-sm text-white/45">No recent multi-session impulse currently passes the Trend Continuation floor.</div>
       : <div className="space-y-3">
         <CandidateGroup title="Continuation ready" {...group("TREND_CONTINUATION_READY", ready)} ranked={ranked} planIds={planIds} color="text-emerald-300" defaultOpen bindChartGesture={bindChartGesture} />
-        <CandidateGroup title="Second-day movers · watch-only" candidates={dayTwoWatch} ranked={ranked} planIds={planIds} color="text-cyan-200" defaultOpen bindChartGesture={bindChartGesture} />
+        <CandidateGroup title="Mid-Way setups · Stage-2 / EP / Stair-Step / VDU" candidates={midwayWatch} ranked={ranked} planIds={planIds} color="text-emerald-200" defaultOpen bindChartGesture={bindChartGesture} />
+        <CandidateGroup title="Second-day movers · watch-only" candidates={dayTwoWatch} ranked={ranked} planIds={planIds} color="text-cyan-200" defaultOpen={midwayWatch.length === 0} bindChartGesture={bindChartGesture} />
         <CandidateGroup title="Continuation watch" {...group("CONTINUATION_WATCH", watch)} ranked={ranked} planIds={planIds} color="text-amber-200" bindChartGesture={bindChartGesture} />
         <CandidateGroup title="Impulse detected" {...group("IMPULSE_DETECTED", impulse)} ranked={ranked} planIds={planIds} color="text-cyan-200" bindChartGesture={bindChartGesture} />
         <CandidateGroup title="Extended · do not chase" {...group("EXTENDED_RISK", extended)} ranked={ranked} planIds={planIds} color="text-rose-200" bindChartGesture={bindChartGesture} />

@@ -22,4 +22,20 @@ describe("trend continuation ordering", () => {
       "stair-ready-75", "ready-80", "stair-64", "watch-70", "impulse-98", "extended-100",
     ]);
   });
+
+  it("ranks active Mid-Way setups ahead of watch-only developing staircases so they are never truncated", () => {
+    const midway = {
+      name: "midway-stage2",
+      status: "CONTINUATION_WATCH" as TrendContinuationStatus,
+      ready: false,
+      score: 60,
+      metrics: { setup_variant: "STAGE2_IMPULSE", developing_staircase: false },
+    };
+    const rows = [
+      row("stair-90", "IMPULSE_DETECTED", 90, true),
+      midway,
+      row("ready-80", "TREND_CONTINUATION_READY", 80),
+    ].sort(compareTrendCandidates);
+    expect(rows.map((item) => item.name)).toEqual(["ready-80", "midway-stage2", "stair-90"]);
+  });
 });

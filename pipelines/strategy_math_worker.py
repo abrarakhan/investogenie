@@ -114,8 +114,13 @@ def _dispatch(request: dict) -> dict:
     elif engine == "trend_execution":
         results = [assess_trend_execution(item) for item in inputs]
         statuses = {"TREND_CONTINUATION_READY": 0, "CONTINUATION_WATCH": 1, "IMPULSE_DETECTED": 2, "EXTENDED_RISK": 3}
+        midway_variants = {"STAGE2_IMPULSE", "EP_REBOUND", "STAIR_STEP"}
         order = sorted(range(len(results)), key=lambda index: (
             -int(bool(results[index].get("effectiveReady"))),
+            -int(
+                inputs[index]["candidate"].get("metrics", {}).get("setup_variant") in midway_variants
+                and results[index].get("effectiveStatus", inputs[index]["candidate"]["status"]) != "EXTENDED_RISK"
+            ),
             -int(inputs[index]["candidate"].get("metrics", {}).get("developing_staircase") is True),
             statuses[results[index].get("effectiveStatus", inputs[index]["candidate"]["status"])],
             -float(inputs[index]["candidate"]["score"]),

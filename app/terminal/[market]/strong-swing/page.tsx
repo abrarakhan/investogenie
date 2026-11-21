@@ -109,7 +109,8 @@ export default async function StrongSwingPage({
       {market === "IN" && <section id="trend-continuation" className="mt-12 scroll-mt-6 border-t border-white/10 pt-8">
         <TrendContinuationCandidates
           candidates={trendShown.shown} counts={trendShown.counts} ranks={trendShown.ranks} market={market} planIds={Object.fromEntries(planIds)}
-          dayTwoWatch={trendContinuation.filter((candidate) => candidate.metrics.developing_staircase === true && !candidate.ready)}
+          midwayWatch={trendContinuation.filter((candidate) => typeof candidate.metrics.setup_variant === "string" && candidate.status !== "EXTENDED_RISK" && !candidate.ready)}
+          dayTwoWatch={trendContinuation.filter((candidate) => candidate.metrics.developing_staircase === true && !candidate.ready && typeof candidate.metrics.setup_variant !== "string")}
           scanTotals={trendTotals}
           regimePositive={trendContinuation.map((candidate) => candidate.metrics.market_regime_positive).find((value): value is boolean => typeof value === "boolean")}
         />

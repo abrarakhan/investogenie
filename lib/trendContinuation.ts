@@ -59,11 +59,16 @@ const STATUS_ORDER: Record<TrendContinuationStatus, number> = {
  * last. At an equal technical score an event-driven candidate ranks ahead of a purely
  * technical one: the same chart with a reason behind it is the better of the two.
  */
+const MIDWAY_VARIANTS = new Set(["STAGE2_IMPULSE", "EP_REBOUND", "STAIR_STEP"]);
+
 export function compareTrendCandidates(
   a: Pick<TrendContinuationCandidate, "status" | "ready" | "score" | "metrics">,
   b: Pick<TrendContinuationCandidate, "status" | "ready" | "score" | "metrics">,
 ): number {
+  const aMidway = typeof a.metrics.setup_variant === "string" && MIDWAY_VARIANTS.has(a.metrics.setup_variant) && a.status !== "EXTENDED_RISK";
+  const bMidway = typeof b.metrics.setup_variant === "string" && MIDWAY_VARIANTS.has(b.metrics.setup_variant) && b.status !== "EXTENDED_RISK";
   return Number(b.ready) - Number(a.ready)
+    || Number(bMidway) - Number(aMidway)
     || Number(b.metrics.developing_staircase === true) - Number(a.metrics.developing_staircase === true)
     || STATUS_ORDER[a.status] - STATUS_ORDER[b.status]
     || b.score - a.score
