@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import {
-  Alert, FlatList, Modal, Pressable, RefreshControl, ScrollView,
+  Alert, AppState, FlatList, Modal, Pressable, RefreshControl, ScrollView,
   StyleSheet, Text, TextInput, View,
 } from "react-native";
 import {
@@ -17,7 +17,17 @@ export default function TradeLedger({ market }: { market: Market }) {
   const [editingSale, setEditingSale] = useState<{ trade: LedgerTrade; sale: LedgerTrade["exits"][number] } | null>(null);
   const load = useCallback(async () => { setRefreshing(true); setError(""); try { const result = await getLedger(market); setTrades(result.trades); setSummary(result.summary); } catch (cause) { setError(errorMessage(cause, "Could not load ledger")); } finally { setRefreshing(false); } }, [market]);
   useEffect(() => { let active = true; getLedger(market).then((result) => { if (active) { setTrades(result.trades); setSummary(result.summary); } }).catch((cause) => { if (active) setError(errorMessage(cause, "Could not load ledger")); }).finally(() => { if (active) setRefreshing(false); }); return () => { active = false; }; }, [market]);
-  useEffect(() => { const timer = setInterval(load, 300_000); return () => clearInterval(timer); }, [load]);
+  useEffect(() => {
+    let timer: ReturnType<typeof setInterval> | null = null;
+    const start = () => { if (!timer) timer = setInterval(load, 300_000); };
+    const stop = () => { if (timer) { clearInterval(timer); timer = null; } };
+    if (AppState.currentState === "active") start();
+    const sub = AppState.addEventListener("change", (state) => {
+      if (state === "active") start();
+      else stop();
+    });
+    return () => { stop(); sub.remove(); };
+  }, [load]);
   const remove = (trade: LedgerTrade) => Alert.alert("Delete trade?", `${trade.ticker} and its sale history will be removed.`, [{ text: "Cancel", style: "cancel" }, { text: "Delete", style: "destructive", onPress: () => deleteTrade(trade.id).then(load).catch((cause) => setError(errorMessage(cause, "Delete failed"))) }]);
   return <View style={styles.flex}><ScreenHead title="Trade Ledger" subtitle="Edit entries and record partial or final sales without changing the frozen projection." />
     {summary && <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.summary}><Summary label="OPEN" value={String(summary.openCount)} /><Summary label="CAPITAL" value={money(summary.capitalEmployedValue, market)} /><Summary label="UNREALIZED" value={money(summary.unrealizedPnlValue, market)} /><Summary label="REALIZED" value={money(summary.realizedPnlValue, market)} /><Summary label="OVERALL" value={money(summary.overallPnlValue, market)} /><Summary label="ROI" value={pct(summary.roiPct)} /><Summary label="XIRR" value={pct(summary.xirrPct)} /></ScrollView>}{!!error && <Banner>{error}</Banner>}
