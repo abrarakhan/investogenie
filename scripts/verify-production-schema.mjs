@@ -56,6 +56,7 @@ const requiredRelations = [
   "public.breeze_order_actions",
   "public.email_digest_deliveries",
   "public.mobile_mutation_idempotency",
+  "public.mobile_alert_preferences",
   "public.daily_delivery_metrics",
   "public.eod_asset_features",
   "public.eod_asset_features_meta",
@@ -126,6 +127,28 @@ const requiredColumns = [
   ["eod_asset_features_meta", "latest_bar_date"],
   ["eod_asset_features_meta", "row_count"],
   ["eod_asset_features_meta", "refreshed_at"],
+  ["mobile_alert_preferences", "user_id"],
+  ["mobile_alert_preferences", "execution_ready"],
+  ["mobile_alert_preferences", "midway_setups"],
+  ["mobile_alert_preferences", "ledger_risk_alerts"],
+  ["mobile_alert_preferences", "news_high_impact"],
+  ["mobile_alert_preferences", "quiet_hours_enabled"],
+  ["mobile_alert_preferences", "updated_at"],
+];
+const requiredRlsRelations = [
+  "adaptive_allocation_runs", "adaptive_allocation_strategies", "armed_swing_plans", "breeze_auto_buy_settings",
+  "breeze_broker_snapshots", "breeze_broker_syncs", "breeze_order_actions",
+  "breeze_order_events", "breeze_order_intents", "browser_notification_events",
+  "candidate_signal_observations", "cas_holding_details", "cas_import_rejected_holdings",
+  "email_digest_deliveries", "email_preferences", "forward_test_positions",
+  "gmail_attachment_imports", "gmail_connections", "gmail_disclosure_attachments",
+  "gmail_oauth_states", "holdings", "mobile_alert_preferences",
+  "mobile_candidate_alert_state", "mobile_mutation_idempotency", "mobile_notification_log",
+  "mobile_push_tokens", "mobile_trade_alert_state", "portfolios", "saved_screens",
+  "swing_execution_plans", "swing_pending_order_fills", "swing_pending_orders",
+  "swing_trade_exits", "swing_trade_ledger", "transactions", "user_credentials",
+  "user_fund_mappings", "user_mutual_fund_holdings", "user_news_providers",
+  "user_swing_settings", "watchlist_items", "watchlists",
 ];
 const client = new pg.Client({
   connectionString: url,
@@ -152,6 +175,22 @@ try {
     .map(([table, column]) => `${table}.${column}`)
     .filter((name) => !present.has(name));
   if (missingColumns.length) throw new Error(`Required production columns are missing: ${missingColumns.join(", ")}`);
+  const rls = await client.query(
+    `select c.relname, c.relrowsecurity,
+            exists (
+              select 1 from pg_policy p
+               where p.polrelid=c.oid and p.polroles @> array[(select oid from pg_roles where rolname='investogenie_web')]
+            ) policy_ready
+       from pg_class c join pg_namespace n on n.oid=c.relnamespace
+      where n.nspname='public' and c.relname=any($1::text[])`,
+    [requiredRlsRelations],
+  );
+  const rlsByTable = new Map(rls.rows.map((row) => [row.relname, row]));
+  const missingRls = requiredRlsRelations.filter((name) => {
+    const row = rlsByTable.get(name);
+    return !row?.relrowsecurity || !row?.policy_ready;
+  });
+  if (missingRls.length) throw new Error(`Required tenant RLS policies are missing: ${missingRls.join(", ")}`);
   console.log(`Verified production schema: ${requiredRelations.join(", ")}`);
 } catch (error) {
   console.error("Production schema verification failed:", error instanceof Error ? error.message : error);

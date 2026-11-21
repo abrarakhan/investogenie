@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { getSessionUser } from "@/lib/auth";
-import { query, queryOne, tx } from "@/lib/db";
+import { rlsTx, tenantQuery, tenantQueryOne } from "@/lib/db";
 
 function revalidateTerminals() {
   revalidatePath("/terminal/us");
@@ -18,23 +18,23 @@ export async function ensureScaffold(): Promise<{
   const user = await getSessionUser();
   if (!user) return null;
 
-  let portfolio = await queryOne<{ id: string }>(
+  let portfolio = await tenantQueryOne<{ id: string }>(user.id,
     "select id from public.portfolios where user_id = $1 limit 1",
     [user.id],
   );
   if (!portfolio) {
-    portfolio = await queryOne<{ id: string }>(
+    portfolio = await tenantQueryOne<{ id: string }>(user.id,
       "insert into public.portfolios (user_id, name) values ($1, 'My Portfolio') returning id",
       [user.id],
     );
   }
 
-  let watchlist = await queryOne<{ id: string }>(
+  let watchlist = await tenantQueryOne<{ id: string }>(user.id,
     "select id from public.watchlists where user_id = $1 limit 1",
     [user.id],
   );
   if (!watchlist) {
-    watchlist = await queryOne<{ id: string }>(
+    watchlist = await tenantQueryOne<{ id: string }>(user.id,
       "insert into public.watchlists (user_id, name) values ($1, 'My Watchlist') returning id",
       [user.id],
     );
@@ -49,7 +49,7 @@ export async function addToWatchlist(formData: FormData): Promise<void> {
   if (!assetId) return;
   const scaffold = await ensureScaffold();
   if (!scaffold) return;
-  await query(
+  await tenantQuery(scaffold.userId,
     `insert into public.watchlist_items (user_id, watchlist_id, asset_id)
      values ($1, $2, $3) on conflict do nothing`,
     [scaffold.userId, scaffold.watchlistId, assetId],
@@ -62,8 +62,8 @@ export async function removeWatchlistItem(formData: FormData): Promise<void> {
   if (!id) return;
   const user = await getSessionUser();
   if (!user) return;
-  // Scope by user_id (no RLS) so one user can't delete another's item.
-  await query("delete from public.watchlist_items where id = $1 and user_id = $2", [id, user.id]);
+  // PostgreSQL RLS enforces the tenant boundary in addition to this ownership predicate.
+  await tenantQuery(user.id, "delete from public.watchlist_items where id = $1 and user_id = $2", [id, user.id]);
   revalidateTerminals();
 }
 
@@ -84,7 +84,7 @@ export async function recordTrade(formData: FormData): Promise<void> {
   if (!scaffold) return;
   const { userId, portfolioId } = scaffold;
 
-  await tx(async (c) => {
+  await rlsTx({ kind: "tenant", userId }, async (c) => {
     await c.query(
       `insert into public.transactions (user_id, portfolio_id, asset_id, side, quantity, price)
        values ($1, $2, $3, $4, $5, $6)`,

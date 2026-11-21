@@ -1,4 +1,4 @@
-import { query } from "@/lib/db";
+import { tenantQuery } from "@/lib/db";
 
 interface RecordedPositionRow {
   ledger_id: string;
@@ -55,7 +55,7 @@ export function mapRecordedPositionRows(rows: RecordedPositionRow[]): RecordedLe
 
 /** Open, user-recorded swing positions for the Terminal portfolio card. */
 export async function getRecordedLedgerPositions(userId: string, market: "IN" | "US") {
-  const rows = await query<RecordedPositionRow>(
+  const rows = await tenantQuery<RecordedPositionRow>(userId,
     `select l.id ledger_id,l.asset_id,a.ticker,a.name,a.asset_class::text asset_class,
             a.exchange,a.currency,a.country,l.quantity,l.buy_price,l.strategy_label,
             coalesce(exits.sold_quantity,0) sold_quantity

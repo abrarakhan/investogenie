@@ -54,6 +54,15 @@ trap restore_services EXIT
 systemctl stop investogenie.service investogenie-breeze.service || true
 services_stopped=1
 
+# RLS uses a cluster-level NOLOGIN role. The application database owner is
+# deliberately NOCREATEROLE, so root provisions membership before migration
+# 0089 attempts table grants and policies.
+if ! sudo -u postgres psql -tAc "select 1 from pg_roles where rolname='investogenie_web'" | grep -q 1; then
+  sudo -u postgres psql -v ON_ERROR_STOP=1 \
+    -c "create role investogenie_web nologin nosuperuser nocreatedb nocreaterole noinherit nobypassrls"
+fi
+sudo -u postgres psql -v ON_ERROR_STOP=1 -c "grant investogenie_web to investogenie"
+
 sudo -u "${APP_USER}" bash -lc \
   "set -a; source /etc/investogenie/investogenie.env; set +a; cd '${APP_DIR}' && node scripts/apply-production-migrations.mjs"
 

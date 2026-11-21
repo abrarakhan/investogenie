@@ -4,6 +4,8 @@ import { getUserSwingSettings, type SwingSettings } from "@/lib/settings";
 import { getStrongSwingCandidates, type StrongSwingCandidate } from "@/features/strong-swing/service";
 import { getSwingTradeLedger, type SwingLedgerTrade } from "@/lib/swingTradeLedger";
 import { markLiveMarketTargets } from "@/lib/liveMarketTargets";
+import { isMarketOpenNow } from "@/lib/market-calendar.mjs";
+import { getMobileAlertPreferences, type MobileAlertPreferences } from "@/lib/mobileAlertPreferences";
 import { getTrendContinuationCandidates, type TrendContinuationCandidate } from "@/features/trend-continuation/service";
 import {
   seedMomentumBoth,
@@ -35,7 +37,21 @@ interface CandidateSignal {
   status: string;
   ready: boolean;
   earlyWatch?: boolean;
+  midway?: boolean;
   quoteAsOf: string | null;
+}
+
+export function candidateAlertAllowed(
+  preferences: MobileAlertPreferences,
+  candidate: Pick<CandidateSignal, "midway">,
+  marketOpen: boolean,
+): boolean {
+  if (preferences.quietHoursEnabled && !marketOpen) return false;
+  return candidate.midway ? preferences.midwaySetups : preferences.executionReady;
+}
+
+export function tradeAlertAllowed(preferences: MobileAlertPreferences): boolean {
+  return preferences.ledgerRiskAlerts;
 }
 
 function candidateAlertDestination(market: "IN" | "US", engine: CandidateEngine) {
@@ -150,6 +166,7 @@ async function candidateSignals(
       status: candidate.status, ready: candidate.executionEligible,
       earlyWatch: candidate.metrics.developing_staircase === true
         && candidate.metrics.execution_data_verified === true,
+      midway: typeof candidate.metrics.setup_variant === "string",
       quoteAsOf: candidate.computedAt,
     })),
   ];
@@ -162,6 +179,7 @@ async function dispatchCandidateAlerts(
   tokens: PushTokenRow[],
   market: "IN" | "US",
   runCache: AlertRunCache,
+  preferences: MobileAlertPreferences,
 ) {
   const candidates = await candidateSignals(market, userId, runCache);
   const readyByEngine = new Map<CandidateEngine, string[]>();
@@ -177,6 +195,7 @@ async function dispatchCandidateAlerts(
   let alerts = 0;
   let delivered = 0;
   for (const candidate of candidates) {
+    const notificationAllowed = candidateAlertAllowed(preferences, candidate, isMarketOpenNow(market));
     const previous = await query<CandidateAlertStateRow>(
       `select was_ready,last_status,last_sent_at from public.mobile_candidate_alert_state
         where user_id=$1 and market=$2 and engine=$3 and asset_id=$4`,
@@ -189,7 +208,7 @@ async function dispatchCandidateAlerts(
       || previous[0]?.was_ready !== candidate.ready;
     let sentCount = 0;
     let failedCount = 0;
-    if (newlyReady) {
+    if (newlyReady && notificationAllowed) {
       const engineLabel = candidate.engine === "STRONG_SWING" ? "Strong Swing"
         : candidate.engine === "MOMENTUM_IGNITION" ? "Momentum Ignition"
         : candidate.engine === "MOMENTUM_IGNITION_V2" ? "Momentum Ignition V2" : "Trend Continuation";
@@ -206,7 +225,7 @@ async function dispatchCandidateAlerts(
           candidateAlertDestination(market, candidate.engine), `${candidate.engine}|${candidate.assetId}|${candidate.status}`],
       );
     }
-    if (candidate.earlyWatch === true) {
+    if (candidate.earlyWatch === true && notificationAllowed) {
       await query(
         `insert into public.browser_notification_events
            (user_id,market,kind,asset_id,title,body,route,signature,market_date)
@@ -219,7 +238,7 @@ async function dispatchCandidateAlerts(
           `${candidate.engine}|${candidate.assetId}|DEVELOPING_STAIRCASE`],
       );
     }
-    if (transitioned) {
+    if (transitioned && notificationAllowed) {
       const engineLabel = candidate.engine === "STRONG_SWING" ? "Strong Swing"
         : candidate.engine === "MOMENTUM_IGNITION" ? "Momentum Ignition"
         : candidate.engine === "MOMENTUM_IGNITION_V2" ? "Momentum Ignition V2" : "Trend Continuation";
@@ -281,8 +300,9 @@ export async function dispatchMobileTradeAlerts(markets: Array<"IN" | "US">) {
   let candidateDelivered = 0;
   const runCache = createAlertRunCache();
   for (const [userId, userTokens] of byUser) {
+    const preferences = await getMobileAlertPreferences(userId);
     for (const market of markets) {
-      const candidateSummary = await dispatchCandidateAlerts(userId, userTokens, market, runCache);
+      const candidateSummary = await dispatchCandidateAlerts(userId, userTokens, market, runCache, preferences);
       candidateEvaluated += candidateSummary.evaluated;
       candidateAlerts += candidateSummary.alerts;
       candidateDelivered += candidateSummary.delivered;
@@ -296,6 +316,18 @@ export async function dispatchMobileTradeAlerts(markets: Array<"IN" | "US">) {
           [userId, trade.id],
         );
         if (!shouldSendTradeAlert(previous[0]?.last_signature ?? null, signature)) continue;
+        if (!tradeAlertAllowed(preferences)) {
+          // Keep state current while delivery is disabled so re-enabling does not
+          // emit a stale risk transition from an earlier scheduler run.
+          await query(
+            `insert into public.mobile_trade_alert_state(user_id,trade_id,market,last_signature,last_recommendation,last_sent_at)
+             values($1,$2,$3,$4,$5,now())
+             on conflict(user_id,trade_id) do update set market=excluded.market,
+               last_signature=excluded.last_signature,last_recommendation=excluded.last_recommendation,last_sent_at=now()`,
+            [userId, trade.id, market, signature, trade.risk.recommendation],
+          );
+          continue;
+        }
         await query(
           `insert into public.browser_notification_events
              (user_id,market,kind,asset_id,trade_id,title,body,route,signature,market_date)

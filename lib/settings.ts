@@ -1,6 +1,6 @@
 import { DEFAULT_RISK, type RiskConfig } from "@/lib/analytics/swingClassifier";
 import { getSessionUser } from "@/lib/auth";
-import { queryOne } from "@/lib/db";
+import { tenantQueryOne } from "@/lib/db";
 
 export interface SwingSettings extends RiskConfig {
   includeShort: boolean;
@@ -19,7 +19,7 @@ interface Row {
 export async function getUserSwingSettings(userId?: string): Promise<SwingSettings> {
   const user = userId ? { id: userId } : await getSessionUser();
   if (!user) return DEFAULT_SETTINGS;
-  const data = await queryOne<Row>(
+  const data = await tenantQueryOne<Row>(user.id,
     "select stop_atr_mult, target_rr, trail_atr_mult, include_short from public.user_swing_settings where user_id = $1",
     [user.id],
   );

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { shouldSendTradeAlert, tradeAlertSignature } from "@/lib/mobileAlerts";
+import { candidateAlertAllowed, shouldSendTradeAlert, tradeAlertAllowed, tradeAlertSignature } from "@/lib/mobileAlerts";
+import { DEFAULT_MOBILE_ALERT_PREFERENCES } from "@/lib/mobileAlertPreferences";
 import type { SwingLedgerTrade } from "@/lib/swingTradeLedger";
 
 const trade = (recommendation: "STAY" | "STAY_CAUTION" | "EXIT") => ({
@@ -37,5 +38,27 @@ describe("mobile trade alert safety", () => {
     const first = trade("STAY_CAUTION");
     const second = { ...trade("STAY_CAUTION"), id: "trade-2" } as SwingLedgerTrade;
     expect(tradeAlertSignature(first)).not.toBe(tradeAlertSignature(second));
+  });
+});
+
+describe("per-user mobile alert preferences", () => {
+  it("separates execution, Mid-Way and ledger delivery switches", () => {
+    const preferences = {
+      ...DEFAULT_MOBILE_ALERT_PREFERENCES,
+      executionReady: false,
+      midwaySetups: true,
+      ledgerRiskAlerts: false,
+    };
+    expect(candidateAlertAllowed(preferences, { midway: false }, true)).toBe(false);
+    expect(candidateAlertAllowed(preferences, { midway: true }, true)).toBe(true);
+    expect(tradeAlertAllowed(preferences)).toBe(false);
+  });
+
+  it("mutes candidate delivery outside market hours when quiet hours are enabled", () => {
+    const preferences = { ...DEFAULT_MOBILE_ALERT_PREFERENCES, quietHoursEnabled: true };
+    expect(candidateAlertAllowed(preferences, { midway: false }, false)).toBe(false);
+    expect(candidateAlertAllowed(preferences, { midway: false }, true)).toBe(true);
+    // Risk alerts are controlled independently and remain available as critical alerts.
+    expect(tradeAlertAllowed(preferences)).toBe(true);
   });
 });

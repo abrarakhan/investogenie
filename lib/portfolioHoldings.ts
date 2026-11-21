@@ -1,4 +1,4 @@
-import { query } from "@/lib/db";
+import { tenantQuery } from "@/lib/db";
 
 export type HoldingSource = "ICICI" | "MUTUAL_FUND";
 
@@ -51,12 +51,12 @@ function dayMove(value: number | null, pct: number | null, current: boolean) {
  */
 export async function getConsolidatedIndiaHoldings(userId: string): Promise<ConsolidatedHoldings> {
   const [icici, funds] = await Promise.all([
-    query<{
+    tenantQuery<{
       id: string; stock_code: string | null; quantity: string | number | null; captured_at: Date | string;
       ticker: string | null; name: string | null; isin: string | null;
       broker_price: string | number | null; broker_avg: string | number | null; broker_change: string | null;
       live_price: string | number | null; live_change: string | number | null; live_at: Date | string | null;
-    }>(
+    }>(userId,
       // ICICI holdings are valued only from Breeze: the broker's own price and average cost
       // captured with the holding, or a newer Breeze live tick. Exchange-file or Yahoo quotes
       // are deliberately not used here.
@@ -76,12 +76,12 @@ export async function getConsolidatedIndiaHoldings(userId: string): Promise<Cons
       if ((error as { code?: string }).code === "42P01") return [];
       throw error;
     }),
-    query<{
+    tenantQuery<{
       holding_id: string; ticker: string; name: string | null; quantity: string | number; avg_cost: string | number | null;
       nav: string | number | null; nav_as_of: Date | string | null; nav_source: string | null;
       nav_change_pct: string | number | null; statement_value: string | number | null;
       cost_value: string | number | null; statement_date: Date | string | null;
-    }>(
+    }>(userId,
       `select h.id holding_id,a.ticker,a.name,h.quantity,h.avg_cost,q.price nav,q.as_of nav_as_of,
               q.source nav_source,q.change_pct nav_change_pct,
               chd.market_value statement_value,chd.cost_value,coalesce(chd.as_of_date,chd.imported_at::date) statement_date

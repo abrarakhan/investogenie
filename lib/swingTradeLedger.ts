@@ -1,4 +1,4 @@
-import { query } from "@/lib/db";
+import { tenantQuery } from "@/lib/db";
 import { type NewsDirection, type NewsScope } from "@/lib/analytics/newsSwing";
 import { type TradeRiskAssessment, type TradeRiskState } from "@/lib/analytics/tradeRisk";
 import { type TradePlanRevision } from "@/lib/analytics/tradePlanRevision";
@@ -505,7 +505,7 @@ export async function getSwingTradeLedger(userId: string, market: "IN" | "US"): 
   if (market === "IN") await refreshMarketHolidays("IN");
   const marketOpen = isMarketOpenNow(market);
   const marketDate = zonedMarketClock(market).date;
-  const rows = await query<LedgerRow>(
+  const rows = await tenantQuery<LedgerRow>(userId,
     `select l.*, a.ticker, a.name asset_name, a.exchange, a.sector asset_sector,
             q.price current_price, q.as_of quote_as_of, q.updated_at quote_updated_at,
             s.atr current_atr,
@@ -574,7 +574,7 @@ export async function getSwingTradeLedger(userId: string, market: "IN" | "US"): 
   };
   const openRows = rows.filter((row) => String(row.status) === "OPEN");
   const assetIds = openRows.map((row) => String(row.asset_id));
-  const impacts = assetIds.length ? await query<ImpactRow>(
+  const impacts = assetIds.length ? await tenantQuery<ImpactRow>(userId,
     `select i.asset_id,i.sector,i.scope,i.direction,i.sentiment_score "sentimentScore",
             i.confidence,i.severity,i.verified_evidence,a.title,a.url,i.rationale,a.published_at
        from public.news_impacts i
@@ -585,7 +585,7 @@ export async function getSwingTradeLedger(userId: string, market: "IN" | "US"): 
       order by a.published_at desc`,
     [market, assetIds],
   ) : [];
-  const newsHealth = await query<{ fetched_at: Date | null }>(
+  const newsHealth = await tenantQuery<{ fetched_at: Date | null }>(userId,
     `select max(a.fetched_at) fetched_at
        from public.news_articles a
        join public.news_impacts i on i.article_id=a.id
@@ -596,7 +596,7 @@ export async function getSwingTradeLedger(userId: string, market: "IN" | "US"): 
   const newsFresh = Boolean(newsAsOf && Date.now() - Date.parse(newsAsOf) <= 2 * 60 * 60 * 1000);
 
   const benchmarkTicker = market === "IN" ? "NIFTY" : "SPX";
-  const benchmark = await query<{ price: string | number | null; change_pct: string | number | null; updated_at: Date | string | null; two_session_reference: string | number | null }>(
+  const benchmark = await tenantQuery<{ price: string | number | null; change_pct: string | number | null; updated_at: Date | string | null; two_session_reference: string | number | null }>(userId,
     `select q.price,q.change_pct,q.updated_at,h.two_session_reference
        from public.assets a
        left join public.latest_quotes q on q.asset_id=a.id
@@ -642,9 +642,9 @@ export async function getSwingTradeLedger(userId: string, market: "IN" | "US"): 
   const followUpRows = openRows.filter((row) => usesStrategyFollowUp(String(row.strategy_key), ledgerDateText(row.bought_on)));
   const followUpBars = new Map<string, OHLCV[]>();
   if (followUpRows.length) {
-    const barRows = await query<{
+    const barRows = await tenantQuery<{
       asset_id: string; date: string; open: string; high: string; low: string; close: string; volume: string | null;
-    }>(
+    }>(userId,
       `select asset_id,date::text date,open,high,low,close,volume
          from (
            select o.*,row_number() over(partition by o.asset_id order by o.date desc) rn

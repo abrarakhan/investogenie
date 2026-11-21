@@ -6,7 +6,7 @@
  */
 import "server-only";
 import { getSessionUser } from "@/lib/auth";
-import { query, queryOne } from "@/lib/db";
+import { tenantQuery, tenantQueryOne, workerQuery } from "@/lib/db";
 import { decryptCredential } from "@/lib/crypto/credentials";
 import { DEFAULT_MODEL_BY_PROVIDER, isAIProvider, type AIProvider } from "@/lib/ai/providers";
 
@@ -19,7 +19,7 @@ export interface ActiveNewsConfig {
 }
 
 export async function newsConfigsForUser(userId: string): Promise<ActiveNewsConfig[]> {
-  const rows = await query<{ provider: string; api_key_encrypted: string }>(
+  const rows = await tenantQuery<{ provider: string; api_key_encrypted: string }>(userId,
     `select provider,api_key_encrypted from public.user_news_providers
       where user_id=$1 and enabled order by provider`, [userId],
   );
@@ -47,9 +47,9 @@ export async function getSystemNewsConfigs(): Promise<ActiveNewsConfig[]> {
   if (environment.length) return environment;
   // Owner fallback: the single designated system owner (users.is_system_owner),
   // never "some admin" — promoting another admin must not switch shared sources.
-  const owner = await queryOne<{ id: string }>(
+  const owner = (await workerQuery<{ id: string }>(
     `select id from public.users where is_system_owner`,
-  );
+  ))[0] ?? null;
   if (owner) {
     const configs = await newsConfigsForUser(owner.id);
     if (configs.length) return configs;
@@ -67,7 +67,7 @@ export async function getActiveNewsConfig(): Promise<ActiveNewsConfig | null> {
   const user = await getSessionUser();
   if (!user) return null;
   {
-    const row = await queryOne<{ news_provider: string | null; news_api_key_encrypted: string | null }>(
+    const row = await tenantQueryOne<{ news_provider: string | null; news_api_key_encrypted: string | null }>(user.id,
       `select news_provider, news_api_key_encrypted from public.user_credentials where user_id = $1`,
       [user.id],
     );
@@ -89,12 +89,12 @@ export async function getActiveNewsConfig(): Promise<ActiveNewsConfig | null> {
 export async function getSystemNewsConfig(): Promise<ActiveNewsConfig | null> {
   const environment = getEnvironmentNewsConfig();
   if (environment) return environment;
-  const row = await queryOne<{ news_provider: string | null; news_api_key_encrypted: string | null }>(
+  const row = (await workerQuery<{ news_provider: string | null; news_api_key_encrypted: string | null }>(
     `select c.news_provider,c.news_api_key_encrypted
        from public.user_credentials c
        join public.users u on u.id=c.user_id
       where c.news_api_key_encrypted is not null and u.is_system_owner`,
-  );
+  ))[0] ?? null;
   if (!row?.news_api_key_encrypted || !NEWS_PROVIDERS.has(row.news_provider as NewsProvider)) return null;
   return {
     provider: row.news_provider as NewsProvider,
@@ -126,7 +126,7 @@ export async function getActiveAIConfig(): Promise<ActiveAIConfig | null> {
   const user = await getSessionUser();
   if (!user) return null;
 
-  const row = await queryOne<{ ai_provider: string | null; ai_model: string | null; ai_api_key_encrypted: string | null }>(
+  const row = await tenantQueryOne<{ ai_provider: string | null; ai_model: string | null; ai_api_key_encrypted: string | null }>(user.id,
     `select ai_provider, ai_model, ai_api_key_encrypted from public.user_credentials where user_id = $1`,
     [user.id],
   );
@@ -186,7 +186,7 @@ export async function getSystemAIConfig(): Promise<ActiveAIConfig | null> {
   if (process.env.GOOGLE_AI_API_KEY) {
     return { provider: "google", model: DEFAULT_MODEL_BY_PROVIDER.google, apiKey: process.env.GOOGLE_AI_API_KEY };
   }
-  const row = await queryOne<{
+  const row = (await workerQuery<{
     ai_provider: string | null;
     ai_model: string | null;
     ai_api_key_encrypted: string | null;
@@ -195,7 +195,7 @@ export async function getSystemAIConfig(): Promise<ActiveAIConfig | null> {
        from public.user_credentials c
        join public.users u on u.id=c.user_id
       where c.ai_api_key_encrypted is not null and u.is_system_owner`,
-  );
+  ))[0] ?? null;
   if (!row?.ai_api_key_encrypted || !isAIProvider(row.ai_provider)) return null;
   return {
     provider: row.ai_provider,
@@ -211,7 +211,7 @@ export async function getSMTPConfig(): Promise<{
   user: string;
   password: string;
 } | null> {
-  const result = await queryOne<{
+  const result = (await workerQuery<{
     smtp_host: string | null;
     smtp_port: number | null;
     smtp_user: string | null;
@@ -221,7 +221,7 @@ export async function getSMTPConfig(): Promise<{
      from public.user_credentials
      where user_id = (select id from public.users where is_system_owner)
      limit 1`,
-  );
+  ))[0] ?? null;
 
   if (result?.smtp_host && result.smtp_user && result.smtp_password_encrypted) {
     return {

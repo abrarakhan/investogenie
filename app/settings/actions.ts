@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getSessionUser } from "@/lib/auth";
-import { query } from "@/lib/db";
+import { tenantQuery } from "@/lib/db";
 
 const clamp = (n: number, lo: number, hi: number, fallback: number) =>
   Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : fallback;
@@ -17,7 +17,7 @@ export async function saveSwingSettings(formData: FormData): Promise<void> {
   const trail = clamp(Number(formData.get("trail_atr_mult")), 0.5, 15, 3);
   const includeShort = formData.get("include_short") === "on";
 
-  await query(
+  await tenantQuery(user.id,
     `insert into public.user_swing_settings
        (user_id, stop_atr_mult, target_rr, trail_atr_mult, include_short, updated_at)
      values ($1, $2, $3, $4, $5, now())
@@ -36,7 +36,7 @@ export async function saveSwingSettings(formData: FormData): Promise<void> {
 export async function resetSwingSettings(formData: FormData): Promise<void> {
   const user = await getSessionUser();
   if (!user) redirect("/login");
-  await query("delete from public.user_swing_settings where user_id = $1", [user.id]);
+  await tenantQuery(user.id, "delete from public.user_swing_settings where user_id = $1", [user.id]);
   revalidatePath("/terminal/us");
   revalidatePath("/terminal/in");
   redirect(String(formData.get("returnTo") || "/settings"));
@@ -57,14 +57,14 @@ export async function saveBreezeAutoBuySettings(formData: FormData): Promise<voi
     throw new Error("To enable live buying, select an engine, set positive limits, and acknowledge real-money orders.");
   }
   if (enabled) {
-    const credentials = await query<{ configured: boolean }>(
+    const credentials = await tenantQuery<{ configured: boolean }>(user.id,
       `select breeze_api_key_encrypted is not null and breeze_api_secret_encrypted is not null
           and breeze_session_token_encrypted is not null configured from public.user_credentials where user_id=$1`,
       [user.id],
     );
     if (!credentials[0]?.configured) throw new Error("Connect Breeze and save today's session before enabling live buying.");
   }
-  await query(
+  await tenantQuery(user.id,
     `insert into public.breeze_auto_buy_settings
        (user_id,enabled,strong_swing_enabled,adaptive_allocation_enabled,daily_budget,max_order_value,
         max_orders_per_day,limit_buffer_bps,acknowledged_at,updated_at)

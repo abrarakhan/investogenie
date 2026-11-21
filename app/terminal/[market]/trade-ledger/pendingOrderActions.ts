@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getSessionUser } from "@/lib/auth";
-import { tx } from "@/lib/db";
+import { rlsTx } from "@/lib/db";
 import { zonedMarketClock } from "@/lib/market-calendar.mjs";
 import { ARMED_PLAN_MAX_AGE_MINUTES, loadArmedPlan, validatePlanForPendingOrder } from "@/lib/armedSwingPlans";
 import { DEFAULT_ORDER_VALIDITY_DAYS, nextOrderState, validatePendingFill } from "@/lib/swingPendingOrders";
@@ -47,7 +47,7 @@ export async function createPendingBuyStop(formData: FormData) {
 
   let inserted = 0;
   try {
-    const result = await tx((client) => client.query(
+    const result = await rlsTx({ kind: "tenant", userId: user.id }, (client) => client.query(
       `insert into public.swing_pending_orders
          (user_id,asset_id,market,plan_id,strategy_key,strategy_label,quantity,trigger_price,limit_price,
           projected_target,projected_stop,projected_trailing_stop,projected_atr,trailing_distance,
@@ -87,7 +87,7 @@ export async function fillPendingBuyStop(formData: FormData) {
   validateShareQuantity(market, fillQuantity);
   const today = zonedMarketClock(market).date;
 
-  await tx(async (client) => {
+  await rlsTx({ kind: "tenant", userId: user.id }, async (client) => {
     const result = await client.query<{
       asset_id: string; quantity: string; filled_quantity: string; trigger_price: string; limit_price: string;
       placed_on: string; valid_until: string; strategy_key: string; strategy_label: string; projected_target: string;
@@ -148,7 +148,7 @@ export async function cancelPendingBuyStop(formData: FormData) {
   const user = await requireUser();
   const market = validMarket(String(formData.get("market") ?? "IN"));
   const orderId = String(formData.get("orderId") ?? "").trim();
-  await tx((client) => client.query(
+  await rlsTx({ kind: "tenant", userId: user.id }, (client) => client.query(
     `update public.swing_pending_orders set status='CANCELLED',updated_at=now()
       where id=$1 and user_id=$2 and market=$3 and status='PENDING'`,
     [orderId, user.id, market],

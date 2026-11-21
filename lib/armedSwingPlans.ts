@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { query, queryOne } from "@/lib/db";
+import { tenantQuery, tenantQueryOne } from "@/lib/db";
 import type { ArmedSwingCandidate } from "@/features/armed-swing/contracts";
 
 /** Exchange tick rounding tolerance around the trigger and limit. */
@@ -106,7 +106,7 @@ export async function captureArmedSwingPlans(
     };
     return { ...content, planHash: armedPlanHash(content) };
   });
-  const rows = await query<{ id: string; asset_id: string }>(
+  const rows = await tenantQuery<{ id: string; asset_id: string }>(userId,
     `with incoming as (
        select p.* from jsonb_to_recordset($4::jsonb) p(
          "assetId" uuid, "planHash" text, "bucketAt" timestamptz, status text, "currentPrice" numeric, trigger numeric, "limit" numeric,
@@ -133,7 +133,7 @@ export async function captureArmedSwingPlans(
     [userId, market, sessionDate, JSON.stringify(payload)],
   );
   if (Math.random() < 0.02) {
-    await query(
+    await tenantQuery(userId,
       `delete from public.armed_swing_plans p
         where p.captured_at < now() - interval '45 days'
           and not exists (select 1 from public.swing_pending_orders o where o.plan_id=p.id)`,
@@ -144,12 +144,12 @@ export async function captureArmedSwingPlans(
 
 export async function loadArmedPlan(userId: string, planId: string): Promise<StoredArmedPlan | null> {
   if (!/^[0-9a-f-]{36}$/i.test(planId)) return null;
-  const row = await queryOne<{
+  const row = await tenantQueryOne<{
     id: string; asset_id: string; market: "IN" | "US"; session_date: string; captured_at: string;
     status: StoredArmedPlan["status"]; trigger_price: string; limit_price: string; projected_target: string;
     projected_stop: string; projected_trailing_stop: string | null; projected_atr: string;
     trailing_distance: string | null; expected_holding_days: number; latest_bar_date: string; strength_score: string;
-  }>(
+  }>(userId,
     `select id,asset_id,market,session_date::text,to_json(captured_at)#>>'{}' captured_at,status,trigger_price::text,limit_price::text,
             projected_target::text,projected_stop::text,projected_trailing_stop::text,projected_atr::text,
             trailing_distance::text,expected_holding_days,latest_bar_date::text,strength_score::text

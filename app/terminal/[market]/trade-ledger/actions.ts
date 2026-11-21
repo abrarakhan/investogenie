@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getSessionUser } from "@/lib/auth";
-import { query, queryOne, tx } from "@/lib/db";
+import { rlsTx, tenantQuery, tenantQueryOne } from "@/lib/db";
 import { resolveSignalProjection } from "@/lib/swingTradeProjection";
 import { armedEditViolation, loadArmedPlan, validatePlanForPurchase, type StoredArmedPlan } from "@/lib/armedSwingPlans";
 import { loadExecutionPlan, protectedExecutionEditViolation, validateExecutionPlanPurchase, type StoredExecutionPlan } from "@/lib/swingExecutionPlans";
@@ -30,7 +30,7 @@ export async function addSwingTrade(formData: FormData) {
   const assetId = String(formData.get("assetId") ?? "").trim();
   const stockQuery = String(formData.get("ticker") ?? "").trim();
   const ticker = stockQuery.toUpperCase();
-  const asset = await queryOne<{ id: string; ticker: string; currency: string; country: "IN" | "US" }>(
+  const asset = await tenantQueryOne<{ id: string; ticker: string; currency: string; country: "IN" | "US" }>(user.id,
     assetId
       ? `select id,ticker,currency,country from public.assets where id=$1 and asset_class='STOCK'`
       : `select id,ticker,currency,country from public.assets
@@ -112,7 +112,7 @@ export async function addSwingTrade(formData: FormData) {
       ? projection.trailingDistance
       : null;
 
-  await query(
+  await tenantQuery(user.id,
     `insert into public.swing_trade_ledger
        (user_id,asset_id,market,status,bought_on,buy_price,quantity,currency,strategy_key,strategy_label,
         signal_verdict,signal_as_of,signal_score,projection_entry,projected_target,projected_stop,
@@ -147,9 +147,9 @@ export async function updateSwingTrade(formData: FormData) {
   if (!buyPrice || buyPrice <= 0 || !quantity || quantity <= 0) throw new Error("Buy price and quantity must be greater than zero");
   validateShareQuantity(market, quantity);
 
-  const trade = await queryOne<{
+  const trade = await tenantQueryOne<{
     status: "OPEN" | "CLOSED"; sold_quantity: string; strategy_key: string; projection_entry: string | null;
-  }>(
+  }>(user.id,
     `select l.status,coalesce(sum(e.quantity),0)::text sold_quantity,l.strategy_key,l.projection_entry::text
        from public.swing_trade_ledger l
        left join public.swing_trade_exits e on e.trade_id=l.id
@@ -186,7 +186,7 @@ export async function updateSwingTrade(formData: FormData) {
     || exitPrice <= 0
   )) throw new Error("Enter a valid exit date and price");
 
-  await query(
+  await tenantQuery(user.id,
     `update public.swing_trade_ledger
         set bought_on=$1,buy_price=$2,quantity=$3,purchase_value=$2::numeric*$3::numeric,notes=$4,
             closed_on=case when status='CLOSED' then $5::date else null end,
@@ -206,7 +206,7 @@ export async function confirmSwingTradeGtt(formData: FormData) {
   const gttStop = cleanNumber(formData, "gttStop");
   if (!id || gttStop === null || gttStop <= 0) throw new Error("Enter a valid GTT stop");
 
-  const trade = await queryOne<{ current_gtt_stop: string | number | null; current_price: string | number | null }>(
+  const trade = await tenantQueryOne<{ current_gtt_stop: string | number | null; current_price: string | number | null }>(user.id,
     `select l.current_gtt_stop,q.price current_price
        from public.swing_trade_ledger l
        left join public.latest_quotes q on q.asset_id=l.asset_id
@@ -219,7 +219,7 @@ export async function confirmSwingTradeGtt(formData: FormData) {
   if (gttStop + 0.005 < previous) throw new Error("A protective GTT cannot be reduced");
   if (currentPrice !== null && gttStop >= currentPrice) throw new Error("GTT stop must remain below the latest price");
 
-  await query(
+  await tenantQuery(user.id,
     `update public.swing_trade_ledger
         set current_gtt_stop=$1,gtt_updated_at=now(),updated_at=now()
       where id=$2 and user_id=$3 and market=$4 and status='OPEN'`,
@@ -241,7 +241,7 @@ export async function recordSwingTradeSale(formData: FormData) {
     throw new Error("Enter a valid sale date, quantity, and price");
   }
 
-  await tx(async (client) => {
+  await rlsTx({ kind: "tenant", userId: user.id }, async (client) => {
     const tradeResult = await client.query<{ quantity: string; bought_on: string }>(
       `select quantity,bought_on::text from public.swing_trade_ledger
         where id=$1 and user_id=$2 and market=$3 and status='OPEN'
@@ -305,7 +305,7 @@ export async function updateSwingTradeSale(formData: FormData) {
     throw new Error("Enter a valid sale date, quantity, and price");
   }
 
-  await tx(async (client) => {
+  await rlsTx({ kind: "tenant", userId: user.id }, async (client) => {
     const tradeResult = await client.query<{ quantity: string; bought_on: string }>(
       `select quantity,bought_on::text from public.swing_trade_ledger
         where id=$1 and user_id=$2 and market=$3
@@ -377,7 +377,7 @@ export async function deleteSwingTrade(formData: FormData) {
   const market = validMarket(String(formData.get("market") ?? "IN"));
   const id = String(formData.get("tradeId") ?? "").trim();
   if (!id) throw new Error("Trade entry is required");
-  await query(
+  await tenantQuery(user.id,
     "delete from public.swing_trade_ledger where id=$1 and user_id=$2",
     [id, user.id],
   );

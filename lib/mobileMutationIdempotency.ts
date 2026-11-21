@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { query, queryOne } from "@/lib/db";
+import { tenantQuery, tenantQueryOne } from "@/lib/db";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -21,7 +21,7 @@ export async function claimMobileMutation(
   operation: string,
   requestHash: string,
 ): Promise<StoredMutationResponse | null> {
-  const inserted = await query<{ idempotency_key: string }>(
+  const inserted = await tenantQuery<{ idempotency_key: string }>(userId,
     `insert into public.mobile_mutation_idempotency
        (user_id,idempotency_key,operation,request_hash,status)
      values($1,$2,$3,$4,'PROCESSING')
@@ -29,10 +29,10 @@ export async function claimMobileMutation(
     [userId, key, operation, requestHash],
   );
   if (inserted.length) return null;
-  const existing = await queryOne<{
+  const existing = await tenantQueryOne<{
     operation: string; request_hash: string; status: string;
     response_status: number | null; response_body: unknown;
-  }>(
+  }>(userId,
     `select operation,request_hash,status,response_status,response_body
        from public.mobile_mutation_idempotency
       where user_id=$1 and idempotency_key=$2`,
@@ -52,7 +52,7 @@ export async function completeMobileMutation(
   key: string,
   response: StoredMutationResponse,
 ): Promise<void> {
-  await query(
+  await tenantQuery(userId,
     `update public.mobile_mutation_idempotency
         set status='COMPLETED',response_status=$3,response_body=$4::jsonb,completed_at=now()
       where user_id=$1 and idempotency_key=$2 and status='PROCESSING'`,
@@ -61,7 +61,7 @@ export async function completeMobileMutation(
 }
 
 export async function abandonMobileMutation(userId: string, key: string): Promise<void> {
-  await query(
+  await tenantQuery(userId,
     `delete from public.mobile_mutation_idempotency
       where user_id=$1 and idempotency_key=$2 and status='PROCESSING'`,
     [userId, key],

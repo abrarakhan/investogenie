@@ -24,6 +24,10 @@ vi.mock("@/lib/auth", async (importOriginal) => ({
 vi.mock("@/lib/db", () => ({
   query: vi.fn(async () => []),
   queryOne: vi.fn(async () => null),
+  tenantQuery: vi.fn(async () => []),
+  tenantQueryOne: vi.fn(async () => null),
+  workerQuery: vi.fn(async () => []),
+  rlsTx: vi.fn(async () => { throw new Error("rlsTx not expected in authorization tests"); }),
   tx: vi.fn(async () => { throw new Error("tx not expected in authorization tests"); }),
   pool: { connect: vi.fn(), end: vi.fn(), query: vi.fn(async () => ({ rows: [] })) },
   getDatabaseUrl: () => "postgres://test",
@@ -100,9 +104,11 @@ const ROUTES: Record<string, RoutePolicy> = {
   "app/api/screener/backtest/route.ts": "session",
   "app/api/screener/route.ts": "session",
   "app/api/v1/mobile/assets/search/route.ts": "mobile",
+  "app/api/v1/mobile/alerts/route.ts": "mobile",
   "app/api/v1/mobile/auth/login/route.ts": "public",
   "app/api/v1/mobile/auth/logout/route.ts": "public", // revokes only the presented token; no-op without one
   "app/api/v1/mobile/candles/route.ts": "mobile",
+  "app/api/v1/mobile/intraday/route.ts": "mobile",
   "app/api/v1/mobile/me/route.ts": "mobile",
   "app/api/v1/mobile/news-swing/route.ts": "mobile",
   "app/api/v1/mobile/push-token/route.ts": "mobile",
@@ -113,6 +119,7 @@ const ROUTES: Record<string, RoutePolicy> = {
   "app/api/v1/mobile/trade-ledger/[tradeId]/sales/[saleId]/route.ts": "mobile",
   "app/api/v1/mobile/trade-ledger/[tradeId]/sales/route.ts": "mobile",
   "app/api/v1/mobile/trade-ledger/route.ts": "mobile",
+  "app/api/v1/mobile/watchlists/route.ts": "mobile",
   "app/auth/confirm/route.ts": "public", // redirects to /login only
   "app/b/route.ts": "public", // re-export of the Breeze callback
   "app/portfolio/fund-mapping/export/route.ts": "session",

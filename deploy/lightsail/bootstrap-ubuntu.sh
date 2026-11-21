@@ -57,6 +57,11 @@ else
   sudo -u postgres psql -v ON_ERROR_STOP=1 \
     -c "alter role investogenie password '${DB_PASSWORD}'"
 fi
+if ! sudo -u postgres psql -tAc "select 1 from pg_roles where rolname='investogenie_web'" | grep -q 1; then
+  sudo -u postgres psql -v ON_ERROR_STOP=1 \
+    -c "create role investogenie_web nologin nosuperuser nocreatedb nocreaterole noinherit nobypassrls"
+fi
+sudo -u postgres psql -v ON_ERROR_STOP=1 -c "grant investogenie_web to investogenie"
 if ! sudo -u postgres psql -tAc "select 1 from pg_database where datname='investogenie'" | grep -q 1; then
   sudo -u postgres createdb --owner=investogenie investogenie
 fi

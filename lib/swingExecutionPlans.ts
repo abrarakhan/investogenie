@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { query, queryOne } from "@/lib/db";
+import { tenantQuery, tenantQueryOne } from "@/lib/db";
 import { isMomentumExecutionReady, MOMENTUM_EXECUTION_MODEL_VERSION } from "@/lib/momentumExecution";
 import type { StrongSwingCandidate } from "@/features/strong-swing/contracts";
 import { STRONG_SWING_MODEL_VERSION, STRONG_SWING_TRAILING_POLICY_VERSION } from "@/lib/analytics/strongSwing";
@@ -62,7 +62,7 @@ export async function captureExecutionPlans(
     planHash: hashPlan(market, sessionDate, plan),
     trailingDistance: trailAtrMult * plan.atr,
   }));
-  const rows = await query<{ id: string; asset_id: string; strategy_key: ProtectedSwingStrategy; status: string }>(
+  const rows = await tenantQuery<{ id: string; asset_id: string; strategy_key: ProtectedSwingStrategy; status: string }>(userId,
     `with incoming as (
        select p.* from jsonb_to_recordset($4::jsonb) p(
          "assetId" uuid,"strategyKey" text,status text,entry numeric,target numeric,stop numeric,trail numeric,
@@ -91,7 +91,7 @@ export async function captureExecutionPlans(
 
 export async function loadExecutionPlan(userId: string, planId: string): Promise<StoredExecutionPlan | null> {
   if (!/^[0-9a-f-]{36}$/i.test(planId)) return null;
-  const row = await queryOne<Record<string, string | null>>(
+  const row = await tenantQueryOne<Record<string, string | null>>(userId,
     `select id,asset_id,market,strategy_key,status,session_date::text,to_json(captured_at)#>>'{}' captured_at,
             entry_price::text,projected_target::text,projected_stop::text,projected_trailing_stop::text,
             projected_atr::text,trailing_distance::text,expected_holding_days::text,signal_as_of::text,

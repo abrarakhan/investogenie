@@ -1,64 +1,22 @@
 import { type NextRequest, NextResponse } from "next/server";
-import { query } from "@/lib/db";
+import { tenantQuery } from "@/lib/db";
 import { getMobileSessionUser } from "@/lib/mobileAuth";
+import {
+  getMobileAlertPreferences,
+  mobileAlertPreferencesDto,
+  type MobileAlertPreferences as AlertPreferences,
+  type MobileAlertPreferenceRow as PrefRow,
+} from "@/lib/mobileAlertPreferences";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-export interface AlertPreferences {
-  executionReady: boolean;
-  midwaySetups: boolean;
-  ledgerRiskAlerts: boolean;
-  newsHighImpact: boolean;
-  quietHoursEnabled: boolean;
-  updatedAt: string | null;
-}
-
-const DEFAULTS: AlertPreferences = {
-  executionReady: true,
-  midwaySetups: true,
-  ledgerRiskAlerts: true,
-  newsHighImpact: false,
-  quietHoursEnabled: false,
-  updatedAt: null,
-};
-
-interface PrefRow {
-  execution_ready: boolean;
-  midway_setups: boolean;
-  ledger_risk_alerts: boolean;
-  news_high_impact: boolean;
-  quiet_hours_enabled: boolean;
-  updated_at: Date | string | null;
-}
-
-function toDto(row: PrefRow | undefined): AlertPreferences {
-  if (!row) return DEFAULTS;
-  return {
-    executionReady: Boolean(row.execution_ready),
-    midwaySetups: Boolean(row.midway_setups),
-    ledgerRiskAlerts: Boolean(row.ledger_risk_alerts),
-    newsHighImpact: Boolean(row.news_high_impact),
-    quietHoursEnabled: Boolean(row.quiet_hours_enabled),
-    updatedAt: row.updated_at ? new Date(row.updated_at).toISOString() : null,
-  };
-}
 
 export async function GET(request: NextRequest) {
   const user = await getMobileSessionUser(request);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   try {
-    const rows = await query<PrefRow>(
-      `select execution_ready, midway_setups, ledger_risk_alerts, news_high_impact,
-              quiet_hours_enabled, updated_at
-         from public.mobile_alert_preferences
-        where user_id = $1`,
-      [user.id],
-    );
-    return NextResponse.json({ preferences: toDto(rows[0]) });
-  } catch (cause) {
-    const code = (cause as { code?: string })?.code;
-    if (code === "42P01") return NextResponse.json({ preferences: DEFAULTS });
+    return NextResponse.json({ preferences: await getMobileAlertPreferences(user.id) });
+  } catch {
     return NextResponse.json({ error: "Could not load alert preferences" }, { status: 500 });
   }
 }
@@ -74,14 +32,7 @@ export async function PATCH(request: NextRequest) {
   const bool = (key: keyof AlertPreferences, fallback: boolean): boolean =>
     typeof body[key] === "boolean" ? (body[key] as boolean) : fallback;
 
-  const existing = await query<PrefRow>(
-    `select execution_ready, midway_setups, ledger_risk_alerts, news_high_impact,
-            quiet_hours_enabled, updated_at
-       from public.mobile_alert_preferences
-      where user_id = $1`,
-    [user.id],
-  ).catch(() => [] as PrefRow[]);
-  const current = toDto(existing[0]);
+  const current = await getMobileAlertPreferences(user.id);
 
   const next = {
     executionReady: bool("executionReady", current.executionReady),
@@ -91,7 +42,7 @@ export async function PATCH(request: NextRequest) {
     quietHoursEnabled: bool("quietHoursEnabled", current.quietHoursEnabled),
   };
 
-  const rows = await query<PrefRow>(
+  const rows = await tenantQuery<PrefRow>(user.id,
     `insert into public.mobile_alert_preferences (
        user_id, execution_ready, midway_setups, ledger_risk_alerts,
        news_high_impact, quiet_hours_enabled, updated_at
@@ -114,5 +65,5 @@ export async function PATCH(request: NextRequest) {
       next.quietHoursEnabled,
     ],
   );
-  return NextResponse.json({ preferences: toDto(rows[0]) });
+  return NextResponse.json({ preferences: mobileAlertPreferencesDto(rows[0]) });
 }

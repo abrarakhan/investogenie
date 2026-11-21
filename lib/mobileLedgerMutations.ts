@@ -1,4 +1,4 @@
-import { query, queryOne, tx } from "@/lib/db";
+import { rlsTx, tenantQuery, tenantQueryOne } from "@/lib/db";
 import { armedEditViolation } from "@/lib/armedSwingPlans";
 import {
   loadExecutionPlan, protectedExecutionEditViolation, validateExecutionPlanPurchase, type StoredExecutionPlan,
@@ -53,7 +53,7 @@ export async function createMobileTrade(userId: string, input: CreateMobileTrade
   const buyPrice = positive(input.buyPrice, "Buy price");
   const quantity = positive(input.quantity, "Quantity");
   validateShareQuantity(market, quantity);
-  const asset = await queryOne<{ id: string; currency: string; country: Market }>(
+  const asset = await tenantQueryOne<{ id: string; currency: string; country: Market }>(userId,
     `select id,currency,country from public.assets
       where id=$1 and country=$2 and asset_class='STOCK' and is_active`,
     [input.assetId, market],
@@ -91,7 +91,7 @@ export async function createMobileTrade(userId: string, input: CreateMobileTrade
   const trailingDistance = plan
     ? plan.trailingDistance
     : projection.levels.atr > 0 && trail !== null ? projection.trailingDistance : null;
-  const inserted = await queryOne<{ id: string }>(
+  const inserted = await tenantQueryOne<{ id: string }>(userId,
     `insert into public.swing_trade_ledger
        (user_id,asset_id,market,status,bought_on,buy_price,quantity,currency,strategy_key,strategy_label,
         signal_verdict,signal_as_of,signal_score,projection_entry,projected_target,projected_stop,
@@ -118,7 +118,7 @@ export async function updateMobileTrade(userId: string, tradeId: string, input: 
   const buyPrice = positive(input.buyPrice, "Buy price");
   const quantity = positive(input.quantity, "Quantity");
   validateShareQuantity(market, quantity);
-  const trade = await queryOne<{ sold_quantity: string; strategy_key: string; projection_entry: string | null }>(
+  const trade = await tenantQueryOne<{ sold_quantity: string; strategy_key: string; projection_entry: string | null }>(userId,
     `select coalesce(sum(e.quantity),0)::text sold_quantity,l.strategy_key,l.projection_entry::text
        from public.swing_trade_ledger l left join public.swing_trade_exits e on e.trade_id=l.id
       where l.id=$1 and l.user_id=$2 and l.market=$3 group by l.id`,
@@ -132,7 +132,7 @@ export async function updateMobileTrade(userId: string, tradeId: string, input: 
     trade.projection_entry === null ? null : Number(trade.projection_entry), buyPrice);
   if (protectedError) throw new Error(protectedError);
   if (quantity + 0.000001 < Number(trade.sold_quantity)) throw new Error("Quantity cannot be below shares already sold");
-  await query(
+  await tenantQuery(userId,
     `update public.swing_trade_ledger
         set bought_on=$1,buy_price=$2,quantity=$3,purchase_value=$2*$3,notes=$4,updated_at=now()
       where id=$5 and user_id=$6 and market=$7`,
@@ -168,7 +168,7 @@ export async function recordMobileTradeSale(userId: string, tradeId: string, inp
   const market: Market = input.market === "US" ? "US" : "IN";
   const soldQuantity = positive(input.quantity, "Sale quantity");
   const exitPrice = positive(input.exitPrice, "Sale price");
-  await tx(async (client) => {
+  await rlsTx({ kind: "tenant", userId }, async (client) => {
     const trade = (await client.query<{ quantity: string; bought_on: string }>(
       `select quantity,bought_on::text from public.swing_trade_ledger
         where id=$1 and user_id=$2 and market=$3 and status='OPEN' for update`,
@@ -197,7 +197,7 @@ export async function updateMobileTradeSale(userId: string, tradeId: string, sal
   const market: Market = input.market === "US" ? "US" : "IN";
   const soldQuantity = positive(input.quantity, "Sale quantity");
   const exitPrice = positive(input.exitPrice, "Sale price");
-  await tx(async (client) => {
+  await rlsTx({ kind: "tenant", userId }, async (client) => {
     const trade = (await client.query<{ quantity: string; bought_on: string }>(
       `select quantity,bought_on::text from public.swing_trade_ledger
         where id=$1 and user_id=$2 and market=$3 for update`,
@@ -227,7 +227,7 @@ export async function updateMobileTradeSale(userId: string, tradeId: string, sal
 }
 
 export async function deleteMobileTrade(userId: string, tradeId: string): Promise<void> {
-  const rows = await query<{ id: string }>(
+  const rows = await tenantQuery<{ id: string }>(userId,
     "delete from public.swing_trade_ledger where id=$1 and user_id=$2 returning id",
     [tradeId, userId],
   );
