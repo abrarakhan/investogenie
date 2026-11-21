@@ -7,14 +7,27 @@ import {
   createMutationKey, deleteTrade, getLedger, recordSale, updateSale, updateTrade,
   type LedgerSummary, type LedgerTrade, type Market,
 } from "../api";
+import { Card } from "../design/Card";
+import { Pill } from "../design/Pill";
+import { colors, hapticSuccess, hapticWarning, radius, tabularNums } from "../design/tokens";
 import { amount, errorMessage, marketDate, money, pct } from "../format";
 import { Action, Banner, Empty, Metric, ScreenHead } from "../ui";
 
 export default function TradeLedger({ market }: { market: Market }) {
   const [trades, setTrades] = useState<LedgerTrade[]>([]); const [summary, setSummary] = useState<LedgerSummary | null>(null);
   const [refreshing, setRefreshing] = useState(true); const [error, setError] = useState("");
+  const [pendingIds, setPendingIds] = useState<Record<string, string>>({});
   const [editing, setEditing] = useState<LedgerTrade | null>(null); const [selling, setSelling] = useState<LedgerTrade | null>(null);
   const [editingSale, setEditingSale] = useState<{ trade: LedgerTrade; sale: LedgerTrade["exits"][number] } | null>(null);
+  const markPending = (tradeId: string, label: string | null) =>
+    setPendingIds((current) => {
+      if (!label) {
+        const next = { ...current };
+        delete next[tradeId];
+        return next;
+      }
+      return { ...current, [tradeId]: label };
+    });
   const load = useCallback(async () => { setRefreshing(true); setError(""); try { const result = await getLedger(market); setTrades(result.trades); setSummary(result.summary); } catch (cause) { setError(errorMessage(cause, "Could not load ledger")); } finally { setRefreshing(false); } }, [market]);
   useEffect(() => { let active = true; getLedger(market).then((result) => { if (active) { setTrades(result.trades); setSummary(result.summary); } }).catch((cause) => { if (active) setError(errorMessage(cause, "Could not load ledger")); }).finally(() => { if (active) setRefreshing(false); }); return () => { active = false; }; }, [market]);
   useEffect(() => {
@@ -28,11 +41,26 @@ export default function TradeLedger({ market }: { market: Market }) {
     });
     return () => { stop(); sub.remove(); };
   }, [load]);
-  const remove = (trade: LedgerTrade) => Alert.alert("Delete trade?", `${trade.ticker} and its sale history will be removed.`, [{ text: "Cancel", style: "cancel" }, { text: "Delete", style: "destructive", onPress: () => deleteTrade(trade.id).then(load).catch((cause) => setError(errorMessage(cause, "Delete failed"))) }]);
+  const remove = (trade: LedgerTrade) => Alert.alert("Delete trade?", `${trade.ticker} and its sale history will be removed.`, [
+    { text: "Cancel", style: "cancel" },
+    {
+      text: "Delete",
+      style: "destructive",
+      onPress: () => {
+        markPending(trade.id, "Deleting…");
+        void deleteTrade(trade.id)
+          .then(async () => { hapticSuccess(); await load(); })
+          .catch((cause) => { hapticWarning(); setError(errorMessage(cause, "Delete failed")); })
+          .finally(() => markPending(trade.id, null));
+      },
+    },
+  ]);
   return <View style={styles.flex}><ScreenHead title="Trade Ledger" subtitle="Edit entries and record partial or final sales without changing the frozen projection." />
     {summary && <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.summary}><Summary label="OPEN" value={String(summary.openCount)} /><Summary label="CAPITAL" value={money(summary.capitalEmployedValue, market)} /><Summary label="UNREALIZED" value={money(summary.unrealizedPnlValue, market)} /><Summary label="REALIZED" value={money(summary.realizedPnlValue, market)} /><Summary label="OVERALL" value={money(summary.overallPnlValue, market)} /><Summary label="ROI" value={pct(summary.roiPct)} /><Summary label="XIRR" value={pct(summary.xirrPct)} /></ScrollView>}{!!error && <Banner>{error}</Banner>}
-    <FlatList data={trades} keyExtractor={(item) => item.id} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={load} tintColor="#34d399" />} contentContainerStyle={styles.list} ListEmptyComponent={!refreshing ? <Empty>No trades in this market.</Empty> : null} renderItem={({ item }) => <View style={styles.card}>
-      <View style={styles.rowBetween}><View><Text style={styles.ticker}>{item.ticker}</Text><Text style={styles.meta}>{item.status} · bought {item.boughtOn}</Text></View><Text style={item.progress.pnlPct !== null && item.progress.pnlPct >= 0 ? styles.goodValue : styles.badValue}>{pct(item.progress.pnlPct)}</Text></View>
+    <FlatList data={trades} keyExtractor={(item) => item.id} removeClippedSubviews windowSize={7} initialNumToRender={10} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={load} tintColor={colors.emerald} />} contentContainerStyle={styles.list} ListEmptyComponent={!refreshing ? <Empty>No trades in this market.</Empty> : null} renderItem={({ item }) => {
+      const pendingLabel = pendingIds[item.id] ?? null;
+      return <Card style={pendingLabel ? styles.cardPending : undefined}>
+      <View style={styles.rowBetween}><View><Text style={styles.ticker}>{item.ticker}</Text><Text style={styles.meta}>{item.status} · bought {item.boughtOn}</Text></View>{pendingLabel ? <Pill label={pendingLabel} tone="warning" compact /> : <Text style={item.progress.pnlPct !== null && item.progress.pnlPct >= 0 ? styles.goodValue : styles.badValue}>{pct(item.progress.pnlPct)}</Text>}</View>
       <View style={styles.metricRow}><Metric label="BUY" value={money(item.buyPrice, market)} /><Metric label="CURRENT" value={item.currentPrice === null ? "STALE" : money(item.currentPrice, market)} /><Metric label="TARGET" value={money(item.projectedTarget, market)} positive /></View>
       <View style={styles.metricRow}><Metric label="INVESTED" value={money(item.progress.investedValue, market)} /><Metric label={item.status === "CLOSED" ? "EXIT VALUE" : "CURRENT VALUE"} value={item.status === "CLOSED" ? money(item.progress.investedValue + item.realizedPnlValue, market) : item.progress.currentValue === null ? "STALE" : money(item.progress.currentValue, market)} positive={(item.progress.pnlValue ?? 0) >= 0} negative={(item.progress.pnlValue ?? 0) < 0} /><Metric label="P&L" value={item.progress.pnlValue === null ? "--" : money(item.progress.pnlValue, market)} positive={(item.progress.pnlValue ?? 0) >= 0} negative={(item.progress.pnlValue ?? 0) < 0} /></View>
       {item.status === "OPEN" && <View style={styles.revisedPlan}>
@@ -42,35 +70,36 @@ export default function TradeLedger({ market }: { market: Market }) {
         <Text style={styles.cardFoot}>{item.revisedPlan.reasons[0]}</Text>
       </View>}
       <Text style={styles.cardFoot}>{item.remainingQuantity} remaining · {item.progress.daysHeld} held / {item.progress.daysRemaining} left · {item.risk.recommendation.replaceAll("_", " ")}</Text>
-      {item.exits.map((sale) => <Pressable key={sale.id} onPress={() => setEditingSale({ trade: item, sale })} style={styles.saleRow}><Text style={styles.meta}>{sale.soldOn} · {sale.quantity} @ {money(sale.exitPrice, market)}</Text><Text style={styles.link}>Edit sale</Text></Pressable>)}
-      <View style={styles.actions}><SmallAction label="Edit" onPress={() => setEditing(item)} />{item.status === "OPEN" && <SmallAction label="Record sale" onPress={() => setSelling(item)} />}<SmallAction label="Delete" destructive onPress={() => remove(item)} /></View>
-    </View>} />
-    <EditTradeSheet trade={editing} market={market} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); load(); }} />
-    <SaleSheet trade={selling} market={market} onClose={() => setSelling(null)} onSaved={() => { setSelling(null); load(); }} />
-    <SaleSheet trade={editingSale?.trade ?? null} sale={editingSale?.sale} market={market} onClose={() => setEditingSale(null)} onSaved={() => { setEditingSale(null); load(); }} />
+      {item.exits.map((sale) => <Pressable key={sale.id} disabled={!!pendingLabel} onPress={() => setEditingSale({ trade: item, sale })} style={styles.saleRow}><Text style={styles.meta}>{sale.soldOn} · {sale.quantity} @ {money(sale.exitPrice, market)}</Text><Text style={styles.link}>Edit sale</Text></Pressable>)}
+      <View style={styles.actions}><SmallAction label="Edit" disabled={!!pendingLabel} onPress={() => setEditing(item)} />{item.status === "OPEN" && <SmallAction label="Record sale" disabled={!!pendingLabel} onPress={() => setSelling(item)} />}<SmallAction label="Delete" disabled={!!pendingLabel} destructive onPress={() => remove(item)} /></View>
+    </Card>;
+    }} />
+    <EditTradeSheet trade={editing} market={market} onClose={() => setEditing(null)} onSaved={(tradeId) => { setEditing(null); hapticSuccess(); markPending(tradeId, "Syncing…"); void load().finally(() => markPending(tradeId, null)); }} />
+    <SaleSheet trade={selling} market={market} onClose={() => setSelling(null)} onSaved={(tradeId) => { setSelling(null); hapticSuccess(); markPending(tradeId, "Syncing…"); void load().finally(() => markPending(tradeId, null)); }} />
+    <SaleSheet trade={editingSale?.trade ?? null} sale={editingSale?.sale} market={market} onClose={() => setEditingSale(null)} onSaved={(tradeId) => { setEditingSale(null); hapticSuccess(); markPending(tradeId, "Syncing…"); void load().finally(() => markPending(tradeId, null)); }} />
   </View>;
 }
 
-function EditTradeSheet({ trade, market, onClose, onSaved }: { trade: LedgerTrade | null; market: Market; onClose: () => void; onSaved: () => void }) { return trade ? <EditTradeForm key={trade.id} trade={trade} market={market} onClose={onClose} onSaved={onSaved} /> : null; }
-function EditTradeForm({ trade, market, onClose, onSaved }: { trade: LedgerTrade; market: Market; onClose: () => void; onSaved: () => void }) {
+function EditTradeSheet({ trade, market, onClose, onSaved }: { trade: LedgerTrade | null; market: Market; onClose: () => void; onSaved: (tradeId: string) => void }) { return trade ? <EditTradeForm key={trade.id} trade={trade} market={market} onClose={onClose} onSaved={onSaved} /> : null; }
+function EditTradeForm({ trade, market, onClose, onSaved }: { trade: LedgerTrade; market: Market; onClose: () => void; onSaved: (tradeId: string) => void }) {
   const [date, setDate] = useState(trade.boughtOn); const [price, setPrice] = useState(String(trade.buyPrice)); const [quantity, setQuantity] = useState(String(trade.quantity)); const [busy, setBusy] = useState(false); const [error, setError] = useState(""); const [idempotencyKey] = useState(createMutationKey);
-  const save = async () => { setBusy(true); setError(""); try { await updateTrade(trade.id, { market, boughtOn: date, buyPrice: amount(price), quantity: amount(quantity) }, idempotencyKey); onSaved(); } catch (cause) { setError(errorMessage(cause, "Trade could not be updated")); } finally { setBusy(false); } };
+  const save = async () => { setBusy(true); setError(""); try { await updateTrade(trade.id, { market, boughtOn: date, buyPrice: amount(price), quantity: amount(quantity) }, idempotencyKey); onSaved(trade.id); } catch (cause) { hapticWarning(); setError(errorMessage(cause, "Trade could not be updated")); } finally { setBusy(false); } };
   return <Sheet visible title={`Edit ${trade.ticker}`} onClose={onClose}><Field value={date} onChangeText={setDate} placeholder="Purchase date YYYY-MM-DD" /><Field value={price} onChangeText={setPrice} placeholder="Buy price" keyboard="decimal-pad" /><Field value={quantity} onChangeText={setQuantity} placeholder="Quantity" keyboard="decimal-pad" />{!!error && <Text style={styles.errorText}>{error}</Text>}<Action label="Save trade" busy={busy} onPress={save} /></Sheet>;
 }
-function SaleSheet({ trade, sale, market, onClose, onSaved }: { trade: LedgerTrade | null; sale?: LedgerTrade["exits"][number]; market: Market; onClose: () => void; onSaved: () => void }) { return trade ? <SaleForm key={`${trade.id}:${sale?.id ?? "new"}`} trade={trade} sale={sale} market={market} onClose={onClose} onSaved={onSaved} /> : null; }
-function SaleForm({ trade, sale, market, onClose, onSaved }: { trade: LedgerTrade; sale?: LedgerTrade["exits"][number]; market: Market; onClose: () => void; onSaved: () => void }) {
+function SaleSheet({ trade, sale, market, onClose, onSaved }: { trade: LedgerTrade | null; sale?: LedgerTrade["exits"][number]; market: Market; onClose: () => void; onSaved: (tradeId: string) => void }) { return trade ? <SaleForm key={`${trade.id}:${sale?.id ?? "new"}`} trade={trade} sale={sale} market={market} onClose={onClose} onSaved={onSaved} /> : null; }
+function SaleForm({ trade, sale, market, onClose, onSaved }: { trade: LedgerTrade; sale?: LedgerTrade["exits"][number]; market: Market; onClose: () => void; onSaved: (tradeId: string) => void }) {
   const [date, setDate] = useState(sale?.soldOn ?? marketDate(market)); const [price, setPrice] = useState(String(sale?.exitPrice ?? trade.currentPrice ?? "")); const [quantity, setQuantity] = useState(String(sale?.quantity ?? trade.remainingQuantity)); const [reason, setReason] = useState(sale?.reason ?? "Manual exit"); const [busy, setBusy] = useState(false); const [error, setError] = useState(""); const [idempotencyKey] = useState(createMutationKey);
-  const save = async () => { setBusy(true); setError(""); try { const input = { market, soldOn: date, exitPrice: amount(price), quantity: amount(quantity), reason }; if (sale) await updateSale(trade.id, sale.id, input, idempotencyKey); else await recordSale(trade.id, input, idempotencyKey); onSaved(); } catch (cause) { setError(errorMessage(cause, "Sale could not be recorded")); } finally { setBusy(false); } };
+  const save = async () => { setBusy(true); setError(""); try { const input = { market, soldOn: date, exitPrice: amount(price), quantity: amount(quantity), reason }; if (sale) await updateSale(trade.id, sale.id, input, idempotencyKey); else await recordSale(trade.id, input, idempotencyKey); onSaved(trade.id); } catch (cause) { hapticWarning(); setError(errorMessage(cause, "Sale could not be recorded")); } finally { setBusy(false); } };
   return <Sheet visible title={`${sale ? "Edit sale" : "Record sale"} · ${trade.ticker}`} onClose={onClose}><Field value={date} onChangeText={setDate} placeholder="Sale date YYYY-MM-DD" /><Field value={price} onChangeText={setPrice} placeholder="Sale price" keyboard="decimal-pad" /><Field value={quantity} onChangeText={setQuantity} placeholder="Quantity" keyboard="decimal-pad" /><Field value={reason} onChangeText={setReason} placeholder="Reason" />{!!error && <Text style={styles.errorText}>{error}</Text>}<Action label={sale ? "Save sale" : "Record sale"} busy={busy} onPress={save} /></Sheet>;
 }
 function Sheet({ visible, title, onClose, children }: { visible: boolean; title: string; onClose: () => void; children: ReactNode }) { return <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}><View style={styles.modalBackdrop}><View style={styles.sheet}><View style={styles.rowBetween}><Text style={styles.sectionTitle}>{title}</Text><Pressable onPress={onClose}><Text style={styles.link}>Close</Text></Pressable></View>{children}</View></View></Modal>; }
-function Field({ value, onChangeText, placeholder, keyboard }: { value: string; onChangeText: (value: string) => void; placeholder: string; keyboard?: "decimal-pad" }) { return <TextInput style={styles.input} value={value} onChangeText={onChangeText} placeholder={placeholder} placeholderTextColor="#697078" autoCapitalize="none" autoCorrect={false} keyboardType={keyboard} />; }
-const SmallAction = ({ label, onPress, destructive }: { label: string; onPress: () => void; destructive?: boolean }) => <Pressable style={styles.smallAction} onPress={onPress}><Text style={destructive ? styles.badValue : styles.link}>{label}</Text></Pressable>;
+function Field({ value, onChangeText, placeholder, keyboard }: { value: string; onChangeText: (value: string) => void; placeholder: string; keyboard?: "decimal-pad" }) { return <TextInput style={styles.input} value={value} onChangeText={onChangeText} placeholder={placeholder} placeholderTextColor={colors.textSubtle} autoCapitalize="none" autoCorrect={false} keyboardType={keyboard} />; }
+const SmallAction = ({ label, onPress, destructive, disabled }: { label: string; onPress: () => void; destructive?: boolean; disabled?: boolean }) => <Pressable disabled={disabled} style={[styles.smallAction, disabled && styles.actionDisabled]} onPress={onPress}><Text style={destructive ? styles.badValue : styles.link}>{label}</Text></Pressable>;
 const Summary = ({ label, value }: { label: string; value: string }) => <View style={styles.summaryCard}><Text style={styles.metricLabel}>{label}</Text><Text style={styles.summaryValue}>{value}</Text></View>;
 
 const styles = StyleSheet.create({
-  flex: { flex: 1 }, title: { color: "#f7f8fa", fontSize: 27, fontWeight: "900" }, muted: { color: "#858c95", fontSize: 14, lineHeight: 21 }, screenHead: { paddingHorizontal: 18, paddingTop: 8, paddingBottom: 12, gap: 5 }, errorBanner: { color: "#fecdd3", backgroundColor: "#35131d", marginHorizontal: 18, marginBottom: 10, padding: 12, borderRadius: 7 }, errorText: { color: "#fb7185" }, list: { padding: 14, gap: 10, paddingBottom: 28 }, card: { backgroundColor: "#0b0f14", borderColor: "#252b33", borderWidth: 1, borderRadius: 8, padding: 15, gap: 14 }, rowBetween: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 10 }, ticker: { color: "#f8fafc", fontSize: 19, fontWeight: "900" }, meta: { color: "#707780", fontSize: 12, marginTop: 3 },
-  metricRow: { flexDirection: "row", gap: 8 }, metric: { flex: 1, minWidth: 88, backgroundColor: "#080b0f", borderRadius: 6, padding: 10 }, metricLabel: { color: "#656c75", fontSize: 10, fontWeight: "700" }, metricValue: { color: "#e5e7eb", fontSize: 14, fontWeight: "800", marginTop: 5 }, goodValue: { color: "#34d399" }, badValue: { color: "#fb7185" }, warningValue: { color: "#fbbf24", fontSize: 11, fontWeight: "900" }, evidenceTitle: { color: "#e5e7eb", fontSize: 13, fontWeight: "700" }, cardFoot: { color: "#949ba4", fontSize: 12 }, revisedPlan: { borderTopWidth: 1, borderTopColor: "#26313a", paddingTop: 12, gap: 9 }, revisedPlanTitle: { color: "#67e8f9", fontSize: 10, fontWeight: "900", letterSpacing: 1.1 },
-  summary: { paddingHorizontal: 14, paddingBottom: 8, gap: 8 }, summaryCard: { width: 140, backgroundColor: "#0b0f14", borderColor: "#252b33", borderWidth: 1, borderRadius: 8, padding: 12 }, summaryValue: { color: "#f8fafc", fontSize: 17, fontWeight: "900", marginTop: 5 }, empty: { padding: 50, alignItems: "center" }, actions: { flexDirection: "row", gap: 8, borderTopWidth: 1, borderTopColor: "#1d2229", paddingTop: 10 }, smallAction: { minHeight: 40, justifyContent: "center", paddingHorizontal: 10 }, saleRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", backgroundColor: "#080b0f", borderRadius: 6, padding: 10 }, link: { color: "#5eead4", fontWeight: "700" },
-  modalBackdrop: { flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(0,0,0,0.72)" }, sheet: { backgroundColor: "#0b0f14", borderTopLeftRadius: 12, borderTopRightRadius: 12, borderColor: "#2a3038", borderWidth: 1, padding: 20, paddingBottom: 36, gap: 12 }, sectionTitle: { color: "#f8fafc", fontSize: 18, fontWeight: "900", marginTop: 8, marginBottom: 10 }, input: { color: "#f7f8fa", backgroundColor: "#0c1015", borderColor: "#242a32", borderWidth: 1, borderRadius: 8, paddingHorizontal: 15, height: 52 }, primary: { backgroundColor: "#34d399", borderRadius: 8, minHeight: 52, alignItems: "center", justifyContent: "center", marginVertical: 4 }, primaryText: { color: "#04110d", fontSize: 15, fontWeight: "900" },
+  flex: { flex: 1 }, errorText: { color: colors.rose }, list: { padding: 14, gap: 10, paddingBottom: 28 }, cardPending: { opacity: 0.72, borderColor: colors.amberBorder }, rowBetween: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 10 }, ticker: { color: colors.text, fontSize: 19, fontWeight: "900" }, meta: { color: colors.textSubtle, fontSize: 12, marginTop: 3 },
+  metricRow: { flexDirection: "row", gap: 8 }, metricLabel: { color: colors.textSubtle, fontSize: 10, fontWeight: "700" }, goodValue: { color: colors.emerald, ...tabularNums }, badValue: { color: colors.rose, ...tabularNums }, warningValue: { color: colors.amber, fontSize: 11, fontWeight: "900" }, evidenceTitle: { color: colors.textSecondary, fontSize: 13, fontWeight: "700" }, cardFoot: { color: colors.textMuted, fontSize: 12 }, revisedPlan: { borderTopWidth: 1, borderTopColor: colors.borderStrong, paddingTop: 12, gap: 9 }, revisedPlanTitle: { color: colors.link, fontSize: 10, fontWeight: "900", letterSpacing: 1.1 },
+  summary: { paddingHorizontal: 14, paddingBottom: 8, gap: 8 }, summaryCard: { width: 140, backgroundColor: colors.surface, borderColor: colors.border, borderWidth: 1, borderRadius: radius.md, padding: 12 }, summaryValue: { color: colors.text, fontSize: 17, fontWeight: "900", marginTop: 5, ...tabularNums }, actions: { flexDirection: "row", gap: 8, borderTopWidth: 1, borderTopColor: colors.border, paddingTop: 10 }, smallAction: { minHeight: 40, justifyContent: "center", paddingHorizontal: 10 }, actionDisabled: { opacity: 0.4 }, saleRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", backgroundColor: colors.surfaceInset, borderRadius: radius.sm, padding: 10 }, link: { color: colors.link, fontWeight: "700" },
+  modalBackdrop: { flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(0,0,0,0.72)" }, sheet: { backgroundColor: colors.surface, borderTopLeftRadius: radius.lg, borderTopRightRadius: radius.lg, borderColor: colors.borderStrong, borderWidth: 1, padding: 20, paddingBottom: 36, gap: 12 }, sectionTitle: { color: colors.text, fontSize: 18, fontWeight: "900", marginTop: 8, marginBottom: 10 }, input: { color: colors.text, backgroundColor: colors.surfaceInset, borderColor: colors.borderStrong, borderWidth: 1, borderRadius: radius.md, paddingHorizontal: 15, height: 50 },
 });
