@@ -1,9 +1,14 @@
 import * as SecureStore from "expo-secure-store";
+import {
+  clearScreenCache, isCacheableScreenPath, readScreenCache, writeScreenCache,
+  type ScreenCacheEntry,
+} from "./data/cache";
 
 const TOKEN_KEY = "investogenie.mobile.token";
 const configuredApiUrl = process.env.EXPO_PUBLIC_API_URL?.trim();
 const API_URL = (configuredApiUrl || "http://localhost:3000").replace(/\/$/, "");
 const responseCache = new Map<string, { etag: string; payload: unknown }>();
+let activeUserId: string | null = null;
 
 export function apiConfigurationError(): string | null {
   if (!configuredApiUrl && !__DEV__) return "This build has no InvestoGenie server configured.";
@@ -126,7 +131,15 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (configurationError) throw new Error(configurationError);
   const token = await SecureStore.getItemAsync(TOKEN_KEY);
   const method = (init.method ?? "GET").toUpperCase();
-  const cached = method === "GET" ? responseCache.get(path) : undefined;
+  const diskCacheable = method === "GET" && !!activeUserId && isCacheableScreenPath(path);
+  let cached = method === "GET" ? responseCache.get(path) : undefined;
+  if (!cached && diskCacheable && activeUserId) {
+    const disk = await readScreenCache<T>(activeUserId, path);
+    if (disk?.etag) {
+      cached = { etag: disk.etag, payload: disk.payload };
+      responseCache.set(path, cached);
+    }
+  }
   const response = await fetch(`${API_URL}${path}`, {
     ...init,
     headers: {
@@ -137,11 +150,15 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
       ...init.headers,
     },
   });
-  if (response.status === 304 && cached) return cached.payload as T;
+  if (response.status === 304 && cached) {
+    if (diskCacheable && activeUserId) writeScreenCache(activeUserId, path, cached.etag, cached.payload);
+    return cached.payload as T;
+  }
   const payload = response.status === 204 ? null : await response.json().catch(() => null);
   if (!response.ok) throw new ApiError(response.status, payload?.error || `Request failed (${response.status})`);
   const etag = response.headers.get("etag");
   if (method === "GET" && etag) responseCache.set(path, { etag, payload });
+  if (diskCacheable && activeUserId && payload) writeScreenCache(activeUserId, path, etag, payload);
   return payload as T;
 }
 
@@ -166,12 +183,16 @@ export async function restoreSession(): Promise<MobileUser | null> {
   if (!(await SecureStore.getItemAsync(TOKEN_KEY))) return null;
   try {
     const result = await request<{ user: MobileUser }>("/api/v1/mobile/me");
+    activeUserId = result.user.id;
     return result.user;
   } catch (cause) {
     // Only a rejected token signs the user out. Offline or a server outage at launch must not
     // discard a valid session; rethrow so the app can offer a retry.
     if (cause instanceof ApiError && cause.status === 401) {
       await SecureStore.deleteItemAsync(TOKEN_KEY);
+      activeUserId = null;
+      responseCache.clear();
+      clearScreenCache();
       return null;
     }
     throw cause;
@@ -184,7 +205,9 @@ export async function login(email: string, password: string): Promise<MobileUser
     body: JSON.stringify({ email, password, deviceName: "InvestoGenie Android/iOS" }),
   });
   await SecureStore.setItemAsync(TOKEN_KEY, result.token);
+  activeUserId = result.user.id;
   responseCache.clear();
+  clearScreenCache();
   return result.user;
 }
 
@@ -194,7 +217,9 @@ export async function logout(): Promise<void> {
     await request("/api/v1/mobile/auth/logout", { method: "DELETE" });
   } finally {
     await SecureStore.deleteItemAsync(TOKEN_KEY);
+    activeUserId = null;
     responseCache.clear();
+    clearScreenCache();
   }
 }
 
@@ -301,7 +326,20 @@ export function getScreenCatalog() {
   return request<{ screens: ScreenCatalogEntry[] }>("/api/v1/mobile/screens");
 }
 
-export function getScreen(key: string, market: Market, params: Record<string, string> = {}, cursor?: string) {
+function screenPath(key: string, market: Market, params: Record<string, string> = {}, cursor?: string): string {
   const query = new URLSearchParams({ ...params, market, limit: "20", ...(cursor ? { cursor } : {}) });
-  return request<MobileScreen>(`/api/v1/mobile/screens/${encodeURIComponent(key)}?${query.toString()}`);
+  return `/api/v1/mobile/screens/${encodeURIComponent(key)}?${query.toString()}`;
+}
+
+export function peekCachedScreen(
+  key: string,
+  market: Market,
+  params: Record<string, string> = {},
+): Promise<ScreenCacheEntry<MobileScreen> | null> {
+  if (!activeUserId) return Promise.resolve(null);
+  return readScreenCache<MobileScreen>(activeUserId, screenPath(key, market, params));
+}
+
+export function getScreen(key: string, market: Market, params: Record<string, string> = {}, cursor?: string) {
+  return request<MobileScreen>(screenPath(key, market, params, cursor));
 }
