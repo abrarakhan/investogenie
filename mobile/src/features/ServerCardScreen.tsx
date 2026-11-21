@@ -5,7 +5,7 @@ import {
 } from "react-native";
 import Svg, { Line, Rect } from "react-native-svg";
 import {
-  createMutationKey, createTrade, getCandles, getScreen, peekCachedScreen,
+  ApiError, createMutationKey, createTrade, getCandles, getScreen, peekCachedScreen,
   type CandlePoint, type Market, type MobileScreen, type ScreenCard, type TradeAction,
 } from "../api";
 import { Card } from "../design/Card";
@@ -23,7 +23,18 @@ function formatFreshness(updatedAt: number | null, fromCache: boolean): string |
 }
 
 /** Generic renderer shared by every server-built market and strategy screen. */
-export default function ServerCardScreen({ screenKey, title, market }: { screenKey: string; title: string; market: Market }) {
+export default function ServerCardScreen({
+  screenKey,
+  fallbackScreenKey,
+  title,
+  market,
+}: {
+  screenKey: string;
+  fallbackScreenKey?: string;
+  title: string;
+  market: Market;
+}) {
+  const [activeKey, setActiveKey] = useState(screenKey);
   const [screen, setScreen] = useState<MobileScreen | null>(null);
   const [params, setParams] = useState<Record<string, string>>({});
   const [search, setSearch] = useState("");
@@ -37,37 +48,44 @@ export default function ServerCardScreen({ screenKey, title, market }: { screenK
   useEffect(() => {
     let active = true;
     let settledLive = false;
-    void peekCachedScreen(screenKey, market, params).then((cached) => {
+    void peekCachedScreen(activeKey, market, params).then((cached) => {
       if (active && !settledLive && cached) {
         setScreen(cached.payload);
         setFromCache(true);
         setUpdatedAt(cached.savedAt);
       }
     });
-    getScreen(screenKey, market, params).then((result) => {
+    getScreen(activeKey, market, params).then((result) => {
       if (!active) return;
       settledLive = true;
       setScreen(result);
       setFromCache(false);
       setUpdatedAt(Date.now());
     })
-      .catch((cause) => { if (active) setError(errorMessage(cause, `Could not load ${title}`)); })
+      .catch((cause) => {
+        if (!active) return;
+        if (cause instanceof ApiError && cause.status === 404 && fallbackScreenKey && activeKey !== fallbackScreenKey) {
+          setActiveKey(fallbackScreenKey);
+          return;
+        }
+        setError(errorMessage(cause, `Could not load ${title}`));
+      })
       .finally(() => { if (active) setRefreshing(false); });
     return () => { active = false; };
-  }, [screenKey, market, params, title, reloads]);
+  }, [activeKey, fallbackScreenKey, market, params, title, reloads]);
   const load = useCallback(() => { setRefreshing(true); setError(""); setReloads((count) => count + 1); }, []);
   const loadMore = useCallback(() => {
     const cursor = screen?.pagination?.nextCursor;
     if (!cursor || loadingMore) return;
     setLoadingMore(true);
-    getScreen(screenKey, market, params, cursor)
+    getScreen(activeKey, market, params, cursor)
       .then((next) => setScreen((current) => current ? {
         ...next,
         cards: [...current.cards, ...next.cards.filter((card) => !current.cards.some((existing) => existing.id === card.id))],
       } : next))
       .catch((cause) => setError(errorMessage(cause, `Could not load more ${title}`)))
       .finally(() => setLoadingMore(false));
-  }, [loadingMore, market, params, screen?.pagination?.nextCursor, screenKey, title]);
+  }, [activeKey, loadingMore, market, params, screen?.pagination?.nextCursor, title]);
   useEffect(() => {
     let timer: ReturnType<typeof setInterval> | null = null;
     const start = () => { if (!timer) timer = setInterval(load, 300_000); };

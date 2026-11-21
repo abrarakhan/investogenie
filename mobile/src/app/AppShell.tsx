@@ -4,6 +4,7 @@ import { getScreenCatalog, type Market, type MobileUser } from "../api";
 import { registerDeviceNotifications } from "../deviceSecurity";
 import { colors, hapticSelection, radius, spacing } from "../design/tokens";
 import { DiscoverHub } from "../features/discover/DiscoverHub";
+import { HomeScreen } from "../features/home/HomeScreen";
 import { MoreHub } from "../features/more/MoreHub";
 import { PortfolioHub } from "../features/portfolio/PortfolioHub";
 import { MOBILE_FEATURES, supportedMobileFeatures, type MobileFeatureEntry } from "../features/registry";
@@ -94,7 +95,12 @@ export function AppShell({
     );
   };
 
-  const marketFeature = screens.find((item) => item.key === "market") ?? MOBILE_FEATURES[0];
+  const navigateTo = (nextDestination: DestinationKey, screenKey?: string) => {
+    setDestination(nextDestination);
+    if (nextDestination === "discover" && screenKey) setDiscoverKey(screenKey);
+    if (nextDestination === "strategies" && screenKey) setStrategyKey(screenKey);
+    if (deepLink) onDeepLinkHandled();
+  };
 
   return (
     <View style={styles.flex}>
@@ -124,7 +130,7 @@ export function AppShell({
       </View>
 
       <View style={styles.flex}>
-        {activeDestination === "home" && renderFeature(marketFeature)}
+        {activeDestination === "home" && <HomeScreen market={market} onNavigate={navigateTo} />}
         {activeDestination === "discover" && (
           <DiscoverHub
             market={market}
