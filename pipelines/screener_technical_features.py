@@ -22,6 +22,16 @@ INCREMENTAL_WRITE_DAYS = 120
 # 320 calendar days comfortably contains the 200 completed trading sessions
 # needed by the longest indicator, including weekends and exchange holidays.
 INCREMENTAL_LOOKBACK_DAYS = 320
+# numeric(6,2) overflows at 10,000.00. A legitimate one-day stock-versus-index
+# alpha never approaches that; anything beyond it is an unadjusted provider datum.
+MAX_STORED_ALPHA_ABS = 10_000.0
+
+
+def bounded_nifty_alpha(stock_change_pct: float | None, benchmark_change_pct: float | None) -> float | None:
+    if stock_change_pct is None or benchmark_change_pct is None:
+        return None
+    alpha = float(stock_change_pct) - float(benchmark_change_pct)
+    return None if not np.isfinite(alpha) or abs(alpha) >= MAX_STORED_ALPHA_ABS else round(alpha, 2)
 
 
 def history_start_date(today: date, years: int, incremental: bool) -> date:
@@ -133,6 +143,80 @@ def compute_fundamental_features(reports: pd.DataFrame) -> list[tuple]:
     return payload
 
 
+def write_midway_columns(cur, since: str | None) -> int:
+    """Fill the mid-way evidence columns on the screener's point-in-time rows.
+
+    Done as set-based statements rather than inside the pandas feature pass.
+    Delivery is matched per session so a historical row keeps the delivery that
+    session actually had. Benchmark return uses a single chosen index series so
+    lag(o.close) never mixes two different benchmark assets on the same date.
+    """
+    bounds = ("and d.date >= %s::date", (since,)) if since else ("", ())
+    cur.execute(
+        f"""
+        with delivery as (
+          select m.asset_id, m.date, m.deliv_pct, m.deliv_qty,
+                 avg(m.deliv_qty) over (
+                   partition by m.asset_id order by m.date
+                   rows between 20 preceding and 1 preceding
+                 ) baseline
+            from public.daily_delivery_metrics m
+           where not m.is_etf
+        )
+        update public.screener_technical_daily d
+           set deliv_pct = delivery.deliv_pct,
+               rel_deliv_20d = case
+                 when delivery.baseline is null or delivery.baseline <= 0 then null
+                 else round((delivery.deliv_qty / delivery.baseline)::numeric, 2) end
+          from delivery
+         where delivery.asset_id = d.asset_id and delivery.date = d.date {bounds[0]}
+        """,
+        bounds[1],
+    )
+    delivery_rows = cur.rowcount
+    cur.execute(
+        f"""
+        with chosen as (
+          select a.id from public.assets a
+           where a.country='IN' and a.ticker in ('NIFTY 500','NIFTY','NIFTY 50','NIFTYBEES')
+           order by (select max(x.date) from public.daily_ohlcv x where x.asset_id=a.id) desc nulls last,
+                    (select count(*) from public.daily_ohlcv x where x.asset_id=a.id) desc,
+                    case a.ticker when 'NIFTY 500' then 0 when 'NIFTY' then 1 when 'NIFTY 50' then 2 else 3 end
+           limit 1
+        ), benchmark as (
+          select o.date,
+                 (o.close / nullif(lag(o.close) over (partition by o.asset_id order by o.date), 0) - 1) * 100 change_pct
+            from public.daily_ohlcv o
+            join chosen c on c.id = o.asset_id
+        )
+        update public.screener_technical_daily d
+           set nifty_alpha_1d = case
+                 when abs(d.change_pct_1d - benchmark.change_pct) >= {MAX_STORED_ALPHA_ABS} then null
+                 else round((d.change_pct_1d - benchmark.change_pct)::numeric, 2)
+               end
+          from benchmark
+         where benchmark.date = d.date and d.change_pct_1d is not null
+           and benchmark.change_pct is not null {bounds[0]}
+        """,
+        bounds[1],
+    )
+    alpha_rows = cur.rowcount
+    cur.execute(
+        f"""
+        update public.screener_technical_daily d
+           set setup_variant = t.setup_variant,
+               catalyst_tag = t.catalyst_tag,
+               days_since_results = t.days_since_results,
+               ibs_close = t.ibs_close,
+               tod_rvol = t.tod_rvol
+          from public.trend_continuation_signals t
+         where t.asset_id = d.asset_id and t.asof_market_date = d.date {bounds[0]}
+        """,
+        bounds[1],
+    )
+    return delivery_rows + alpha_rows + cur.rowcount
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--market", choices=("IN", "US"))
@@ -242,8 +326,10 @@ def main() -> None:
                     fundamental_payload,
                     page_size=2000,
                 )
+            midway = write_midway_columns(cur, write_since)
         conn.commit()
-        print(f"[screener-features] wrote {written} rows ({args.market or 'ALL'}, {'incremental' if incremental else 'full'})")
+        print(f"[screener-features] wrote {written} rows, {midway} mid-way column updates "
+              f"({args.market or 'ALL'}, {'incremental' if incremental else 'full'})")
     finally:
         conn.close()
 

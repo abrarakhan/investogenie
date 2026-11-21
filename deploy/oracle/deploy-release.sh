@@ -41,9 +41,18 @@ sudo -u "${APP_USER}" bash -lc \
 sudo -u "${APP_USER}" "${APP_DIR}/.venv/bin/pip" install -r "${APP_DIR}/pipelines/requirements.txt"
 sudo -u "${APP_USER}" "${APP_DIR}/.venv/bin/pip" install -r "${APP_DIR}/workers/requirements.txt"
 
-# Stop live app and Breeze workers before running schema migrations so DDL
-# statements never deadlock on table locks held by active scan queries.
-systemctl stop investogenie investogenie-breeze.service || true
+# Schema changes can require an exclusive lock on tables read by both long-running
+# services. Stop the old revision only after the new build is ready, and always bring
+# it back if a migration or verification step fails.
+services_stopped=0
+restore_services() {
+  if [[ "${services_stopped}" == "1" ]]; then
+    systemctl start investogenie.service investogenie-breeze.service || true
+  fi
+}
+trap restore_services EXIT
+systemctl stop investogenie.service investogenie-breeze.service || true
+services_stopped=1
 
 sudo -u "${APP_USER}" bash -lc \
   "set -a; source /etc/investogenie/investogenie.env; set +a; cd '${APP_DIR}' && node scripts/apply-production-migrations.mjs"
@@ -75,6 +84,8 @@ systemctl daemon-reload
 systemctl restart investogenie
 systemctl enable --now investogenie-breeze.service
 systemctl restart investogenie-breeze.service
+services_stopped=0
+trap - EXIT
 # Nothing backed up this database until the timer existed; keep it enabled on every release.
 systemctl enable --now investogenie-backup.timer
 sleep 5

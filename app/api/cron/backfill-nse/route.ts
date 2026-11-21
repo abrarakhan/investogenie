@@ -26,7 +26,8 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const maxSessions = Number(request.nextUrl.searchParams.get("maxSessions") ?? 20);
+    const requestedMaxSessions = request.nextUrl.searchParams.get("maxSessions");
+    const maxSessions = requestedMaxSessions === null ? undefined : Number(requestedMaxSessions);
     const startISO = request.nextUrl.searchParams.get("startISO") ?? undefined;
     const endISO = request.nextUrl.searchParams.get("endISO") ?? undefined;
     const isoDate = /^\d{4}-\d{2}-\d{2}$/;
@@ -34,7 +35,9 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ ok: false, error: "startISO and endISO must use YYYY-MM-DD" }, { status: 400 });
     }
     const summary = await backfillNseHistory(databaseUrl, {
-      maxSessions: Number.isFinite(maxSessions) ? Math.min(60, Math.max(1, maxSessions)) : 20,
+      ...(maxSessions !== undefined
+        ? { maxSessions: Number.isFinite(maxSessions) ? Math.min(60, Math.max(1, maxSessions)) : 20 }
+        : {}),
       startISO,
       endISO,
     });
