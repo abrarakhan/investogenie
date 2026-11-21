@@ -14,6 +14,8 @@ export interface Preset {
   description: string;
   filters: Filter[];
   sort?: SortSpec;
+  /** Highlight this preset chip in the filter bar. */
+  highlight?: boolean;
   /** Non-declarative presets the service resolves at query time (e.g. sector
    *  median). The listed filters act as a sensible fallback. */
   dynamic?: "value";
@@ -21,6 +23,10 @@ export interface Preset {
 
 export const PRESETS: Preset[] = [
   // --- Price action --------------------------------------------------------
+  { key: "midway_setup", label: "Mid-Way Setup", group: "Price action", highlight: true,
+    description: "Active Mid-Way setups (Stage-2 Impulse, EP Rebound, 3D Stair-Step) sorted by 20-day delivery expansion",
+    filters: [{ field: "setup_variant", op: "in", value: ["STAGE2_IMPULSE", "EP_REBOUND", "STAIR_STEP"] }],
+    sort: { field: "rel_deliv_20d", dir: "desc" } },
   { key: "top_gainers", label: "Top gainers", group: "Price action",
     description: "Biggest 1-day % gains", filters: [{ field: "change_pct_1d", op: "gt", value: 0 }],
     sort: { field: "change_pct_1d", dir: "desc" } },

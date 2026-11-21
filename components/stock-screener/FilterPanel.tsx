@@ -77,7 +77,9 @@ export default function FilterPanel({
                 className={`rounded-full border px-2.5 py-1 text-xs transition-colors ${
                   activePreset === p.key
                     ? "border-[var(--ig-accent,#22d3ee)] bg-[var(--ig-accent,#22d3ee)]/15 text-white"
-                    : "border-white/10 text-white/60 hover:bg-white/5 hover:text-white"
+                    : p.highlight
+                      ? "border-emerald-400/35 bg-emerald-400/10 font-semibold text-emerald-200 hover:bg-emerald-400/20"
+                      : "border-white/10 text-white/60 hover:bg-white/5 hover:text-white"
                 }`}
               >
                 {p.label}

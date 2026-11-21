@@ -105,7 +105,7 @@ sudo bash /opt/investogenie/app/deploy/lightsail/deploy-release.sh
 ```
 
 The release script updates the checkout and re-executes the checked-out version once, then installs locked dependencies, builds Next.js, discovers and applies the ordered migrations
-from `0033_breeze_credentials.sql` onward in filename order (currently through 0077), verifies required production relations, restarts the web
+from `0033_breeze_credentials.sql` onward in filename order (currently through 0087), verifies required production relations, restarts the web
 scheduler and Breeze services, and checks the local login endpoint.
 
 Install the local PostgreSQL backup job:
@@ -118,7 +118,7 @@ echo '20 2 * * * root /usr/local/sbin/investogenie-backup' | \
 ```
 
 The local seven-day rotation protects against bad deployments but not VM or
-volume loss. Also schedule OCI block-volume backups or copy encrypted dumps to
+volume loss. Also schedule AWS Lightsail snapshots or copy encrypted dumps to
 off-instance storage.
 
 ## Operating notes

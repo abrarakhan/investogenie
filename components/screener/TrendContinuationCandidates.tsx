@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import type { TrendContinuationCandidate, TrendContinuationStatus } from "@/features/trend-continuation/contracts";
 import { TREND_CONTINUATION_STATUS_LABEL } from "@/lib/candidateStatusCopy";
@@ -132,6 +133,7 @@ export default function TrendContinuationCandidates({ candidates, planIds, count
   market?: string;
 }) {
   const { chart, closeChart, bindChartGesture } = useTradingViewChart();
+  const [view, setView] = useState<"ALL" | "MIDWAY">("ALL");
   const ranked = new Map(candidates.map((candidate, index) => [candidate.assetId, ranks?.[candidate.assetId] ?? index + 1]));
   const total = (status: TrendContinuationStatus, shown: number) => counts?.[status] ?? shown;
   const group = (status: TrendContinuationStatus, shown: TrendContinuationCandidate[]) => market && LAZY_STATUSES.trend.has(status)
@@ -139,6 +141,8 @@ export default function TrendContinuationCandidates({ candidates, planIds, count
     : { candidates: shown, totalCount: total(status, shown.length) };
   const candidateCount = counts ? Object.values(counts).reduce((sum, value) => sum + value, 0) : candidates.length;
   const ready = candidates.filter((candidate) => candidate.status === "TREND_CONTINUATION_READY");
+  const midwayReady = ready.filter((candidate) => typeof candidate.metrics.setup_variant === "string");
+  const midwayTotal = midwayReady.length + midwayWatch.length;
   const watch = candidates.filter((candidate) => candidate.status === "CONTINUATION_WATCH");
   const impulse = candidates.filter((candidate) => candidate.status === "IMPULSE_DETECTED");
   const extended = candidates.filter((candidate) => candidate.status === "EXTENDED_RISK");
@@ -153,13 +157,38 @@ export default function TrendContinuationCandidates({ candidates, planIds, count
         <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-violet-300">Python signal engine · protected manual execution</div>
         <h2 className="mt-1 text-2xl font-black">Trend Continuation</h2>
         <p className="mt-1 max-w-3xl text-sm leading-relaxed text-white/45">
-          Finds stocks rising for a second session. A two-session staircase becomes an entry after 10:15 IST only above its 20-session high, in a rising broad market, for a liquid stock with top-30% six-month strength. Heavy-volume day-one breakouts are confirmed the same way on day two. Stocks that reverse are dropped, and pullbacks are watch-only.
+          Tracks institutional Mid-Way continuation across three trigger paths — <strong className="text-white/70">Stage-2 Impulse</strong> (≥ 2.5× RVOL in an uptrend), <strong className="text-white/70">EP Rebound</strong> (recent results or material news with ≥ 65% delivery reclaiming a rising EMA20), and <strong className="text-white/70">3D Stair-Step</strong> (three consecutive strong closes) — plus <strong className="text-white/70">Days 3–5 VDU Pause</strong> resumptions holding above EMA10 / Anchored VWAP on drying volume. All paths require ≥ 55% delivery or 2.5× 20-day delivery, IBS ≥ 0.75, and stop below the anti-chasing exhaustion ceiling (5-day gain &gt; 22% or RSI ≥ 80). Legacy day-two staircases are kept alongside for comparison.
         </p>
       </div>
       <div className="text-right text-xs text-white/40">
         <div><span className="font-mono font-bold text-white/75">{candidateCount}</span> ranked continuation signals{scanTotal > candidateCount ? <> of <span className="font-mono font-bold text-white/75">{scanTotal}</span> in the scan</> : null}</div>
         <div>Universe scan every 15 minutes; live execution checks refresh with quotes</div>
       </div>
+    </div>
+
+    <div className="flex flex-wrap items-center gap-2">
+      <button
+        type="button"
+        onClick={() => setView("ALL")}
+        className={`rounded-full border px-3.5 py-1.5 text-xs font-semibold transition-colors ${
+          view === "ALL"
+            ? "border-violet-400/50 bg-violet-400/15 text-white"
+            : "border-white/10 text-white/50 hover:text-white"
+        }`}
+      >
+        All signals <span className="ml-1 font-mono text-[10px] text-white/50">{candidateCount}</span>
+      </button>
+      <button
+        type="button"
+        onClick={() => setView("MIDWAY")}
+        className={`rounded-full border px-3.5 py-1.5 text-xs font-semibold transition-colors ${
+          view === "MIDWAY"
+            ? "border-emerald-400/50 bg-emerald-400/15 text-emerald-200"
+            : "border-emerald-400/25 bg-emerald-400/[0.05] text-emerald-200/75 hover:bg-emerald-400/10 hover:text-emerald-100"
+        }`}
+      >
+        Mid-Way setups <span className="ml-1 font-mono text-[10px]">{midwayTotal}</span>
+      </button>
     </div>
 
     <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
@@ -178,14 +207,21 @@ export default function TrendContinuationCandidates({ candidates, planIds, count
       <span className="font-bold">Broad market is below its 50-session average.</span> New entries are withheld: in this condition continuation trades lost money on average. Second-day movers are still listed as watch-only.
     </div>}
     <div className="rounded-lg border border-violet-400/15 bg-violet-400/[0.035] px-4 py-3 text-xs leading-relaxed text-violet-100/65">
-      A confirmed day-two entry may unlock manual Buy &amp; Track after 10:15 IST only when fresh Breeze depth, spread, circuit room, results calendar, plan geometry and freshness checks pass. Day-one impulses and pullbacks remain observation-only; auto-buy stays disabled.
+      A Mid-Way or day-two setup unlocks manual Buy &amp; Track after 10:15 IST only when price clears its frozen breakout / VDU ceiling on required live volume pace (2.5× impulse, 1.8× stair-step, 1.5× VDU pause) and fresh Breeze depth, spread, circuit room, and results-calendar checks pass. Auto-buy stays disabled.
       <span className="mt-2 block text-white/55">
-        In a day-by-day replay of 2025–26 NSE data the day-two continuation entry averaged +0.3% a trade before costs with 45% winners — about break-even, so size it as an experiment. Its live results are tracked under Strategy Tests.
+        Mid-Way variants are tracked per path under Strategy Tests (`ENGINE:MIDWAY_*`); size them as experimental until live forward evidence accumulates.
       </span>
       <span className="mt-2 block text-white/45">Double-click a stock card, or long-press it on mobile, to open its interactive chart.</span>
     </div>
 
-    {!candidateCount
+    {view === "MIDWAY"
+      ? (!midwayTotal
+        ? <div className="rounded-lg border border-white/10 px-4 py-8 text-center text-sm text-white/45">No Stage-2 Impulse, EP Rebound, 3D Stair-Step, or VDU Pause setup qualified on the latest scan (all three Mid-Way paths require ≥ 55% delivery or 2.5× 20-day delivery, IBS ≥ 0.75, and non-exhausted RSI/5d gain).</div>
+        : <div className="space-y-3">
+          <CandidateGroup title="Mid-Way ready" candidates={midwayReady} ranked={ranked} planIds={planIds} color="text-emerald-300" defaultOpen bindChartGesture={bindChartGesture} />
+          <CandidateGroup title="Mid-Way setups · Stage-2 / EP / Stair-Step / VDU" candidates={midwayWatch} ranked={ranked} planIds={planIds} color="text-emerald-200" defaultOpen bindChartGesture={bindChartGesture} />
+        </div>)
+      : (!candidateCount
       ? <div className="rounded-lg border border-white/10 px-4 py-8 text-center text-sm text-white/45">No recent multi-session impulse currently passes the Trend Continuation floor.</div>
       : <div className="space-y-3">
         <CandidateGroup title="Continuation ready" {...group("TREND_CONTINUATION_READY", ready)} ranked={ranked} planIds={planIds} color="text-emerald-300" defaultOpen bindChartGesture={bindChartGesture} />
@@ -194,7 +230,7 @@ export default function TrendContinuationCandidates({ candidates, planIds, count
         <CandidateGroup title="Continuation watch" {...group("CONTINUATION_WATCH", watch)} ranked={ranked} planIds={planIds} color="text-amber-200" bindChartGesture={bindChartGesture} />
         <CandidateGroup title="Impulse detected" {...group("IMPULSE_DETECTED", impulse)} ranked={ranked} planIds={planIds} color="text-cyan-200" bindChartGesture={bindChartGesture} />
         <CandidateGroup title="Extended · do not chase" {...group("EXTENDED_RISK", extended)} ranked={ranked} planIds={planIds} color="text-rose-200" bindChartGesture={bindChartGesture} />
-      </div>}
+      </div>)}
     <TradingViewChartModal chart={chart} onClose={closeChart} />
   </div>;
 }
