@@ -5,11 +5,19 @@ import {
 } from "react-native";
 import Svg, { Line, Rect } from "react-native-svg";
 import {
-  createMutationKey, createTrade, getCandles, getScreen,
+  createMutationKey, createTrade, getCandles, getScreen, peekCachedScreen,
   type CandlePoint, type Market, type MobileScreen, type ScreenCard, type ScreenTone, type TradeAction,
 } from "../api";
+import { CardListSkeleton } from "../design/Skeleton";
 import { amount, errorMessage, marketDate, money } from "../format";
 import { Action, Banner, Empty, Metric, ScreenHead } from "../ui";
+
+function formatFreshness(updatedAt: number | null, fromCache: boolean): string | null {
+  if (!updatedAt) return null;
+  const elapsedMin = Math.max(0, Math.floor((Date.now() - updatedAt) / 60_000));
+  const age = elapsedMin < 1 ? "just now" : elapsedMin < 60 ? `${elapsedMin}m ago` : `${Math.floor(elapsedMin / 60)}h ago`;
+  return fromCache ? `Cached · updated ${age}` : `Updated ${age}`;
+}
 
 /** Generic renderer shared by every server-built market and strategy screen. */
 export default function ServerCardScreen({ screenKey, title, market }: { screenKey: string; title: string; market: Market }) {
@@ -21,9 +29,25 @@ export default function ServerCardScreen({ screenKey, title, market }: { screenK
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState("");
   const [reloads, setReloads] = useState(0);
+  const [fromCache, setFromCache] = useState(false);
+  const [updatedAt, setUpdatedAt] = useState<number | null>(null);
   useEffect(() => {
     let active = true;
-    getScreen(screenKey, market, params).then((result) => { if (active) setScreen(result); })
+    let settledLive = false;
+    void peekCachedScreen(screenKey, market, params).then((cached) => {
+      if (active && !settledLive && cached) {
+        setScreen(cached.payload);
+        setFromCache(true);
+        setUpdatedAt(cached.savedAt);
+      }
+    });
+    getScreen(screenKey, market, params).then((result) => {
+      if (!active) return;
+      settledLive = true;
+      setScreen(result);
+      setFromCache(false);
+      setUpdatedAt(Date.now());
+    })
       .catch((cause) => { if (active) setError(errorMessage(cause, `Could not load ${title}`)); })
       .finally(() => { if (active) setRefreshing(false); });
     return () => { active = false; };
@@ -54,20 +78,24 @@ export default function ServerCardScreen({ screenKey, title, market }: { screenK
   }, [load]);
   if (selected) return <CardDetail card={selected} market={market} onBack={() => setSelected(null)} />;
   const setParam = (param: string, value: string) => { setRefreshing(true); setError(""); setParams((current) => ({ ...current, [param]: value })); };
+  const freshness = formatFreshness(updatedAt, fromCache);
   return <View style={styles.flex}>
     <ScreenHead title={screen?.title ?? title} subtitle={screen?.subtitle ?? "Loading from the server."} />
-    {!!screen?.summary && <Text style={styles.summary}>{screen.summary}</Text>}
+    {(!!screen?.summary || !!freshness) && <View style={styles.metaBar}>
+      {!!screen?.summary && <Text style={styles.summary}>{screen.summary}</Text>}
+      {!!freshness && <Text style={fromCache ? styles.cachedTag : styles.freshTag}>{freshness}</Text>}
+    </View>}
     {!!screen?.notice && <Text style={styles.notice}>{screen.notice}</Text>}
     {screen?.options.map((option) => <ScrollView key={option.param} horizontal showsHorizontalScrollIndicator={false} style={styles.chipBar} contentContainerStyle={styles.chips}>
       {option.choices.map((choice) => <Pressable key={choice.value} onPress={() => setParam(option.param, choice.value)} style={[styles.chip, (params[option.param] ?? option.value) === choice.value && styles.chipActive]}><Text style={(params[option.param] ?? option.value) === choice.value ? styles.chipTextActive : styles.chipText}>{choice.label}</Text></Pressable>)}
     </ScrollView>)}
     {screen?.searchable && <View style={styles.searchRow}><TextInput style={styles.input} value={search} onChangeText={setSearch} onSubmitEditing={() => setParam("search", search.trim())} returnKeyType="search" placeholder="Search symbol or name" placeholderTextColor="#697078" autoCapitalize="characters" autoCorrect={false} /></View>}
     {!!error && <Banner>{error}</Banner>}
-    <FlatList data={screen?.cards ?? []} keyExtractor={(item) => item.id} onEndReached={loadMore} onEndReachedThreshold={0.4} ListFooterComponent={loadingMore ? <ActivityIndicator color="#34d399" /> : null} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={load} tintColor="#34d399" />} contentContainerStyle={styles.list} ListEmptyComponent={!refreshing ? <Empty>Nothing to show right now.</Empty> : null} renderItem={({ item }) => <Pressable onPress={() => setSelected(item)} style={styles.card}>
+    {!screen && refreshing ? <CardListSkeleton count={4} /> : <FlatList data={screen?.cards ?? []} keyExtractor={(item) => item.id} onEndReached={loadMore} onEndReachedThreshold={0.4} ListFooterComponent={loadingMore ? <ActivityIndicator color="#34d399" /> : null} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={load} tintColor="#34d399" />} contentContainerStyle={styles.list} ListEmptyComponent={!refreshing ? <Empty>Nothing to show right now.</Empty> : null} renderItem={({ item }) => <Pressable onPress={() => setSelected(item)} style={styles.card}>
       <View style={styles.rowBetween}><View style={styles.flex}><Text style={styles.ticker}>{item.title}</Text><Text numberOfLines={1} style={styles.meta}>{item.subtitle}</Text></View>{item.badge && <TonePill label={item.badge.label} tone={item.badge.tone} />}{item.score !== null && <View style={styles.score}><Text style={styles.scoreText}>{item.score}</Text></View>}</View>
       <View style={styles.metricRow}>{item.metrics.map((metric) => <Metric key={metric.label} label={metric.label} value={metric.value} positive={metric.tone === "positive"} negative={metric.tone === "negative"} />)}</View>
       {!!item.footer && <Text style={styles.cardFoot}>{item.footer}</Text>}
-    </Pressable>} />
+    </Pressable>} />}
   </View>;
 }
 
@@ -109,7 +137,7 @@ function Field({ value, onChangeText, placeholder, keyboard }: { value: string; 
 const TonePill = ({ label, tone }: { label: string; tone: ScreenTone }) => <View style={[styles.statePill, tone === "positive" ? styles.stateFavored : tone === "negative" ? styles.stateRisk : tone === "warning" ? styles.stateCaution : null]}><Text style={styles.stateText}>{label.toUpperCase()}</Text></View>;
 
 const styles = StyleSheet.create({
-  flex: { flex: 1 }, screenHead: { paddingHorizontal: 18, paddingTop: 8, paddingBottom: 12, gap: 5 }, title: { color: "#f7f8fa", fontSize: 27, fontWeight: "900" }, muted: { color: "#858c95", fontSize: 14, lineHeight: 21 }, summary: { color: "#697078", fontSize: 10, paddingHorizontal: 18, paddingBottom: 8 }, notice: { color: "#fbbf24", fontSize: 11, paddingHorizontal: 18, paddingBottom: 8 }, errorBanner: { color: "#fecdd3", backgroundColor: "#35131d", marginHorizontal: 18, marginBottom: 10, padding: 12, borderRadius: 7 }, errorText: { color: "#fb7185" },
+  flex: { flex: 1 }, screenHead: { paddingHorizontal: 18, paddingTop: 8, paddingBottom: 12, gap: 5 }, title: { color: "#f7f8fa", fontSize: 27, fontWeight: "900" }, muted: { color: "#858c95", fontSize: 14, lineHeight: 21 }, metaBar: { flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between", alignItems: "center", paddingHorizontal: 18, paddingBottom: 8, gap: 8 }, summary: { color: "#697078", fontSize: 10 }, freshTag: { color: "#697078", fontSize: 10, fontWeight: "700" }, cachedTag: { color: "#fbbf24", fontSize: 10, fontWeight: "700" }, notice: { color: "#fbbf24", fontSize: 11, paddingHorizontal: 18, paddingBottom: 8 }, errorBanner: { color: "#fecdd3", backgroundColor: "#35131d", marginHorizontal: 18, marginBottom: 10, padding: 12, borderRadius: 7 }, errorText: { color: "#fb7185" },
   chipBar: { flexGrow: 0, flexShrink: 0 }, chips: { paddingHorizontal: 14, paddingBottom: 8, gap: 8 }, chip: { borderWidth: 1, borderColor: "#252b33", borderRadius: 16, paddingHorizontal: 12, paddingVertical: 7 }, chipActive: { backgroundColor: "#102a22", borderColor: "#2b8c70" }, chipText: { color: "#858c95", fontSize: 12, fontWeight: "700" }, chipTextActive: { color: "#6ee7b7", fontSize: 12, fontWeight: "900" }, searchRow: { paddingHorizontal: 14, paddingBottom: 8 }, input: { color: "#f7f8fa", backgroundColor: "#0c1015", borderColor: "#242a32", borderWidth: 1, borderRadius: 8, paddingHorizontal: 15, height: 52 },
   list: { padding: 14, gap: 10, paddingBottom: 28 }, empty: { padding: 50, alignItems: "center" }, card: { backgroundColor: "#0b0f14", borderColor: "#252b33", borderWidth: 1, borderRadius: 8, padding: 15, gap: 14 }, rowBetween: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 10 }, ticker: { color: "#f8fafc", fontSize: 19, fontWeight: "900" }, meta: { color: "#707780", fontSize: 12, marginTop: 3 }, score: { minWidth: 43, height: 32, paddingHorizontal: 8, alignItems: "center", justifyContent: "center", borderRadius: 16, backgroundColor: "#103126" }, scoreText: { color: "#6ee7b7", fontWeight: "900" }, cardFoot: { color: "#949ba4", fontSize: 12 },
   metricRow: { flexDirection: "row", gap: 8 }, metricGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginVertical: 18 }, metric: { flex: 1, minWidth: 88, backgroundColor: "#080b0f", borderRadius: 6, padding: 10 }, metricLabel: { color: "#656c75", fontSize: 10, fontWeight: "700" }, metricValue: { color: "#e5e7eb", fontSize: 14, fontWeight: "800", marginTop: 5 }, goodValue: { color: "#34d399" }, badValue: { color: "#fb7185" },
