@@ -3,8 +3,12 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import type { Market } from "../../api";
 import { colors, hapticSelection, radius, spacing } from "../../design/tokens";
 import type { MobileFeatureEntry } from "../registry";
+import { WatchlistView } from "./WatchlistView";
+
+const WATCHLIST_TAB = { key: "watchlist", tabLabel: "Watchlist" } as const;
 
 export function DiscoverHub({
+  market,
   features,
   selectedKey,
   onSelectKey,
@@ -16,38 +20,42 @@ export function DiscoverHub({
   onSelectKey: (key: string) => void;
   renderFeature: (feature: MobileFeatureEntry) => ReactNode;
 }) {
+  const isWatchlist = selectedKey === WATCHLIST_TAB.key;
   const active = features.find((item) => item.key === selectedKey) ?? features[0];
-  if (!active) return null;
+  const tabs: Array<{ key: string; tabLabel: string }> = [
+    ...features.map((item) => ({ key: item.key, tabLabel: item.tabLabel })),
+    WATCHLIST_TAB,
+  ];
 
   return (
     <View style={styles.flex}>
-      {features.length > 1 && (
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          style={styles.bar}
-          contentContainerStyle={styles.row}
-        >
-          {features.map((feature) => {
-            const isActive = feature.key === active.key;
-            return (
-              <Pressable
-                key={feature.key}
-                onPress={() => {
-                  if (!isActive) hapticSelection();
-                  onSelectKey(feature.key);
-                }}
-                style={[styles.pill, isActive && styles.pillActive]}
-              >
-                <Text style={isActive ? styles.pillTextActive : styles.pillText}>
-                  {feature.tabLabel}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </ScrollView>
-      )}
-      <View style={styles.flex}>{renderFeature(active)}</View>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={styles.bar}
+        contentContainerStyle={styles.row}
+      >
+        {tabs.map((tab) => {
+          const isActive = isWatchlist ? tab.key === WATCHLIST_TAB.key : tab.key === active?.key;
+          return (
+            <Pressable
+              key={tab.key}
+              onPress={() => {
+                if (!isActive) hapticSelection();
+                onSelectKey(tab.key);
+              }}
+              style={[styles.pill, isActive && styles.pillActive]}
+            >
+              <Text style={isActive ? styles.pillTextActive : styles.pillText}>
+                {tab.tabLabel}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </ScrollView>
+      <View style={styles.flex}>
+        {isWatchlist ? <WatchlistView market={market} /> : active ? renderFeature(active) : null}
+      </View>
     </View>
   );
 }

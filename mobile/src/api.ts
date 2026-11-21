@@ -248,6 +248,29 @@ export function updateAlertPreferences(patch: Partial<Omit<MobileAlertPreference
   return mutation<{ preferences: MobileAlertPreferences }>("/api/v1/mobile/alerts", "PATCH", patch);
 }
 
+export interface MobileWatchlistItem {
+  id: string;
+  assetId: string;
+  ticker: string;
+  name: string | null;
+  exchange: string;
+  price: number | null;
+  changePct: number | null;
+  asOf: string | null;
+}
+
+export function getWatchlist(market: Market) {
+  return request<{ market: Market; items: MobileWatchlistItem[] }>(`/api/v1/mobile/watchlists?market=${market}`);
+}
+
+export function addToWatchlist(market: Market, ticker: string, idempotencyKey?: string) {
+  return mutation<{ ok: true; id: string | null }>("/api/v1/mobile/watchlists", "POST", { market, ticker }, idempotencyKey);
+}
+
+export function removeFromWatchlist(id: string, idempotencyKey?: string) {
+  return mutation<{ ok: true }>(`/api/v1/mobile/watchlists?id=${encodeURIComponent(id)}`, "DELETE", undefined, idempotencyKey);
+}
+
 export function registerPushToken(token: string, platform: "android" | "ios") {
   return request<{ ok: true }>("/api/v1/mobile/push-token", {
     method: "POST", body: JSON.stringify({ token, platform }),
