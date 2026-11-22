@@ -36,8 +36,8 @@ const DOT: Record<FreshnessStatus, string> = {
   off_hours: "bg-slate-400",
 };
 
-async function DataHealthDot() {
-  const status = await getWorstDataHealthStatus();
+async function DataHealthDot({ market }: { market: MarketId }) {
+  const status = await getWorstDataHealthStatus(market);
   return <span title={`Data health: ${status}`} className={`h-2 w-2 rounded-full ${DOT[status]}`} />;
 }
 
@@ -169,7 +169,7 @@ export default async function AppShell({
                         <span className="flex items-center gap-2">
                         {item.statusDot === "data-health" && (
                           <Suspense fallback={<span className="h-2 w-2 rounded-full bg-white/20" />}>
-                            <DataHealthDot />
+                            <DataHealthDot market={market} />
                           </Suspense>
                         )}
                         {item.badge && (
@@ -260,7 +260,7 @@ export default async function AppShell({
                             <span className="ml-2 flex shrink-0 items-center gap-2">
                               {item.statusDot === "data-health" && (
                                 <Suspense fallback={<span className="h-2 w-2 rounded-full bg-white/20" />}>
-                                  <DataHealthDot />
+                                <DataHealthDot market={market} />
                                 </Suspense>
                               )}
                               {item.badge && (

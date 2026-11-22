@@ -35,6 +35,17 @@ describe("dataHealthIndicatorStatus", () => {
   it("does not penalize a market feed during explicit off-hours", () => {
     expect(dataHealthIndicatorStatus([card("US Quotes", "off_hours")])).toBe("fresh");
   });
+
+  it("scopes the indicator to the selected market", () => {
+    const cards = [
+      card("NSE Quotes", "fresh"),
+      card("NSE OHLCV History", "fresh"),
+      card("India Fundamentals", "fresh"),
+      card("US Fundamentals", "failed"),
+    ];
+    expect(dataHealthIndicatorStatus(cards, "IN")).toBe("fresh");
+    expect(dataHealthIndicatorStatus(cards, "US")).toBe("failed");
+  });
 });
 
 describe("classifyFreshness", () => {

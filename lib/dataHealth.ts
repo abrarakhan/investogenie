@@ -263,9 +263,21 @@ const STOCK_HEALTH_SOURCES = new Set([
  * quotes, bars and fundamentals are strategy inputs and fail closed: stale,
  * unknown or failed input is shown red.
  */
-export function dataHealthIndicatorStatus(cards: SourceHealthCard[]): FreshnessStatus {
+function sourceBelongsToMarket(source: string, market?: "IN" | "US"): boolean {
+  if (!market) return true;
+  if (source.startsWith("US ")) return market === "US";
+  if (source.startsWith("NSE ") || source.startsWith("BSE ") || source === "India Fundamentals") {
+    return market === "IN";
+  }
+  // Macro is shared. AMC/CAS are India-only portfolio inputs.
+  if (source === "AMC Fund Snapshots" || source === "CAS Imports") return market === "IN";
+  return true;
+}
+
+export function dataHealthIndicatorStatus(cards: SourceHealthCard[], market?: "IN" | "US"): FreshnessStatus {
   let warning = false;
   for (const card of cards) {
+    if (!sourceBelongsToMarket(card.source, market)) continue;
     if (card.source === "AMC Fund Snapshots") continue;
     if (card.status === "fresh" || card.status === "off_hours") continue;
     if (STOCK_HEALTH_SOURCES.has(card.source)) return "failed";
@@ -480,9 +492,9 @@ export async function getDataHealthSummary(now = new Date()): Promise<SourceHeal
   });
 }
 
-export async function getWorstDataHealthStatus(): Promise<FreshnessStatus> {
+export async function getWorstDataHealthStatus(market?: "IN" | "US"): Promise<FreshnessStatus> {
   try {
-    return dataHealthIndicatorStatus(await getDataHealthSummary());
+    return dataHealthIndicatorStatus(await getDataHealthSummary(), market);
   } catch {
     return "unknown";
   }
