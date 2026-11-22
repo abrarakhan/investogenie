@@ -89,6 +89,16 @@ class SecEdgarFundamentalsTests(unittest.TestCase):
         self.assertEqual(by_date[date(2024, 3, 31)]["revenue"], 70.0)
         self.assertEqual(by_date[date(2026, 3, 31)]["revenue"], 100.0)
 
+    def test_leap_day_period_computes_yoy_without_invalid_date(self):
+        fixture = self.fixture()
+        fixture["facts"]["us-gaap"]["RevenueFromContractWithCustomerExcludingAssessedTax"] = concept("USD", [
+            fact(80_000_000, "2023-02-28", "10-Q", "2023-04-20", start="2022-12-01", fy=2023),
+            fact(100_000_000, "2024-02-29", "10-Q", "2024-04-20", start="2023-12-01", fy=2024),
+        ])
+        reports, _, _ = build_company_statements(fixture)
+        latest = next(row for row in reports if row["period_end_date"] == date(2024, 2, 29))
+        self.assertEqual(latest["sales_variance_yoy"], 25.0)
+
 
 if __name__ == "__main__":
     unittest.main()

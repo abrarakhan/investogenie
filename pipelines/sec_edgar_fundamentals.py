@@ -121,7 +121,9 @@ def load_companies(conn, ticker_map: dict[str, tuple[int, str]], requested: set[
     freshness = ""
     if not force:
         params.append(datetime.now(timezone.utc) - timedelta(days=max(0, stale_days)))
-        freshness = "and (s.last_success_at is null or s.last_success_at < %s)"
+        params.append(datetime.now(timezone.utc) - timedelta(days=max(1, stale_days)))
+        freshness = """and (s.last_success_at is null or s.last_success_at < %s)
+          and (s.last_error is null or s.last_attempt_at < %s)"""
     limit_sql = ""
     if limit is not None:
         params.append(max(1, limit))
@@ -242,7 +244,16 @@ def build_company_statements(payload: dict[str, Any]) -> tuple[list[dict], list[
         balances.append(balance_row)
     reports.sort(key=lambda row: (row["report_type"], row["period_end_date"]))
     for report in reports:
-        prior = next((row for row in reports if row["report_type"] == report["report_type"] and abs((row["period_end_date"] - report["period_end_date"].replace(year=report["period_end_date"].year - 1)).days) <= 45), None)
+        comparable = [
+            row for row in reports
+            if row["report_type"] == report["report_type"]
+            and 320 <= (report["period_end_date"] - row["period_end_date"]).days <= 410
+        ]
+        prior = min(
+            comparable,
+            key=lambda row: abs((report["period_end_date"] - row["period_end_date"]).days - 365),
+            default=None,
+        )
         report["profit_variance_yoy"] = pct_change(report.get("net_profit"), prior.get("net_profit") if prior else None)
         report["sales_variance_yoy"] = pct_change(report.get("revenue"), prior.get("revenue") if prior else None)
     for (end, report_type), values in cash.items():
