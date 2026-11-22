@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getSessionUser } from "@/lib/auth";
-import { query, tx } from "@/lib/db";
+import { rlsTx, tenantQuery } from "@/lib/db";
 import { getFundMappingData, countSnapshotStocks } from "@/lib/funds/fundMappingStore";
 
 async function requireUser() {
@@ -13,7 +13,7 @@ async function requireUser() {
 }
 
 async function ensureHolding(userId: string, holdingId: string) {
-  const rows = await query<{ id: string }>(
+  const rows = await tenantQuery<{ id: string }>(userId,
     `select h.id
        from public.holdings h
        join public.assets a on a.id = h.asset_id
@@ -31,7 +31,7 @@ export async function acceptFundSuggestion(formData: FormData) {
   const confidence = Number(formData.get("confidence") ?? 1);
   if (!holdingId || !schemeCode) throw new Error("Missing mapping target");
   await ensureHolding(user.id, holdingId);
-  await query(
+  await tenantQuery(user.id,
     `insert into public.user_fund_mappings (user_id, user_holding_id, scheme_code, status, match_method, confidence, matched_at, matched_by, updated_at)
      values ($1, $2, $3, 'matched', $4, $5, now(), $1, now())
      on conflict (user_id, user_holding_id) do update set
@@ -57,7 +57,7 @@ export async function rejectFundSuggestion(formData: FormData) {
   const schemeCode = String(formData.get("schemeCode") || "") || null;
   if (!holdingId) throw new Error("Missing fund holding");
   await ensureHolding(user.id, holdingId);
-  await query(
+  await tenantQuery(user.id,
     `insert into public.user_fund_mappings (user_id, user_holding_id, scheme_code, status, match_method, rejected_at, updated_at)
      values ($1, $2, $3, 'rejected', 'user_rejected', now(), now())
      on conflict (user_id, user_holding_id) do update set
@@ -79,7 +79,7 @@ export async function unlinkFundMapping(formData: FormData) {
   const user = await requireUser();
   const holdingId = String(formData.get("holdingId") ?? "");
   if (!holdingId) throw new Error("Missing fund holding");
-  await query("delete from public.user_fund_mappings where user_id = $1 and user_holding_id = $2", [user.id, holdingId]);
+  await tenantQuery(user.id, "delete from public.user_fund_mappings where user_id = $1 and user_holding_id = $2", [user.id, holdingId]);
   revalidatePath("/portfolio/fund-mapping");
   revalidatePath("/terminal/in");
 }
@@ -90,7 +90,7 @@ export async function autoAcceptIsinMatches() {
   const matches = data.funds.filter((fund) => fund.suggestion.method === "isin_exact" && fund.suggestion.schemeCode && fund.displayStatus !== "matched");
   if (matches.length === 0) return;
 
-  await tx(async (client) => {
+  await rlsTx({ kind: "tenant", userId: user.id }, async (client) => {
     for (const fund of matches) {
       await client.query(
         `insert into public.user_fund_mappings (user_id, user_holding_id, scheme_code, status, match_method, confidence, matched_at, matched_by, updated_at)

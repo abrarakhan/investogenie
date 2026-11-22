@@ -1,4 +1,4 @@
-import { query, queryOne } from "@/lib/db";
+import { tenantQuery, tenantQueryOne } from "@/lib/db";
 
 export interface BreezeReconciliation {
   scopeStart: string;
@@ -83,7 +83,7 @@ export async function getBreezeReconciliation(userId: string): Promise<BreezeRec
     mismatches: [], rejectedOrders: [], liveOrderUpdates: [], openOrders: [],
   };
   try {
-    const credential = await queryOne<{ configured: boolean; session_updated_at: Date | string | null }>(
+    const credential = await tenantQueryOne<{ configured: boolean; session_updated_at: Date | string | null }>(userId,
       `select breeze_api_key_encrypted is not null
               and breeze_api_secret_encrypted is not null
               and breeze_session_token_encrypted is not null configured,
@@ -91,14 +91,14 @@ export async function getBreezeReconciliation(userId: string): Promise<BreezeRec
          from public.user_credentials where user_id=$1`,
       [userId],
     );
-    const sync = await queryOne<SyncRow>(
+    const sync = await tenantQueryOne<SyncRow>(userId,
       `select status,holdings_count,positions_count,orders_count,error,started_at,finished_at
          from public.breeze_broker_syncs where user_id=$1
         order by started_at desc limit 1`,
       [userId],
     );
     const superseded = isSyncOlderThanSession(sync?.started_at, credential?.session_updated_at);
-    const scopedCounts = await queryOne<{ holdings_count: string; positions_count: string }>(
+    const scopedCounts = await tenantQueryOne<{ holdings_count: string; positions_count: string }>(userId,
       `with tracked as (
          select distinct upper(a.ticker) ticker
            from public.swing_trade_ledger l join public.assets a on a.id=l.asset_id
@@ -117,9 +117,9 @@ export async function getBreezeReconciliation(userId: string): Promise<BreezeRec
          from scoped`,
       [userId, scopeStart],
     );
-    const mismatches = await query<{
+    const mismatches = await tenantQuery<{
       ticker: string; exchange: string | null; broker_quantity: string; ledger_quantity: string;
-    }>(
+    }>(userId,
       `with tracked as (
          select distinct upper(a.ticker) ticker
            from public.swing_trade_ledger l join public.assets a on a.id=l.asset_id
@@ -157,10 +157,10 @@ export async function getBreezeReconciliation(userId: string): Promise<BreezeRec
         order by coalesce(b.ticker,l.ticker)`,
       [userId, scopeStart],
     );
-    const rejected = await query<{
+    const rejected = await tenantQuery<{
       order_id: string | null; stock_code: string | null; status: string | null;
       reason: string | null; captured_at: Date | string;
-    }>(
+    }>(userId,
       `select order_id,stock_code,coalesce(status,'Rejected') status,
               coalesce(raw_data->>'reason',raw_data->>'rejection_reason',raw_data->>'message') reason,
               captured_at
@@ -171,10 +171,10 @@ export async function getBreezeReconciliation(userId: string): Promise<BreezeRec
         order by captured_at desc limit 10`,
       [userId, scopeStart],
     );
-    const open = superseded ? [] : await query<{
+    const open = superseded ? [] : await tenantQuery<{
       order_id: string; name: string | null; action: string | null; status: string; order_type: string | null;
       quantity: string | null; pending_quantity: string | null; price: string | null; captured_at: Date | string;
-    }>(
+    }>(userId,
       `select s.order_id,coalesce(a.ticker,s.stock_code) name,s.action,s.status,
               s.raw_data->>'order_type' order_type,s.quantity,
               nullif(s.raw_data->>'pending_quantity','')::numeric pending_quantity,
@@ -190,10 +190,10 @@ export async function getBreezeReconciliation(userId: string): Promise<BreezeRec
       [userId],
     );
     // Shown newest first; a table that predates this feature simply has no rows.
-    const live = await query<{
+    const live = await tenantQuery<{
       id: string; name: string | null; action: string | null; status: string;
       quantity: string | null; executed_quantity: string | null; received_at: Date | string;
-    }>(
+    }>(userId,
       `select e.id::text,coalesce(a.ticker,e.stock_code) name,e.action,e.status,
               e.quantity,e.executed_quantity,e.received_at
          from public.breeze_order_events e

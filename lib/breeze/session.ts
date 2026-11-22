@@ -1,6 +1,6 @@
 import { SignJWT, jwtVerify } from "jose";
 import { decryptCredential, encryptCredential } from "@/lib/crypto/credentials";
-import { query, queryOne } from "@/lib/db";
+import { tenantQuery, tenantQueryOne } from "@/lib/db";
 import { triggerBreezeReconciliation } from "@/lib/breeze/reconciliation";
 
 export const BREEZE_CONNECT_COOKIE = "ig_breeze_connect";
@@ -48,7 +48,7 @@ export function extractBreezeApiSession(params: URLSearchParams): string | null 
 }
 
 export async function getBreezeApiKey(userId: string): Promise<string | null> {
-  const row = await queryOne<{ breeze_api_key_encrypted: string | null }>(
+  const row = await tenantQueryOne<{ breeze_api_key_encrypted: string | null }>(userId,
     "select breeze_api_key_encrypted from public.user_credentials where user_id=$1",
     [userId],
   );
@@ -58,7 +58,7 @@ export async function getBreezeApiKey(userId: string): Promise<string | null> {
 }
 
 export async function saveBreezeApiSession(userId: string, apiSession: string): Promise<boolean> {
-  const rows = await query<{ id: string }>(
+  const rows = await tenantQuery<{ id: string }>(userId,
     `update public.user_credentials
         set breeze_session_token_encrypted=$2,breeze_session_updated_at=now(),updated_at=now()
       where user_id=$1 and breeze_api_key_encrypted is not null

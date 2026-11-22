@@ -1,4 +1,4 @@
-import { query, queryOne } from "@/lib/db";
+import { query, queryOne, tenantQuery } from "@/lib/db";
 import { latestExpectedSessionDate, refreshMarketHolidays } from "@/lib/market-calendar.mjs";
 import type { UniversalBacktestResult, UniversalPricePoint } from "@/lib/analytics/universalPortfolio";
 import { backtestUniversalPortfolio } from "@/lib/universalPortfolio";
@@ -168,12 +168,12 @@ export async function getAdaptiveBacktest(input: {
 }
 
 export async function getSavedAdaptiveStrategies(userId: string, market: MarketId): Promise<SavedAdaptiveStrategy[]> {
-  const rows = await query<{
+  const rows = await tenantQuery<{
     id: string; name: string; market: MarketId; ticker_a: string; ticker_b: string;
     initial_capital: string; fee_bps: string; no_trade_band_pct: string; lookback_years: number;
     status: "ACTIVE" | "PAUSED"; latest_as_of: string | Date | null; latest_verdict: UniversalBacktestResult["verdict"] | null;
     latest_weight_a: string | null;
-  }>(
+  }>(userId,
     `select s.id,s.name,s.market,a.ticker ticker_a,b.ticker ticker_b,s.initial_capital,s.fee_bps,
             s.no_trade_band_pct,s.lookback_years,s.status,r.as_of latest_as_of,r.verdict latest_verdict,
             r.target_weight_a latest_weight_a

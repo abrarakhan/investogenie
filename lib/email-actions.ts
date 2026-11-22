@@ -1,7 +1,7 @@
 "use server";
 
 import { getSessionUser } from "@/lib/auth";
-import { queryOne } from "@/lib/db";
+import { tenantQueryOne } from "@/lib/db";
 
 // Every export of this "use server" module is a browser-callable Server Action.
 // Cross-user digest delivery lives in lib/email-digest.server.ts.
@@ -22,7 +22,7 @@ export async function getEmailPreferences(): Promise<EmailPreferences | null> {
   const user = await getSessionUser();
   if (!user) return null;
 
-  const result = await queryOne<{
+  const result = await tenantQueryOne<{
     id: string;
     user_id: string;
     enabled: boolean;
@@ -31,7 +31,7 @@ export async function getEmailPreferences(): Promise<EmailPreferences | null> {
     include_swing_candidates: boolean;
     include_probability: boolean;
     last_sent_at: Date | null;
-  }>(
+  }>(user.id,
     `select id, user_id, enabled, email, send_time, include_swing_candidates,
             include_probability, last_sent_at
      from public.email_preferences
@@ -67,7 +67,7 @@ export async function updateEmailPreferences(updates: {
 
   if (!existing) {
     // Create new preferences
-    const result = await queryOne<{
+    const result = await tenantQueryOne<{
       id: string;
       user_id: string;
       enabled: boolean;
@@ -76,7 +76,7 @@ export async function updateEmailPreferences(updates: {
       include_swing_candidates: boolean;
       include_probability: boolean;
       last_sent_at: Date | null;
-    }>(
+    }>(user.id,
       `insert into public.email_preferences (user_id, email, enabled, send_time,
         include_swing_candidates, include_probability)
        values ($1, $2, $3, $4, $5, $6)
@@ -96,7 +96,7 @@ export async function updateEmailPreferences(updates: {
   }
 
   // Update existing
-  const result = await queryOne<{
+  const result = await tenantQueryOne<{
     id: string;
     user_id: string;
     enabled: boolean;
@@ -105,7 +105,7 @@ export async function updateEmailPreferences(updates: {
     include_swing_candidates: boolean;
     include_probability: boolean;
     last_sent_at: Date | null;
-  }>(
+  }>(user.id,
     `update public.email_preferences
      set enabled = coalesce($2, enabled),
          send_time = coalesce($3, send_time),

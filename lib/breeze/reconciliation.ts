@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { queryOne } from "@/lib/db";
+import { workerQuery } from "@/lib/db";
 
 /**
  * Start the read-only account reconciliation after a daily token is replaced.
@@ -9,12 +9,12 @@ import { queryOne } from "@/lib/db";
 export async function triggerBreezeReconciliation(): Promise<boolean> {
   if (process.env.BREEZE_ACCOUNT_SYNC_DISABLED === "1") return false;
 
-  const running = await queryOne<{ running: boolean }>(
+  const running = (await workerQuery<{ running: boolean }>(
     `select exists(
        select 1 from public.breeze_broker_syncs
         where status='RUNNING' and started_at >= now() - interval '15 minutes'
      ) running`,
-  );
+  ))[0] ?? null;
   if (running?.running) return false;
 
   const root = process.cwd();

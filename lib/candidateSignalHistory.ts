@@ -1,4 +1,4 @@
-import { query } from "@/lib/db";
+import { tenantQuery } from "@/lib/db";
 
 export type CandidateSignalEngine = "STRONG_SWING" | "MOMENTUM_IGNITION" | "MOMENTUM_IGNITION_V2" | "TREND_CONTINUATION";
 
@@ -21,10 +21,10 @@ export async function getTodayReadySignalHistory(
   userId: string,
   market: "IN" | "US",
 ): Promise<ReadySignalHistoryRow[]> {
-  const rows = await query<{
+  const rows = await tenantQuery<{
     asset_id: string; ticker: string; engine: CandidateSignalEngine;
     first_ready_at: string; first_ready_status: string; latest_status: string; currently_ready: boolean;
-  }>(
+  }>(userId,
     `with todays as materialized (
        select o.*
          from public.candidate_signal_observations o

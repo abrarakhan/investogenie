@@ -4,7 +4,7 @@
  * neither may be a browser-callable Server Action. Cron routes only.
  */
 import "server-only";
-import { query, queryOne } from "@/lib/db";
+import { tenantQuery, tenantQueryOne, workerQuery } from "@/lib/db";
 import { buildEmailHtml, type EmailDigestData } from "@/lib/email/digest-template";
 import { sendEmailWithConfig } from "@/lib/email/nodemailer-service";
 import { getProbabilitySummary } from "@/lib/probability-runtime";
@@ -23,7 +23,7 @@ export function createEmailDigestBatchCache(): EmailDigestBatchCache {
 }
 
 export async function claimEmailDigest(userId: string, marketDate: string): Promise<boolean> {
-  const rows = await query<{ user_id: string }>(
+  const rows = await tenantQuery<{ user_id: string }>(userId,
     `insert into public.email_digest_deliveries(user_id,market_date,status)
      values($1,$2,'PROCESSING') on conflict do nothing returning user_id`,
     [userId, marketDate],
@@ -37,7 +37,7 @@ export async function finishEmailDigest(
   status: "SENT" | "FAILED",
   error?: string,
 ): Promise<void> {
-  await query(
+  await tenantQuery(userId,
     `update public.email_digest_deliveries
         set status=$3,completed_at=now(),error=$4
       where user_id=$1 and market_date=$2`,
@@ -49,7 +49,7 @@ export async function finishEmailDigest(
 export async function getEnabledEmailPreferences(): Promise<
   (EmailPreferences & { userName: string })[]
 > {
-  const results = await query<{
+  const results = await workerQuery<{
     id: string;
     user_id: string;
     enabled: boolean;
@@ -81,7 +81,7 @@ export async function getEnabledEmailPreferences(): Promise<
 
 /** Send email digest to a user. */
 export async function sendEmailDigest(userId: string, batchCache?: EmailDigestBatchCache): Promise<void> {
-  const prefs = await queryOne<{
+  const prefs = await tenantQueryOne<{
     id: string;
     user_id: string;
     enabled: boolean;
@@ -90,7 +90,7 @@ export async function sendEmailDigest(userId: string, batchCache?: EmailDigestBa
     include_swing_candidates: boolean;
     include_probability: boolean;
     last_sent_at: Date | null;
-  }>(
+  }>(userId,
     `select * from public.email_preferences where user_id = $1`,
     [userId],
   );
@@ -98,12 +98,12 @@ export async function sendEmailDigest(userId: string, batchCache?: EmailDigestBa
   if (!prefs || !prefs.enabled) return;
 
   // Get SMTP credentials from database
-  const smtpCreds = await queryOne<{
+  const smtpCreds = await tenantQueryOne<{
     smtp_host: string;
     smtp_port: number;
     smtp_user: string;
     smtp_password_encrypted: string;
-  }>(
+  }>(userId,
     `select smtp_host, smtp_port, smtp_user, smtp_password_encrypted
      from public.user_credentials where user_id = $1`,
     [userId],
@@ -171,7 +171,7 @@ export async function sendEmailDigest(userId: string, batchCache?: EmailDigestBa
   );
 
   // Update last_sent_at
-  await query(
+  await tenantQuery(userId,
     `update public.email_preferences set last_sent_at = now() where user_id = $1`,
     [userId],
   );

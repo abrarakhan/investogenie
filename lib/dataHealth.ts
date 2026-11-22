@@ -1,4 +1,4 @@
-import { query, queryOne } from "@/lib/db";
+import { workerQuery } from "@/lib/db";
 import type { FreshnessStatus } from "@/lib/status";
 import { getBackfillStatusSummary } from "@/lib/backfill/queue";
 import type { BackfillStatusSummary } from "@/lib/backfill/types";
@@ -354,7 +354,7 @@ export async function getDataHealthSummary(now = new Date()): Promise<SourceHeal
   await refreshMarketHolidays("IN");
   const nowIso = now.toISOString();
   const expectedIndianDate = expectedIndianBhavcopyDate(now);
-  const [rows, coverageRows] = await Promise.all([query<SourceRow>(
+  const [rows, coverageRows] = await Promise.all([workerQuery<SourceRow>(
     `with latest_cron as (
        select distinct on (job) job, status, error, created_at
          from public.cron_logs
@@ -408,7 +408,7 @@ export async function getDataHealthSummary(now = new Date()): Promise<SourceHeal
      select c.*, coalesce(l.status='error', false) failed
        from counts c
        left join latest_cron l on lower(c.source) like '%' || replace(l.job, '-', ' ') || '%'`,
-  ), query<IndianCoverageRow>(
+  ), workerQuery<IndianCoverageRow>(
     `with scoped as (
        select a.id,a.exchange,q.as_of::date quote_date,h.latest_date
          from public.assets a
@@ -500,7 +500,7 @@ function parseDetail(value: Record<string, unknown> | string | null): Record<str
 
 export async function getCoverageGaps(userId: string, now = new Date()): Promise<CoverageGap[]> {
   await refreshMarketHolidays("IN");
-  const rows = await query<AssetGapRow>(
+  const rows = await workerQuery<AssetGapRow>(
     `with uni as (select distinct asset_id from public.universe_members where universe in ('NIFTY_500','SP_500')),
           swing as (
             select distinct t.asset_id
@@ -594,7 +594,7 @@ export async function getCoverageGaps(userId: string, now = new Date()): Promise
     now: nowIso,
   }));
 
-  const fundRows = await query<{ fund_name: string; isin: string | null; status: string }>(
+  const fundRows = await workerQuery<{ fund_name: string; isin: string | null; status: string }>(
     `select coalesce(a.name, a.ticker) fund_name,
             nullif(m.amfi_code_in, '') isin,
             coalesce(map.status, 'pending') status
@@ -620,7 +620,7 @@ export async function getCoverageGaps(userId: string, now = new Date()): Promise
 }
 
 export async function getRecentCronLogs(limit = 50): Promise<CronLogEntry[]> {
-  const rows = await query<CronLogRow>(
+  const rows = await workerQuery<CronLogRow>(
     `select id, job, status, error, duration_ms, created_at, detail
        from public.cron_logs
       order by created_at desc
@@ -639,7 +639,7 @@ export async function getRecentCronLogs(limit = 50): Promise<CronLogEntry[]> {
 }
 
 export async function getQuoteNoHistoryCount(): Promise<number> {
-  const row = await queryOne<{ count: string }>(
+  const row = (await workerQuery<{ count: string }>(
     `select count(distinct (a.country, a.ticker))::text count
          from public.assets a
          join public.latest_quotes q on q.asset_id = a.id
@@ -652,7 +652,7 @@ export async function getQuoteNoHistoryCount(): Promise<number> {
             or (a.country='US' and a.exchange in ('NASDAQ','NYSE','AMEX','NYSEARCA','NYSEAMERICAN'))
           )
           and not exists(select 1 from public.daily_ohlcv o where o.asset_id=a.id)`,
-  );
+  ))[0] ?? null;
   return Number(row?.count ?? 0);
 }
 

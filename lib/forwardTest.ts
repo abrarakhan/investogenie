@@ -3,7 +3,7 @@
 // getProbabilitySummary) so the calls under test are the same ones the app
 // shows — a separate code path would be testing something the user never sees.
 
-import { query, tx } from "@/lib/db";
+import { rlsTx, workerQuery } from "@/lib/db";
 import { runScreener } from "@/features/swing/service";
 import { getProbabilitySummary } from "@/lib/probability-runtime";
 import { MARKET_COUNTRY } from "@/lib/markets";
@@ -168,7 +168,7 @@ export async function enrollCohort(market: MarketId): Promise<EnrollSummary> {
   ]);
   // One live call per method and stock: re-enrolling a stock that is still
   // pending or open would count the same trade twice.
-  const activeRows = await query<{ method: string; asset_id: string }>(
+  const activeRows = await workerQuery<{ method: string; asset_id: string }>(
     `select method, asset_id from public.forward_test_positions
       where market = $1 and status in ('PENDING','OPEN')`,
     [market],
@@ -208,7 +208,7 @@ export async function enrollCohort(market: MarketId): Promise<EnrollSummary> {
   for (const key of Object.keys(byMethod)) delete byMethod[key];
   for (const r of fresh) (byMethod[String(r.method)] ??= []).push(String(r.ticker));
 
-  await tx(async (c) => {
+  await rlsTx({ kind: "worker" }, async (c) => {
     for (const r of fresh) {
       const res = await c.query(
         `insert into public.forward_test_positions
@@ -265,7 +265,7 @@ export interface EvaluateSummary {
 export async function evaluateOpenPositions(market?: MarketId): Promise<EvaluateSummary> {
   // A market's EOD stage grades only that market: the other one's bars for the
   // day may not be final yet. With no market (a manual run) everything is graded.
-  const positions = await query<OpenPosition>(
+  const positions = await workerQuery<OpenPosition>(
     `select id, asset_id, direction, horizon_days, enrolled_on, entry_price,
             projected_target, projected_stop, projected_p5_pct, projected_p95_pct
        , status, trigger_price, fill_window_days, filled_on
@@ -282,7 +282,7 @@ export async function evaluateOpenPositions(market?: MarketId): Promise<Evaluate
   for (const p of positions) {
     const enrolledOn = dateOnly(p.enrolled_on);
 
-    const bars = await query<{ date: string | Date; high: string | number; low: string | number; close: string | number }>(
+    const bars = await workerQuery<{ date: string | Date; high: string | number; low: string | number; close: string | number }>(
       `select date, high, low, close from public.daily_ohlcv
         where asset_id = $1 and date > $2 order by date asc`,
       [p.asset_id, enrolledOn],
@@ -337,7 +337,7 @@ export async function evaluateOpenPositions(market?: MarketId): Promise<Evaluate
 
     if (!status) {
       // Still running: record path stats so drawdown is visible before close.
-      await query(
+      await workerQuery(
         `update public.forward_test_positions
             set max_favorable_pct=$2, max_adverse_pct=$3, evaluated_through=$4,
                 status=$5, filled_on=coalesce(filled_on, $6::date), updated_at=now()
@@ -348,7 +348,7 @@ export async function evaluateOpenPositions(market?: MarketId): Promise<Evaluate
     }
 
     if (status === "UNFILLED") {
-      await query(
+      await workerQuery(
         `update public.forward_test_positions
             set status='UNFILLED', closed_at=$2::date, evaluated_through=$2::date, updated_at=now()
           where id=$1`,
@@ -362,7 +362,7 @@ export async function evaluateOpenPositions(market?: MarketId): Promise<Evaluate
     const p95 = n(p.projected_p95_pct);
     const withinBand = p5 !== null && p95 !== null ? realized >= p5 && realized <= p95 : null;
 
-    await query(
+    await workerQuery(
       `update public.forward_test_positions
           set status = $2, exit_price = $3, closed_at = $4::date, realized_return_pct = $5,
               max_favorable_pct = $6, max_adverse_pct = $7, within_projected_band = $8,
@@ -394,7 +394,7 @@ export interface ScorecardRow {
 }
 
 export async function getForwardTestScorecard(market?: MarketId): Promise<ScorecardRow[]> {
-  const rows = await query<Record<string, unknown>>(
+  const rows = await workerQuery<Record<string, unknown>>(
     `select * from public.forward_test_scorecard
       ${market ? "where market = $1" : ""}
       order by method`,
@@ -429,7 +429,7 @@ export interface PositionRow {
 
 /** Every position for a market, newest cohort first. */
 export async function getForwardTestPositions(market?: MarketId): Promise<PositionRow[]> {
-  const rows = await query<Record<string, unknown>>(
+  const rows = await workerQuery<Record<string, unknown>>(
     `select id, method, market, ticker, status, direction,
             enrolled_on::text as enrolled_on, filled_on::text as filled_on,
             entry_price, trigger_price, projected_target, projected_stop,

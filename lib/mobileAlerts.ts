@@ -1,4 +1,4 @@
-import { query } from "@/lib/db";
+import { workerQuery } from "@/lib/db";
 import { getMomentumBothCandidates, type MomentumBothResult } from "@/features/momentum/service";
 import { getUserSwingSettings, type SwingSettings } from "@/lib/settings";
 import { getStrongSwingCandidates, type StrongSwingCandidate } from "@/features/strong-swing/service";
@@ -94,7 +94,7 @@ async function recordDisabledTokens(tokens: PushTokenRow[], receipts: Array<{ st
     else {
       failedCount += 1;
       if (receipt?.details?.error === "DeviceNotRegistered") {
-        await query(`update public.mobile_push_tokens set enabled=false,updated_at=now() where id=$1`, [tokens[index].id]);
+        await workerQuery(`update public.mobile_push_tokens set enabled=false,updated_at=now() where id=$1`, [tokens[index].id]);
       }
     }
   }
@@ -185,7 +185,7 @@ async function dispatchCandidateAlerts(
   const readyByEngine = new Map<CandidateEngine, string[]>();
   for (const engine of ["STRONG_SWING", "MOMENTUM_IGNITION", "MOMENTUM_IGNITION_V2", "TREND_CONTINUATION"] as const) {
     readyByEngine.set(engine, candidates.filter((candidate) => candidate.engine === engine && candidate.ready).map((candidate) => candidate.assetId));
-    await query(
+    await workerQuery(
       `update public.mobile_candidate_alert_state set was_ready=false,last_seen_at=now()
         where user_id=$1 and market=$2 and engine=$3
           and not (asset_id = any($4::uuid[]))`,
@@ -196,7 +196,7 @@ async function dispatchCandidateAlerts(
   let delivered = 0;
   for (const candidate of candidates) {
     const notificationAllowed = candidateAlertAllowed(preferences, candidate, isMarketOpenNow(market));
-    const previous = await query<CandidateAlertStateRow>(
+    const previous = await workerQuery<CandidateAlertStateRow>(
       `select was_ready,last_status,last_sent_at from public.mobile_candidate_alert_state
         where user_id=$1 and market=$2 and engine=$3 and asset_id=$4`,
       [userId, market, candidate.engine, candidate.assetId],
@@ -214,7 +214,7 @@ async function dispatchCandidateAlerts(
         : candidate.engine === "MOMENTUM_IGNITION_V2" ? "Momentum Ignition V2" : "Trend Continuation";
       const statusLabel = candidate.status === "EXECUTION_READY" ? "Execution Ready"
         : candidate.status === "TREND_CONTINUATION_READY" ? "Continuation Ready" : "Momentum Ready";
-      await query(
+      await workerQuery(
         `insert into public.browser_notification_events
            (user_id,market,kind,asset_id,title,body,route,signature,market_date)
          values($1,$2,'CANDIDATE_READY',$3,$4,$5,$6,$7,
@@ -226,7 +226,7 @@ async function dispatchCandidateAlerts(
       );
     }
     if (candidate.earlyWatch === true && notificationAllowed) {
-      await query(
+      await workerQuery(
         `insert into public.browser_notification_events
            (user_id,market,kind,asset_id,title,body,route,signature,market_date)
          values($1,$2,'CANDIDATE_WATCH',$3,$4,$5,$6,$7,
@@ -252,7 +252,7 @@ async function dispatchCandidateAlerts(
       ({ sentCount, failedCount } = await recordDisabledTokens(tokens, receipts));
       alerts += 1;
       delivered += sentCount;
-      await query(
+      await workerQuery(
         `insert into public.mobile_notification_log
            (user_id,asset_id,engine,market,recommendation,signature,quote_updated_at,sent_count,failed_count)
          values($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
@@ -261,7 +261,7 @@ async function dispatchCandidateAlerts(
       );
     }
     if (statusChanged) {
-      await query(
+      await workerQuery(
         `insert into public.candidate_signal_observations
            (user_id,market,engine,asset_id,status,ready,quote_as_of)
          values($1,$2,$3,$4,$5,$6,$7)`,
@@ -269,7 +269,7 @@ async function dispatchCandidateAlerts(
           candidate.ready, candidate.quoteAsOf],
       );
     }
-    await query(
+    await workerQuery(
       `insert into public.mobile_candidate_alert_state
          (user_id,market,engine,asset_id,last_status,was_ready,last_seen_at,last_sent_at)
          values($1,$2,$3,$4,$5,$6,now(),case when $7 then now() else null end)
@@ -283,14 +283,14 @@ async function dispatchCandidateAlerts(
 }
 
 export async function dispatchMobileTradeAlerts(markets: Array<"IN" | "US">) {
-  const tokens = await query<PushTokenRow>(
+  const tokens = await workerQuery<PushTokenRow>(
     `select id,user_id,expo_push_token from public.mobile_push_tokens where enabled order by user_id,id`,
   );
   const byUser = new Map<string, PushTokenRow[]>();
   for (const token of tokens) byUser.set(token.user_id, [...(byUser.get(token.user_id) ?? []), token]);
   // Candidate evaluation is production monitoring, not a side effect of push
   // registration. Evaluate every account even when it has no enabled device.
-  const users = await query<{ id: string }>(`select id from public.users order by created_at,id`);
+  const users = await workerQuery<{ id: string }>(`select id from public.users order by created_at,id`);
   for (const user of users) if (!byUser.has(user.id)) byUser.set(user.id, []);
   let evaluated = 0;
   let alerts = 0;
@@ -311,7 +311,7 @@ export async function dispatchMobileTradeAlerts(markets: Array<"IN" | "US">) {
         const signature = tradeAlertSignature(trade);
         if (!signature) continue;
         evaluated += 1;
-        const previous = await query<AlertStateRow>(
+        const previous = await workerQuery<AlertStateRow>(
           `select last_signature from public.mobile_trade_alert_state where user_id=$1 and trade_id=$2`,
           [userId, trade.id],
         );
@@ -319,7 +319,7 @@ export async function dispatchMobileTradeAlerts(markets: Array<"IN" | "US">) {
         if (!tradeAlertAllowed(preferences)) {
           // Keep state current while delivery is disabled so re-enabling does not
           // emit a stale risk transition from an earlier scheduler run.
-          await query(
+          await workerQuery(
             `insert into public.mobile_trade_alert_state(user_id,trade_id,market,last_signature,last_recommendation,last_sent_at)
              values($1,$2,$3,$4,$5,now())
              on conflict(user_id,trade_id) do update set market=excluded.market,
@@ -328,7 +328,7 @@ export async function dispatchMobileTradeAlerts(markets: Array<"IN" | "US">) {
           );
           continue;
         }
-        await query(
+        await workerQuery(
           `insert into public.browser_notification_events
              (user_id,market,kind,asset_id,trade_id,title,body,route,signature,market_date)
            values($1,$2,'TRADE_ACTION',$3,$4,$5,$6,$7,$8,
@@ -344,14 +344,14 @@ export async function dispatchMobileTradeAlerts(markets: Array<"IN" | "US">) {
           screen: "ledger", market,
         }) : [];
         const { sentCount, failedCount } = await recordDisabledTokens(userTokens, receipts);
-        await query(
+        await workerQuery(
           `insert into public.mobile_trade_alert_state(user_id,trade_id,market,last_signature,last_recommendation,last_sent_at)
            values($1,$2,$3,$4,$5,now())
            on conflict(user_id,trade_id) do update set market=excluded.market,
              last_signature=excluded.last_signature,last_recommendation=excluded.last_recommendation,last_sent_at=now()`,
           [userId, trade.id, market, signature, trade.risk.recommendation],
         );
-        await query(
+        await workerQuery(
           `insert into public.mobile_notification_log
              (user_id,trade_id,market,recommendation,signature,quote_updated_at,sent_count,failed_count)
            values($1,$2,$3,$4,$5,$6,$7,$8)`,

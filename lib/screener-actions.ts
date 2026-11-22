@@ -1,7 +1,7 @@
 "use server";
 
 import { getSessionUser } from "@/lib/auth";
-import { query } from "@/lib/db";
+import { tenantQuery } from "@/lib/db";
 import { ensureScaffold } from "@/lib/dashboard-actions";
 import type { Filter, SortSpec } from "@/lib/screener/filterEngine";
 import { parseScreenQuery, MAX_QUERY_CHARS, type ScreenIntent } from "@/lib/screener/nlQuery";
@@ -14,7 +14,7 @@ export async function addToWatchlistById(assetId: string): Promise<{ ok: boolean
   if (!assetId) return { ok: false };
   const scaffold = await ensureScaffold();
   if (!scaffold) return { ok: false };
-  await query(
+  await tenantQuery(scaffold.userId,
     `insert into public.watchlist_items (user_id, watchlist_id, asset_id)
      values ($1, $2, $3) on conflict do nothing`,
     [scaffold.userId, scaffold.watchlistId, assetId],
@@ -71,10 +71,10 @@ interface SavePayload {
 export async function listSavedScreens(): Promise<SavedScreen[]> {
   const user = await getSessionUser();
   if (!user) return [];
-  const rows = await query<{
+  const rows = await tenantQuery<{
     id: string; name: string; market: string; universe: string;
     filters: unknown; sort: unknown; columns: unknown;
-  }>(
+  }>(user.id,
     `select id, name, market, universe, filters, sort, columns
        from public.saved_screens where user_id = $1 order by updated_at desc`,
     [user.id],
@@ -107,7 +107,7 @@ export async function saveScreen(payload: SavePayload): Promise<SavedScreen[]> {
       ? { valueBelowSectorMedian: true }
       : null;
 
-  await query(
+  await tenantQuery(user.id,
     `insert into public.saved_screens (user_id, name, market, universe, filters, sort, columns, updated_at)
      values ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7::jsonb, now())
      on conflict (user_id, name) do update set
@@ -129,13 +129,13 @@ export async function renameScreen(id: string, name: string): Promise<SavedScree
   if (!user) throw new Error("Not signed in");
   const clean = name.trim().slice(0, 80);
   if (!clean) throw new Error("Name required");
-  await query("update public.saved_screens set name = $1, updated_at = now() where id = $2 and user_id = $3", [clean, id, user.id]);
+  await tenantQuery(user.id, "update public.saved_screens set name = $1, updated_at = now() where id = $2 and user_id = $3", [clean, id, user.id]);
   return listSavedScreens();
 }
 
 export async function deleteScreen(id: string): Promise<SavedScreen[]> {
   const user = await getSessionUser();
   if (!user) throw new Error("Not signed in");
-  await query("delete from public.saved_screens where id = $1 and user_id = $2", [id, user.id]);
+  await tenantQuery(user.id, "delete from public.saved_screens where id = $1 and user_id = $2", [id, user.id]);
   return listSavedScreens();
 }

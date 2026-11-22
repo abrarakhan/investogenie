@@ -1,6 +1,6 @@
 import { redirect, notFound } from "next/navigation";
 import { getSessionUser } from "@/lib/auth";
-import { query } from "@/lib/db";
+import { query, tenantQuery } from "@/lib/db";
 import AppShell from "@/components/app/AppShell";
 import EngineSection from "@/components/dashboard/EngineSection";
 import AssetPicker from "@/components/dashboard/AssetPicker";
@@ -67,7 +67,7 @@ export default async function TerminalPage({
   const buyOnlySettings = { ...settings, includeShort: false };
 
   const [holdingRows, ledgerPositions, watchRows, benchmarkQuoteRows, swing, macro, consolidated] = await Promise.all([
-    query<HoldingRow>(
+    tenantQuery<HoldingRow>(user.id,
       `select h.id as hid, h.quantity, h.avg_cost,
               a.id, a.ticker, a.name, a.asset_class, a.exchange, a.currency, a.country
          from public.holdings h join public.assets a on a.id = h.asset_id
@@ -77,7 +77,7 @@ export default async function TerminalPage({
       [user.id],
     ),
     getRecordedLedgerPositions(user.id, marketId),
-    query<WatchRow>(
+    tenantQuery<WatchRow>(user.id,
       `select w.id as wid, a.id, a.ticker, a.name, a.asset_class, a.currency, a.country
          from public.watchlist_items w join public.assets a on a.id = w.asset_id
         where w.user_id = $1 order by w.created_at desc`,

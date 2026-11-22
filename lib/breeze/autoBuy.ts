@@ -1,5 +1,5 @@
 import { getSessionUser } from "@/lib/auth";
-import { queryOne } from "@/lib/db";
+import { tenantQueryOne } from "@/lib/db";
 
 export interface BreezeAutoBuySettings {
   enabled: boolean;
@@ -20,11 +20,11 @@ export const DEFAULT_AUTO_BUY_SETTINGS: BreezeAutoBuySettings = {
 export async function getBreezeAutoBuySettings(userId?: string): Promise<BreezeAutoBuySettings> {
   const user = userId ? { id: userId } : await getSessionUser();
   if (!user) return DEFAULT_AUTO_BUY_SETTINGS;
-  const row = await queryOne<{
+  const row = await tenantQueryOne<{
     enabled: boolean; strong_swing_enabled: boolean; adaptive_allocation_enabled: boolean;
     daily_budget: string; max_order_value: string; max_orders_per_day: number;
     limit_buffer_bps: string; acknowledged_at: string | Date | null;
-  }>("select * from public.breeze_auto_buy_settings where user_id=$1", [user.id]);
+  }>(user.id, "select * from public.breeze_auto_buy_settings where user_id=$1", [user.id]);
   if (!row) return DEFAULT_AUTO_BUY_SETTINGS;
   return {
     enabled: row.enabled,

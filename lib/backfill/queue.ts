@@ -1,4 +1,4 @@
-import { query, queryOne, tx } from "@/lib/db";
+import { rlsTx, workerQuery } from "@/lib/db";
 import { shouldSkipMarketForBackfill } from "./classifier";
 import { planQueueRows } from "./planner";
 import { isDefinitiveNoHistoryError } from "./tracking";
@@ -57,7 +57,7 @@ export function rowToCandidate(row: CandidateRow): BackfillCandidate {
 }
 
 export async function getBackfillCandidates(): Promise<BackfillCandidate[]> {
-  const rows = await query<CandidateRow>(
+  const rows = await workerQuery<CandidateRow>(
     `with clock as (
        select (now() at time zone 'Asia/Kolkata')::date today,
               extract(isodow from now() at time zone 'Asia/Kolkata')::int dow,
@@ -112,7 +112,7 @@ export async function getBackfillCandidates(): Promise<BackfillCandidate[]> {
 }
 
 async function pruneUnsupportedBackfillItems() {
-  await query(
+  await workerQuery(
     `update public.backfill_queue q
         set status='skipped', completed_at=coalesce(q.completed_at, now()),
             last_error=coalesce(q.last_error, 'Removed from active tracking')
@@ -138,7 +138,7 @@ async function pruneUnsupportedBackfillItems() {
 }
 
 async function retireStructurallyUnsupportedAssets(): Promise<number> {
-  const rows = await query<{ asset_id: string }>(
+  const rows = await workerQuery<{ asset_id: string }>(
     `with candidates as (
        select a.id asset_id,
               case when a.country='IN' then 'temporary_rights_issue' else 'warrant_or_right' end reason_code
@@ -177,7 +177,7 @@ async function retireStructurallyUnsupportedAssets(): Promise<number> {
 }
 
 async function restoreRecentlyQuotedAssets(): Promise<number> {
-  const rows = await query<{ asset_id: string }>(
+  const rows = await workerQuery<{ asset_id: string }>(
     `with clock as (
        select (now() at time zone 'Asia/Kolkata')::date today,
               extract(isodow from now() at time zone 'Asia/Kolkata')::int dow,
@@ -208,7 +208,7 @@ async function restoreRecentlyQuotedAssets(): Promise<number> {
 }
 
 async function retireTerminalFailedBackfillItems(): Promise<number> {
-  const rows = await query<{ asset_id: string }>(
+  const rows = await workerQuery<{ asset_id: string }>(
     `with candidates as (
        select q.asset_id, q.attempts, q.last_error
          from public.backfill_queue q
@@ -263,7 +263,7 @@ export async function populateBackfillQueue(): Promise<PopulateBackfillSummary> 
     params.push(candidate.assetId, candidate.symbol, candidate.market, candidate.tier);
   });
 
-  const rows = await query<{ inserted: string }>(
+  const rows = await workerQuery<{ inserted: string }>(
     `insert into public.backfill_queue (asset_id, symbol, market, tier)
      values ${values.join(",")}
      on conflict (asset_id) do update set
@@ -293,12 +293,12 @@ export async function populateBackfillQueue(): Promise<PopulateBackfillSummary> 
 }
 
 export async function isBackfillRunning(): Promise<boolean> {
-  const row = await queryOne<{ exists: boolean }>(
+  const row = (await workerQuery<{ exists: boolean }>(
     `select exists(
        select 1 from public.backfill_queue
         where status='in_progress' and started_at > now() - interval '30 minutes'
      )`,
-  );
+  ))[0] ?? null;
   return row?.exists ?? false;
 }
 
@@ -309,7 +309,7 @@ export async function claimNextBackfillItem({
   skipDuringMarketHours: boolean;
   now?: Date;
 }): Promise<BackfillQueueItem | null> {
-  return tx(async (client) => {
+  return rlsTx({ kind: "worker" }, async (client) => {
     const { rows } = await client.query<{
       id: number;
       asset_id: string;
@@ -359,7 +359,7 @@ export async function claimNextBackfillItem({
 }
 
 export async function markBackfillDone(id: number, barsLoaded: number) {
-  await query(
+  await workerQuery(
     `update public.backfill_queue
         set status=$2, bars_loaded=$3, completed_at=now(), last_error=null
       where id=$1
@@ -369,7 +369,7 @@ export async function markBackfillDone(id: number, barsLoaded: number) {
 }
 
 export async function markBackfillFailed(id: number, error: string, maxAttempts = 3): Promise<"pending" | "failed" | "retired"> {
-  return tx(async (client) => {
+  return rlsTx({ kind: "worker" }, async (client) => {
     const { rows } = await client.query<{ asset_id: string; attempts: number; status: "pending" | "failed" }>(
       `update public.backfill_queue
         set attempts=attempts+1,
@@ -410,7 +410,7 @@ export async function markBackfillFailed(id: number, error: string, maxAttempts 
 }
 
 export async function requeueFailedBackfillItems(): Promise<number> {
-  const rows = await query<{ id: number }>(
+  const rows = await workerQuery<{ id: number }>(
     `update public.backfill_queue
         set status='pending', attempts=0, last_error=null, started_at=null, completed_at=null
       where status='failed'
@@ -421,7 +421,7 @@ export async function requeueFailedBackfillItems(): Promise<number> {
 }
 
 async function reconcileCoveredBackfillItems(): Promise<void> {
-  await query(
+  await workerQuery(
     `with clock as (
        select (now() at time zone 'Asia/Kolkata')::date today,
               extract(isodow from now() at time zone 'Asia/Kolkata')::int dow,
@@ -456,13 +456,13 @@ async function reconcileCoveredBackfillItems(): Promise<void> {
 export async function getBackfillStatusSummary(): Promise<BackfillStatusSummary> {
   await reconcileCoveredBackfillItems();
   const [rows, activeRows, lastRunRows, retiredRow] = await Promise.all([
-    query<{ tier: number; status: QueueStatusRow["status"]; count: string }>(
+    workerQuery<{ tier: number; status: QueueStatusRow["status"]; count: string }>(
       `select tier, status, count(*)::text count
          from public.backfill_queue
         group by tier, status
         order by tier, status`,
     ),
-    query<{ symbol: string; market: BackfillMarket; tier: number; exchange: string | null; started_at: Date | string | null }>(
+    workerQuery<{ symbol: string; market: BackfillMarket; tier: number; exchange: string | null; started_at: Date | string | null }>(
       `select q.symbol, q.market::text, q.tier, a.exchange::text exchange, q.started_at
          from public.backfill_queue q
          left join public.assets a on a.id=q.asset_id
@@ -470,14 +470,14 @@ export async function getBackfillStatusSummary(): Promise<BackfillStatusSummary>
         order by started_at asc nulls last, tier asc
         limit 8`,
     ),
-    query<{ created_at: Date | string; duration_ms: string | number | null; status: string; detail: unknown; error: string | null }>(
+    workerQuery<{ created_at: Date | string; duration_ms: string | number | null; status: string; detail: unknown; error: string | null }>(
       `select created_at, duration_ms, status, detail, error
          from public.cron_logs
         where job in ('backfill_ohlcv', 'backfill_ohlcv_cron', 'backfill-nse', 'backfill-bse')
         order by created_at desc
       limit 1`,
     ),
-    queryOne<{ count: string }>("select count(*)::text count from public.asset_tracking_exclusions"),
+    workerQuery<{ count: string }>("select count(*)::text count from public.asset_tracking_exclusions").then((rows) => rows[0] ?? null),
   ]);
   const summaryRows = rows.map((row) => ({ tier: Number(row.tier), status: row.status, count: Number(row.count) }));
   const total = summaryRows.reduce((sum, row) => sum + row.count, 0);

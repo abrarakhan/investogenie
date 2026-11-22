@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { getSessionUser } from "@/lib/auth";
-import { query, queryOne } from "@/lib/db";
+import { tenantQuery, tenantQueryOne } from "@/lib/db";
 import { encryptCredential } from "@/lib/crypto/credentials";
 import { processPendingGmailAttachments } from "@/lib/gmail/processing";
 import {
@@ -35,7 +35,7 @@ export async function saveGmailOAuthCredentials(formData: FormData) {
   const clientSecret = String(formData.get("gmailClientSecret") ?? "").trim();
   if (!clientId || !clientSecret) throw new Error("Enter both the Google OAuth client ID and client secret");
   if (!clientId.endsWith(".apps.googleusercontent.com")) throw new Error("Enter a Google OAuth Web application client ID");
-  await query(
+  await tenantQuery(user.id,
     `insert into public.user_credentials (user_id,gmail_client_id_encrypted,gmail_client_secret_encrypted)
      values ($1,$2,$3)
      on conflict (user_id) do update set gmail_client_id_encrypted=excluded.gmail_client_id_encrypted,
@@ -49,7 +49,7 @@ export async function saveGmailAutoImportSettings(formData: FormData) {
   const user = await requireUser();
   const password = String(formData.get("casPassword") ?? "").trim();
   const enabled = String(formData.get("autoImport") ?? "") === "on";
-  await query(
+  await tenantQuery(user.id,
     `update public.gmail_connections set
        cas_pdf_password_encrypted=coalesce($2,cas_pdf_password_encrypted),
        auto_import_enabled=$3,updated_at=now() where user_id=$1`,
@@ -62,21 +62,21 @@ export async function saveGmailAutoImportSettings(formData: FormData) {
 
 export async function clearGmailCasPassword() {
   const user = await requireUser();
-  await query("update public.gmail_connections set cas_pdf_password_encrypted=null,updated_at=now() where user_id=$1", [user.id]);
+  await tenantQuery(user.id, "update public.gmail_connections set cas_pdf_password_encrypted=null,updated_at=now() where user_id=$1", [user.id]);
   revalidatePath("/portfolio/fund-mapping");
 }
 
 export async function disconnectGmailDisclosureInbox() {
   const user = await requireUser();
-  await query("delete from public.gmail_connections where user_id=$1", [user.id]);
-  await query("delete from public.gmail_disclosure_attachments where user_id=$1", [user.id]);
+  await tenantQuery(user.id, "delete from public.gmail_connections where user_id=$1", [user.id]);
+  await tenantQuery(user.id, "delete from public.gmail_disclosure_attachments where user_id=$1", [user.id]);
   revalidatePath("/portfolio/fund-mapping");
 }
 
 export async function ignoreGmailDisclosure(formData: FormData) {
   const user = await requireUser();
   const id = String(formData.get("attachmentId") ?? "");
-  await query(
+  await tenantQuery(user.id,
     "update public.gmail_disclosure_attachments set status='ignored',updated_at=now() where id=$1 and user_id=$2",
     [id, user.id],
   );
@@ -101,12 +101,12 @@ export async function importGmailDisclosure(formData: FormData) {
     : "";
   if (!attachmentId || !holdingId || !month) throw new Error("Choose a fund and disclosure month");
 
-  const document = await queryOne<{ document_type: string }>(
+  const document = await tenantQueryOne<{ document_type: string }>(user.id,
     "select document_type from public.gmail_disclosure_attachments where id=$1 and user_id=$2", [attachmentId, user.id],
   );
   if (document?.document_type !== "amc_disclosure") throw new Error("This attachment is not an AMC portfolio disclosure");
 
-  const fund = await queryOne<HeldFund>(
+  const fund = await tenantQueryOne<HeldFund>(user.id,
     "select h.id holding_id,a.id asset_id,a.ticker,coalesce(amfi.scheme_name,a.name,a.ticker) name," +
     "coalesce(nullif(chd.isin,''),nullif(m.amfi_code_in,'')) isin " +
     "from public.holdings h join public.assets a on a.id=h.asset_id " +
@@ -146,7 +146,7 @@ export async function importGmailDisclosure(formData: FormData) {
       rows: parsed.rows,
       assetId: fund.asset_id,
     });
-    await query(
+    await tenantQuery(user.id,
       "insert into public.user_fund_mappings " +
       "(user_id,user_holding_id,scheme_code,status,match_method,confidence,matched_at,matched_by,updated_at) " +
       "values ($1,$2,$3,'matched','gmail_disclosure',1,now(),$1,now()) " +
@@ -154,7 +154,7 @@ export async function importGmailDisclosure(formData: FormData) {
       "match_method='gmail_disclosure',confidence=1,matched_at=now(),matched_by=$1,rejected_at=null,updated_at=now()",
       [user.id, fund.holding_id, fund.ticker],
     );
-    await query(
+    await tenantQuery(user.id,
       "update public.gmail_disclosure_attachments set status='imported',matched_holding_id=$1," +
       "snapshot_month=$2,imported_at=now(),error_message=null,updated_at=now() where id=$3 and user_id=$4",
       [fund.holding_id, month, attachmentId, user.id],
@@ -164,7 +164,7 @@ export async function importGmailDisclosure(formData: FormData) {
     return { rows: parsed.rows.length };
   } catch (cause) {
     const message = cause instanceof Error ? cause.message : String(cause);
-    await query(
+    await tenantQuery(user.id,
       "update public.gmail_disclosure_attachments set status='error',error_message=$1,updated_at=now() where id=$2 and user_id=$3",
       [message.slice(0, 500), attachmentId, user.id],
     );

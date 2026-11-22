@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import type { PoolClient } from "pg";
 import { normalizeFolio, parseCasHoldings, type ParsedHoldingRow } from "@/lib/cas/parse";
-import { queryOne, tx } from "@/lib/db";
+import { rlsTx, tenantQueryOne } from "@/lib/db";
 
 const execFileAsync = promisify(execFile);
 
@@ -101,15 +101,15 @@ export async function importCasStatementBytes(input: { userId: string; bytes: Bu
   if (!text) throw new CasImportError("empty", "CAS statement is empty");
   const rows = parseCasHoldings(text).filter((row) => !isNoise(row));
   if (!rows.length) throw new CasImportError("empty", "No holdings were detected in the CAS statement");
-  let portfolio = await queryOne<{ id: string }>("select id from public.portfolios where user_id=$1 order by created_at limit 1", [input.userId]);
-  if (!portfolio) portfolio = await queryOne<{ id: string }>("insert into public.portfolios (user_id,name) values ($1,'My Portfolio') returning id", [input.userId]);
+  let portfolio = await tenantQueryOne<{ id: string }>(input.userId, "select id from public.portfolios where user_id=$1 order by created_at limit 1", [input.userId]);
+  if (!portfolio) portfolio = await tenantQueryOne<{ id: string }>(input.userId, "insert into public.portfolios (user_id,name) values ($1,'My Portfolio') returning id", [input.userId]);
   if (!portfolio) throw new Error("Could not create the user's portfolio");
 
   // Every row identified by ISIN means the CAMS/KFintech section parser read the statement.
   const identifiedStatement = rows.every((row) => row.assetClass === "MUTUAL_FUND" && Boolean(row.isin));
   const importedAssetIds: string[] = [];
   let retired = 0;
-  await tx(async (c) => {
+  await rlsTx({ kind: "tenant", userId: input.userId }, async (c) => {
     await c.query(
       "update public.cas_import_rejected_holdings set resolved_at=now() where user_id=$1 and resolved_at is null",
       [input.userId],

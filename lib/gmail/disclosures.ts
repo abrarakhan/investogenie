@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { decryptCredential, encryptCredential } from "@/lib/crypto/credentials";
-import { query, queryOne } from "@/lib/db";
+import { tenantQuery, tenantQueryOne, workerQuery } from "@/lib/db";
 import { inferAmc } from "@/lib/funds/fundMapping";
 import { classifyGmailDocument, inferSnapshotMonth } from "@/lib/gmail/classification";
 
@@ -70,7 +70,7 @@ export async function getGmailOAuthConfig(userId?: string) {
   const clientSecret = process.env.GOOGLE_GMAIL_CLIENT_SECRET ?? "";
   if (clientId && clientSecret) return { clientId, clientSecret, source: "environment" as const };
   if (!userId) return null;
-  const row = await queryOne<{ gmail_client_id_encrypted: string | null; gmail_client_secret_encrypted: string | null }>(
+  const row = await tenantQueryOne<{ gmail_client_id_encrypted: string | null; gmail_client_secret_encrypted: string | null }>(userId,
     "select gmail_client_id_encrypted,gmail_client_secret_encrypted from public.user_credentials where user_id=$1",
     [userId],
   );
@@ -86,8 +86,8 @@ export const hashOAuthState = (state: string) => createHash("sha256").update(sta
 
 export async function createGmailOAuthState(userId: string, redirectUri: string) {
   const state = randomBytes(32).toString("base64url");
-  await query("delete from public.gmail_oauth_states where expires_at < now()");
-  await query(
+  await workerQuery("delete from public.gmail_oauth_states where expires_at < now()");
+  await tenantQuery(userId,
     "insert into public.gmail_oauth_states (state_hash,user_id,redirect_uri,expires_at) values ($1,$2,$3,now()+interval '10 minutes')",
     [hashOAuthState(state), userId, redirectUri],
   );
@@ -95,7 +95,7 @@ export async function createGmailOAuthState(userId: string, redirectUri: string)
 }
 
 export async function consumeGmailOAuthState(state: string, userId: string) {
-  const row = await queryOne<{ redirect_uri: string }>(
+  const row = await tenantQueryOne<{ redirect_uri: string }>(userId,
     "delete from public.gmail_oauth_states where state_hash=$1 and user_id=$2 and expires_at > now() returning redirect_uri",
     [hashOAuthState(state), userId],
   );
@@ -157,10 +157,10 @@ export async function completeGmailConnection(input: { userId: string; code: str
   });
   if (!profileResponse.ok) throw new Error("Could not read the connected Gmail profile");
   const profile = await profileResponse.json() as { emailAddress: string };
-  const existing = await queryOne<{ refresh_token_encrypted: string | null }>(
+  const existing = await tenantQueryOne<{ refresh_token_encrypted: string | null }>(input.userId,
     "select refresh_token_encrypted from public.gmail_connections where user_id=$1", [input.userId],
   );
-  await query(
+  await tenantQuery(input.userId,
     "insert into public.gmail_connections (user_id,gmail_email,access_token_encrypted,refresh_token_encrypted,token_expires_at,scope,connected_at,updated_at) " +
     "values ($1,$2,$3,$4,now()+($5 || ' seconds')::interval,$6,now(),now()) " +
     "on conflict (user_id) do update set gmail_email=excluded.gmail_email,access_token_encrypted=excluded.access_token_encrypted," +
@@ -175,7 +175,7 @@ export async function completeGmailConnection(input: { userId: string; code: str
 }
 
 async function getAccessToken(userId: string) {
-  const connection = await queryOne<ConnectionRow>(
+  const connection = await tenantQueryOne<ConnectionRow>(userId,
     "select gmail_email,access_token_encrypted,refresh_token_encrypted,token_expires_at,scope,last_scan_at from public.gmail_connections where user_id=$1",
     [userId],
   );
@@ -193,7 +193,7 @@ async function getAccessToken(userId: string) {
     }));
   } catch (cause) {
     if (isRevokedGrant(cause)) {
-      await query(
+      await tenantQuery(userId,
         "update public.gmail_connections set needs_reconnect=true,updated_at=now() where user_id=$1", [userId],
       );
       throw new Error(
@@ -203,7 +203,7 @@ async function getAccessToken(userId: string) {
     }
     throw cause;
   }
-  await query(
+  await tenantQuery(userId,
     "update public.gmail_connections set access_token_encrypted=$2,token_expires_at=now()+($3 || ' seconds')::interval,updated_at=now() where user_id=$1",
     [userId, encryptCredential(token.access_token!), String(token.expires_in ?? 3600)],
   );
@@ -342,7 +342,7 @@ export async function scanGmailDisclosures(userId: string) {
       const amc = inferAmc((sender ?? "") + " " + (subject ?? "") + " " + filename, null);
       const documentType = classifyGmailDocument({ filename, subject, sender });
       if (documentType === "unknown") continue;
-      await query(
+      await tenantQuery(userId,
         "insert into public.gmail_disclosure_attachments " +
         "(user_id,message_id,attachment_id,part_id,filename,mime_type,size_bytes,email_subject,sender,received_at,inferred_amc,document_type) " +
         "values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) " +
@@ -367,7 +367,7 @@ export async function scanGmailDisclosures(userId: string) {
     const month = inferSnapshotMonth({ filename: "", subject, receivedAt });
     const partId = "link:" + createHash("sha256").update(sourceUrl).digest("hex").slice(0, 24);
     const filename = `${amc.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "")}-${month.slice(0, 7)}-portfolio.download`;
-    await query(
+    await tenantQuery(userId,
       `insert into public.gmail_disclosure_attachments
          (user_id,message_id,part_id,filename,mime_type,size_bytes,email_subject,sender,received_at,inferred_amc,document_type,source_kind,source_url_encrypted)
        values ($1,$2,$3,$4,null,0,$5,$6,$7,$8,'amc_disclosure','link',$9)
@@ -379,7 +379,7 @@ export async function scanGmailDisclosures(userId: string) {
          updated_at=now()`,
       [userId, message.id, partId, filename, subject, sender, receivedAt, amc, encryptCredential(sourceUrl)],
     );
-    await query(
+    await tenantQuery(userId,
       `update public.gmail_disclosure_attachments
           set status='ignored',error_message=null,updated_at=now()
         where user_id=$1 and document_type='amc_disclosure' and inferred_amc=$2
@@ -388,14 +388,14 @@ export async function scanGmailDisclosures(userId: string) {
     );
     attachments++;
   }
-  await query("update public.gmail_connections set last_scan_at=now(),updated_at=now() where user_id=$1", [userId]);
+  await tenantQuery(userId, "update public.gmail_connections set last_scan_at=now(),updated_at=now() where user_id=$1", [userId]);
   const { processPendingGmailAttachments } = await import("@/lib/gmail/processing");
   const processing = await processPendingGmailAttachments(userId);
   return { messages: messageIds.length, attachments, processing };
 }
 
 export async function scanAllConnectedGmailDisclosures() {
-  const connections = await query<{ user_id: string; gmail_email: string }>(
+  const connections = await workerQuery<{ user_id: string; gmail_email: string }>(
     "select user_id,gmail_email from public.gmail_connections order by connected_at",
   );
   const results: Array<{
@@ -409,7 +409,7 @@ export async function scanAllConnectedGmailDisclosures() {
   for (const connection of connections) {
     try {
       const result = await scanGmailDisclosures(connection.user_id);
-      await query(
+      await tenantQuery(connection.user_id,
         "update public.gmail_connections set last_error=null,last_error_at=null where user_id=$1", [connection.user_id],
       );
       results.push({
@@ -420,7 +420,7 @@ export async function scanAllConnectedGmailDisclosures() {
     } catch (cause) {
       const error = cause instanceof Error ? cause.message : String(cause);
       // Recorded so the inbox can show why imports stopped, instead of only a failed count.
-      await query(
+      await tenantQuery(connection.user_id,
         "update public.gmail_connections set last_error=$2,last_error_at=now() where user_id=$1",
         [connection.user_id, error.slice(0, 500)],
       ).catch(() => {});
@@ -447,11 +447,11 @@ export async function scanAllConnectedGmailDisclosures() {
 }
 
 export async function downloadGmailDisclosureAttachment(userId: string, recordId: string) {
-  const record = await queryOne<{
+  const record = await tenantQueryOne<{
     message_id: string; attachment_id: string | null; part_id: string;
     filename: string; mime_type: string | null; size_bytes: number;
     source_kind: "attachment" | "link"; source_url_encrypted: string | null;
-  }>(
+  }>(userId,
     "select message_id,attachment_id,part_id,filename,mime_type,size_bytes,source_kind,source_url_encrypted from public.gmail_disclosure_attachments where id=$1 and user_id=$2 and status <> 'ignored'",
     [recordId, userId],
   );
@@ -522,16 +522,16 @@ export async function downloadGmailDisclosureAttachment(userId: string, recordId
 
 export async function getGmailDisclosureData(userId: string): Promise<GmailDisclosureData> {
   const [connection, rows, oauthConfig] = await Promise.all([
-    queryOne<ConnectionRow>(
+    tenantQueryOne<ConnectionRow>(userId,
       "select gmail_email,access_token_encrypted,refresh_token_encrypted,token_expires_at,scope,last_scan_at,cas_pdf_password_encrypted,auto_import_enabled,needs_reconnect,last_error,last_error_at from public.gmail_connections where user_id=$1",
       [userId],
     ),
-    query<{
+    tenantQuery<{
       id: string; filename: string; mime_type: string | null; size_bytes: number;
       email_subject: string | null; sender: string | null; received_at: Date | string | null;
       inferred_amc: string | null; document_type: GmailDisclosureAttachment["documentType"]; status: GmailDisclosureAttachment["status"];
       matched_holding_id: string | null; snapshot_month: Date | string | null; error_message: string | null;
-    }>(
+    }>(userId,
       "select id,filename,mime_type,size_bytes,email_subject,sender,received_at,inferred_amc,document_type,status,matched_holding_id,snapshot_month,error_message " +
       `from public.gmail_disclosure_attachments a where user_id=$1
          and (document_type <> 'nsdl_cas' or id=(

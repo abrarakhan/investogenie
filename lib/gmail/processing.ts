@@ -1,6 +1,6 @@
 import { decryptCredential } from "@/lib/crypto/credentials";
 import { importCasStatementBytes, CasImportError } from "@/lib/cas/importStatement";
-import { query, queryOne } from "@/lib/db";
+import { tenantQuery, tenantQueryOne } from "@/lib/db";
 import { AmcDisclosureProvider, parseDisclosureSource } from "@/lib/funds/amcProvider";
 import { inferAmc, sameAmc } from "@/lib/funds/fundMapping";
 import { downloadGmailDisclosureAttachment } from "@/lib/gmail/disclosures";
@@ -9,7 +9,7 @@ import { inferSnapshotMonth, type GmailDocumentType } from "@/lib/gmail/classifi
 type HeldFund = { holding_id: string; asset_id: string; ticker: string; name: string; isin: string | null; amc: string | null };
 
 async function heldFunds(userId: string): Promise<HeldFund[]> {
-  const rows = await query<HeldFund>(
+  const rows = await tenantQuery<HeldFund>(userId,
     `select h.id holding_id,a.id asset_id,a.ticker,
             coalesce(mapped.name,amfi.scheme_name,a.name,a.ticker) name,
             coalesce(nullif(chd.isin,''),nullif(m.amfi_code_in,'')) isin,
@@ -42,7 +42,7 @@ async function processCas(userId: string, id: string, passwordEncrypted: string 
   });
   // Retain the latest successful CAS as the only actionable record. Historical
   // failures are no longer useful once a newer cumulative statement imports.
-  await query(
+  await tenantQuery(userId,
     `update public.gmail_disclosure_attachments
         set status='ignored',error_message=null,updated_at=now()
       where user_id=$1 and document_type='nsdl_cas' and id<>$2`,
@@ -62,7 +62,7 @@ async function processDisclosure(userId: string, id: string, meta: { inferred_am
   let totalRows = 0;
   const failures: string[] = [];
   for (const fund of funds) {
-    const prior = await queryOne<{ id: string }>(
+    const prior = await tenantQueryOne<{ id: string }>(userId,
       "select id from public.gmail_attachment_imports where attachment_id=$1 and holding_id=$2 and snapshot_month=$3 and status='imported'", [id, fund.holding_id, month],
     );
     if (prior) continue;
@@ -83,7 +83,7 @@ async function processDisclosure(userId: string, id: string, meta: { inferred_am
         meta: { schemeCode: fund.ticker, name: fund.name, isin: fund.isin, amc: fund.amc, category: null, subCategory: null },
         month, rows: parsed.rows, assetId: fund.asset_id,
       });
-      await query(
+      await tenantQuery(userId,
         `insert into public.user_fund_mappings
            (user_id,user_holding_id,scheme_code,status,match_method,confidence,matched_at,matched_by,updated_at)
          values ($1,$2,$3,'matched','gmail_disclosure',1,now(),$1,now())
@@ -91,7 +91,7 @@ async function processDisclosure(userId: string, id: string, meta: { inferred_am
            match_method='gmail_disclosure',confidence=1,matched_at=now(),matched_by=$1,rejected_at=null,updated_at=now()`,
         [userId, fund.holding_id, fund.ticker],
       );
-      await query(
+      await tenantQuery(userId,
         `insert into public.gmail_attachment_imports
            (attachment_id,user_id,holding_id,scheme_code,snapshot_month,row_count,status,detail)
          values ($1,$2,$3,$4,$5,$6,'imported','Automatic unambiguous Gmail import')
@@ -109,14 +109,14 @@ async function processDisclosure(userId: string, id: string, meta: { inferred_am
 }
 
 export async function processPendingGmailAttachments(userId: string) {
-  const connection = await queryOne<{ cas_pdf_password_encrypted: string | null; auto_import_enabled: boolean }>(
+  const connection = await tenantQueryOne<{ cas_pdf_password_encrypted: string | null; auto_import_enabled: boolean }>(userId,
     "select cas_pdf_password_encrypted,auto_import_enabled from public.gmail_connections where user_id=$1", [userId],
   );
   if (!connection?.auto_import_enabled) return { processed: 0, imported: 0, review: 0, errors: 0 };
 
   // A consolidated account statement is cumulative. Importing older CAS PDFs
   // wastes work and can overwrite newer holdings with historical balances.
-  await query(
+  await tenantQuery(userId,
     `with latest_cas as (
        select id
          from public.gmail_disclosure_attachments
@@ -135,7 +135,7 @@ export async function processPendingGmailAttachments(userId: string) {
   // The newest CAS must be imported once. An older release marked it 'ignored' without ever
   // importing it, and only discovered/needs_password rows are picked up, so it stayed stuck.
   // Re-queue the newest CAS when it is ignored and nothing at least as new was imported.
-  await query(
+  await tenantQuery(userId,
     `with newest as (
        select id,received_at from public.gmail_disclosure_attachments
         where user_id=$1 and document_type='nsdl_cas'
@@ -153,7 +153,7 @@ export async function processPendingGmailAttachments(userId: string) {
         )`,
     [userId],
   );
-  const candidates = await query<{ id: string; document_type: GmailDocumentType; inferred_amc: string | null; filename: string; email_subject: string | null; received_at: Date | string | null }>(
+  const candidates = await tenantQuery<{ id: string; document_type: GmailDocumentType; inferred_amc: string | null; filename: string; email_subject: string | null; received_at: Date | string | null }>(userId,
     `select id,document_type,inferred_amc,filename,email_subject,received_at
        from public.gmail_disclosure_attachments
       where user_id=$1
@@ -171,7 +171,7 @@ export async function processPendingGmailAttachments(userId: string) {
   );
   const result = { processed: 0, imported: 0, review: 0, errors: 0 };
   for (const item of candidates) {
-    const claimed = await queryOne<{ id: string }>(
+    const claimed = await tenantQueryOne<{ id: string }>(userId,
       `update public.gmail_disclosure_attachments set status='processing',processing_started_at=now(),error_message=null,updated_at=now()
         where id=$1 and user_id=$2
           and (status in ('discovered','needs_password') or (status='processing' and processing_started_at < now()-interval '30 minutes'))
@@ -183,7 +183,7 @@ export async function processPendingGmailAttachments(userId: string) {
       const detail = item.document_type === "nsdl_cas"
         ? await processCas(userId, item.id, connection.cas_pdf_password_encrypted)
         : await processDisclosure(userId, item.id, item);
-      await query(
+      await tenantQuery(userId,
         `update public.gmail_disclosure_attachments set status='imported',snapshot_month=$1,imported_at=now(),
            processing_completed_at=now(),error_message=null,updated_at=now() where id=$2 and user_id=$3`,
         ["month" in detail ? detail.month : null, item.id, userId],
@@ -194,7 +194,7 @@ export async function processPendingGmailAttachments(userId: string) {
       const needsPassword = cause instanceof CasImportError && (cause.code === "encrypted" || cause.code === "bad_password");
       const needsReview = item.document_type === "amc_disclosure" && /(?:No imported CAS fund|choose the fund manually|No scheme sheet imported)/i.test(message);
       const status = needsPassword ? "needs_password" : needsReview ? "needs_review" : "error";
-      await query(
+      await tenantQuery(userId,
         `update public.gmail_disclosure_attachments set status=$1,error_message=$2,processing_completed_at=now(),updated_at=now() where id=$3 and user_id=$4`,
         [status, message.slice(0, 500), item.id, userId],
       );

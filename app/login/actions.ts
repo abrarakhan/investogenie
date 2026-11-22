@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { allowAuthAttempt, RATE_LIMITS } from "@/lib/rateLimit";
-import { query, queryOne } from "@/lib/db";
+import { query, tenantQueryOne } from "@/lib/db";
 import { isResetKeyConfigured, resetKeyMatches } from "@/lib/passwordReset";
 import { acceptInvitation } from "@/lib/invitations";
 import {
@@ -136,12 +136,12 @@ export async function resetPassword(_prev: AuthState, formData: FormData): Promi
 
 /** Resolves the account's own stored SMTP credentials — the same ones the daily digest uses. */
 async function smtpConfigFor(userId: string) {
-  const creds = await queryOne<{
+  const creds = await tenantQueryOne<{
     smtp_host: string | null;
     smtp_port: number | null;
     smtp_user: string | null;
     smtp_password_encrypted: string | null;
-  }>(
+  }>(userId,
     `select smtp_host, smtp_port, smtp_user, smtp_password_encrypted
        from public.user_credentials where user_id = $1`,
     [userId],

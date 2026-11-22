@@ -1,6 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { checkCronAuth } from "@/lib/ingest/cronLog";
-import { query } from "@/lib/db";
+import { workerQuery } from "@/lib/db";
 import { getUserSwingSettings } from "@/lib/settings";
 import { getStrongSwingCandidates, type StrongSwingCandidate } from "@/features/strong-swing/service";
 import { seedStrongSwing, swingSettingsKey } from "@/lib/displayScanCache";
@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
 export async function GET(request: NextRequest) {
   const auth = checkCronAuth(request.headers.get("authorization"), process.env.CRON_SECRET);
   if (!auth.ok) return NextResponse.json({ ok: false, error: auth.reason }, { status: auth.status });
-  const users = await query<{ user_id: string }>(
+  const users = await workerQuery<{ user_id: string }>(
     "select user_id from public.breeze_auto_buy_settings where enabled and strong_swing_enabled",
   );
   const bySettings = new Map<string, StrongSwingCandidate[]>();

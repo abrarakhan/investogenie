@@ -1,4 +1,4 @@
-import { query } from "@/lib/db";
+import { query, tenantQuery } from "@/lib/db";
 import { inferAmc, suggestFundMapping, summarizeMapping, type FundMatchSuggestion, type SnapshotSchemeForMapping, type UserFundForMapping } from "@/lib/funds/fundMapping";
 import type { MatchStatus } from "@/lib/status";
 
@@ -53,7 +53,7 @@ const dateOnly = (value: Date | string | null): string | null => {
 
 export async function getFundMappingData(userId: string): Promise<FundMappingData> {
   const [fundRows, snapshotRows] = await Promise.all([
-    query<FundRow>(
+    tenantQuery<FundRow>(userId,
       `select h.id holding_id, a.id asset_id, a.ticker,
               coalesce(amfi.scheme_name,a.name) name,
               coalesce(nullif(chd.isin, ''), nullif(m.amfi_code_in, '')) isin,
@@ -77,7 +77,7 @@ export async function getFundMappingData(userId: string): Promise<FundMappingDat
         order by h.updated_at desc`,
       [userId],
     ),
-    query<SnapshotRow>(
+    tenantQuery<SnapshotRow>(userId,
       `select fs.scheme_code, fs.name, coalesce(fs.isin, ids.primary_isin) isin,
               coalesce(ids.identifiers, '{}'::text[]) identifiers,
               fs.amc, fs.category, fs.latest_month,

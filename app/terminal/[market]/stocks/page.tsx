@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import { getSessionUser } from "@/lib/auth";
-import { query } from "@/lib/db";
+import { tenantQuery } from "@/lib/db";
 import { normalizeMarket } from "@/lib/markets";
 import { getScreenerResults, getSectors, getUniverses, type Market } from "@/lib/screener/service";
 import { listSavedScreens } from "@/lib/screener-actions";
@@ -14,7 +14,7 @@ async function loadUserPositions(userId: string) {
   const holdings: Record<Market, Record<string, HeldPosition>> = { IN: {}, US: {} };
   const watchlist: Record<Market, string[]> = { IN: [], US: [] };
 
-  const hrows = await query<{ country: string; ticker: string; quantity: string | number; avg_cost: string | number | null }>(
+  const hrows = await tenantQuery<{ country: string; ticker: string; quantity: string | number; avg_cost: string | number | null }>(userId,
     `select a.country, a.ticker, h.quantity, h.avg_cost
        from public.holdings h join public.assets a on a.id = h.asset_id
       where h.user_id = $1 and a.asset_class = 'STOCK'`,
@@ -25,7 +25,7 @@ async function loadUserPositions(userId: string) {
     holdings[m][r.ticker.toUpperCase()] = { quantity: Number(r.quantity), avgCost: r.avg_cost === null ? null : Number(r.avg_cost) };
   }
 
-  const wrows = await query<{ country: string; ticker: string }>(
+  const wrows = await tenantQuery<{ country: string; ticker: string }>(userId,
     `select a.country, a.ticker
        from public.watchlist_items w join public.assets a on a.id = w.asset_id
       where w.user_id = $1`,

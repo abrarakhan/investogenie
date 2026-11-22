@@ -1,4 +1,4 @@
-import { query } from "@/lib/db";
+import { tenantQuery } from "@/lib/db";
 import { zonedMarketClock } from "@/lib/market-calendar.mjs";
 
 /** Fill-price tolerance for exchange tick rounding around the trigger and limit. */
@@ -66,12 +66,12 @@ export interface PendingOrder {
 
 export async function getPendingOrders(userId: string, market: "IN" | "US"): Promise<PendingOrder[]> {
   const today = zonedMarketClock(market).date;
-  const rows = await query<{
+  const rows = await tenantQuery<{
     id: string; asset_id: string; ticker: string; strategy_label: string; quantity: string; filled_quantity: string;
     trigger_price: string; limit_price: string; projected_target: string; projected_stop: string;
     projected_trailing_stop: string | null; expected_holding_days: number;
     placed_on: string; valid_until: string; current_price: string | null;
-  }>(
+  }>(userId,
     `select o.id,o.asset_id,a.ticker,o.strategy_label,o.quantity::text,o.filled_quantity::text,o.trigger_price::text,o.limit_price::text,
             o.projected_target::text,o.projected_stop::text,o.projected_trailing_stop::text,o.expected_holding_days,
             o.placed_on::text,o.valid_until::text,q.price::text current_price

@@ -1,7 +1,7 @@
 "use server";
 
 import { getSessionUser } from "@/lib/auth";
-import { query, queryOne } from "@/lib/db";
+import { tenantQuery, tenantQueryOne } from "@/lib/db";
 import { encryptCredential } from "@/lib/crypto/credentials";
 import { triggerBreezeReconciliation } from "@/lib/breeze/reconciliation";
 import { isAIProvider, type AIProvider } from "@/lib/ai/providers";
@@ -102,7 +102,7 @@ function mapCredentials(row: CredsRow): StoredCredentials {
 export async function getUserCredentials(): Promise<StoredCredentials | null> {
   const user = await getSessionUser();
   if (!user) return null;
-  const row = await queryOne<CredsRow>(
+  const row = await tenantQueryOne<CredsRow>(user.id,
     `select ${SELECT_COLS} from public.user_credentials where user_id = $1`,
     [user.id],
   );
@@ -129,13 +129,13 @@ export async function updateCredentials(input: CredentialsInput): Promise<Stored
     throw new Error(`Unsupported news provider: ${input.newsProvider}`);
   }
 
-  const existing = await queryOne<CredsRow>(
+  const existing = await tenantQueryOne<CredsRow>(user.id,
     `select ${SELECT_COLS} from public.user_credentials where user_id = $1`,
     [user.id],
   );
 
   if (!existing) {
-    const row = await queryOne<CredsRow>(
+    const row = await tenantQueryOne<CredsRow>(user.id,
       `insert into public.user_credentials
          (user_id, smtp_host, smtp_port, smtp_user, smtp_password_encrypted,
           ai_provider, ai_model, ai_api_key_encrypted,
@@ -166,7 +166,7 @@ export async function updateCredentials(input: CredentialsInput): Promise<Stored
     return mapCredentials(row);
   }
 
-  const row = await queryOne<CredsRow>(
+  const row = await tenantQueryOne<CredsRow>(user.id,
     `update public.user_credentials set
         smtp_host = coalesce($2, smtp_host),
         smtp_port = coalesce($3, smtp_port),
@@ -210,7 +210,7 @@ export async function clearCredential(field: "smtpPassword" | "aiApiKey" | "news
   const user = await getSessionUser();
   if (!user) throw new Error("Not signed in");
   if (field === "breeze") {
-    await query(
+    await tenantQuery(user.id,
       `update public.user_credentials set
          breeze_api_key_encrypted=null,breeze_api_secret_encrypted=null,
          breeze_session_token_encrypted=null,breeze_session_updated_at=null,updated_at=now()
@@ -222,7 +222,7 @@ export async function clearCredential(field: "smtpPassword" | "aiApiKey" | "news
   const column = field === "smtpPassword"
     ? "smtp_password_encrypted"
     : field === "aiApiKey" ? "ai_api_key_encrypted" : "news_api_key_encrypted";
-  await query(
+  await tenantQuery(user.id,
     `update public.user_credentials set ${column} = null, updated_at = now() where user_id = $1`,
     [user.id],
   );
@@ -233,7 +233,7 @@ export interface StoredNewsProvider { provider: NewsProvider; enabled: boolean }
 export async function getUserNewsProviders(): Promise<StoredNewsProvider[]> {
   const user = await getSessionUser();
   if (!user) return [];
-  return query<StoredNewsProvider>(
+  return tenantQuery<StoredNewsProvider>(user.id,
     `select provider,enabled from public.user_news_providers where user_id=$1 order by provider`,
     [user.id],
   );
@@ -243,7 +243,7 @@ export async function saveNewsProvider(provider: NewsProvider, apiKey: string): 
   const user = await getSessionUser();
   if (!user) throw new Error("Not signed in");
   if (!NEWS_PROVIDERS.has(provider) || !apiKey.trim()) throw new Error("Select a provider and enter its API key.");
-  await query(
+  await tenantQuery(user.id,
     `insert into public.user_news_providers(user_id,provider,api_key_encrypted,enabled)
      values($1,$2,$3,true) on conflict(user_id,provider) do update set
      api_key_encrypted=excluded.api_key_encrypted,enabled=true,updated_at=now()`,
@@ -254,5 +254,5 @@ export async function saveNewsProvider(provider: NewsProvider, apiKey: string): 
 export async function removeNewsProvider(provider: NewsProvider): Promise<void> {
   const user = await getSessionUser();
   if (!user) throw new Error("Not signed in");
-  await query(`delete from public.user_news_providers where user_id=$1 and provider=$2`, [user.id, provider]);
+  await tenantQuery(user.id, `delete from public.user_news_providers where user_id=$1 and provider=$2`, [user.id, provider]);
 }

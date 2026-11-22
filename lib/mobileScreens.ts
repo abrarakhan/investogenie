@@ -18,7 +18,7 @@ import type { ScreenRow } from "@/features/swing/service";
 import { getScreenerResults, getSectors, getUniverses, type ScreenerStock } from "@/lib/screener/service";
 import type { Filter, SortSpec } from "@/lib/screener/filterEngine";
 import { PRESETS, PRESET_BY_KEY } from "@/lib/screener/presets";
-import { query } from "@/lib/db";
+import { query, tenantQuery } from "@/lib/db";
 import { getUserSwingSettings } from "@/lib/settings";
 import { zonedMarketClock } from "@/lib/market-calendar.mjs";
 import type { LegacyMomentumIgnitionCandidate, MomentumIgnitionCandidate } from "@/features/momentum/contracts";
@@ -269,7 +269,7 @@ async function stockScreener(market: MobileMarket, params: URLSearchParams, user
   const [universes, sectors, savedRows] = await Promise.all([
     getUniverses(market),
     getSectors(market),
-    query<SavedScreenRow>(
+    tenantQuery<SavedScreenRow>(userId,
       `select id::text, name, universe, filters, sort from public.saved_screens
         where user_id = $1 and market = $2 order by updated_at desc limit 20`,
       [userId, market],

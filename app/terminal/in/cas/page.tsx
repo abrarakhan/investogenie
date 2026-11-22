@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { getSessionUser } from "@/lib/auth";
 import AppShell from "@/components/app/AppShell";
-import { query } from "@/lib/db";
+import { tenantQuery } from "@/lib/db";
 import { importAmcDisclosure, importCasStatement } from "./actions";
 import ImportButton from "./ImportButton";
 
@@ -42,7 +42,7 @@ export default async function CasUploadPage({
   const params = await searchParams;
   const message = statusMessage(params.status, params.count, params.funds, params.stocks);
   const disclosureStatus = disclosureMessage(params.disclosure, params.rows);
-  const funds = await query<{ id: string; ticker: string; name: string | null }>(
+  const funds = await tenantQuery<{ id: string; ticker: string; name: string | null }>(user.id,
     `select a.id, a.ticker, a.name
        from public.holdings h
        join public.assets a on a.id = h.asset_id

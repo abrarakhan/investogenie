@@ -4,7 +4,7 @@
 //   backtest — recorded production-ready signals, next-open entry (retrospective);
 //   ledger   — the signed-in user's own closed trades.
 // Nothing is recomputed here: it only aggregates stored outcomes.
-import { query } from "@/lib/db";
+import { tenantQuery, workerQuery } from "@/lib/db";
 import type { MarketId } from "@/lib/types";
 
 export interface EvidenceStats {
@@ -101,7 +101,7 @@ const nOrNull = (value: unknown) => (value === null || value === undefined ? nul
 
 export async function getStrategyLeaderboard(market: MarketId, userId: string): Promise<LeaderboardRow[]> {
   const [forwardRows, backtestRows, ledgerRows] = await Promise.all([
-    query<Record<string, unknown>>(
+    workerQuery<Record<string, unknown>>(
       `select method,
               count(*) filter (where status in ('TARGET_HIT','STOP_HIT','EXPIRED')) trades,
               avg(realized_return_pct) filter (where status in ('TARGET_HIT','STOP_HIT','EXPIRED')) avg_ret,
@@ -117,12 +117,12 @@ export async function getStrategyLeaderboard(market: MarketId, userId: string): 
          from public.forward_test_positions where market = $1 group by method`,
       [market],
     ),
-    query<Record<string, unknown>>(
+    workerQuery<Record<string, unknown>>(
       `select engine, horizon_sessions, observations, win_rate_pct, average_return_pct, median_return_pct
          from public.strategy_retrospective_scorecards where market = $1`,
       [market],
     ),
-    query<Record<string, unknown>>(
+    tenantQuery<Record<string, unknown>>(userId,
       `select coalesce(strategy_key, 'DEFAULT_SWING') strategy,
               count(*) trades,
               avg((exit_price / buy_price - 1) * 100) avg_ret,

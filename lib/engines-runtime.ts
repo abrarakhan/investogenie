@@ -1,8 +1,8 @@
 // Server-side glue: pull market data out of Postgres and run the analytical
 // engines, scoped to a single market (US or India). Direct SQL; user-owned
-// queries are scoped by the session user id (no RLS in plain Postgres).
+// queries are scoped by the session user id and PostgreSQL RLS.
 
-import { query } from "@/lib/db";
+import { query, tenantQuery } from "@/lib/db";
 import { getSessionUser } from "@/lib/auth";
 import {
   analyzeFundOverlap,
@@ -135,7 +135,7 @@ export async function getFundOverlap(): Promise<OverlapReport | null> {
   if (!user) return null;
 
   const heldFunds = (
-    await query<{ holding_id: string; id: string; ticker: string; name: string | null; display_name: string | null; display_amc: string | null; isin: string | null; asset_class: string; quantity: string | number; avg_cost: string | number | null; quote_price: string | number | null; statement_value: string | number | null }>(
+    await tenantQuery<{ holding_id: string; id: string; ticker: string; name: string | null; display_name: string | null; display_amc: string | null; isin: string | null; asset_class: string; quantity: string | number; avg_cost: string | number | null; quote_price: string | number | null; statement_value: string | number | null }>(user.id,
       `select h.id as holding_id, a.id, a.ticker,a.name,
               coalesce(fs.name,amfi.scheme_name,a.name) as display_name,
               fs.amc as display_amc, coalesce(nullif(chd.isin,''),nullif(m.amfi_code_in,'')) as isin,
@@ -173,7 +173,7 @@ export async function getFundOverlap(): Promise<OverlapReport | null> {
   if (heldFunds.length === 0) return null;
 
   const heldFundIds = heldFunds.map((h) => h.id);
-  const userMfh = await query<{ fund_asset_id: string; stock_asset_id: string; weight_percentage: string | number }>(
+  const userMfh = await tenantQuery<{ fund_asset_id: string; stock_asset_id: string; weight_percentage: string | number }>(user.id,
     `select fund_asset_id, stock_asset_id, weight_percentage
        from public.user_mutual_fund_holdings
       where user_id = $1 and fund_asset_id = any($2)`,
@@ -182,7 +182,7 @@ export async function getFundOverlap(): Promise<OverlapReport | null> {
   const userScopedFunds = new Set(userMfh.map((r) => r.fund_asset_id));
   const globalFallbackFundIds = heldFundIds.filter((id) => !userScopedFunds.has(id));
   const globalMfh = globalFallbackFundIds.length
-    ? await query<{ fund_asset_id: string; stock_asset_id: string; weight_percentage: string | number }>(
+    ? await tenantQuery<{ fund_asset_id: string; stock_asset_id: string; weight_percentage: string | number }>(user.id,
         `select fund_asset_id, stock_asset_id, weight_percentage
            from public.mutual_fund_holdings
           where fund_asset_id = any($1)`,
@@ -198,7 +198,7 @@ export async function getFundOverlap(): Promise<OverlapReport | null> {
   const mfhCoveredIds = new Set(mfh.map((r) => r.fund_asset_id));
   const snapshotHoldingIds = heldFunds.filter((h) => !mfhCoveredIds.has(h.id)).map((h) => h.holdingId);
   const snapRows = snapshotHoldingIds.length
-    ? await query<{ asset_id: string; scheme_name: string; scheme_amc: string | null; instrument_isin: string; instrument_name: string; weight_pct: number }>(
+    ? await tenantQuery<{ asset_id: string; scheme_name: string; scheme_amc: string | null; instrument_isin: string; instrument_name: string; weight_pct: number }>(user.id,
         `select h.asset_id, fs.name as scheme_name, fs.amc as scheme_amc,
                 fhs.instrument_isin, fhs.instrument_name, fhs.weight_pct::float8 as weight_pct
            from public.user_fund_mappings map

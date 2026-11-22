@@ -11,7 +11,7 @@ import { revalidatePath } from "next/cache";
 import { ensureScaffold } from "@/lib/dashboard-actions";
 import { getSessionUser } from "@/lib/auth";
 import { normalizeFolio, parseCasHoldings, type ParsedHoldingRow as CasParsedHoldingRow } from "@/lib/cas/parse";
-import { query, queryOne, tx } from "@/lib/db";
+import { query, queryOne, rlsTx, tenantQuery, tenantQueryOne } from "@/lib/db";
 import {
   AmcDisclosureProvider,
   parseDisclosureSource,
@@ -105,7 +105,7 @@ async function fileToText(file: File, password: string): Promise<string | "encry
 }
 
 async function rejectCasArtifact(scaffold: { userId: string; portfolioId: string }, row: CasParsedHoldingRow, reason: string) {
-  await query(
+  await tenantQuery(scaffold.userId,
     `insert into public.cas_import_rejected_holdings
        (reason, user_id, portfolio_id, asset_id, ticker, name, quantity, avg_cost, value)
      values ($1, $2, $3, null, $4, $5, $6, $7, $8)`,
@@ -140,7 +140,7 @@ export async function importCasStatement(formData: FormData): Promise<void> {
   // A successfully parsed newer statement supersedes parsing errors from
   // earlier uploads. Keep them for audit, but remove them from active error
   // views before recording any artifacts specific to this statement.
-  await query(
+  await tenantQuery(scaffold.userId,
     "update public.cas_import_rejected_holdings set resolved_at=now() where user_id=$1 and resolved_at is null",
     [scaffold.userId],
   ).catch(() => {});
@@ -149,7 +149,7 @@ export async function importCasStatement(formData: FormData): Promise<void> {
     await rejectCasArtifact(scaffold, row, "CAS parser artifact: AMC header or disclosure/legal text").catch(() => {});
   }
 
-  await tx(async (c) => {
+  await rlsTx({ kind: "tenant", userId: scaffold.userId }, async (c) => {
     await c.query(
       `delete from public.holdings h
         using public.assets a
@@ -204,7 +204,7 @@ export async function importCasStatement(formData: FormData): Promise<void> {
     }
   });
 
-  await query(
+  await tenantQuery(scaffold.userId,
     `update public.gmail_disclosure_attachments
         set status='ignored',error_message=null,updated_at=now()
       where user_id=$1 and document_type='nsdl_cas' and status<>'imported'`,
@@ -268,7 +268,7 @@ export async function importAmcDisclosure(formData: FormData): Promise<void> {
     if (!fundAssetId) redirect("/terminal/in/cas?disclosure=missing_fund");
     if (!(file instanceof File) || file.size === 0) redirect("/terminal/in/cas?disclosure=missing_file");
 
-    const fund = await queryOne<{ id: string; ticker: string; name: string }>(
+    const fund = await tenantQueryOne<{ id: string; ticker: string; name: string }>(user.id,
       `select a.id, a.ticker, a.name
          from public.holdings h
          join public.assets a on a.id = h.asset_id
@@ -292,7 +292,7 @@ export async function importAmcDisclosure(formData: FormData): Promise<void> {
       stockIds.push({ id: await resolveStockAssetId(row), weight: Number(row.weight_percentage) });
     }
 
-    await tx(async (c) => {
+    await rlsTx({ kind: "tenant", userId: user.id }, async (c) => {
       await c.query(
         "delete from public.user_mutual_fund_holdings where user_id = $1 and fund_asset_id = $2",
         [user.id, fundAssetId],

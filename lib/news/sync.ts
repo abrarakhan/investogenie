@@ -1,4 +1,4 @@
-import { tx, query } from "@/lib/db";
+import { rlsTx, workerQuery } from "@/lib/db";
 import type { ActiveAIConfig, ActiveNewsConfig } from "@/lib/credentials.server";
 import type { MarketId } from "@/lib/types";
 import { classifyNews, type NewsAssetRef } from "./classifier";
@@ -34,7 +34,7 @@ export async function refreshNewsIntelligence(
   ai: ActiveAIConfig | null,
 ): Promise<NewsSyncSummary> {
   const newsConfigs = Array.isArray(newsInput) ? newsInput : [newsInput];
-  const rows = await query<CandidateRow>(
+  const rows = await workerQuery<CandidateRow>(
     `with latest_scan as (
        select max(as_of) as_of from public.swing_signals where country=$1
      ), ranked as (
@@ -71,14 +71,14 @@ export async function refreshNewsIntelligence(
   // Open real trades remain exposed to event risk even after they leave the
   // current top-candidate list. Always include them in news retrieval and AI
   // classification so ledger monitoring does not silently stop after entry.
-  const ledgerRows = await query<CandidateRow>(
+  const ledgerRows = await workerQuery<CandidateRow>(
     `select distinct a.id asset_id,a.ticker,a.name,a.sector
        from public.swing_trade_ledger l
        join public.assets a on a.id=l.asset_id
       where l.market=$1 and l.status='OPEN' and a.is_active`,
     [market],
   );
-  const strongRows = await query<CandidateRow>(
+  const strongRows = await workerQuery<CandidateRow>(
     `with latest as (select max(captured_at) at from public.strong_swing_snapshots where market=$1)
      select a.id asset_id,a.ticker,a.name,a.sector
        from public.strong_swing_snapshots s join latest l on l.at=s.captured_at
@@ -93,7 +93,7 @@ export async function refreshNewsIntelligence(
     assetId: row.asset_id, ticker: row.ticker, name: row.name, sector: row.sector,
   }));
   const fetchedBatches = await Promise.allSettled(newsConfigs.map(async (news) => {
-    const syncState = await query<{ last_published_at: Date | string | null }>(
+    const syncState = await workerQuery<{ last_published_at: Date | string | null }>(
       `select last_published_at from public.news_sync_state where provider=$1 and market=$2`,
       [news.provider, market],
     );
@@ -115,7 +115,7 @@ export async function refreshNewsIntelligence(
   const impacts = await classifyNews(market, articles, assets, ai);
   const aiSucceeded = impacts.some((impact) => impact.analysisSource.startsWith("ai:"));
 
-  const articleIds = await tx(async (client) => {
+  const articleIds = await rlsTx({ kind: "worker" }, async (client) => {
     const ids: string[] = [];
     for (const article of articles) {
       const result = await client.query<{ id: string }>(
