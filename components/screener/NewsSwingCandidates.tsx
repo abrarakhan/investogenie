@@ -124,6 +124,36 @@ function CandidateCard({
         </div>
       )}
 
+      {candidate.aiBrief && (
+        <div className="mt-4 rounded-md border border-violet-400/25 bg-violet-400/[0.05] px-3.5 py-3 text-xs leading-relaxed text-violet-100/85">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-violet-300">
+              AI Movement &amp; Filter Brief
+            </span>
+            <span className="text-[10px] text-white/35">
+              {candidate.aiBrief.model ?? candidate.aiBrief.analysisSource} · {fmtTime(candidate.aiBrief.generatedAt)}
+            </span>
+          </div>
+          <p className="mt-1.5 text-white/80">{candidate.aiBrief.summary}</p>
+          {(candidate.aiBrief.catalystNote || candidate.aiBrief.riskNote) && (
+            <div className="mt-2 grid gap-1.5 sm:grid-cols-2">
+              {candidate.aiBrief.catalystNote && (
+                <div className="rounded bg-emerald-400/[0.06] px-2.5 py-1.5 text-[11px] text-emerald-200/90">
+                  <span className="font-bold uppercase text-emerald-300">Tailwind: </span>
+                  {candidate.aiBrief.catalystNote}
+                </div>
+              )}
+              {candidate.aiBrief.riskNote && (
+                <div className="rounded bg-rose-400/[0.06] px-2.5 py-1.5 text-[11px] text-rose-200/90">
+                  <span className="font-bold uppercase text-rose-300">Risk: </span>
+                  {candidate.aiBrief.riskNote}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="mt-4 border-t border-white/8 pt-4">
         <div className="mb-2 text-[10px] font-bold uppercase tracking-[0.16em] text-white/35">
           Evidence ({candidate.news.length})

@@ -193,3 +193,169 @@ export async function classifyNews(
     return fallback;
   }
 }
+
+export type BriefVerdict = "KEEP" | "CAUTION" | "FILTER_OUT";
+export type BriefMovementBias = "TAILWIND" | "NEUTRAL" | "HEADWIND" | "EVENT_RISK";
+
+export interface StockNewsBrief {
+  market: MarketId;
+  assetId: string;
+  ticker: string;
+  verdict: BriefVerdict;
+  movementBias: BriefMovementBias;
+  summary: string;
+  catalystNote: string | null;
+  riskNote: string | null;
+  articleCount: number;
+  analysisSource: string;
+  model: string | null;
+}
+
+function synthesizeBriefsDeterministically(
+  market: MarketId,
+  grouped: Array<{ asset: NewsAssetRef; items: Array<{ impact: ClassifiedImpact; title: string }> }>,
+): StockNewsBrief[] {
+  return grouped.map(({ asset, items }) => {
+    const pos = items.filter((entry) => entry.impact.direction === "POSITIVE");
+    const neg = items.filter((entry) => entry.impact.direction === "NEGATIVE");
+    const severeNeg = neg.some((entry) => entry.impact.severity >= 0.7 && entry.impact.confidence >= 0.55);
+    const verdict: BriefVerdict = severeNeg ? "FILTER_OUT" : neg.length > pos.length ? "CAUTION" : "KEEP";
+    const movementBias: BriefMovementBias = severeNeg || neg.length > pos.length
+      ? "HEADWIND"
+      : pos.length > neg.length
+        ? "TAILWIND"
+        : "NEUTRAL";
+    const leadPos = pos[0]?.title ?? null;
+    const leadNeg = neg[0]?.title ?? null;
+    const summary = verdict === "FILTER_OUT"
+      ? `High-severity adverse news linked to ${asset.ticker} (${neg.length} negative item${neg.length === 1 ? "" : "s"}). Filter out until headline risk clears.`
+      : verdict === "CAUTION"
+        ? `Mixed-to-negative news flow (${neg.length} negative, ${pos.length} positive) suggests near-term headline drag for ${asset.ticker}.`
+        : pos.length > 0
+          ? `Constructive news flow (${pos.length} positive item${pos.length === 1 ? "" : "s"}) supports technical continuation for ${asset.ticker}.`
+          : `Recent headlines linked to ${asset.ticker} are neutral with no material directional shift.`;
+    return {
+      market,
+      assetId: asset.assetId,
+      ticker: asset.ticker,
+      verdict,
+      movementBias,
+      summary: summary.slice(0, 420),
+      catalystNote: leadPos ? leadPos.slice(0, 220) : null,
+      riskNote: leadNeg ? leadNeg.slice(0, 220) : null,
+      articleCount: items.length,
+      analysisSource: "deterministic_brief",
+      model: null,
+    };
+  });
+}
+
+function briefPromptFor(
+  market: MarketId,
+  grouped: Array<{ asset: NewsAssetRef; items: Array<{ impact: ClassifiedImpact; title: string }> }>,
+  marketHeadlines: string[],
+): string {
+  const payload = grouped.map(({ asset, items }) => ({
+    ticker: asset.ticker,
+    name: asset.name,
+    sector: asset.sector,
+    headlines: items.slice(0, 5).map(({ impact, title }) => ({
+      scope: impact.scope,
+      direction: impact.direction,
+      severity: impact.severity,
+      confidence: impact.confidence,
+      eventType: impact.eventType,
+      title,
+      rationale: impact.rationale,
+    })),
+  }));
+  return `You are a disciplined swing-trading risk analyst for ${market === "IN" ? "Indian" : "US"} equities.
+For each stock below, synthesize ONLY the supplied headlines and macro context into a concise filter verdict to separate clean setups from headline-risky stocks.
+Return JSON only: {"briefs":[{"ticker":"...","verdict":"KEEP|CAUTION|FILTER_OUT","movementBias":"TAILWIND|NEUTRAL|HEADWIND|EVENT_RISK","summary":"1-2 short factual sentences on expected near-term pressure","catalystNote":"short positive driver or null","riskNote":"short risk/headwind or null"}]}.
+Rules: never invent facts, price targets, or buy/sell advice; use FILTER_OUT only for severe adverse risk (fraud, default, regulatory action, major earnings miss, guidance cut, sharp dilution); use CAUTION for mixed/uncertain headlines or event-gap risk; use KEEP when news is supportive or benign.
+Broad market headlines: ${JSON.stringify(marketHeadlines.slice(0, 6))}
+Stocks: ${JSON.stringify(payload)}`;
+}
+
+/**
+ * Synthesize one cached movement & filter brief per stock with linked news.
+ * Runs only during news refresh (never on page loads) and falls back cleanly.
+ */
+export async function synthesizeStockBriefs(
+  market: MarketId,
+  assets: NewsAssetRef[],
+  articles: NormalizedNewsArticle[],
+  impacts: ClassifiedImpact[],
+  ai: ActiveAIConfig | null,
+): Promise<StockNewsBrief[]> {
+  const assetById = new Map(assets.map((asset) => [asset.assetId, asset]));
+  const itemsByAsset = new Map<string, Array<{ impact: ClassifiedImpact; title: string }>>();
+  const marketHeadlines: string[] = [];
+
+  for (const impact of impacts) {
+    const article = articles[impact.articleIndex];
+    if (!article) continue;
+    if (impact.scope === "MARKET") {
+      if (impact.direction !== "NEUTRAL") marketHeadlines.push(article.title);
+      continue;
+    }
+    if (impact.scope === "ASSET" && impact.assetId && assetById.has(impact.assetId)) {
+      const list = itemsByAsset.get(impact.assetId) ?? [];
+      list.push({ impact, title: article.title });
+      itemsByAsset.set(impact.assetId, list);
+    } else if (impact.scope === "SECTOR" && impact.sector) {
+      for (const asset of assets) {
+        if (asset.sector && asset.sector === impact.sector) {
+          const list = itemsByAsset.get(asset.assetId) ?? [];
+          list.push({ impact, title: article.title });
+          itemsByAsset.set(asset.assetId, list);
+        }
+      }
+    }
+  }
+
+  const grouped = [...itemsByAsset.entries()]
+    .slice(0, 25)
+    .map(([assetId, items]) => ({ asset: assetById.get(assetId)!, items }));
+  if (!grouped.length) return [];
+
+  const fallback = synthesizeBriefsDeterministically(market, grouped);
+  if (!ai) return fallback;
+
+  try {
+    const raw = await callAI(ai, briefPromptFor(market, grouped, marketHeadlines)) as {
+      briefs?: Array<Record<string, unknown>>;
+    };
+    const byTicker = new Map(grouped.map((entry) => [entry.asset.ticker.toUpperCase(), entry]));
+    const parsed: StockNewsBrief[] = [];
+    for (const item of raw.briefs ?? []) {
+      const entry = byTicker.get(String(item.ticker ?? "").toUpperCase());
+      if (!entry) continue;
+      const verdict = ["KEEP", "CAUTION", "FILTER_OUT"].includes(String(item.verdict))
+        ? (String(item.verdict) as BriefVerdict)
+        : "CAUTION";
+      const movementBias = ["TAILWIND", "NEUTRAL", "HEADWIND", "EVENT_RISK"].includes(String(item.movementBias))
+        ? (String(item.movementBias) as BriefMovementBias)
+        : "NEUTRAL";
+      const summary = String(item.summary ?? "").trim();
+      if (!summary) continue;
+      parsed.push({
+        market,
+        assetId: entry.asset.assetId,
+        ticker: entry.asset.ticker,
+        verdict,
+        movementBias,
+        summary: summary.slice(0, 420),
+        catalystNote: item.catalystNote ? String(item.catalystNote).trim().slice(0, 220) : null,
+        riskNote: item.riskNote ? String(item.riskNote).trim().slice(0, 220) : null,
+        articleCount: entry.items.length,
+        analysisSource: `ai:${ai.provider}`,
+        model: ai.model,
+      });
+    }
+    return parsed.length ? parsed : fallback;
+  } catch (error) {
+    console.error("[news-ai] stock brief synthesis failed; using deterministic brief fallback", error);
+    return fallback;
+  }
+}

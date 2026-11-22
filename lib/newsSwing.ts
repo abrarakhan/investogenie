@@ -51,6 +51,18 @@ export interface NewsEvidence {
   model: string | null;
 }
 
+export interface NewsStockBrief {
+  verdict: NewsFilterVerdict;
+  movementBias: NewsMovementBias;
+  summary: string;
+  catalystNote: string | null;
+  riskNote: string | null;
+  articleCount: number;
+  analysisSource: string;
+  model: string | null;
+  generatedAt: string;
+}
+
 export interface NewsSwingCandidate extends StrongSwingCandidate, NewsSwingScore {
   news: NewsEvidence[];
   sourcePool: NewsSourcePool;
@@ -59,6 +71,7 @@ export interface NewsSwingCandidate extends StrongSwingCandidate, NewsSwingScore
   upcomingResultsDate: string | null;
   daysToResults: number | null;
   resultsBlackout: boolean;
+  aiBrief: NewsStockBrief | null;
 }
 
 export interface NewsSwingWorkspace {
@@ -142,12 +155,19 @@ function trendCandidateToBase(item: TrendContinuationCandidate, rank: number): S
 function deriveVerdictAndBias(
   state: NewsSwingScore["state"],
   resultsBlackout: boolean,
+  brief: NewsStockBrief | null,
 ): { filterVerdict: NewsFilterVerdict; movementBias: NewsMovementBias } {
-  if (state === "RISK_OFF") return { filterVerdict: "FILTER_OUT", movementBias: "HEADWIND" };
+  if (state === "RISK_OFF" || brief?.verdict === "FILTER_OUT") {
+    return { filterVerdict: "FILTER_OUT", movementBias: "HEADWIND" };
+  }
   if (resultsBlackout) return { filterVerdict: "CAUTION", movementBias: "EVENT_RISK" };
-  if (state === "CAUTION") return { filterVerdict: "CAUTION", movementBias: "HEADWIND" };
-  if (state === "FAVORED") return { filterVerdict: "KEEP", movementBias: "TAILWIND" };
-  return { filterVerdict: "KEEP", movementBias: "NEUTRAL" };
+  if (state === "CAUTION" || brief?.verdict === "CAUTION") {
+    return { filterVerdict: "CAUTION", movementBias: brief?.movementBias ?? "HEADWIND" };
+  }
+  if (state === "FAVORED" || brief?.movementBias === "TAILWIND") {
+    return { filterVerdict: "KEEP", movementBias: "TAILWIND" };
+  }
+  return { filterVerdict: "KEEP", movementBias: brief?.movementBias ?? "NEUTRAL" };
 }
 
 export async function getNewsSwingWorkspace(
@@ -176,7 +196,7 @@ export async function getNewsSwingWorkspace(
   }
 
   const ids = base.map((row) => row.assetId);
-  const [impacts, sectors, eventRows] = ids.length
+  const [impacts, sectors, eventRows, briefRows] = ids.length
     ? await Promise.all([
       query<ImpactRow>(
         `select i.asset_id,i.sector,i.scope,i.event_type,i.direction,i.sentiment_score,
@@ -203,11 +223,46 @@ export async function getNewsSwingWorkspace(
           group by asset_id`,
         [ids],
       ).catch(() => []),
+      query<{
+        asset_id: string;
+        verdict: NewsFilterVerdict;
+        movement_bias: NewsMovementBias;
+        summary: string;
+        catalyst_note: string | null;
+        risk_note: string | null;
+        article_count: number;
+        analysis_source: string;
+        model: string | null;
+        generated_at: Date | string;
+      }>(
+        `select asset_id,verdict,movement_bias,summary,catalyst_note,risk_note,
+                article_count,analysis_source,model,generated_at
+           from public.news_stock_briefs
+          where market=$1 and asset_id=any($2::uuid[])
+            and generated_at >= now() - interval '7 days'`,
+        [market, ids],
+      ).catch(() => []),
     ])
-    : [[], [], []];
+    : [[], [], [], []];
 
   const sectorByAsset = new Map(sectors.map((row) => [row.id, row.sector]));
   const resultsByAsset = new Map(eventRows.map((row) => [row.asset_id, row]));
+  const briefByAsset = new Map<string, NewsStockBrief>(
+    briefRows.map((row) => [
+      row.asset_id,
+      {
+        verdict: row.verdict,
+        movementBias: row.movement_bias,
+        summary: row.summary,
+        catalystNote: row.catalyst_note,
+        riskNote: row.risk_note,
+        articleCount: Number(row.article_count),
+        analysisSource: row.analysis_source,
+        model: row.model,
+        generatedAt: iso(row.generated_at),
+      },
+    ]),
+  );
   const evidence = impacts.map((row): NewsEvidence & { assetId: string | null; sector: string | null } => ({
     assetId: row.asset_id,
     sector: row.sector,
@@ -247,7 +302,8 @@ export async function getNewsSwingWorkspace(
     const upcoming = resultsByAsset.get(row.assetId);
     const daysToResults = upcoming ? Number(upcoming.days_away) : null;
     const resultsBlackout = daysToResults !== null && daysToResults <= 3;
-    const { filterVerdict, movementBias } = deriveVerdictAndBias(score.state, resultsBlackout);
+    const aiBrief = briefByAsset.get(row.assetId) ?? null;
+    const { filterVerdict, movementBias } = deriveVerdictAndBias(score.state, resultsBlackout, aiBrief);
     return {
       ...row,
       ...score,
@@ -258,6 +314,7 @@ export async function getNewsSwingWorkspace(
       upcomingResultsDate: upcoming?.next_date ?? null,
       daysToResults,
       resultsBlackout,
+      aiBrief,
     };
   }).sort((left, right) => left.pythonRank - right.pythonRank);
 

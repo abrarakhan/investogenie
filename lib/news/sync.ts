@@ -1,7 +1,7 @@
 import { rlsTx, workerQuery } from "@/lib/db";
 import type { ActiveAIConfig, ActiveNewsConfig } from "@/lib/credentials.server";
 import type { MarketId } from "@/lib/types";
-import { classifyNews, type NewsAssetRef } from "./classifier";
+import { classifyNews, synthesizeStockBriefs, type NewsAssetRef } from "./classifier";
 import { fetchNews } from "./providers";
 import { enrichEvidence } from "./evidence";
 
@@ -124,6 +124,7 @@ export async function refreshNewsIntelligence(
   }
   const articles = fetched.slice(0, 50);
   const impacts = await classifyNews(market, articles, assets, ai);
+  const briefs = await synthesizeStockBriefs(market, assets, articles, impacts, ai);
   const aiSucceeded = impacts.some((impact) => impact.analysisSource.startsWith("ai:"));
 
   const articleIds = await rlsTx({ kind: "worker" }, async (client) => {
@@ -199,6 +200,36 @@ export async function refreshNewsIntelligence(
     }
     return ids;
   });
+
+  if (briefs.length) {
+    try {
+      await rlsTx({ kind: "worker" }, async (client) => {
+        for (const brief of briefs) {
+          await client.query(
+            `insert into public.news_stock_briefs
+               (market,asset_id,verdict,movement_bias,summary,catalyst_note,risk_note,
+                article_count,analysis_source,model,generated_at)
+             values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,now())
+             on conflict (market,asset_id) do update set
+               verdict=excluded.verdict, movement_bias=excluded.movement_bias,
+               summary=excluded.summary, catalyst_note=excluded.catalyst_note,
+               risk_note=excluded.risk_note, article_count=excluded.article_count,
+               analysis_source=excluded.analysis_source, model=excluded.model,
+               generated_at=now()`,
+            [
+              brief.market, brief.assetId, brief.verdict, brief.movementBias,
+              brief.summary, brief.catalystNote, brief.riskNote, brief.articleCount,
+              brief.analysisSource, brief.model,
+            ],
+          );
+        }
+      });
+    } catch (error) {
+      if ((error as { code?: string })?.code !== "42P01") {
+        console.warn("[news-ai] stock briefs were not persisted:", error instanceof Error ? error.message : String(error));
+      }
+    }
+  }
 
   return {
     market,
