@@ -1,5 +1,9 @@
-import type { NewsSwingCandidate } from "@/lib/newsSwing";
+"use client";
+
+import { useState } from "react";
+import type { NewsFilterVerdict, NewsMovementBias, NewsSwingCandidate } from "@/lib/newsSwing";
 import { swingBuildupLabel } from "@/lib/candidateStatusCopy";
+import TradingViewChartModal, { useTradingViewChart, type ChartGestureProps, type ChartSymbol } from "@/components/charts/TradingViewChartModal";
 
 const STATE_STYLE = {
   FAVORED: "border-emerald-400/35 bg-emerald-400/10 text-emerald-300",
@@ -12,15 +16,37 @@ const STATE_LABEL = {
   FAVORED: "News favored",
   NEUTRAL: "No material shift",
   CAUTION: "News caution",
-  RISK_OFF: "Risk-off",
+  RISK_OFF: "Filtered out · Risk-off",
 } as const;
+
+const BIAS_STYLE: Record<NewsMovementBias, string> = {
+  TAILWIND: "border-emerald-400/30 bg-emerald-400/10 text-emerald-200",
+  NEUTRAL: "border-white/10 bg-white/[0.03] text-white/50",
+  HEADWIND: "border-rose-400/30 bg-rose-400/10 text-rose-200",
+  EVENT_RISK: "border-amber-400/35 bg-amber-400/10 text-amber-200",
+};
+
+const BIAS_LABEL: Record<NewsMovementBias, string> = {
+  TAILWIND: "Bias: Upside tailwind",
+  NEUTRAL: "Bias: Neutral",
+  HEADWIND: "Bias: Adverse headwind",
+  EVENT_RISK: "Bias: Results gap risk",
+};
 
 const fmt = (value: number | null, digits = 2) => value === null ? "-" : value.toFixed(digits);
 const fmtTime = (value: string) => new Intl.DateTimeFormat("en-IN", {
   dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Kolkata",
 }).format(new Date(value));
 
-function CandidateCard({ candidate, rank }: { candidate: NewsSwingCandidate; rank: number }) {
+function CandidateCard({
+  candidate,
+  rank,
+  chartGesture,
+}: {
+  candidate: NewsSwingCandidate;
+  rank: number;
+  chartGesture: ChartGestureProps;
+}) {
   const evidence = candidate.news.slice(0, 4);
   const price = candidate.lastQuote ?? candidate.latestClose;
   const strongRisk = candidate.strongEntry - candidate.strongStop;
@@ -28,7 +54,10 @@ function CandidateCard({ candidate, rank }: { candidate: NewsSwingCandidate; ran
     ? (candidate.strongTarget - candidate.strongEntry) / strongRisk
     : null;
   return (
-    <article className="rounded-lg border border-white/10 bg-white/[0.025] p-4 sm:p-5">
+    <article
+      {...chartGesture}
+      className="cursor-pointer rounded-lg border border-white/10 bg-white/[0.025] p-4 transition-colors hover:border-white/20 sm:p-5"
+    >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="flex flex-wrap items-center gap-2">
@@ -36,19 +65,24 @@ function CandidateCard({ candidate, rank }: { candidate: NewsSwingCandidate; ran
             <h2 className="text-lg font-bold">{candidate.ticker}</h2>
             <span className="text-[10px] uppercase tracking-wider text-white/35">{candidate.exchange} · {candidate.status.replaceAll("_", " ")}</span>
           </div>
-          <p className="mt-1 text-sm text-white/45">Current {fmt(price)} · Strong Swing signal {candidate.latestDate}</p>
+          <p className="mt-1 text-sm text-white/45">Current {fmt(price)} · Signal {candidate.latestDate}</p>
         </div>
-        <span className={`rounded-full border px-3 py-1 text-[10px] font-bold uppercase tracking-wide ${STATE_STYLE[candidate.state]}`}>
-          {STATE_LABEL[candidate.state]}
-        </span>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className={`rounded-full border px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide ${BIAS_STYLE[candidate.movementBias]}`}>
+            {BIAS_LABEL[candidate.movementBias]}
+          </span>
+          <span className={`rounded-full border px-3 py-1 text-[10px] font-bold uppercase tracking-wide ${STATE_STYLE[candidate.state]}`}>
+            {STATE_LABEL[candidate.state]}
+          </span>
+        </div>
       </div>
 
       <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
         {[
-          ["Strong technical", candidate.technicalScore.toFixed(1), "text-white"],
+          ["Technical", candidate.technicalScore.toFixed(1), "text-white"],
           ["News overlay", `${candidate.newsAdjustment >= 0 ? "+" : ""}${candidate.newsAdjustment.toFixed(1)}`, candidate.newsAdjustment >= 0 ? "text-emerald-300" : "text-rose-300"],
           ["Combined", candidate.combinedScore.toFixed(1), "text-[var(--ig-accent)]"],
-          ["Confirmed entry", fmt(candidate.strongEntry), "text-white"],
+          ["Entry", fmt(candidate.strongEntry), "text-white"],
           ["Target", fmt(candidate.strongTarget), "text-emerald-300"],
           ["Stop", fmt(candidate.strongStop), "text-rose-300"],
         ].map(([label, value, color]) => (
@@ -60,7 +94,7 @@ function CandidateCard({ candidate, rank }: { candidate: NewsSwingCandidate; ran
       </div>
 
       <div className="mt-3 grid grid-cols-2 gap-x-5 gap-y-2 border-y border-white/8 py-3 text-[11px] sm:grid-cols-4 lg:grid-cols-8">
-        <span><span className="text-white/32">Strong rank </span><span className="font-mono text-cyan-200">#{candidate.strongSwingRank}</span></span>
+        <span><span className="text-white/32">Base rank </span><span className="font-mono text-cyan-200">#{candidate.strongSwingRank}</span></span>
         <span><span className="text-white/32">Trail </span><span className="font-mono text-amber-200">{fmt(candidate.strongTrail)}</span></span>
         <span><span className="text-white/32">R:R </span><span className="font-mono text-white/65">{fmt(strongRiskReward, 1)}x</span></span>
         <span><span className="text-white/32">Horizon </span><span className="text-white/65">~{candidate.strongExpectedDays}d</span></span>
@@ -78,9 +112,15 @@ function CandidateCard({ candidate, rank }: { candidate: NewsSwingCandidate; ran
         {candidate.strategyTags.map((strategy) => <span key={strategy} className="rounded border border-white/10 px-2 py-1">{strategy.replaceAll("_", " ")}</span>)}
       </div>
 
+      {candidate.resultsBlackout && candidate.upcomingResultsDate && (
+        <div className="mt-4 rounded-md border border-amber-400/30 bg-amber-400/[0.06] px-3 py-2 text-xs text-amber-100">
+          Earnings / results blackout: results scheduled on <strong className="font-mono">{candidate.upcomingResultsDate}</strong> ({candidate.daysToResults === 0 ? "today" : `in ${candidate.daysToResults}d`}). High overnight gap risk — treat as caution until results clear.
+        </div>
+      )}
+
       {candidate.state === "RISK_OFF" && (
         <div className="mt-4 rounded-md border border-rose-400/25 bg-rose-400/[0.06] px-3 py-2 text-xs text-rose-200">
-          Severe recent negative evidence vetoes actionability. The technical setup remains visible for audit, not as a buy instruction.
+          Severe recent negative evidence vetoes actionability. Filtered out of clean candidates; retained here for audit only.
         </div>
       )}
 
@@ -109,29 +149,109 @@ function CandidateCard({ candidate, rank }: { candidate: NewsSwingCandidate; ran
             ))}
           </div>
         ) : (
-          <p className="text-xs text-white/38">No material article is currently linked to this candidate. Its combined score therefore equals its technical score.</p>
+          <p className="text-xs text-white/38">No material article is currently linked to this candidate. Its combined score equals its technical score.</p>
         )}
       </div>
     </article>
   );
 }
 
+type VerdictTab = "ALL" | NewsFilterVerdict;
+
 export default function NewsSwingCandidates({ candidates }: { candidates: NewsSwingCandidate[] }) {
-  const riskOff = candidates.filter((candidate) => candidate.state === "RISK_OFF").length;
-  const favored = candidates.filter((candidate) => candidate.state === "FAVORED").length;
+  const { chart, closeChart, bindChartGesture } = useTradingViewChart();
+  const [verdictTab, setVerdictTab] = useState<VerdictTab>("ALL");
+  const [newsOnly, setNewsOnly] = useState(false);
+
+  const keepCount = candidates.filter((candidate) => candidate.filterVerdict === "KEEP").length;
+  const favoredCount = candidates.filter((candidate) => candidate.state === "FAVORED").length;
+  const cautionCount = candidates.filter((candidate) => candidate.filterVerdict === "CAUTION").length;
+  const filteredOutCount = candidates.filter((candidate) => candidate.filterVerdict === "FILTER_OUT").length;
+  const withNewsCount = candidates.filter((candidate) => candidate.news.length > 0).length;
+
+  const visible = candidates.filter((candidate) => {
+    if (verdictTab !== "ALL" && candidate.filterVerdict !== verdictTab) return false;
+    if (newsOnly && candidate.news.length === 0) return false;
+    return true;
+  });
+
+  const tabs: Array<{ key: VerdictTab; label: string; count: number; tone: string }> = [
+    { key: "ALL", label: "All", count: candidates.length, tone: "border-white/25 bg-white/10 text-white" },
+    { key: "KEEP", label: "Good · Keep", count: keepCount, tone: "border-emerald-400/45 bg-emerald-400/15 text-emerald-200" },
+    { key: "CAUTION", label: "Caution / Results", count: cautionCount, tone: "border-amber-400/45 bg-amber-400/15 text-amber-200" },
+    { key: "FILTER_OUT", label: "Filtered out · Risk-off", count: filteredOutCount, tone: "border-rose-400/45 bg-rose-400/15 text-rose-200" },
+  ];
+
   return (
-    <div className="space-y-6">
-      <div className="grid grid-cols-3 gap-2 border-y border-white/10 py-4">
-        {[["Candidates", candidates.length], ["News favored", favored], ["Risk-off", riskOff]].map(([label, value]) => (
-          <div key={label} className="px-2">
-            <div className="font-mono text-xl font-bold">{value}</div>
+    <div className="space-y-5">
+      <div className="grid grid-cols-2 gap-2 border-y border-white/10 py-4 sm:grid-cols-4">
+        {[
+          ["Good · Keep", keepCount, "text-emerald-300"],
+          ["News favored", favoredCount, "text-emerald-200"],
+          ["Caution / Results", cautionCount, "text-amber-200"],
+          ["Filtered out", filteredOutCount, "text-rose-300"],
+        ].map(([label, value, color]) => (
+          <div key={String(label)} className="px-2">
+            <div className={`font-mono text-xl font-bold ${color}`}>{value}</div>
             <div className="mt-1 text-[10px] uppercase tracking-wider text-white/38">{label}</div>
           </div>
         ))}
       </div>
-      {candidates.length > 0 && <p className="text-xs text-white/40">Strong Swing candidates ranked from highest to lowest combined confirmation and news conviction. Risk-off setups are shown last.</p>}
-      {candidates.map((candidate, index) => <CandidateCard key={candidate.assetId} candidate={candidate} rank={index + 1} />)}
-      {!candidates.length && <div className="rounded-lg border border-white/10 p-8 text-center text-sm text-white/45">No Strong Swing candidates are available to enrich with news.</div>}
+
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          {tabs.map((tab) => (
+            <button
+              key={tab.key}
+              type="button"
+              onClick={() => setVerdictTab(tab.key)}
+              className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors ${
+                verdictTab === tab.key
+                  ? tab.tone
+                  : "border-white/10 text-white/50 hover:border-white/25 hover:text-white"
+              }`}
+            >
+              {tab.label} <span className="ml-1 font-mono text-[10px] opacity-75">{tab.count}</span>
+            </button>
+          ))}
+        </div>
+        <button
+          type="button"
+          onClick={() => setNewsOnly((current) => !current)}
+          className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors ${
+            newsOnly
+              ? "border-cyan-400/45 bg-cyan-400/15 text-cyan-200"
+              : "border-white/10 text-white/50 hover:border-white/25 hover:text-white"
+          }`}
+        >
+          With news only <span className="ml-1 font-mono text-[10px] opacity-75">{withNewsCount}</span>
+        </button>
+      </div>
+
+      {visible.length > 0 && (
+        <p className="text-xs text-white/40">
+          Ranked from highest to lowest combined technical and news conviction. Double-click any card (or long-press on mobile) to open its interactive chart.
+        </p>
+      )}
+
+      {visible.map((candidate, index) => (
+        <CandidateCard
+          key={candidate.assetId}
+          candidate={candidate}
+          rank={index + 1}
+          chartGesture={bindChartGesture({ ticker: candidate.ticker, exchange: candidate.exchange } as ChartSymbol)}
+        />
+      ))}
+
+      {!visible.length && (
+        <div className="rounded-lg border border-white/10 p-8 text-center text-sm text-white/45">
+          {candidates.length
+            ? "No candidates match the selected verdict / news filter."
+            : "No technical candidates are currently available in this pool to enrich with news."}
+        </div>
+      )}
+
+      <TradingViewChartModal chart={chart} onClose={closeChart} />
     </div>
   );
 }

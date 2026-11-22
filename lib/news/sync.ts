@@ -13,9 +13,9 @@ interface CandidateRow {
 }
 
 export function prioritizeNewsCandidates(
-  ledger: CandidateRow[], strong: CandidateRow[], swing: CandidateRow[],
+  ledger: CandidateRow[], strong: CandidateRow[], swing: CandidateRow[], trend: CandidateRow[] = [],
 ): CandidateRow[] {
-  return [...new Map([...ledger, ...strong, ...swing].map((row) => [row.asset_id, row])).values()];
+  return [...new Map([...ledger, ...strong, ...trend, ...swing].map((row) => [row.asset_id, row])).values()];
 }
 
 export interface NewsSyncSummary {
@@ -45,21 +45,10 @@ export async function refreshNewsIntelligence(
         where s.country = $1 and s.bias <> 'SHORT' and s.verdict <> 'NO_SETUP'
           and a.is_active
           and not exists (select 1 from public.asset_tracking_exclusions x where x.asset_id=a.id)
-          and exists (select 1 from public.daily_ohlcv o where o.asset_id=a.id and o.date >= current_date - interval '4 days')
-          and exists (
+          and exists (select 1 from public.daily_ohlcv o where o.asset_id=a.id and o.date >= current_date - interval '10 days')
+          and not exists (
             select 1 from public.latest_quotes q
-             where q.asset_id=a.id
-               and q.as_of::date >= case
-                 when a.country='IN'
-                  and extract(isodow from now() at time zone 'Asia/Kolkata') between 1 and 5
-                  and (now() at time zone 'Asia/Kolkata')::time between time '09:15' and time '15:30'
-                   then (now() at time zone 'Asia/Kolkata')::date
-                 when a.country='US'
-                  and extract(isodow from now() at time zone 'America/New_York') between 1 and 5
-                  and (now() at time zone 'America/New_York')::time between time '09:30' and time '16:00'
-                   then (now() at time zone 'America/New_York')::date
-                 else current_date - 4
-               end
+             where q.asset_id=a.id and q.as_of is not null and q.as_of::date < current_date - 10
           )
         order by a.id, s.score desc
      )
@@ -86,10 +75,32 @@ export async function refreshNewsIntelligence(
       where s.market=$1 and a.is_active order by s.rank limit 30`,
     [market],
   );
+  const trendRows = market === "IN"
+    ? await workerQuery<CandidateRow>(
+      `select * from (
+         select distinct on (s.asset_id)
+                s.asset_id, a.ticker, a.name, a.sector, s.score,
+                (s.metrics->>'setup_variant' is not null) is_midway
+           from public.trend_continuation_signals s
+           join public.assets a on a.id = s.asset_id
+          where s.market = 'IN'
+            and s.status <> 'EXTENDED_RISK'
+            and a.is_active
+            and s.asof_market_date >= (
+              select max(asof_market_date) - interval '4 days'
+                from public.trend_continuation_signals
+               where market = 'IN'
+            )
+          order by s.asset_id, s.asof_market_date desc, s.computed_at desc
+       ) latest
+       order by is_midway desc, score desc, ticker
+       limit 20`,
+    ).catch(() => [] as CandidateRow[])
+    : [];
   // Provider queries are intentionally quota-bounded. Open real trades must
   // come first so swing candidates can never crowd held positions out of the
   // stock-specific news search.
-  const assets: NewsAssetRef[] = prioritizeNewsCandidates(ledgerRows, strongRows, rows).map((row) => ({
+  const assets: NewsAssetRef[] = prioritizeNewsCandidates(ledgerRows, strongRows, rows, trendRows).map((row) => ({
     assetId: row.asset_id, ticker: row.ticker, name: row.name, sector: row.sector,
   }));
   const fetchedBatches = await Promise.allSettled(newsConfigs.map(async (news) => {

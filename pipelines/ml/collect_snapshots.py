@@ -61,6 +61,58 @@ def load_bars(cur, asset_id: str, market_date: str) -> list[FeatureBar]:
                        Decimal(str(row[2])), Decimal(str(row[4]))) for row in reversed(cur.fetchall())]
 
 
+def load_point_in_time_news_features(cur, market: str, asset_id: str, data_cutoff, market_date: str) -> dict[str, str | int | None]:
+    """Point-in-time news & results-calendar features strictly at or before data_cutoff (zero look-ahead)."""
+    defaults: dict[str, str | int | None] = {
+        "news_impact_count": 0,
+        "news_positive_count": 0,
+        "news_negative_count": 0,
+        "news_weighted_sentiment": None,
+        "news_max_severity": None,
+        "days_to_results": None,
+    }
+    try:
+        cur.execute(
+            """
+            select count(*)::int total,
+                   count(*) filter (where i.direction = 'POSITIVE')::int pos,
+                   count(*) filter (where i.direction = 'NEGATIVE')::int neg,
+                   case when sum(i.confidence) > 0
+                        then round((sum(i.sentiment_score * i.confidence) / sum(i.confidence))::numeric, 4)::text
+                        else null end weighted_sentiment,
+                   max(i.severity)::text max_severity
+              from public.news_impacts i
+              join public.news_articles a on a.id = i.article_id
+             where i.market = %s
+               and (i.asset_id = %s or i.scope = 'MARKET')
+               and a.published_at <= %s
+               and a.published_at >= %s - interval '7 days'
+            """,
+            (market, asset_id, data_cutoff, data_cutoff),
+        )
+        row = cur.fetchone()
+        if row:
+            defaults["news_impact_count"] = int(row[0] or 0)
+            defaults["news_positive_count"] = int(row[1] or 0)
+            defaults["news_negative_count"] = int(row[2] or 0)
+            defaults["news_weighted_sentiment"] = row[3]
+            defaults["news_max_severity"] = row[4]
+        cur.execute(
+            """
+            select (min(event_date) - %s::date)::int
+              from public.corporate_events
+             where asset_id = %s and event_type = 'RESULTS' and event_date >= %s::date
+            """,
+            (market_date, asset_id, market_date),
+        )
+        ev = cur.fetchone()
+        if ev and ev[0] is not None:
+            defaults["days_to_results"] = int(ev[0])
+    except Exception:
+        pass
+    return defaults
+
+
 def collect(conn, scheduler_run_id: str, market: str, market_date: str) -> tuple[int, int, int]:
     written = skipped = invalid = 0
     with conn.cursor() as cur:
@@ -73,6 +125,7 @@ def collect(conn, scheduler_run_id: str, market: str, market_date: str) -> tuple
             except (ArithmeticError, ValueError):
                 invalid += 1
                 continue
+            features.update(load_point_in_time_news_features(cur, market, str(snapshot["asset_id"]), snapshot["data_cutoff"], market_date))
             average_value = metrics.get("averageTradedValue20")
             average_value_decimal = Decimal(str(average_value)) if average_value is not None else None
             bucket = liquidity_bucket(average_value_decimal)
