@@ -1,8 +1,41 @@
 import { describe, expect, it } from "vitest";
 import {
-  classifyCoverageFreshness, classifyCoverageGaps, classifyFreshness, classifySourceFreshness, worstFreshnessStatus,
+  classifyCoverageFreshness, classifyCoverageGaps, classifyFreshness, classifySourceFreshness,
+  dataHealthIndicatorStatus, worstFreshnessStatus,
   type SourceRow,
 } from "./dataHealth";
+
+describe("dataHealthIndicatorStatus", () => {
+  const card = (source: string, status: "fresh" | "stale" | "failed" | "unknown" | "off_hours") => ({
+    source, status, lastSuccessAt: null, recordCount: 0, detail: "test",
+  });
+
+  it("stays green when only AMC snapshots are pending", () => {
+    expect(dataHealthIndicatorStatus([
+      card("NSE Quotes", "fresh"),
+      card("NSE OHLCV History", "fresh"),
+      card("India Fundamentals", "fresh"),
+      card("AMC Fund Snapshots", "failed"),
+    ])).toBe("fresh");
+  });
+
+  it("shows amber when CAS is old or missing", () => {
+    expect(dataHealthIndicatorStatus([
+      card("NSE Quotes", "fresh"),
+      card("CAS Imports", "stale"),
+    ])).toBe("stale");
+    expect(dataHealthIndicatorStatus([card("CAS Imports", "failed")])).toBe("stale");
+  });
+
+  it.each(["NSE Quotes", "BSE OHLCV History", "US Fundamentals"])(
+    "shows red when %s is stale",
+    (source) => expect(dataHealthIndicatorStatus([card(source, "stale")])).toBe("failed"),
+  );
+
+  it("does not penalize a market feed during explicit off-hours", () => {
+    expect(dataHealthIndicatorStatus([card("US Quotes", "off_hours")])).toBe("fresh");
+  });
+});
 
 describe("classifyFreshness", () => {
   it("marks data fresh inside cadence and stale after cadence", () => {

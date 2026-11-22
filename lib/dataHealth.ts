@@ -250,6 +250,30 @@ export function worstFreshnessStatus(statuses: FreshnessStatus[]): FreshnessStat
   return statuses.reduce<FreshnessStatus>((worst, status) => statusRank[status] < statusRank[worst] ? status : worst, "fresh");
 }
 
+const STOCK_HEALTH_SOURCES = new Set([
+  "NSE Quotes", "BSE Quotes", "US Quotes",
+  "NSE OHLCV History", "BSE OHLCV History", "US OHLCV History",
+  "India Fundamentals", "US Fundamentals",
+]);
+
+/**
+ * Compact navigation indicator policy. Missing AMC disclosures affect only
+ * fund look-through and must not imply that trading data is unsafe. CAS is
+ * personal portfolio input, so an old/missing import is a warning. Stock
+ * quotes, bars and fundamentals are strategy inputs and fail closed: stale,
+ * unknown or failed input is shown red.
+ */
+export function dataHealthIndicatorStatus(cards: SourceHealthCard[]): FreshnessStatus {
+  let warning = false;
+  for (const card of cards) {
+    if (card.source === "AMC Fund Snapshots") continue;
+    if (card.status === "fresh" || card.status === "off_hours") continue;
+    if (STOCK_HEALTH_SOURCES.has(card.source)) return "failed";
+    warning = true;
+  }
+  return warning ? "stale" : "fresh";
+}
+
 export function countSeverities(gaps: CoverageGap[]): SeverityCounts {
   return gaps.reduce<SeverityCounts>((acc, gap) => {
     acc[gap.severity]++;
@@ -458,7 +482,7 @@ export async function getDataHealthSummary(now = new Date()): Promise<SourceHeal
 
 export async function getWorstDataHealthStatus(): Promise<FreshnessStatus> {
   try {
-    return worstFreshnessStatus((await getDataHealthSummary()).map((card) => card.status));
+    return dataHealthIndicatorStatus(await getDataHealthSummary());
   } catch {
     return "unknown";
   }
@@ -674,7 +698,7 @@ async function loadDataHealthPageData(userId: string): Promise<DataHealthPageDat
     gaps,
     severityCounts: countSeverities(gaps),
     recentRuns,
-    worstStatus: worstFreshnessStatus(sources.map((source) => source.status)),
+    worstStatus: dataHealthIndicatorStatus(sources),
     backfill,
     quoteNoHistoryCount,
   };
