@@ -28,6 +28,7 @@ const breezeAccountWorker = resolve(root, "workers/breeze_account_sync.py");
 const breezeAutoBuyWorker = resolve(root, "workers/breeze_auto_buy.py");
 const corporateResultsPipeline = resolve(root, "pipelines/corporate_results_sync.py");
 const usPipeline = resolve(root, "pipelines/us_market_sync.py");
+const usSecFundamentalsPipeline = resolve(root, "pipelines/sec_edgar_fundamentals.py");
 const usHistoryPipeline = resolve(root, "pipelines/us_history_sync.py");
 const macroPipeline = resolve(root, "pipelines/macro_sync.py");
 const amfiSchemeMasterScript = resolve(root, "scripts/sync-amfi-scheme-master.mjs");
@@ -110,6 +111,10 @@ const usSyncSleep = process.env.US_SYNC_SLEEP_SECONDS ?? "0.4";
 const usFundamentalsLimit = process.env.US_FUNDAMENTALS_LIMIT ?? "250";
 const usFundamentalsStaleDays = process.env.US_FUNDAMENTALS_STALE_DAYS ?? "7";
 const usFundamentalsDisabled = process.env.US_FUNDAMENTALS_SYNC_DISABLED === "1";
+const usSecFundamentalsDisabled = process.env.US_SEC_FUNDAMENTALS_SYNC_DISABLED === "1";
+const usSecFundamentalsLimit = process.env.US_SEC_FUNDAMENTALS_LIMIT ?? "1000";
+const usSecFundamentalsStaleDays = process.env.US_SEC_FUNDAMENTALS_STALE_DAYS ?? "7";
+const usSecFundamentalsSleep = process.env.US_SEC_FUNDAMENTALS_SLEEP_SECONDS ?? "0.12";
 const usHistoryDisabled = process.env.US_HISTORY_SYNC_DISABLED === "1";
 // pipelines/us_history_sync.py pulls from free/unofficial Yahoo Finance (yfinance),
 // NOT the paid Tiingo API — Tiingo's key/module (lib/ingest/usHistory.ts) is unused
@@ -145,6 +150,7 @@ let syncChild = null;
 let syncPromise = null;
 let fundamentalsChild = null;
 let usFundamentalsChild = null;
+let usSecFundamentalsChild = null;
 let usHistoryChild = null;
 let macroChild = null;
 let amfiChild = null;
@@ -1348,7 +1354,7 @@ function runUSHistory(trigger) {
   });
 }
 
-async function runUSFundamentals(trigger) {
+async function runUSYahooFundamentals(trigger) {
   if (shuttingDown) return;
   if (usFundamentalsDisabled) {
     console.log(`[us-fundamentals] ${trigger} sync disabled by US_FUNDAMENTALS_SYNC_DISABLED=1`);
@@ -1406,6 +1412,38 @@ async function runUSFundamentals(trigger) {
     if (signal) console.log(`[us-fundamentals] stopped by ${signal}`);
     else if (code === 0) console.log(`[us-fundamentals] ${trigger} update completed`);
     else console.error(`[us-fundamentals] ${trigger} update failed with exit code ${code}`);
+  });
+}
+
+async function runUSFundamentals(trigger) {
+  if (shuttingDown) return;
+  if (usSecFundamentalsDisabled) {
+    console.log(`[sec-edgar] ${trigger} sync disabled by US_SEC_FUNDAMENTALS_SYNC_DISABLED=1`);
+    recordSyncJob(`sec-edgar/${trigger}`, "skipped", "disabled");
+    await runUSYahooFundamentals(trigger);
+    return;
+  }
+  if (!python || usSecFundamentalsChild) {
+    if (usSecFundamentalsChild) console.log(`[sec-edgar] skipping ${trigger}; sync still running`);
+    return;
+  }
+  const args = [
+    usSecFundamentalsPipeline,
+    "--limit", usSecFundamentalsLimit,
+    "--stale-days", usSecFundamentalsStaleDays,
+    "--sleep", usSecFundamentalsSleep,
+  ];
+  console.log(`[sec-edgar] starting ${trigger} authoritative US fundamentals update`);
+  usSecFundamentalsChild = spawn(python, args, { cwd: root, env: process.env, stdio: "inherit" });
+  usSecFundamentalsChild.on("error", (error) => {
+    console.error(`[sec-edgar] unable to start: ${error.message}`);
+  });
+  usSecFundamentalsChild.on("close", (code, signal) => {
+    usSecFundamentalsChild = null;
+    if (signal) console.log(`[sec-edgar] stopped by ${signal}`);
+    else if (code === 0) console.log(`[sec-edgar] ${trigger} update completed`);
+    else console.error(`[sec-edgar] ${trigger} update failed with exit code ${code}`);
+    if (!signal) runUSYahooFundamentals(trigger);
   });
 }
 
@@ -1618,6 +1656,7 @@ function shutdown(signal) {
   if (syncChild) syncChild.kill(signal);
   if (fundamentalsChild) fundamentalsChild.kill(signal);
   if (usFundamentalsChild) usFundamentalsChild.kill(signal);
+  if (usSecFundamentalsChild) usSecFundamentalsChild.kill(signal);
   if (usHistoryChild) usHistoryChild.kill(signal);
   if (macroChild) macroChild.kill(signal);
   if (amfiChild) amfiChild.kill(signal);
@@ -1661,6 +1700,7 @@ nextChild.on("close", (code, signal) => {
   if (syncChild) syncChild.kill("SIGTERM");
   if (fundamentalsChild) fundamentalsChild.kill("SIGTERM");
   if (usFundamentalsChild) usFundamentalsChild.kill("SIGTERM");
+  if (usSecFundamentalsChild) usSecFundamentalsChild.kill("SIGTERM");
   if (usHistoryChild) usHistoryChild.kill("SIGTERM");
   if (macroChild) macroChild.kill("SIGTERM");
   if (amfiChild) amfiChild.kill("SIGTERM");

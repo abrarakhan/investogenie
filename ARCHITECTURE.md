@@ -81,7 +81,7 @@ CAS holdings use user/ISIN/folio identities. Explicit mappings and AMFI identifi
 
 Schedules cover market-hours priority quotes, EOD Bhavcopy/history, repair queues, fundamentals, macro, AMFI, scans, forward tests, news, Gmail, mobile alerts, email and ML snapshots. Corporate results run at 07:00/17:00 IST plus startup work. Breeze can be embedded or supervised separately.
 
-India live quotes prefer Breeze, with Yahoo/Google/exchange fallback elsewhere. Bhavcopy maintains EOD history; US recurring history uses Yahoo. The optional Tiingo history module is separate from that recurring Python path. Market-calendar helpers support session-aware freshness.
+India live quotes prefer Breeze, with Yahoo/Google/exchange fallback elsewhere. Bhavcopy maintains EOD history; US recurring history uses Yahoo. US reported 10-Q/10-K fundamentals use SEC EDGAR Company Facts as the authority, with Yahoo limited to supplemental/fallback fields such as sector and price-derived metrics. The optional Tiingo history module is separate from that recurring Python path. Market-calendar helpers support session-aware freshness.
 
 Email defaults to 07:00 IST with wrapper catch-up and retry limits. The actual digest uses per-user encrypted SMTP and India Strong Swing/Probability results. Stored user send times and last-sent timestamps are not enforced by the sender's enabled-user query; partial retries can duplicate successful deliveries.
 
