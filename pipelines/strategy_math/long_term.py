@@ -14,7 +14,9 @@ def median(xs):
 def cagr(latest,oldest,years):
     return ((latest/oldest)**(1/years)-1)*100 if latest and oldest and latest>0 and oldest>0 and years>=2 else None
 def back(points,years):
-    target=points[0]["date"].replace(year=points[0]["date"].year-years)
+    d=points[0]["date"]
+    try: target=d.replace(year=d.year-years)
+    except ValueError: target=d.replace(year=d.year-years,day=28)
     choices=sorted(points[1:],key=lambda p:abs((p["date"]-target).days))
     return choices[0] if choices and abs((choices[0]["date"]-target).days)<=540 else None
 def historical_metrics(raw):
@@ -48,7 +50,7 @@ def _value(f,field):
 def _score(v,target,direction):
     if target==0:return 100 if (v>0 if direction=="higher" else v<=0) else 0
     distance=v/target-1 if direction=="higher" else 1-v/target
-    return _clamp(100/(1+math.exp(-3.2*distance)),0,100)
+    return _clamp(100/(1+math.exp(_clamp(-3.2*distance,-60,60))),0,100)
 def score_fundamentals(data):
     market=data["market"]; out=[]
     floor=500 if market=="IN" else 50
