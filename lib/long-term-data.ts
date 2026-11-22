@@ -138,19 +138,9 @@ with ranked_assets as materialized (
      and exists (
        select 1 from public.daily_ohlcv recent
         where recent.asset_id=a.id
-          and recent.date >= current_date - interval '4 days'
+          and recent.date >= current_date - interval '10 days'
      )
-     and q.as_of::date >= case
-       when a.country='IN'
-        and extract(isodow from now() at time zone 'Asia/Kolkata') between 1 and 5
-        and (now() at time zone 'Asia/Kolkata')::time between time '09:15' and time '15:30'
-         then (now() at time zone 'Asia/Kolkata')::date
-       when a.country='US'
-        and extract(isodow from now() at time zone 'America/New_York') between 1 and 5
-        and (now() at time zone 'America/New_York')::time between time '09:30' and time '16:00'
-         then (now() at time zone 'America/New_York')::date
-       else current_date - 4
-     end
+     and (q.as_of is null or q.as_of::date >= current_date - 10)
      and exists (select 1 from public.asset_financial_reports f where f.asset_id = a.id)
 ),
 universe as materialized (
@@ -293,10 +283,11 @@ export async function getLongTermData(market: LongTermMarket): Promise<LongTermD
         : providerMarketCap;
     const ttmProfit = Number(row.ttm_quarters) >= 4 ? numberOrNull(row.ttm_net_profit) : null;
     const providerPe = numberOrNull(row.provider_pe);
+    const positiveProviderPe = providerPe !== null && providerPe > 0 ? providerPe : null;
     const priceAdjustedProviderPe =
-      providerPe !== null && providerPe > 0 && cmp !== null && cmp > 0 && ltp !== null && ltp > 0
-        ? providerPe * ltp / cmp
-        : providerPe;
+      positiveProviderPe !== null && cmp !== null && cmp > 0 && ltp !== null && ltp > 0
+        ? positiveProviderPe * ltp / cmp
+        : positiveProviderPe;
     const sameReportingCurrency = !row.report_currency || row.report_currency === row.currency;
     const peRatio = priceAdjustedProviderPe ?? (
       sameReportingCurrency && adjustedMarketCap !== null && ttmProfit !== null && ttmProfit > 0
@@ -328,15 +319,27 @@ export async function getLongTermData(market: LongTermMarket): Promise<LongTermD
     const quickRatio = cash !== null && receivables !== null
       ? ratio(cash + receivables, currentLiabilities)
       : null;
-    const netDebtToEbitda = cash !== null && totalDebt !== null
-      ? ratio(totalDebt - cash, annualEbitda)
+    const netDebtToEbitda = cash !== null && totalDebt !== null && annualEbitda !== null
+      ? annualEbitda > 0
+        ? (totalDebt - cash) / annualEbitda
+        : totalDebt - cash <= 0 ? 0 : null
       : null;
-    const interestCoverage = ratio(annualEbit, annualInterestExpense === null ? null : Math.abs(annualInterestExpense));
-    const priceToBook = sameReportingCurrency ? ratio(adjustedMarketCap, equity) : null;
+    const interestCoverage = annualEbit !== null && annualInterestExpense !== null
+      ? annualInterestExpense === 0
+        ? annualEbit > 0 ? 100 : null
+        : annualEbit / Math.abs(annualInterestExpense)
+      : null;
+    const priceToBook = sameReportingCurrency && equity !== null && equity > 0
+      ? ratio(adjustedMarketCap, equity)
+      : null;
     const enterpriseValue = sameReportingCurrency && adjustedMarketCap !== null && totalDebt !== null && cash !== null
       ? adjustedMarketCap + totalDebt - cash
       : null;
-    const ebitEnterpriseValueYield = ratio(annualEbit, enterpriseValue);
+    const ebitEnterpriseValueYield = enterpriseValue !== null && enterpriseValue > 0
+      ? ratio(annualEbit, enterpriseValue)
+      : null;
+    const rawDebtToEquity = numberOrNull(row.debt_to_equity);
+    const debtToEquity = rawDebtToEquity !== null && rawDebtToEquity >= 0 ? rawDebtToEquity : null;
     const accrualRatio = annualNetProfit !== null && annualOperatingCashFlow !== null
       ? ratio(annualNetProfit - annualOperatingCashFlow, totalAssets)
       : null;
@@ -360,7 +363,7 @@ export async function getLongTermData(market: LongTermMarket): Promise<LongTermD
         ...history,
         peRatio,
         roe: numberOrNull(row.roe),
-        debtToEquity: numberOrNull(row.debt_to_equity),
+        debtToEquity,
         dividendYield: numberOrNull(row.dividend_yield),
         marketCap: adjustedMarketCap,
         freeCashFlowYield,

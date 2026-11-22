@@ -39,6 +39,12 @@ def _clamp(v,lo,hi): return min(hi,max(lo,v))
 def _js_round(v): return math.floor(v+.5)
 def _value(f,field):
     if field=="earningsYield": return 100/f["peRatio"] if f.get("peRatio") and f["peRatio"]>0 else None
+    if field in ("peRatio","priceToBook"):
+        v=f.get(field)
+        return v if v is not None and v>0 else None
+    if field=="debtToEquity":
+        v=f.get(field)
+        return v if v is not None and v>=0 else None
     if field in ("revenueCagr3y","profitCagr3y"):
         fallback="revenueGrowthYoY" if field.startswith("revenue") else "profitGrowthYoY"
         v=f.get(field) if f.get(field) is not None else f.get(fallback)
@@ -49,7 +55,7 @@ def _value(f,field):
     return f.get(field)
 def _score(v,target,direction):
     if target==0:return 100 if (v>0 if direction=="higher" else v<=0) else 0
-    distance=v/target-1 if direction=="higher" else 1-v/target
+    distance=(v-target)/abs(target) if direction=="higher" else (target-v)/abs(target)
     return _clamp(100/(1+math.exp(_clamp(-3.2*distance,-60,60))),0,100)
 def score_fundamentals(data):
     market=data["market"]; out=[]
