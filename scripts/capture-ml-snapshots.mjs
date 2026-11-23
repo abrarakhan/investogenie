@@ -56,4 +56,23 @@ await new Promise((resolveRun, rejectRun) => {
   });
 });
 
+// Label any previously captured snapshots whose forward holding window has matured.
+await new Promise((resolveRun) => {
+  const child = spawn(python, [
+    resolve(root, "pipelines/ml/run_labeler.py"),
+    "--database-url", process.env.DATABASE_URL,
+    "--market", market,
+  ], { cwd: root, env: process.env, stdio: "inherit" });
+  child.once("error", (err) => {
+    console.warn(`[ml-labeler] failed to start: ${err.message}`);
+    resolveRun();
+  });
+  child.once("close", (code, signal) => {
+    if (code !== 0 || signal) {
+      console.warn(`[ml-labeler] exited ${signal ?? code}`);
+    }
+    resolveRun();
+  });
+});
+
 console.log(`[ml-snapshots] market=${market} date=${marketDate} candidates=${candidates.length} run=${runId}`);
