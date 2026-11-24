@@ -105,6 +105,13 @@ export default function ProbabilityDashboard({ summary }: { summary: Probability
                   <td className="px-4 py-3 text-right text-xs tabular-nums text-white/35">{row.asOf}</td>
                 </tr>
               ))}
+              {summary.rows.length === 0 && (
+                <tr>
+                  <td colSpan={10} className="px-4 py-8 text-center text-sm text-white/50">
+                    No {summary.market} stocks currently meet both the minimum history floor and the latest expected trading-session quote freshness. Check Data Health if quotes or OHLCV sync is still catching up.
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>

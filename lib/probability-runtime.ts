@@ -1,9 +1,24 @@
 import { query } from "@/lib/db";
 import { MARKET_COUNTRY } from "@/lib/markets";
 import { DEFAULT_PROBABILITY_CONFIG } from "@/lib/analytics/probability/config";
+import { latestSignalSessionDate, previousTradingDay, refreshMarketHolidays } from "@/lib/market-calendar.mjs";
 import type { MarketId } from "@/lib/types";
 import type { ProbabilityConfig, ProbabilityForecast, ProbabilitySummary } from "@/lib/analytics/probability/types";
 import { runPythonStrategyBatch } from "@/lib/pythonStrategyMath";
+
+/**
+ * Compute holiday-aware OHLCV and quote freshness cutoffs from the shared market calendar.
+ * Never assumes every weekday is a trading session.
+ */
+export function probabilityFreshnessCutoffs(market: MarketId, at: Date = new Date()): {
+  expectedSession: string;
+  quoteCutoff: string;
+  ohlcvCutoff: string;
+} {
+  const expectedSession = latestSignalSessionDate(market, at);
+  const ohlcvCutoff = previousTradingDay(market, expectedSession);
+  return { expectedSession, quoteCutoff: expectedSession, ohlcvCutoff };
+}
 
 interface BarRow {
   asset_id: string;
@@ -33,6 +48,8 @@ export async function getProbabilitySummary(
   market: MarketId,
   cfg: ProbabilityConfig = DEFAULT_PROBABILITY_CONFIG,
 ): Promise<ProbabilitySummary> {
+  if (market === "IN") await refreshMarketHolidays("IN").catch(() => false);
+  const { ohlcvCutoff, quoteCutoff } = probabilityFreshnessCutoffs(market);
   const country = MARKET_COUNTRY[market];
   const exchanges = market === "IN" ? ["NSE"] : ["NASDAQ", "NYSE"];
   const rows = await query<BarRow>(
@@ -47,7 +64,7 @@ export async function getProbabilitySummary(
         where o.date >= current_date - interval '430 days'
         group by o.asset_id
        having count(*) >= $4
-          and max(o.date) >= current_date - interval '4 days'
+          and max(o.date) >= $5::date
      ),
      ranked_assets as (
        select a.id
@@ -59,17 +76,7 @@ export async function getProbabilitySummary(
           and exists (
             select 1 from public.latest_quotes current_quote
              where current_quote.asset_id=a.id
-               and current_quote.as_of::date >= case
-                 when a.country='IN'
-                  and extract(isodow from now() at time zone 'Asia/Kolkata') between 1 and 5
-                  and (now() at time zone 'Asia/Kolkata')::time between time '09:15' and time '15:30'
-                   then (now() at time zone 'Asia/Kolkata')::date
-                 when a.country='US'
-                  and extract(isodow from now() at time zone 'America/New_York') between 1 and 5
-                  and (now() at time zone 'America/New_York')::time between time '09:30' and time '16:00'
-                   then (now() at time zone 'America/New_York')::date
-                 else current_date - 4
-               end
+               and current_quote.as_of::date >= $6::date
           )
         order by f.market_cap desc nulls last, a.ticker
         limit $3
@@ -84,7 +91,7 @@ export async function getProbabilitySummary(
       order by a.ticker, o.date`,
     // Candidates are now pre-filtered for coverage, so a small multiple of
     // maxRows is plenty of headroom instead of a 4x over-fetch.
-    [country, exchanges, Math.max(cfg.maxRows * 2, 120), cfg.minBars],
+    [country, exchanges, Math.max(cfg.maxRows * 2, 120), cfg.minBars, ohlcvCutoff, quoteCutoff],
   );
 
   const grouped = new Map<string, BarRow[]>();
