@@ -105,7 +105,7 @@ sudo bash /opt/investogenie/app/deploy/lightsail/deploy-release.sh
 ```
 
 The release script updates the checkout and re-executes the checked-out version once, then installs locked dependencies, builds Next.js, discovers and applies the ordered migrations
-from `0033_breeze_credentials.sql` onward in filename order (currently through 0089), verifies required production relations and tenant RLS policies, restarts the web
+from `0033_breeze_credentials.sql` onward in filename order (currently through 0092), verifies required production relations and tenant RLS policies, restarts the web
 scheduler and Breeze services, and checks the local login endpoint.
 
 Install the local PostgreSQL backup job:

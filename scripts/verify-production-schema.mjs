@@ -60,6 +60,8 @@ const requiredRelations = [
   "public.daily_delivery_metrics",
   "public.eod_asset_features",
   "public.eod_asset_features_meta",
+  "public.news_stock_briefs",
+  "public.ml_readiness_checks",
 ];
 const requiredColumns = [
   ["corporate_event_sync_state", "authoritative_source"],
@@ -118,6 +120,9 @@ const requiredColumns = [
   ["eod_asset_features", "c63"],
   ["eod_asset_features", "c126"],
   ["eod_asset_features", "c189"],
+  ["fundamentals_sync_state", "error_code"],
+  ["fundamentals_sync_state", "next_retry_at"],
+  ["fundamentals_sync_state", "failure_count"],
   ["eod_asset_features", "c252"],
   ["eod_asset_features", "armed_rs_percentile"],
   ["eod_asset_features", "two_close_hold"],
@@ -191,6 +196,18 @@ try {
     return !row?.relrowsecurity || !row?.policy_ready;
   });
   if (missingRls.length) throw new Error(`Required tenant RLS policies are missing: ${missingRls.join(", ")}`);
+  const kindCheck = await client.query(
+    `select pg_get_constraintdef(c.oid) def
+       from pg_constraint c
+       join pg_class t on t.oid = c.conrelid
+       join pg_namespace n on n.oid = t.relnamespace
+      where n.nspname = 'public'
+        and t.relname = 'browser_notification_events'
+        and c.conname = 'browser_notification_events_kind_check'`,
+  );
+  if (!kindCheck.rows[0]?.def?.includes("NEWS_RISK")) {
+    throw new Error("browser_notification_events_kind_check is missing NEWS_RISK (apply 0092_news_risk_notifications.sql)");
+  }
   console.log(`Verified production schema: ${requiredRelations.join(", ")}`);
 } catch (error) {
   console.error("Production schema verification failed:", error instanceof Error ? error.message : error);

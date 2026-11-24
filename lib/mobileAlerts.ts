@@ -315,30 +315,48 @@ async function dispatchHighImpactNewsAlerts(
           exists (select 1 from public.swing_trade_ledger l where l.user_id = $2 and l.asset_id = b.asset_id and l.status = 'OPEN')
           or exists (select 1 from public.watchlist_items w where w.user_id = $2 and w.asset_id = b.asset_id)
         )
+        and not exists (
+          select 1 from public.browser_notification_events e
+           where e.user_id = $2
+             and e.market = $1
+             and e.asset_id = b.asset_id
+             and e.kind = 'NEWS_RISK'
+             and e.signature = 'NEWS_HIGH_IMPACT|' || b.asset_id::text || '|' || b.verdict
+             and e.market_date = (now() at time zone case when $1 = 'IN' then 'Asia/Kolkata' else 'America/New_York' end)::date
+        )
       order by b.generated_at desc
       limit 5`,
     [market, userId],
-  ).catch(() => []);
+  ).catch((error) => {
+    console.error("[mobile-alerts] failed to query high-impact news briefs:", error);
+    return [];
+  });
 
   let alerts = 0;
   let delivered = 0;
   for (const row of rows) {
     const signature = `NEWS_HIGH_IMPACT|${row.asset_id}|${row.verdict}`;
-    const inserted = await workerQuery<{ id: string }>(
-      `insert into public.browser_notification_events
-         (user_id,market,kind,asset_id,title,body,route,signature,market_date)
-       values($1,$2,'NEWS_RISK',$3,$4,$5,$6,$7,
-         (now() at time zone case when $2='IN' then 'Asia/Kolkata' else 'America/New_York' end)::date)
-       on conflict(user_id,signature,market_date) do nothing
-       returning id::text`,
-      [
-        userId, market, row.asset_id,
-        `InvestoGenie: High-impact news · ${row.ticker}`,
-        row.summary.slice(0, 180),
-        `/terminal/${market.toLowerCase()}/news-swing`,
-        signature,
-      ],
-    ).catch(() => []);
+    let inserted: Array<{ id: string }>;
+    try {
+      inserted = await workerQuery<{ id: string }>(
+        `insert into public.browser_notification_events
+           (user_id,market,kind,asset_id,title,body,route,signature,market_date)
+         values($1,$2,'NEWS_RISK',$3,$4,$5,$6,$7,
+           (now() at time zone case when $2='IN' then 'Asia/Kolkata' else 'America/New_York' end)::date)
+         on conflict(user_id,signature,market_date) do nothing
+         returning id::text`,
+        [
+          userId, market, row.asset_id,
+          `InvestoGenie: High-impact news · ${row.ticker}`,
+          row.summary.slice(0, 180),
+          `/terminal/${market.toLowerCase()}/news-swing`,
+          signature,
+        ],
+      );
+    } catch (error) {
+      console.error(`[mobile-alerts] failed to insert NEWS_RISK notification for ${row.ticker}:`, error);
+      continue;
+    }
     if (!inserted.length) continue;
     alerts += 1;
     if (tokens.length) {

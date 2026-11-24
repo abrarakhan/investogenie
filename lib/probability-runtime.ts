@@ -1,23 +1,32 @@
 import { query } from "@/lib/db";
 import { MARKET_COUNTRY } from "@/lib/markets";
 import { DEFAULT_PROBABILITY_CONFIG } from "@/lib/analytics/probability/config";
-import { latestSignalSessionDate, previousTradingDay, refreshMarketHolidays } from "@/lib/market-calendar.mjs";
+import { isMarketOpenNow, latestSignalSessionDate, refreshMarketHolidays, zonedMarketClock } from "@/lib/market-calendar.mjs";
 import type { MarketId } from "@/lib/types";
 import type { ProbabilityConfig, ProbabilityForecast, ProbabilitySummary } from "@/lib/analytics/probability/types";
 import { runPythonStrategyBatch } from "@/lib/pythonStrategyMath";
 
 /**
- * Compute holiday-aware OHLCV and quote freshness cutoffs from the shared market calendar.
- * Never assumes every weekday is a trading session.
+ * Compute fail-closed, holiday-aware OHLCV and quote freshness cutoffs from the shared market calendar.
+ * - Completed OHLCV must reach the latest expected completed session (no 1-session lag).
+ * - During an active trading session, live quotes from the current session are required.
+ * - On holidays, weekends, and after EOD publication, quotes from the latest completed session suffice.
  */
 export function probabilityFreshnessCutoffs(market: MarketId, at: Date = new Date()): {
-  expectedSession: string;
-  quoteCutoff: string;
-  ohlcvCutoff: string;
+  expectedCompletedSession: string;
+  requiredOhlcvDate: string;
+  requiredQuoteDate: string;
+  marketOpen: boolean;
 } {
-  const expectedSession = latestSignalSessionDate(market, at);
-  const ohlcvCutoff = previousTradingDay(market, expectedSession);
-  return { expectedSession, quoteCutoff: expectedSession, ohlcvCutoff };
+  const clock = zonedMarketClock(market, at);
+  const marketOpen = isMarketOpenNow(market, at);
+  const expectedCompletedSession = latestSignalSessionDate(market, at);
+  return {
+    expectedCompletedSession,
+    requiredOhlcvDate: expectedCompletedSession,
+    requiredQuoteDate: marketOpen ? clock.date : expectedCompletedSession,
+    marketOpen,
+  };
 }
 
 interface BarRow {
@@ -49,7 +58,7 @@ export async function getProbabilitySummary(
   cfg: ProbabilityConfig = DEFAULT_PROBABILITY_CONFIG,
 ): Promise<ProbabilitySummary> {
   if (market === "IN") await refreshMarketHolidays("IN").catch(() => false);
-  const { ohlcvCutoff, quoteCutoff } = probabilityFreshnessCutoffs(market);
+  const { requiredOhlcvDate, requiredQuoteDate } = probabilityFreshnessCutoffs(market);
   const country = MARKET_COUNTRY[market];
   const exchanges = market === "IN" ? ["NSE"] : ["NASDAQ", "NYSE"];
   const rows = await query<BarRow>(
@@ -91,7 +100,7 @@ export async function getProbabilitySummary(
       order by a.ticker, o.date`,
     // Candidates are now pre-filtered for coverage, so a small multiple of
     // maxRows is plenty of headroom instead of a 4x over-fetch.
-    [country, exchanges, Math.max(cfg.maxRows * 2, 120), cfg.minBars, ohlcvCutoff, quoteCutoff],
+    [country, exchanges, Math.max(cfg.maxRows * 2, 120), cfg.minBars, requiredOhlcvDate, requiredQuoteDate],
   );
 
   const grouped = new Map<string, BarRow[]>();

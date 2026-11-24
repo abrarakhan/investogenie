@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { candidateAlertAllowed, shouldSendTradeAlert, tradeAlertAllowed, tradeAlertSignature } from "@/lib/mobileAlerts";
+import { candidateAlertAllowed, newsAlertAllowed, shouldSendTradeAlert, tradeAlertAllowed, tradeAlertSignature } from "@/lib/mobileAlerts";
 import { DEFAULT_MOBILE_ALERT_PREFERENCES } from "@/lib/mobileAlertPreferences";
 import type { SwingLedgerTrade } from "@/lib/swingTradeLedger";
 
@@ -60,5 +60,12 @@ describe("per-user mobile alert preferences", () => {
     expect(candidateAlertAllowed(preferences, { midway: false }, true)).toBe(true);
     // Risk alerts are controlled independently and remain available as critical alerts.
     expect(tradeAlertAllowed(preferences)).toBe(true);
+  });
+
+  it("gates high-impact news alerts by newsHighImpact and quietHoursEnabled", () => {
+    expect(newsAlertAllowed({ ...DEFAULT_MOBILE_ALERT_PREFERENCES, newsHighImpact: false }, true)).toBe(false);
+    expect(newsAlertAllowed({ ...DEFAULT_MOBILE_ALERT_PREFERENCES, newsHighImpact: true, quietHoursEnabled: false }, false)).toBe(true);
+    expect(newsAlertAllowed({ ...DEFAULT_MOBILE_ALERT_PREFERENCES, newsHighImpact: true, quietHoursEnabled: true }, false)).toBe(false);
+    expect(newsAlertAllowed({ ...DEFAULT_MOBILE_ALERT_PREFERENCES, newsHighImpact: true, quietHoursEnabled: true }, true)).toBe(true);
   });
 });
