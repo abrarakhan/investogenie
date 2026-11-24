@@ -31,8 +31,8 @@ class TrainWalkForwardTests(unittest.TestCase):
             d = base_day + timedelta(days=day_idx)
             for stock_idx in range(12):
                 is_win = 1 if stock_idx >= 9 else 0
-                # Strong synthetic feature (rsi14 & news_weighted_sentiment) vs noisy baseline strength_score
-                rsi = 65.0 + stock_idx if is_win else 40.0 + stock_idx
+                # Strong synthetic feature (close_location & news_weighted_sentiment) vs noisy baseline strength_score
+                cloc = 0.85 + stock_idx * 0.01 if is_win else 0.25 + stock_idx * 0.01
                 sent = 0.7 if is_win else -0.4
                 samples.append(
                     Sample(
@@ -43,7 +43,7 @@ class TrainWalkForwardTests(unittest.TestCase):
                         target=is_win,
                         realized_return=0.08 if is_win else -0.04,
                         features={
-                            "rsi14": rsi,
+                            "close_location": cloc,
                             "news_weighted_sentiment": sent,
                             "news_impact_count": 2.0,
                             "strength_score": 50.0 + (stock_idx % 5),

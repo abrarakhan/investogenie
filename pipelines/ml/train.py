@@ -23,18 +23,24 @@ from pathlib import Path
 from typing import Sequence
 
 NUMERIC_FEATURES = (
-    "close_vs_ema20_pct",
-    "close_vs_ema50_pct",
-    "ema20_vs_ema50_pct",
-    "rsi14",
-    "macd_hist_atr",
+    # Exact canonical keys from pipelines/ml/features.py
     "atr_pct",
-    "volume_ratio_20",
+    "macd_atr",
+    "macd_signal_atr",
+    "distance_sma20_pct",
+    "distance_sma50_pct",
+    "distance_sma200_pct",
+    "relative_strength20_pct",
+    "volume_ratio",
+    "breakout_clearance_atr",
+    "gap_atr",
+    "close_location",
     "five_day_return_pct",
     "ten_day_return_pct",
-    "distance_from_52w_high_pct",
-    "stop_distance_atr",
-    "reward_risk_ratio",
+    "stop_risk_pct",
+    "entry_extension_atr",
+    "circuit_like_sessions20",
+    "market_regime_positive",
     "strength_score",
     # Point-in-time news & results features (added in c9c2ad0; safely imputed when absent)
     "news_impact_count",
