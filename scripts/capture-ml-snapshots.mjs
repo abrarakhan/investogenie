@@ -75,4 +75,23 @@ await new Promise((resolveRun) => {
   });
 });
 
+// Check walk-forward ML readiness and notify via push once all promotion gates pass.
+await new Promise((resolveRun) => {
+  const child = spawn(process.execPath, [
+    "--import", resolve(root, "scripts/ts-alias-hook.mjs"),
+    resolve(root, "scripts/check-ml-readiness.mjs"),
+    market,
+  ], { cwd: root, env: process.env, stdio: "inherit" });
+  child.once("error", (err) => {
+    console.warn(`[ml-readiness] failed to start: ${err.message}`);
+    resolveRun();
+  });
+  child.once("close", (code, signal) => {
+    if (code !== 0 || signal) {
+      console.warn(`[ml-readiness] exited ${signal ?? code}`);
+    }
+    resolveRun();
+  });
+});
+
 console.log(`[ml-snapshots] market=${market} date=${marketDate} candidates=${candidates.length} run=${runId}`);
