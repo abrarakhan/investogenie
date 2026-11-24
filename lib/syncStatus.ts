@@ -37,6 +37,10 @@ export interface FundamentalsProviderSummary {
   attempted: number;
   succeeded: number;
   failed: number;
+  transientErrors: number;
+  defectErrors: number;
+  unsupportedCount: number;
+  healthTone: "green" | "amber" | "red" | "info";
   lastAttemptAt: string | null;
   lastSuccessAt: string | null;
   sampleError: string | null;
@@ -100,6 +104,9 @@ interface FundamentalsProviderRow {
   attempted: string;
   succeeded: string;
   failed: string;
+  transient_errors?: string;
+  defect_errors?: string;
+  unsupported_count?: string;
   last_attempt_at: Date | string | null;
   last_success_at: Date | string | null;
   sample_error: string | null;
@@ -209,13 +216,27 @@ export async function getSyncStatus(): Promise<SyncStatusData> {
               count(*)::text attempted,
               count(*) filter (where last_success_at is not null)::text succeeded,
               count(*) filter (where last_success_at is null)::text failed,
+              count(*) filter (where error_code = 'TRANSIENT_PROVIDER')::text transient_errors,
+              count(*) filter (where error_code in ('DATA_VALIDATION', 'INTERNAL_ERROR'))::text defect_errors,
+              count(*) filter (where error_code in ('NOT_AVAILABLE', 'UNSUPPORTED_FILING'))::text unsupported_count,
+              max(last_attempt_at) last_attempt_at,
+              max(last_success_at) last_success_at,
+              (array_agg(last_error order by last_attempt_at desc) filter (where last_error is not null and coalesce(error_code, '') not in ('NOT_AVAILABLE', 'UNSUPPORTED_FILING')))[1] sample_error
+         from public.fundamentals_sync_state
+        group by country,provider
+        order by country,provider`,
+    ).catch(() => query<FundamentalsProviderRow>(
+      `select country,provider,
+              count(*)::text attempted,
+              count(*) filter (where last_success_at is not null)::text succeeded,
+              count(*) filter (where last_success_at is null)::text failed,
               max(last_attempt_at) last_attempt_at,
               max(last_success_at) last_success_at,
               (array_agg(last_error order by last_attempt_at desc) filter (where last_error is not null))[1] sample_error
          from public.fundamentals_sync_state
         group by country,provider
         order by country,provider`,
-    ),
+    )),
     queryOne<{ now: Date }>("select now()"),
   ]);
 
@@ -260,15 +281,33 @@ export async function getSyncStatus(): Promise<SyncStatusData> {
       lastSuccessAt: isoDateTime(row.last_success_at),
       sampleError: row.sample_error,
     })),
-    fundamentalsProviders: fundamentalsProviders.map((row) => ({
-      country: row.country,
-      provider: row.provider,
-      attempted: Number(row.attempted),
-      succeeded: Number(row.succeeded),
-      failed: Number(row.failed),
-      lastAttemptAt: isoDateTime(row.last_attempt_at),
-      lastSuccessAt: isoDateTime(row.last_success_at),
-      sampleError: row.sample_error,
-    })),
+    fundamentalsProviders: fundamentalsProviders.map((row) => {
+      const succeeded = Number(row.succeeded);
+      const transientErrors = Number(row.transient_errors ?? 0);
+      const defectErrors = Number(row.defect_errors ?? 0);
+      const unsupportedCount = Number(row.unsupported_count ?? 0);
+      const healthTone: FundamentalsProviderSummary["healthTone"] =
+        defectErrors > 0 || (succeeded === 0 && Number(row.failed) > unsupportedCount)
+          ? "red"
+          : transientErrors > 0
+            ? "amber"
+            : unsupportedCount > 0 && succeeded === 0
+              ? "info"
+              : "green";
+      return {
+        country: row.country,
+        provider: row.provider,
+        attempted: Number(row.attempted),
+        succeeded,
+        failed: Number(row.failed),
+        transientErrors,
+        defectErrors,
+        unsupportedCount,
+        healthTone,
+        lastAttemptAt: isoDateTime(row.last_attempt_at),
+        lastSuccessAt: isoDateTime(row.last_success_at),
+        sampleError: row.sample_error,
+      };
+    }),
   };
 }

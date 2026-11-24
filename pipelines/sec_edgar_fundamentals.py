@@ -12,6 +12,7 @@ import argparse
 import os
 import time
 from datetime import date, datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 from typing import Any
 
 import psycopg2
@@ -90,18 +91,120 @@ def requested_symbols(raw: str | None) -> set[str] | None:
     return {part.strip().upper() for part in raw.split(",") if part.strip()} if raw else None
 
 
+ERROR_TRANSIENT = "TRANSIENT_PROVIDER"
+ERROR_NOT_AVAILABLE = "NOT_AVAILABLE"
+ERROR_UNSUPPORTED = "UNSUPPORTED_FILING"
+ERROR_DATA_VALIDATION = "DATA_VALIDATION"
+ERROR_INTERNAL = "INTERNAL_ERROR"
+
+TRANSIENT_BACKOFF_HOURS = (1, 3, 6, 24)
+
+
+class SyncFailure(Exception):
+    def __init__(self, error_code: str, message: str, retry_after_seconds: int | None = None):
+        super().__init__(message)
+        self.error_code = error_code
+        self.retry_after_seconds = retry_after_seconds
+
+
+def parse_retry_after(header: str | None, now: datetime | None = None) -> int | None:
+    if not header:
+        return None
+    raw = header.strip()
+    if not raw:
+        return None
+    if raw.isdigit():
+        return int(raw)
+    try:
+        dt = parsedate_to_datetime(raw)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        ref = now or datetime.now(timezone.utc)
+        return max(0, int((dt - ref).total_seconds()))
+    except (TypeError, ValueError):
+        return None
+
+
+def compute_next_retry(
+    error_code: str,
+    failure_count: int,
+    retry_after_seconds: int | None = None,
+    now: datetime | None = None,
+) -> datetime:
+    ref = now or datetime.now(timezone.utc)
+    count = max(1, failure_count)
+    if error_code == ERROR_TRANSIENT:
+        if retry_after_seconds is not None:
+            clamped = max(300, min(6 * 3600, retry_after_seconds))
+            return ref + timedelta(seconds=clamped)
+        hours = TRANSIENT_BACKOFF_HOURS[min(count - 1, len(TRANSIENT_BACKOFF_HOURS) - 1)]
+        return ref + timedelta(hours=hours)
+    if error_code in (ERROR_NOT_AVAILABLE, ERROR_UNSUPPORTED):
+        return ref + timedelta(days=30)
+    # DATA_VALIDATION / INTERNAL_ERROR: retry next scheduled run for failures 1-2, then cap at 24h.
+    if count <= 2:
+        return ref
+    return ref + timedelta(hours=24)
+
+
+def classify_exception(exc: Exception) -> SyncFailure:
+    if isinstance(exc, SyncFailure):
+        return exc
+    if isinstance(exc, (requests.Timeout, requests.ConnectionError)):
+        return SyncFailure(ERROR_TRANSIENT, str(exc))
+    if isinstance(exc, requests.HTTPError):
+        resp = exc.response
+        status = resp.status_code if resp is not None else None
+        if status == 404:
+            return SyncFailure(ERROR_NOT_AVAILABLE, f"SEC dataset not found (HTTP 404): {exc}")
+        if status == 429:
+            retry_after = parse_retry_after(resp.headers.get("Retry-After") if resp is not None else None)
+            return SyncFailure(ERROR_TRANSIENT, f"SEC rate limited (HTTP 429): {exc}", retry_after_seconds=retry_after)
+        if status is not None and status >= 500:
+            return SyncFailure(ERROR_TRANSIENT, f"SEC server error (HTTP {status}): {exc}")
+        return SyncFailure(ERROR_DATA_VALIDATION, f"Unexpected SEC HTTP {status}: {exc}")
+    if isinstance(exc, (ValueError, KeyError, TypeError)):
+        return SyncFailure(ERROR_DATA_VALIDATION, str(exc))
+    return SyncFailure(ERROR_INTERNAL, f"{type(exc).__name__}: {exc}")
+
+
 def fetch_json(url: str, retries: int) -> dict[str, Any]:
-    error: Exception | None = None
-    for attempt in range(max(1, retries)):
+    last_failure: SyncFailure | None = None
+    attempts = max(1, retries)
+    for attempt in range(attempts):
         try:
             response = requests.get(url, headers=SEC_HEADERS, timeout=60)
+            if response.status_code == 404:
+                raise SyncFailure(ERROR_NOT_AVAILABLE, f"SEC company facts not found (HTTP 404) for {url}")
+            if response.status_code == 429:
+                retry_after = parse_retry_after(response.headers.get("Retry-After"))
+                failure = SyncFailure(ERROR_TRANSIENT, f"SEC throttled (HTTP 429) for {url}", retry_after_seconds=retry_after)
+                if retry_after is not None and retry_after > 10:
+                    raise failure
+                last_failure = failure
+                if attempt + 1 < attempts:
+                    time.sleep(retry_after if retry_after is not None and retry_after > 0 else 2 ** attempt)
+                    continue
+                raise failure
+            if response.status_code >= 500:
+                last_failure = SyncFailure(ERROR_TRANSIENT, f"SEC server error (HTTP {response.status_code}) for {url}")
+                if attempt + 1 < attempts:
+                    time.sleep(2 ** attempt)
+                    continue
+                raise last_failure
             response.raise_for_status()
             return response.json()
-        except Exception as exc:  # requests exposes several provider-specific subclasses
-            error = exc
-            if attempt + 1 < retries:
+        except SyncFailure:
+            raise
+        except (requests.Timeout, requests.ConnectionError) as exc:
+            last_failure = SyncFailure(ERROR_TRANSIENT, f"SEC network failure: {exc}")
+            if attempt + 1 < attempts:
                 time.sleep(2 ** attempt)
-    raise RuntimeError(f"SEC request failed after {retries} attempts: {error}")
+                continue
+            raise last_failure
+        except Exception as exc:
+            raise classify_exception(exc) from exc
+    raise last_failure or SyncFailure(ERROR_TRANSIENT, f"SEC request failed after {attempts} attempts")
 
 
 def fetch_ticker_map(retries: int) -> dict[str, tuple[int, str]]:
@@ -113,7 +216,7 @@ def fetch_ticker_map(retries: int) -> dict[str, tuple[int, str]]:
 
 
 def load_companies(conn, ticker_map: dict[str, tuple[int, str]], requested: set[str] | None,
-                   limit: int | None, stale_days: int, force: bool) -> list[tuple[CompanyState, int]]:
+                   limit: int | None, stale_days: int, force: bool) -> list[tuple[CompanyState, int, int]]:
     tickers = sorted(set(ticker_map) & requested) if requested else sorted(ticker_map)
     if not tickers:
         return []
@@ -121,9 +224,8 @@ def load_companies(conn, ticker_map: dict[str, tuple[int, str]], requested: set[
     freshness = ""
     if not force:
         params.append(datetime.now(timezone.utc) - timedelta(days=max(0, stale_days)))
-        params.append(datetime.now(timezone.utc) - timedelta(days=max(1, stale_days)))
         freshness = """and (s.last_success_at is null or s.last_success_at < %s)
-          and (s.last_error is null or s.last_attempt_at < %s)"""
+          and (s.last_error is null or s.next_retry_at is null or s.next_retry_at <= now())"""
     limit_sql = ""
     if limit is not None:
         params.append(max(1, limit))
@@ -131,21 +233,21 @@ def load_companies(conn, ticker_map: dict[str, tuple[int, str]], requested: set[
     with conn.cursor() as cur:
         cur.execute(
             f"""
-            select a.ticker,array_agg(a.id::text order by a.exchange),s.last_success_at
+            select a.ticker,array_agg(a.id::text order by a.exchange),s.last_success_at,coalesce(s.failure_count,0)
               from public.assets a
               left join public.fundamentals_sync_state s
                 on s.country='US' and s.ticker=a.ticker and s.provider='{PROVIDER}'
              where a.country='US' and a.asset_class='STOCK' and coalesce(a.is_active,true)
                and a.exchange in ('NASDAQ','NYSE','AMEX','NYSEARCA','NYSEAMERICAN')
                and a.ticker=any(%s) {freshness}
-             group by a.ticker,s.last_success_at,s.last_attempt_at
+             group by a.ticker,s.last_success_at,s.last_attempt_at,s.failure_count
              order by s.last_attempt_at nulls first,a.ticker
              {limit_sql}
             """,
             params,
         )
         return [
-            (CompanyState(row[0], row[0], tuple(row[1]), row[2], False), ticker_map[row[0]][0])
+            (CompanyState(row[0], row[0], tuple(row[1]), row[2], False), ticker_map[row[0]][0], int(row[3] or 0))
             for row in cur.fetchall()
         ]
 
@@ -269,17 +371,26 @@ def build_company_statements(payload: dict[str, Any]) -> tuple[list[dict], list[
     return reports, balances, cash_flows
 
 
-def record_state(conn, ticker: str, error: str | None) -> None:
+def record_state(
+    conn,
+    ticker: str,
+    error: str | None,
+    error_code: str | None = None,
+    next_retry_at: datetime | None = None,
+) -> None:
     with conn.cursor() as cur:
         cur.execute(
             """insert into public.fundamentals_sync_state
-                 (country,ticker,provider,last_attempt_at,last_success_at,last_error)
-               values ('US',%s,%s,now(),case when %s is null then now() end,%s)
+                 (country,ticker,provider,last_attempt_at,last_success_at,last_error,error_code,next_retry_at,failure_count)
+               values ('US',%s,%s,now(),case when %s is null then now() end,%s,%s,%s,case when %s is null then 0 else 1 end)
                on conflict(country,ticker,provider) do update set
                  last_attempt_at=excluded.last_attempt_at,
                  last_success_at=case when excluded.last_error is null then now() else fundamentals_sync_state.last_success_at end,
-                 last_error=excluded.last_error""",
-            (ticker, PROVIDER, error, error),
+                 last_error=excluded.last_error,
+                 error_code=case when excluded.last_error is null then null else excluded.error_code end,
+                 next_retry_at=case when excluded.last_error is null then null else excluded.next_retry_at end,
+                 failure_count=case when excluded.last_error is null then 0 else fundamentals_sync_state.failure_count + 1 end""",
+            (ticker, PROVIDER, error, error, error_code, next_retry_at, error),
         )
     conn.commit()
 
@@ -326,12 +437,12 @@ def main() -> None:
         companies = load_companies(conn, ticker_map, requested_symbols(args.symbols), args.limit, args.stale_days, args.force)
         print(f"Synchronizing SEC EDGAR fundamentals for {len(companies)} US companies.")
         succeeded = failed = reports_written = 0
-        for index, (state, cik) in enumerate(companies, 1):
+        for index, (state, cik, prior_failures) in enumerate(companies, 1):
             try:
                 payload = fetch_json(SEC_COMPANY_FACTS_URL.format(cik=cik), args.retries)
                 reports, balances, cash_flows = build_company_statements(payload)
                 if not reports:
-                    raise ValueError("no usable 10-Q/10-K US-GAAP facts")
+                    raise SyncFailure(ERROR_UNSUPPORTED, "no usable 10-Q/10-K US-GAAP facts")
                 if not args.dry_run:
                     counts = upsert_reports(conn, state, reports, balances, cash_flows, {}, monetary_divisor=USD_MILLION, default_currency="USD", source=PROVIDER)
                     removed = remove_overlapping_fallback_rows(conn, state, reports)
@@ -344,9 +455,11 @@ def main() -> None:
             except Exception as exc:
                 conn.rollback()
                 failed += 1
+                failure = classify_exception(exc)
+                retry_at = compute_next_retry(failure.error_code, prior_failures + 1, failure.retry_after_seconds)
                 if not args.dry_run:
-                    record_state(conn, state.ticker, str(exc)[:1000])
-                print(f"[{index}/{len(companies)}] {state.ticker}: ERROR {exc}")
+                    record_state(conn, state.ticker, str(failure)[:1000], failure.error_code, retry_at)
+                print(f"[{index}/{len(companies)}] {state.ticker}: ERROR [{failure.error_code}] {failure} (next retry {retry_at.isoformat()})")
             if index < len(companies):
                 time.sleep(args.sleep)
         print(f"SEC EDGAR fundamentals sync complete: companies={len(companies)} succeeded={succeeded} failed={failed} reports_written={reports_written}")

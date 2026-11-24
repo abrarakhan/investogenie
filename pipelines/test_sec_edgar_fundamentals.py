@@ -99,6 +99,43 @@ class SecEdgarFundamentalsTests(unittest.TestCase):
         latest = next(row for row in reports if row["period_end_date"] == date(2024, 2, 29))
         self.assertEqual(latest["sales_variance_yoy"], 25.0)
 
+    def test_retry_policy_classification_and_backoff(self):
+        from datetime import datetime, timedelta, timezone
+        from sec_edgar_fundamentals import (
+            ERROR_DATA_VALIDATION,
+            ERROR_INTERNAL,
+            ERROR_NOT_AVAILABLE,
+            ERROR_TRANSIENT,
+            ERROR_UNSUPPORTED,
+            classify_exception,
+            compute_next_retry,
+            parse_retry_after,
+        )
+
+        now = datetime(2026, 11, 24, 12, 0, tzinfo=timezone.utc)
+        self.assertEqual(parse_retry_after("120", now=now), 120)
+        self.assertEqual(parse_retry_after("Tue, 24 Nov 2026 12:30:00 GMT", now=now), 1800)
+        self.assertIsNone(parse_retry_after("not-a-date", now=now))
+
+        # Transient progressive backoff: 1h, 3h, 6h, 24h
+        self.assertEqual(compute_next_retry(ERROR_TRANSIENT, 1, now=now), now + timedelta(hours=1))
+        self.assertEqual(compute_next_retry(ERROR_TRANSIENT, 2, now=now), now + timedelta(hours=3))
+        self.assertEqual(compute_next_retry(ERROR_TRANSIENT, 3, now=now), now + timedelta(hours=6))
+        self.assertEqual(compute_next_retry(ERROR_TRANSIENT, 5, now=now), now + timedelta(hours=24))
+        # Retry-After honored and clamped to [5m, 6h]
+        self.assertEqual(compute_next_retry(ERROR_TRANSIENT, 1, retry_after_seconds=900, now=now), now + timedelta(seconds=900))
+        self.assertEqual(compute_next_retry(ERROR_TRANSIENT, 1, retry_after_seconds=10, now=now), now + timedelta(seconds=300))
+
+        # 404 / unsupported -> 30 days
+        self.assertEqual(compute_next_retry(ERROR_NOT_AVAILABLE, 1, now=now), now + timedelta(days=30))
+        self.assertEqual(compute_next_retry(ERROR_UNSUPPORTED, 1, now=now), now + timedelta(days=30))
+
+        # Validation / internal -> immediate next run for 1-2, then 24h cap
+        self.assertEqual(compute_next_retry(ERROR_DATA_VALIDATION, 1, now=now), now)
+        self.assertEqual(compute_next_retry(ERROR_DATA_VALIDATION, 3, now=now), now + timedelta(hours=24))
+        self.assertEqual(classify_exception(ValueError("bad date")).error_code, ERROR_DATA_VALIDATION)
+        self.assertEqual(classify_exception(RuntimeError("boom")).error_code, ERROR_INTERNAL)
+
 
 if __name__ == "__main__":
     unittest.main()

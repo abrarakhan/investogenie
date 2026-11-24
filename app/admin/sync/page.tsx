@@ -127,16 +127,48 @@ export default async function SyncAdminPage() {
 
           <Card title="Fundamentals provider state">
             <div className="divide-y divide-white/5">
-              {data.fundamentalsProviders.map((row) => (
-                <div key={`${row.country}:${row.provider}`} className="grid gap-2 px-4 py-3 text-sm sm:grid-cols-[1fr_auto]">
-                  <div>
-                    <b>{row.country} · {row.provider}</b>
-                    <div className="mt-1 text-xs text-white/40">Last success {stamp(row.lastSuccessAt)} · Last attempt {stamp(row.lastAttemptAt)}</div>
-                    {row.sampleError && <div className="mt-1 truncate text-xs text-amber-300/70">{row.sampleError}</div>}
+              {data.fundamentalsProviders.map((row) => {
+                const toneClass =
+                  row.healthTone === "red"
+                    ? "border-rose-400/40 bg-rose-400/10 text-rose-200"
+                    : row.healthTone === "amber"
+                      ? "border-amber-400/40 bg-amber-400/10 text-amber-200"
+                      : row.healthTone === "info"
+                        ? "border-cyan-400/35 bg-cyan-400/10 text-cyan-200"
+                        : "border-emerald-400/35 bg-emerald-400/10 text-emerald-200";
+                const toneLabel =
+                  row.healthTone === "red"
+                    ? "Defect"
+                    : row.healthTone === "amber"
+                      ? "Transient retry"
+                      : row.healthTone === "info"
+                        ? "Fallback info"
+                        : "Healthy";
+                return (
+                  <div key={`${row.country}:${row.provider}`} className="grid gap-2 px-4 py-3 text-sm sm:grid-cols-[1fr_auto]">
+                    <div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <b>{row.country} · {row.provider}</b>
+                        <span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase ${toneClass}`}>
+                          {toneLabel}
+                        </span>
+                      </div>
+                      <div className="mt-1 text-xs text-white/40">
+                        Last success {stamp(row.lastSuccessAt)} · Last attempt {stamp(row.lastAttemptAt)}
+                        {row.transientErrors > 0 ? ` · ${row.transientErrors} transient` : ""}
+                        {row.defectErrors > 0 ? ` · ${row.defectErrors} defects` : ""}
+                        {row.unsupportedCount > 0 ? ` · ${row.unsupportedCount} unsupported/fallback` : ""}
+                      </div>
+                      {row.sampleError && (
+                        <div className={`mt-1 truncate text-xs ${row.healthTone === "red" ? "text-rose-300/85" : "text-amber-300/75"}`}>
+                          {row.sampleError}
+                        </div>
+                      )}
+                    </div>
+                    <div className="text-right tabular-nums text-white/65">{row.succeeded.toLocaleString()} / {row.attempted.toLocaleString()} ok</div>
                   </div>
-                  <div className="text-right tabular-nums text-white/65">{row.succeeded.toLocaleString()} / {row.attempted.toLocaleString()} ok</div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </Card>
         </div>
