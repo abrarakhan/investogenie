@@ -54,6 +54,18 @@ export function tradeAlertAllowed(preferences: MobileAlertPreferences): boolean 
   return preferences.ledgerRiskAlerts;
 }
 
+export function newsAlertAllowed(preferences: MobileAlertPreferences, marketOpen: boolean): boolean {
+  if (!preferences.newsHighImpact) return false;
+  if (preferences.quietHoursEnabled && !marketOpen) return false;
+  return true;
+}
+
+function mobileScreenForEngine(engine: CandidateEngine): "strong-swing" | "momentum-v2" | "trend-continuation" {
+  if (engine === "TREND_CONTINUATION") return "trend-continuation";
+  if (engine === "MOMENTUM_IGNITION_V2") return "momentum-v2";
+  return "strong-swing";
+}
+
 function candidateAlertDestination(market: "IN" | "US", engine: CandidateEngine) {
   const section = engine === "STRONG_SWING" ? "strong-swing"
     : engine === "MOMENTUM_IGNITION" ? "momentum-ignition"
@@ -62,7 +74,10 @@ function candidateAlertDestination(market: "IN" | "US", engine: CandidateEngine)
 }
 
 async function sendExpoMessages(tokens: PushTokenRow[], message: {
-  title: string; body: string; screen: "ledger" | "strong-swing"; market?: "IN" | "US";
+  title: string;
+  body: string;
+  screen: "ledger" | "strong-swing" | "momentum-v2" | "trend-continuation" | "news-swing";
+  market?: "IN" | "US";
 }) {
   if (!tokens.length) return [];
   // Financial details never leave InvestoGenie. The authenticated app fetches them after opening.
@@ -246,8 +261,8 @@ async function dispatchCandidateAlerts(
         : candidate.status === "TREND_CONTINUATION_READY" ? "Continuation Ready" : "Momentum Ready";
       const receipts = await sendExpoMessages(tokens, {
         title: `InvestoGenie: ${statusLabel}`,
-        body: `${candidate.ticker} entered ${statusLabel} in ${engineLabel}. Open Strong Swing to review it.`,
-        screen: "strong-swing", market,
+        body: `${candidate.ticker} entered ${statusLabel} in ${engineLabel}. Open ${engineLabel} to review it.`,
+        screen: mobileScreenForEngine(candidate.engine), market,
       });
       ({ sentCount, failedCount } = await recordDisabledTokens(tokens, receipts));
       alerts += 1;
@@ -282,6 +297,64 @@ async function dispatchCandidateAlerts(
   return { evaluated: candidates.length, alerts, delivered };
 }
 
+async function dispatchHighImpactNewsAlerts(
+  userId: string,
+  tokens: PushTokenRow[],
+  market: "IN" | "US",
+  preferences: MobileAlertPreferences,
+): Promise<{ alerts: number; delivered: number }> {
+  if (!newsAlertAllowed(preferences, isMarketOpenNow(market))) return { alerts: 0, delivered: 0 };
+  const rows = await workerQuery<{ asset_id: string; ticker: string; verdict: string; summary: string }>(
+    `select b.asset_id::text, a.ticker, b.verdict, b.summary
+       from public.news_stock_briefs b
+       join public.assets a on a.id = b.asset_id
+      where b.market = $1
+        and b.verdict = 'FILTER_OUT'
+        and b.generated_at >= now() - interval '24 hours'
+        and (
+          exists (select 1 from public.swing_trade_ledger l where l.user_id = $2 and l.asset_id = b.asset_id and l.status = 'OPEN')
+          or exists (select 1 from public.watchlist_items w where w.user_id = $2 and w.asset_id = b.asset_id)
+        )
+      order by b.generated_at desc
+      limit 5`,
+    [market, userId],
+  ).catch(() => []);
+
+  let alerts = 0;
+  let delivered = 0;
+  for (const row of rows) {
+    const signature = `NEWS_HIGH_IMPACT|${row.asset_id}|${row.verdict}`;
+    const inserted = await workerQuery<{ id: string }>(
+      `insert into public.browser_notification_events
+         (user_id,market,kind,asset_id,title,body,route,signature,market_date)
+       values($1,$2,'NEWS_RISK',$3,$4,$5,$6,$7,
+         (now() at time zone case when $2='IN' then 'Asia/Kolkata' else 'America/New_York' end)::date)
+       on conflict(user_id,signature,market_date) do nothing
+       returning id::text`,
+      [
+        userId, market, row.asset_id,
+        `InvestoGenie: High-impact news · ${row.ticker}`,
+        row.summary.slice(0, 180),
+        `/terminal/${market.toLowerCase()}/news-swing`,
+        signature,
+      ],
+    ).catch(() => []);
+    if (!inserted.length) continue;
+    alerts += 1;
+    if (tokens.length) {
+      const receipts = await sendExpoMessages(tokens, {
+        title: `InvestoGenie: High-impact news`,
+        body: `High-impact adverse news flagged for a tracked ${market} stock. Open News & AI to review.`,
+        screen: "news-swing",
+        market,
+      });
+      const { sentCount } = await recordDisabledTokens(tokens, receipts);
+      delivered += sentCount;
+    }
+  }
+  return { alerts, delivered };
+}
+
 export async function dispatchMobileTradeAlerts(markets: Array<"IN" | "US">) {
   const tokens = await workerQuery<PushTokenRow>(
     `select id,user_id,expo_push_token from public.mobile_push_tokens where enabled order by user_id,id`,
@@ -306,6 +379,9 @@ export async function dispatchMobileTradeAlerts(markets: Array<"IN" | "US">) {
       candidateEvaluated += candidateSummary.evaluated;
       candidateAlerts += candidateSummary.alerts;
       candidateDelivered += candidateSummary.delivered;
+      const newsSummary = await dispatchHighImpactNewsAlerts(userId, userTokens, market, preferences);
+      alerts += newsSummary.alerts;
+      delivered += newsSummary.delivered;
       const trades = await getSwingTradeLedger(userId, market);
       for (const trade of trades) {
         const signature = tradeAlertSignature(trade);
