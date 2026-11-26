@@ -267,7 +267,7 @@ export default function TacticalRadarClient({
             <article
               key={`${c.bucket}:${c.assetId}`}
               {...bindChartGesture({ ticker: c.ticker, exchange: c.exchange, market })}
-              className="rounded-xl border border-white/10 bg-white/[0.025] p-4 transition-colors hover:border-white/20"
+              className="touch-manipulation select-none rounded-xl border border-white/10 bg-white/[0.025] p-4 transition-colors hover:border-white/20"
             >
               <div className="flex flex-wrap items-start justify-between gap-4">
                 <div className="min-w-0 flex-1 space-y-1">
@@ -275,6 +275,7 @@ export default function TacticalRadarClient({
                     <span className="font-mono text-xs text-white/35">#{idx + 1}</span>
                     <button
                       type="button"
+                      data-chart-trigger
                       aria-label={`Open ${c.ticker} chart`}
                       onClick={() => openChart({ ticker: c.ticker, exchange: c.exchange, market })}
                       className="text-base font-bold tracking-tight text-white hover:text-[var(--ig-accent)]"

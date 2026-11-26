@@ -19,7 +19,9 @@ const LONG_PRESS_MS = 550;
 const MOVE_TOLERANCE_PX = 12;
 
 function isInteractiveTarget(target: EventTarget | null): boolean {
-  return target instanceof Element && target.closest(INTERACTIVE_SELECTOR) !== null;
+  if (!(target instanceof Element)) return false;
+  const control = target.closest(INTERACTIVE_SELECTOR);
+  return control !== null && !control.hasAttribute("data-chart-trigger");
 }
 
 function tradingViewSymbol({ ticker, exchange }: ChartSymbol): string {
@@ -69,6 +71,13 @@ export function useTradingViewChart() {
     },
     onPointerUp: cancelLongPress,
     onPointerCancel: cancelLongPress,
+    onContextMenu: (event) => {
+      const pointerType = (event.nativeEvent as PointerEvent).pointerType;
+      if (isInteractiveTarget(event.target) || (pointerType !== "touch" && pointerType !== "pen" && !start.current)) return;
+      event.preventDefault();
+      cancelLongPress();
+      setChart(symbol);
+    },
   }), [cancelLongPress]);
 
   return { chart, openChart: setChart, closeChart, bindChartGesture };

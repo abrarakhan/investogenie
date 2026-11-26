@@ -1,9 +1,20 @@
 "use client";
 
 import Link from "next/link";
-import { useRef, useState } from "react";
-import type { FundamentalLeader, MarketOverviewData, OverviewQuote } from "@/lib/marketOverview";
-import TradingViewChartModal, { type ChartSymbol } from "@/components/charts/TradingViewChartModal";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type {
+  OverviewCandle,
+  FundamentalLeader,
+  MarketOverviewData,
+  OverviewQuote,
+  OverviewSeries,
+} from "@/lib/marketOverview";
+
+import CandleChartPro from "./CandleChartPro";
+import PerformanceChartPro from "./PerformanceChartPro";
+
+/** Max symbols plotted at once — beyond this the chart gets unreadable. */
+const MAX_SELECTED = 5;
 
 const META = {
   US: {
@@ -14,6 +25,7 @@ const META = {
     accentSoft: "#172a38",
     zone: "America/New_York",
     currency: "USD",
+    chartColors: ["#43b5ff", "#a78bfa", "#f59e0b", "#35d399", "#ff6b76"],
   },
   IN: {
     label: "India Markets",
@@ -23,9 +35,14 @@ const META = {
     accentSoft: "#302617",
     zone: "Asia/Kolkata",
     currency: "INR",
+    chartColors: ["#f6b94b", "#35d399", "#43b5ff", "#a78bfa", "#ff6b76"],
   },
 } as const;
 
+const RANGE_POINTS = { "5D": 5, "1M": 22, "3M": 66, "6M": 132, "1Y": 260 } as const;
+const CANDLE_DAYS = { "5D": 10, "1M": 45, "3M": 120, "6M": 220, "1Y": 420 } as const;
+type Range = keyof typeof RANGE_POINTS;
+type ChartMode = "performance" | "candles";
 
 function money(value: number, currency: string): string {
   return new Intl.NumberFormat(currency === "INR" ? "en-IN" : "en-US", {
@@ -65,25 +82,46 @@ function Panel({
   );
 }
 
-function QuoteRows({ rows, currency, onChart }: {
+/** Accent bar + tint marking a row that is currently plotted on the chart. */
+function selectionStyle(active: boolean, color?: string): React.CSSProperties {
+  return active
+    ? { boxShadow: `inset 3px 0 0 ${color ?? "var(--overview-accent)"}`, background: "rgba(255,255,255,0.045)" }
+    : {};
+}
+
+function QuoteRows({
+  rows, currency, selected, colorFor, onToggle,
+}: {
   rows: OverviewQuote[];
   currency: string;
-  onChart: (row: OverviewQuote) => void;
+  selected: string[];
+  colorFor: (ticker: string) => string | undefined;
+  onToggle: (ticker: string) => void;
 }) {
   if (!rows.length) return <Empty label="No live quotes" />;
   return (
     <div className="divide-y divide-[#242a31]">
-      {rows.map((row) => (
-        <button key={`${row.exchange}:${row.ticker}`} type="button" onClick={() => onChart(row)}
-          className="grid w-full grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-3 px-3 py-2 text-left text-xs hover:bg-white/[0.05]">
-          <span className="min-w-0">
-            <span className="block truncate font-semibold text-white/85">{row.ticker}</span>
-            <span className="block truncate text-[10px] text-white/35">{row.name}</span>
-          </span>
-          <span className="tabular-nums text-white/70">{money(row.price, currency)}</span>
-          <Change value={row.changePct} />
-        </button>
-      ))}
+      {rows.map((row) => {
+        const active = selected.includes(row.ticker);
+        return (
+          <button
+            key={`${row.exchange}:${row.ticker}`}
+            type="button"
+            onClick={() => onToggle(row.ticker)}
+            aria-pressed={active}
+            title={active ? `Remove ${row.ticker} from chart` : `Plot ${row.ticker} on the chart`}
+            style={selectionStyle(active, colorFor(row.ticker))}
+            className="grid w-full grid-cols-[1fr_auto_auto] items-center gap-3 px-3 py-2 text-left text-xs transition-colors hover:bg-white/[0.05]"
+          >
+            <div className="min-w-0">
+              <div className="truncate font-semibold text-white/85">{row.ticker}</div>
+              <div className="truncate text-[10px] text-white/35">{row.name}</div>
+            </div>
+            <span className="tabular-nums text-white/70">{money(row.price, currency)}</span>
+            <Change value={row.changePct} />
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -92,8 +130,220 @@ function Empty({ label }: { label: string }) {
   return <div className="px-4 py-8 text-center text-xs text-white/35">{label}</div>;
 }
 
+/** Rebase every selected series to the first date they ALL share.
+ *
+ *  Rebasing each series to its own first bar meant a shorter history was
+ *  measured from a later start date than its peers, so the "normalized"
+ *  comparison was between returns over different periods. Anchoring to the
+ *  common start costs some leading history on the longer series, which is the
+ *  right trade for a like-for-like comparison. */
+function normalizeToCommonStart(
+  series: OverviewSeries[],
+  points: number,
+): { ticker: string; points: { date: string; value: number }[] }[] {
+  const sliced = series.map((item) => ({ ticker: item.ticker, points: item.points.slice(-points) }));
+  if (!sliced.length) return [];
 
-function CandidateRows({ data, currency, onChart }: { data: MarketOverviewData["candidates"]; currency: string; onChart: (ticker: string) => void }) {
+  // Latest first-bar across the selection = the earliest date everyone covers.
+  const commonStart = sliced.reduce((latest, item) => {
+    const first = item.points[0]?.date;
+    return first && first > latest ? first : latest;
+  }, "");
+
+  return sliced.map((item) => {
+    const from = item.points.findIndex((p) => p.date >= commonStart);
+    const kept = from === -1 ? [] : item.points.slice(from);
+    const base = kept[0]?.close ?? 0;
+    return {
+      ticker: item.ticker,
+      points: kept.map((p) => ({
+        date: p.date,
+        value: base ? ((p.close - base) / base) * 100 : 0,
+      })),
+    };
+  });
+}
+
+function Performance({
+  market,
+  series,
+  quotes,
+  colors,
+  accent,
+  currency,
+  loading,
+  notice,
+  onToggle,
+}: {
+  market: MarketOverviewData["market"];
+  series: OverviewSeries[];
+  quotes: OverviewQuote[];
+  colors: readonly string[];
+  accent: string;
+  currency: string;
+  loading: boolean;
+  notice: string | null;
+  onToggle: (ticker: string) => void;
+}) {
+  const [range, setRange] = useState<Range>("1M");
+  const [mode, setMode] = useState<ChartMode>("performance");
+  const [focus, setFocus] = useState<string | null>(null);
+  const [activeCandleTicker, setActiveCandleTicker] = useState<string | null>(series[0]?.ticker ?? null);
+  const [candleCache, setCandleCache] = useState<Record<string, OverviewCandle>>({});
+  const [candleLoading, setCandleLoading] = useState(false);
+  const [candleNotice, setCandleNotice] = useState<string | null>(null);
+  const lines = useMemo(
+    () => normalizeToCommonStart(series, RANGE_POINTS[range]),
+    [series, range],
+  );
+  const effectiveCandleTicker = activeCandleTicker && series.some((item) => item.ticker === activeCandleTicker)
+    ? activeCandleTicker
+    : series[0]?.ticker ?? null;
+  const candleKey = effectiveCandleTicker ? `${effectiveCandleTicker}:${range}` : "";
+  const candle = candleKey ? candleCache[candleKey] : undefined;
+
+  useEffect(() => {
+    if (mode !== "candles" || !effectiveCandleTicker || candleCache[candleKey]) return;
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      setCandleLoading(true);
+      setCandleNotice(null);
+      const params = new URLSearchParams({
+        market,
+        ticker: effectiveCandleTicker,
+        days: String(CANDLE_DAYS[range]),
+      });
+      fetch(`/api/market-overview/candles?${params.toString()}`)
+        .then((res) => res.json())
+        .then((payload: { candle?: OverviewCandle | null }) => {
+          if (cancelled) return;
+          if (payload.candle?.points.length) {
+            setCandleCache((prev) => ({ ...prev, [candleKey]: payload.candle! }));
+          } else {
+            setCandleNotice(`No OHLCV candles for ${effectiveCandleTicker} yet`);
+          }
+        })
+        .catch(() => {
+          if (!cancelled) setCandleNotice(`Could not load candles for ${effectiveCandleTicker}`);
+        })
+        .finally(() => {
+          if (!cancelled) setCandleLoading(false);
+        });
+    }, 0);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [candleCache, candleKey, effectiveCandleTicker, market, mode, range]);
+
+  return (
+    <Panel
+      title={series.length ? (mode === "candles" ? "Trading chart" : "Normalized performance") : "One-day leader performance"}
+      action={series.length ? (
+        <div className="flex flex-wrap items-center justify-end gap-1">
+          {(loading || candleLoading) && <span className="mr-1 h-2 w-2 animate-pulse rounded-full bg-[var(--overview-accent)]" />}
+          <div className="mr-1 flex overflow-hidden rounded border border-white/10 bg-[#0d1115] p-0.5">
+            {(["performance", "candles"] as ChartMode[]).map((value) => (
+              <button
+                key={value}
+                type="button"
+                onClick={() => setMode(value)}
+                className={`rounded px-2 py-1 text-[10px] font-semibold ${mode === value ? "bg-[var(--overview-accent)] text-black" : "text-white/45 hover:bg-white/5"}`}
+              >
+                {value === "performance" ? "Performance" : "Candles"}
+              </button>
+            ))}
+          </div>
+          {(Object.keys(RANGE_POINTS) as Range[]).map((value) => (
+            <button
+              key={value}
+              type="button"
+              onClick={() => setRange(value)}
+              className={`rounded px-2 py-1 text-[10px] font-semibold ${range === value ? "bg-[var(--overview-accent)] text-black" : "text-white/45 hover:bg-white/5"}`}
+            >
+              {value}
+            </button>
+          ))}
+        </div>
+      ) : undefined}
+    >
+      {series.length ? (
+        <div className="relative p-3">
+          {/* Legend doubles as the active-selection control: hover to spotlight,
+              click x to drop the symbol from the plot. */}
+          <div className="mb-2 flex flex-wrap items-center gap-3 text-[11px]">
+            {lines.map((line, index) => {
+              // Period return; the crosshair readout inside the chart covers
+              // point-in-time values.
+              const value = line.points[line.points.length - 1]?.value ?? 0;
+              return (
+                <span
+                  key={line.ticker}
+                  onMouseEnter={() => setFocus(line.ticker)}
+                  onMouseLeave={() => setFocus(null)}
+                  className={`flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-white/60 ${mode === "candles" && effectiveCandleTicker === line.ticker ? "border-[var(--overview-accent)] bg-[var(--overview-soft)]" : "border-white/10 bg-white/[0.03]"}`}
+                >
+                  <i className="h-2 w-2 rounded-sm" style={{ background: colors[index % colors.length] }} />
+                  <button
+                    type="button"
+                    onClick={() => mode === "candles" && setActiveCandleTicker(line.ticker)}
+                    className="font-semibold text-white/75"
+                    title={mode === "candles" ? `Show ${line.ticker} candles` : line.ticker}
+                  >
+                    {line.ticker}
+                  </button>
+                  <b className="tabular-nums text-white/90">{pct(value)}</b>
+                  <button
+                    type="button"
+                    onClick={() => onToggle(line.ticker)}
+                    className="ml-0.5 text-white/30 hover:text-[#ff6b76]"
+                    title={`Remove ${line.ticker}`}
+                  >
+                    ×
+                  </button>
+                </span>
+              );
+            })}
+            {notice || candleNotice ? (
+              <span className="rounded-full border border-[#ff6b76]/30 bg-[#ff6b76]/10 px-2 py-0.5 text-[10px] text-[#ff6b76]">{candleNotice ?? notice}</span>
+            ) : (
+              <span className="text-[10px] text-white/25">{mode === "candles" ? "Select a plotted symbol to inspect candles" : "Click any symbol on the left or right to plot it"}</span>
+            )}
+          </div>
+
+          {mode === "candles" ? (
+            candle ? (
+              <CandleChartPro candle={candle} accent={accent} currency={currency} />
+            ) : (
+              <div className="grid h-[380px] place-items-center rounded-md border border-[#293039] bg-[#0d1115] text-xs text-white/35">
+                {candleLoading ? `Loading candles for ${effectiveCandleTicker}...` : candleNotice ?? "Choose a symbol with OHLCV history"}
+              </div>
+            )
+          ) : (
+            <PerformanceChartPro lines={lines} colors={colors} focus={focus} onFocus={setFocus} />
+          )}
+        </div>
+      ) : (
+        <div className="space-y-3 p-4">
+          {quotes.map((item) => {
+            const value = item.changePct ?? 0;
+            return (
+              <div key={item.ticker} className="grid grid-cols-[50px_1fr_64px] items-center gap-3 text-xs">
+                <span className="font-semibold">{item.ticker}</span>
+                <div className="h-2 overflow-hidden rounded-sm bg-[#252b32]">
+                  <div className="h-full bg-[var(--overview-accent)]" style={{ width: `${Math.min(100, Math.abs(value) * 12 + 8)}%`, opacity: value < 0 ? 0.45 : 1 }} />
+                </div>
+                <Change value={item.changePct} />
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </Panel>
+  );
+}
+
+function CandidateRows({ data, currency }: { data: MarketOverviewData["candidates"]; currency: string }) {
   if (!data.length) return <Empty label="No active buy candidates" />;
   return (
     <div className="overflow-x-auto">
@@ -104,7 +354,7 @@ function CandidateRows({ data, currency, onChart }: { data: MarketOverviewData["
         <tbody className="divide-y divide-[#242a31]">
           {data.map((row) => (
             <tr key={row.ticker} className="hover:bg-white/[0.025]">
-              <td className="px-3 py-2.5 font-semibold text-white/85"><button type="button" onClick={() => onChart(row.ticker)}>{row.ticker}</button></td>
+              <td className="px-3 py-2.5 font-semibold text-white/85">{row.ticker}</td>
               <td className="px-3 py-2.5 text-right tabular-nums text-white/65">{row.current === null ? "-" : money(row.current, currency)}</td>
               <td className="px-3 py-2.5 text-right tabular-nums">{row.entry === null ? "-" : money(row.entry, currency)}</td>
               <td className="px-3 py-2.5 text-right tabular-nums text-[#47d7a1]">{row.target === null ? "-" : money(row.target, currency)}</td>
@@ -118,20 +368,26 @@ function CandidateRows({ data, currency, onChart }: { data: MarketOverviewData["
 }
 
 function FundamentalRows({
-  rows, onChart,
+  rows, selected, colorFor, onToggle,
 }: {
   rows: FundamentalLeader[];
-  onChart: (ticker: string) => void;
+  selected: string[];
+  colorFor: (ticker: string) => string | undefined;
+  onToggle: (ticker: string) => void;
 }) {
   if (!rows.length) return <Empty label="Fundamentals are syncing" />;
   return (
     <div className="divide-y divide-[#242a31]">
       {rows.map((row) => {
+        const active = selected.includes(row.ticker);
         return (
           <button
             key={row.ticker}
             type="button"
-            onClick={() => onChart(row.ticker)}
+            onClick={() => onToggle(row.ticker)}
+            aria-pressed={active}
+            title={active ? `Remove ${row.ticker} from chart` : `Plot ${row.ticker} on the chart`}
+            style={selectionStyle(active, colorFor(row.ticker))}
             className="grid w-full grid-cols-[1fr_58px_58px] gap-2 px-3 py-2.5 text-left text-xs transition-colors hover:bg-white/[0.05]"
           >
             <div><b className="text-white/85">{row.ticker}</b><div className="mt-0.5 text-[10px] text-white/35">P/E {row.peRatio?.toFixed(1) ?? "-"}</div></div>
@@ -196,18 +452,75 @@ function FreshnessRows({ data }: { data: MarketOverviewData }) {
 
 export default function MarketOverview({ data }: { data: MarketOverviewData }) {
   const meta = META[data.market];
-  const [selectedChart, setSelectedChart] = useState<ChartSymbol | null>(null);
-  const chartPanel = useRef<HTMLDivElement>(null);
-  const defaultQuote = data.quotes[0] ?? data.gainers[0] ?? data.losers[0];
-  const defaultTicker = data.series[0]?.ticker ?? defaultQuote?.ticker;
-  const chart = selectedChart?.market === data.market ? selectedChart : defaultTicker
-    ? { ticker: defaultTicker, exchange: defaultQuote?.ticker === defaultTicker ? defaultQuote.exchange : "", market: data.market }
-    : null;
-  const openStockChart = (ticker: string, exchange = "") => {
-    setSelectedChart({ ticker, exchange, market: data.market });
-    chartPanel.current?.scrollIntoView({ block: "nearest" });
-  };
-  const openQuoteChart = (quote: OverviewQuote) => openStockChart(quote.ticker, quote.exchange);
+
+  // ---- Interactive chart selection -----------------------------------------
+  // The server seeds a default trio; clicking any gainer / decliner /
+  // fundamental leader toggles that symbol into the plot, fetching its history
+  // on demand and caching it so re-selecting is instant.
+  const [selected, setSelected] = useState<string[]>(() => data.series.map((s) => s.ticker));
+  const [cache, setCache] = useState<Record<string, OverviewSeries>>(
+    () => Object.fromEntries(data.series.map((s) => [s.ticker, s])),
+  );
+  const [loading, setLoading] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  // Tickers already requested (seeded ones count as done) so a symbol is only
+  // ever fetched once, however many times it is toggled.
+  const requested = useRef<Set<string>>(new Set(data.series.map((s) => s.ticker)));
+
+  const ensureSeries = useCallback(async (ticker: string) => {
+    if (requested.current.has(ticker)) return;
+    requested.current.add(ticker);
+    setNotice(null);
+    setLoading(true);
+    try {
+      const params = new URLSearchParams({ market: data.market, tickers: ticker });
+      const res = await fetch(`/api/market-overview/series?${params.toString()}`);
+      const payload: { series?: OverviewSeries[] } = await res.json();
+      if (payload.series?.length) {
+        setCache((prev) => {
+          const next = { ...prev };
+          for (const s of payload.series!) next[s.ticker] = s;
+          return next;
+        });
+      } else {
+        // No OHLC history for this symbol (US coverage is far thinner than the
+        // quoted universe). Un-select it and say so, rather than leaving a
+        // highlighted row that never appears on the chart.
+        setSelected((prev) => prev.filter((t) => t !== ticker));
+        setNotice(`No price history for ${ticker} yet`);
+      }
+    } catch {
+      // Allow a retry on the next click; the symbol simply stays unplotted.
+      requested.current.delete(ticker);
+    } finally {
+      setLoading(false);
+    }
+  }, [data.market]);
+
+  const toggleTicker = useCallback((ticker: string) => {
+    setSelected((prev) => {
+      if (prev.includes(ticker)) {
+        // Never empty the chart entirely.
+        return prev.length === 1 ? prev : prev.filter((t) => t !== ticker);
+      }
+      // At the cap, drop the oldest to make room (FIFO) so a click always works.
+      return prev.length >= MAX_SELECTED ? [...prev.slice(1), ticker] : [...prev, ticker];
+    });
+    void ensureSeries(ticker);
+  }, [ensureSeries]);
+
+  const chartSeries = useMemo(
+    () => selected.map((t) => cache[t]).filter((s): s is OverviewSeries => Boolean(s)),
+    [selected, cache],
+  );
+  const colorFor = useCallback(
+    (ticker: string) => {
+      const i = chartSeries.findIndex((s) => s.ticker === ticker);
+      return i === -1 ? undefined : meta.chartColors[i % meta.chartColors.length];
+    },
+    [chartSeries, meta.chartColors],
+  );
 
   const totalBreadth = data.breadth.advancers + data.breadth.decliners + data.breadth.unchanged;
   const advanceWidth = totalBreadth ? data.breadth.advancers / totalBreadth * 100 : 0;
@@ -221,33 +534,37 @@ export default function MarketOverview({ data }: { data: MarketOverviewData }) {
       <div className="min-w-0">
           <div className="mb-3 grid gap-2 sm:grid-cols-3">
             {data.quotes.map((item) => (
-              <button key={item.ticker} type="button" aria-label={`Open ${item.ticker} chart`} onClick={() => openQuoteChart(item)} className="rounded-md border border-[#293039] bg-[#12161b] px-4 py-3 text-left">
-                <div className="flex items-center justify-between gap-2 text-[10px] uppercase tracking-wider text-white/40">
-                  <span>{item.name} · {item.exchange}</span>
-                </div>
+              <div key={item.ticker} className="rounded-md border border-[#293039] bg-[#12161b] px-4 py-3">
+                <div className="flex items-center justify-between text-[10px] uppercase tracking-wider text-white/40"><span>{item.name}</span><span>{item.exchange}</span></div>
                 <div className="mt-1 flex items-end justify-between gap-3"><strong className="text-xl tabular-nums">{money(item.price, meta.currency)}</strong><Change value={item.changePct} /></div>
-              </button>
+              </div>
             ))}
           </div>
 
           <div className="grid gap-3 xl:grid-cols-[260px_minmax(0,1fr)_300px]">
             <div className="space-y-3">
               <Panel title="Top gainers">
-                <QuoteRows rows={data.gainers} currency={meta.currency} onChart={openQuoteChart} />
+                <QuoteRows rows={data.gainers} currency={meta.currency} selected={selected} colorFor={colorFor} onToggle={toggleTicker} />
               </Panel>
               <Panel title="Top decliners">
-                <QuoteRows rows={data.losers} currency={meta.currency} onChart={openQuoteChart} />
+                <QuoteRows rows={data.losers} currency={meta.currency} selected={selected} colorFor={colorFor} onToggle={toggleTicker} />
               </Panel>
             </div>
 
             <div className="min-w-0 space-y-3">
-              <div ref={chartPanel}>
-                {chart ? <TradingViewChartModal key={`${chart.market}:${chart.exchange}:${chart.ticker}`} chart={chart} /> : (
-                  <Panel title="Stock chart"><Empty label="No market symbols available" /></Panel>
-                )}
-              </div>
+              <Performance
+                market={data.market}
+                series={chartSeries}
+                quotes={data.quotes}
+                colors={meta.chartColors}
+                accent={meta.accent}
+                currency={meta.currency}
+                loading={loading}
+                notice={notice}
+                onToggle={toggleTicker}
+              />
               <Panel title="Swing candidates" action={<Link href={`/terminal/${data.market.toLowerCase()}/screener`} className="text-[10px] font-semibold text-[var(--overview-accent)]">View all</Link>}>
-                <CandidateRows data={data.candidates} currency={meta.currency} onChart={openStockChart} />
+                <CandidateRows data={data.candidates} currency={meta.currency} />
               </Panel>
             </div>
 
@@ -263,7 +580,7 @@ export default function MarketOverview({ data }: { data: MarketOverviewData }) {
                 </div>
               </Panel>
               <Panel title="Fundamental leaders">
-                <FundamentalRows rows={data.fundamentals} onChart={openStockChart} />
+                <FundamentalRows rows={data.fundamentals} selected={selected} colorFor={colorFor} onToggle={toggleTicker} />
               </Panel>
               <Panel title="Data freshness">
                 <FreshnessRows data={data} />
