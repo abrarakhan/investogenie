@@ -129,6 +129,34 @@ class TacticalRadarMathTests(unittest.TestCase):
         self.assertEqual(near[0]["score"], 95)
         self.assertEqual([c["ticker"] for c in out["buckets"]["MID_TREND_PULLBACK"]], ["ACE"])
 
+    def test_excludes_etfs_and_boosts_high_turnover_pullbacks(self):
+        out = assess({
+            "market": "IN",
+            "priceFloor": 20,
+            "limitPerBucket": 15,
+            "breadth": {"advancers": 1200, "decliners": 800, "asOfDate": "2026-11-26"},
+            "benchmark": {"ticker": "NIFTY", "price": 25884.5, "changePct": 0.25, "aboveSma50": True},
+            "excludedAssetIds": [],
+            "excludedCounts": {"adverseNews": 0, "resultsBlackout": 0},
+            "newsNotes": {},
+            "strongRows": [],
+            "obsRows": [
+                {"assetId": "e-1", "ticker": "PSUBNKBEES", "name": "Nippon India ETF PSU Bank", "exchange": "NSE", "engine": "MOMENTUM_IGNITION", "status": "EARLY_WATCH", "livePrice": 90},
+                {"assetId": "e-2", "ticker": "PVTBANIETF", "name": "ICICI Pru Pvt Bank ETF", "exchange": "NSE", "engine": "MOMENTUM_IGNITION", "status": "EARLY_WATCH", "livePrice": 28},
+                {"assetId": "e-3", "ticker": "SBIBANKNIF", "name": "SBI Nifty Bank ETF", "exchange": "NSE", "engine": "MOMENTUM_IGNITION", "status": "EARLY_WATCH", "livePrice": 520},
+                {"assetId": "s-1", "ticker": "PRESTIGE", "name": "Prestige Estates", "exchange": "NSE", "engine": "MOMENTUM_IGNITION", "status": "EARLY_WATCH", "livePrice": 1685},
+            ],
+            "trendRows": [],
+            "swingRows": [],
+            "pullbackRows": [
+                {"assetId": "p-small", "ticker": "SMALLCAP", "name": "Small Cap Ltd", "exchange": "NSE", "close": 100, "livePrice": 100, "rsi14": 60, "atrPct": 3.5, "volumeRatio": 0.8, "return20d": 18.0, "distanceSma20Pct": 4.5, "distanceSma200Pct": 12.0, "tradedValue": 12_000_000},
+                {"assetId": "p-inst", "ticker": "INSTLEADER", "name": "Inst Leader Ltd", "exchange": "NSE", "close": 1685, "livePrice": 1685, "rsi14": 63, "atrPct": 3.0, "volumeRatio": 1.56, "return20d": 18.5, "distanceSma20Pct": 5.3, "distanceSma200Pct": 13.8, "tradedValue": 1_690_000_000},
+            ],
+            "snapbackRows": [],
+        })
+        self.assertEqual([c["ticker"] for c in out["buckets"]["NEAR_TRIGGER"]], ["PRESTIGE"])
+        self.assertEqual(out["buckets"]["MID_TREND_PULLBACK"][0]["ticker"], "INSTLEADER")
+
 
 if __name__ == "__main__":
     unittest.main()

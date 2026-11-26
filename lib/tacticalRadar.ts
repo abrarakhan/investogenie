@@ -190,6 +190,7 @@ interface TechScanRow {
   ibs_close: string | number | null;
   live_price: string | number | null;
   live_change_pct: string | number | null;
+  traded_value: string | number | null;
 }
 
 interface ExclusionRow {
@@ -267,7 +268,7 @@ export function clearTacticalRadarCache(): void {
 export async function getTacticalRadar(
   market: MarketId,
   userId: string,
-  limitPerBucket = 10,
+  limitPerBucket = 15,
   at: Date = new Date(),
 ): Promise<TacticalRadarResult> {
   if (!userId) {
@@ -500,7 +501,8 @@ export async function getTacticalRadar(
           `select td.asset_id, a.ticker, a.name, a.exchange, a.sector, td.date, td.close, td.sma_20,
                   td.rsi_14, td.atr_pct_14, td.volume_ratio_20, td.return_5d, td.return_20d,
                   td.distance_sma_20_pct, td.distance_sma_50_pct, td.distance_sma_200_pct, td.ibs_close,
-                  q.price as live_price, q.change_pct as live_change_pct
+                  q.price as live_price, q.change_pct as live_change_pct,
+                  coalesce(o.close * o.volume, 0) as traded_value
            from public.screener_technical_daily td
            join public.assets a on a.id = td.asset_id
            left join public.latest_quotes q on q.asset_id = td.asset_id
@@ -518,8 +520,8 @@ export async function getTacticalRadar(
              and coalesce(td.atr_pct_14, 3) <= 6.5
              and coalesce(td.volume_ratio_20, 0) >= 0.75
              and coalesce(o.close * o.volume, 0) >= $3
-           order by td.return_20d desc, coalesce(td.volume_ratio_20, 0) desc
-           limit 60`,
+           order by coalesce(td.volume_ratio_20, 0) desc, td.return_20d desc
+           limit 100`,
           [country, priceFloor, tradedValueFloor, latestTdDate],
         ).catch(logQueryErr("pullback"))
       : Promise.resolve([]),
@@ -529,7 +531,8 @@ export async function getTacticalRadar(
           `select td.asset_id, a.ticker, a.name, a.exchange, a.sector, td.date, td.close, td.sma_20,
                   td.rsi_14, td.atr_pct_14, td.volume_ratio_20, td.return_5d, td.return_20d,
                   td.distance_sma_20_pct, td.distance_sma_50_pct, td.distance_sma_200_pct, td.ibs_close,
-                  q.price as live_price, q.change_pct as live_change_pct
+                  q.price as live_price, q.change_pct as live_change_pct,
+                  coalesce(o.close * o.volume, 0) as traded_value
            from public.screener_technical_daily td
            join public.assets a on a.id = td.asset_id
            left join public.latest_quotes q on q.asset_id = td.asset_id
@@ -548,7 +551,7 @@ export async function getTacticalRadar(
            order by (case when coalesce(q.change_pct, 0) > 0 then 1 else 0 end) desc,
                     coalesce(td.volume_ratio_20, 0) desc,
                     td.rsi_14 asc
-           limit 60`,
+           limit 100`,
           [country, priceFloor, tradedValueFloor, latestTdDate],
         ).catch(logQueryErr("snapback"))
       : Promise.resolve([]),
@@ -694,6 +697,7 @@ export async function getTacticalRadar(
       return20d: toNum(r.return_20d),
       distanceSma20Pct: toNum(r.distance_sma_20_pct),
       distanceSma200Pct: toNum(r.distance_sma_200_pct),
+      tradedValue: toNum(r.traded_value),
     })),
     snapbackRows: snapbackRows.map((r) => ({
       assetId: r.asset_id,

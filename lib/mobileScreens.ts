@@ -1073,7 +1073,7 @@ function tacticalRadarCard(item: TacticalCandidate, market: MobileMarket, forHom
 }
 
 async function tacticalRadarScreen(market: MobileMarket, params: URLSearchParams, userId: string): Promise<MobileScreen> {
-  const data = await getTacticalRadar(market, userId, 10);
+  const data = await getTacticalRadar(market, userId, 15);
   const bucketParam = pick(
     params.get("bucket"),
     ["FAVORED", "NEAR_TRIGGER", "MID_TREND_PULLBACK", "OVERSOLD_SNAPBACK", "ALL"] as const,

@@ -54,6 +54,18 @@ def _exchange_rank(exchange: str | None) -> int:
     return 0
 
 
+def _is_etf_like(ticker: str | None, name: str | None) -> bool:
+    tk = (ticker or "").strip().upper()
+    nm = (name or "").strip().upper()
+    if not tk:
+        return False
+    if tk.endswith(("BEES", "ETF", "IETF")) or "NIFTY" in tk or "BANKNIF" in tk or "SENSEX" in tk:
+        return True
+    if " ETF" in nm or nm.endswith("ETF") or "EXCHANGE TRADED" in nm or "INDEX FUND" in nm:
+        return True
+    return False
+
+
 def classify_market_regime(
     benchmark_above_sma50: bool | None,
     benchmark_change_pct: float | None,
@@ -224,7 +236,7 @@ def assess(payload: dict[str, Any]) -> dict[str, Any]:
 
     for row in payload.get("strongRows") or []:
         aid = row.get("assetId")
-        if not aid or aid in excluded:
+        if not aid or aid in excluded or _is_etf_like(row.get("ticker"), row.get("name")):
             continue
         check = evaluate_strong_swing_near_trigger(row.get("gates"))
         if not check["eligible"]:
@@ -268,7 +280,7 @@ def assess(payload: dict[str, Any]) -> dict[str, Any]:
 
     for row in payload.get("trendRows") or []:
         aid = row.get("assetId")
-        if not aid or aid in excluded:
+        if not aid or aid in excluded or _is_etf_like(row.get("ticker"), row.get("name")):
             continue
         price = _to_num(row.get("livePrice")) or _to_num(row.get("entry"))
         if price is None or price < price_floor:
@@ -310,7 +322,7 @@ def assess(payload: dict[str, Any]) -> dict[str, Any]:
 
     for row in payload.get("obsRows") or []:
         aid = row.get("assetId")
-        if not aid or aid in excluded:
+        if not aid or aid in excluded or _is_etf_like(row.get("ticker"), row.get("name")):
             continue
         price = _to_num(row.get("livePrice")) or _to_num(row.get("close"))
         if price is None or price < price_floor:
@@ -354,7 +366,7 @@ def assess(payload: dict[str, Any]) -> dict[str, Any]:
 
     for row in payload.get("swingRows") or []:
         aid = row.get("assetId")
-        if not aid or aid in excluded:
+        if not aid or aid in excluded or _is_etf_like(row.get("ticker"), row.get("name")):
             continue
         price = _to_num(row.get("livePrice")) or _to_num(row.get("lastClose"))
         if price is None or price < price_floor:
@@ -445,7 +457,7 @@ def assess(payload: dict[str, Any]) -> dict[str, Any]:
     for row in payload.get("pullbackRows") or []:
         aid = row.get("assetId")
         tk = str(row.get("ticker") or "")
-        if not aid or not tk or aid in excluded or tk in used_tickers:
+        if not aid or not tk or aid in excluded or tk in used_tickers or _is_etf_like(tk, row.get("name")):
             continue
         prev = pullback_by_ticker.get(tk)
         if prev is None or _exchange_rank(row.get("exchange")) > _exchange_rank(prev.get("exchange")):
@@ -462,10 +474,19 @@ def assess(payload: dict[str, Any]) -> dict[str, Any]:
         v_ratio = _to_num(row.get("volumeRatio")) or 1.0
         dist20 = _to_num(row.get("distanceSma20Pct")) or 0.0
         dist200 = _to_num(row.get("distanceSma200Pct"))
+        traded_val = _to_num(row.get("tradedValue")) or 0.0
         levels = compute_atr_levels(price, atr_pct, "TREND")
+        # Reward institutional liquidity (log-scaled traded value) and volume confirmation alongside 20D trend
+        liq_bonus = min(8.0, max(0.0, (math.log10(max(1.0, traded_val)) - 7.0) * 4.0)) if traded_val > 0 else 0.0
         score = min(
-            95,
-            round(62 + min(18.0, ret20 * 0.8) + min(10.0, max(0.0, (v_ratio - 0.8) * 8.0)) + (5 if dist20 <= 4.0 else 0)),
+            96,
+            round(
+                58
+                + min(16.0, ret20 * 0.75)
+                + min(12.0, max(0.0, (v_ratio - 0.75) * 10.0))
+                + liq_bonus
+                + (4 if dist20 <= 4.0 else 0)
+            ),
         )
         rsi_str = f"{rsi14:.0f}" if rsi14 is not None else "--"
         mid_trend_pullback.append({
@@ -504,7 +525,7 @@ def assess(payload: dict[str, Any]) -> dict[str, Any]:
     for row in payload.get("snapbackRows") or []:
         aid = row.get("assetId")
         tk = str(row.get("ticker") or "")
-        if not aid or not tk or aid in excluded or tk in used_tickers:
+        if not aid or not tk or aid in excluded or tk in used_tickers or _is_etf_like(tk, row.get("name")):
             continue
         prev = snapback_by_ticker.get(tk)
         if prev is None or _exchange_rank(row.get("exchange")) > _exchange_rank(prev.get("exchange")):
