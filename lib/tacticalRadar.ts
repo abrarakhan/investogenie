@@ -312,8 +312,13 @@ export async function getTacticalRadar(market: MarketId, limitPerBucket = 10): P
 
   const country = MARKET_COUNTRY[market];
   const priceFloor = market === "IN" ? 20 : 2;
-  const mcapFloor = market === "IN" ? 5_000_000_000 : 300_000_000; // ₹500 Cr IN / $300M US liquidity proxy
+  const tradedValueFloor = market === "IN" ? 10_000_000 : 1_000_000; // ₹1 Cr IN / $1M US daily traded value floor
   const benchmarkTickers = market === "IN" ? ["NIFTY", "NIFTYBEES"] : ["SPY"];
+
+  const logQueryErr = (label: string) => (err: unknown) => {
+    console.error(`[tactical-radar] ${label} query failed:`, err instanceof Error ? err.message : err);
+    return [];
+  };
 
   // Fast lookup of the latest precomputed technical snapshot date for this market
   const latestTdDateRows = await query<{ max_date: string | Date | null }>(
@@ -322,7 +327,7 @@ export async function getTacticalRadar(market: MarketId, limitPerBucket = 10): P
      join public.assets a on a.id = td.asset_id
      where a.country = $1 and td.date >= current_date - interval '10 days'`,
     [country],
-  ).catch(() => []);
+  ).catch(logQueryErr("latestTdDate"));
   const latestTdDate = toIsoDate(latestTdDateRows[0]?.max_date);
 
   const [
@@ -346,33 +351,49 @@ export async function getTacticalRadar(market: MarketId, limitPerBucket = 10): P
        join public.latest_quotes q on q.asset_id = a.id
        where a.country = $1 and a.is_active = true and a.asset_class = 'STOCK'`,
       [country],
-    ).catch(() => []),
+    ).catch(logQueryErr("breadth")),
 
     query<BenchRow>(
-      `select a.ticker, q.price, q.change_pct, td.distance_sma_50_pct
+      `select a.ticker, q.price, q.change_pct,
+              coalesce(
+                td.distance_sma_50_pct,
+                case
+                  when b50.sma50 is not null and b50.sma50 > 0
+                  then ((q.price - b50.sma50) / b50.sma50) * 100
+                  else null
+                end
+              ) as distance_sma_50_pct
        from public.assets a
        join public.latest_quotes q on q.asset_id = a.id
        left join public.screener_technical_daily td
          on td.asset_id = a.id and td.date = $3::date
+       left join lateral (
+         select avg(sub.close) as sma50
+         from (
+           select close from public.daily_ohlcv
+           where asset_id = a.id
+           order by date desc limit 50
+         ) sub
+       ) b50 on true
        where a.country = $1 and a.ticker = any($2)
        order by array_position($2::text[], a.ticker) asc
        limit 1`,
       [country, benchmarkTickers, latestTdDate],
-    ).catch(() => []),
+    ).catch(logQueryErr("benchmark")),
 
     query<ExclusionRow>(
       `select asset_id, verdict, summary, catalyst_note
        from public.news_stock_briefs
        where market = $1 and generated_at >= now() - interval '72 hours'`,
       [market],
-    ).catch(() => []),
+    ).catch(logQueryErr("newsBriefs")),
 
     query<{ asset_id: string }>(
       `select distinct asset_id
        from public.corporate_events
        where event_type = 'RESULTS'
          and event_date between current_date - interval '1 day' and current_date + interval '3 days'`,
-    ).catch(() => []),
+    ).catch(logQueryErr("resultsBlackout")),
 
     query<StrongSnapRow>(
       `with latest_ts as (
@@ -398,7 +419,7 @@ export async function getTacticalRadar(market: MarketId, limitPerBucket = 10): P
        order by s.strength_score desc, s.rank asc
        limit 80`,
       [market, latestTdDate],
-    ).catch(() => []),
+    ).catch(logQueryErr("strongSwing")),
 
     query<ObservationRow>(
       `select distinct on (o.asset_id, o.engine)
@@ -419,7 +440,7 @@ export async function getTacticalRadar(market: MarketId, limitPerBucket = 10): P
        order by o.asset_id, o.engine, o.observed_at desc
        limit 120`,
       [market, latestTdDate],
-    ).catch(() => []),
+    ).catch(logQueryErr("observations")),
 
     market === "IN"
       ? query<TrendRow>(
@@ -441,7 +462,7 @@ export async function getTacticalRadar(market: MarketId, limitPerBucket = 10): P
            order by t.asset_id, t.asof_market_date desc, t.score desc
            limit 60`,
           [latestTdDate],
-        ).catch(() => [])
+        ).catch(logQueryErr("trendContinuation"))
       : Promise.resolve([]),
 
     query<SwingBreakoutRow>(
@@ -458,28 +479,29 @@ export async function getTacticalRadar(market: MarketId, limitPerBucket = 10): P
        left join public.latest_quotes q on q.asset_id = s.asset_id
        left join public.screener_technical_daily td
          on td.asset_id = s.asset_id and td.date = $4::date
-       left join public.screener_fundamental_latest f on f.asset_id = s.asset_id
+       left join public.daily_ohlcv o
+         on o.asset_id = s.asset_id and o.date = $4::date
        where s.country = $1
          and s.verdict = 'LONG_BREAKOUT'
          and s.score >= 0.55
          and s.last_close >= $2
-         and (f.market_cap is null or f.market_cap >= $3)
+         and (o.volume is null or (o.close * o.volume) >= $3)
        order by s.score desc, coalesce(td.volume_ratio_20, 0) desc
        limit 60`,
-      [country, priceFloor, mcapFloor, latestTdDate],
-    ).catch(() => []),
+      [country, priceFloor, tradedValueFloor, latestTdDate],
+    ).catch(logQueryErr("swingBreakout")),
 
-    // Mid-Trend Pullbacks: direct single-date indexed lookup
+    // Mid-Trend Pullbacks: direct single-date indexed lookup + daily traded value liquidity guardrail
     latestTdDate
       ? query<TechScanRow>(
           `select td.asset_id, a.ticker, a.name, a.exchange, a.sector, td.date, td.close, td.sma_20,
                   td.rsi_14, td.atr_pct_14, td.volume_ratio_20, td.return_5d, td.return_20d,
                   td.distance_sma_20_pct, td.distance_sma_50_pct, td.distance_sma_200_pct, td.ibs_close,
-                  q.price as live_price, q.change_pct as live_change_pct, f.market_cap
+                  q.price as live_price, q.change_pct as live_change_pct
            from public.screener_technical_daily td
            join public.assets a on a.id = td.asset_id
            left join public.latest_quotes q on q.asset_id = td.asset_id
-           left join public.screener_fundamental_latest f on f.asset_id = td.asset_id
+           left join public.daily_ohlcv o on o.asset_id = td.asset_id and o.date = td.date
            where td.date = $4::date
              and a.country = $1
              and a.is_active = true
@@ -492,24 +514,24 @@ export async function getTacticalRadar(market: MarketId, limitPerBucket = 10): P
              and td.return_20d >= 6
              and coalesce(td.atr_pct_14, 3) <= 6.5
              and coalesce(td.volume_ratio_20, 0) >= 0.75
-             and (f.market_cap is null or f.market_cap >= $3)
+             and coalesce(o.close * o.volume, 0) >= $3
            order by td.return_20d desc, coalesce(td.volume_ratio_20, 0) desc
            limit 60`,
-          [country, priceFloor, mcapFloor, latestTdDate],
-        ).catch(() => [])
+          [country, priceFloor, tradedValueFloor, latestTdDate],
+        ).catch(logQueryErr("pullback"))
       : Promise.resolve([]),
 
-    // Oversold Snapbacks: direct single-date indexed lookup
+    // Oversold Snapbacks: direct single-date indexed lookup + daily traded value liquidity guardrail
     latestTdDate
       ? query<TechScanRow>(
           `select td.asset_id, a.ticker, a.name, a.exchange, a.sector, td.date, td.close, td.sma_20,
                   td.rsi_14, td.atr_pct_14, td.volume_ratio_20, td.return_5d, td.return_20d,
                   td.distance_sma_20_pct, td.distance_sma_50_pct, td.distance_sma_200_pct, td.ibs_close,
-                  q.price as live_price, q.change_pct as live_change_pct, f.market_cap
+                  q.price as live_price, q.change_pct as live_change_pct
            from public.screener_technical_daily td
            join public.assets a on a.id = td.asset_id
            left join public.latest_quotes q on q.asset_id = td.asset_id
-           left join public.screener_fundamental_latest f on f.asset_id = td.asset_id
+           left join public.daily_ohlcv o on o.asset_id = td.asset_id and o.date = td.date
            where td.date = $4::date
              and a.country = $1
              and a.is_active = true
@@ -520,13 +542,13 @@ export async function getTacticalRadar(market: MarketId, limitPerBucket = 10): P
              and (td.return_5d <= -3 or td.distance_sma_20_pct <= -3)
              and (coalesce(td.volume_ratio_20, 0) >= 0.65 or coalesce(q.change_pct, 0) >= 0.5 or coalesce(td.ibs_close, 0) >= 0.5)
              and coalesce(td.atr_pct_14, 3) <= 7.5
-             and (f.market_cap is null or f.market_cap >= $3)
+             and coalesce(o.close * o.volume, 0) >= $3
            order by (case when coalesce(q.change_pct, 0) > 0 then 1 else 0 end) desc,
                     coalesce(td.volume_ratio_20, 0) desc,
                     td.rsi_14 asc
            limit 60`,
-          [country, priceFloor, mcapFloor, latestTdDate],
-        ).catch(() => [])
+          [country, priceFloor, tradedValueFloor, latestTdDate],
+        ).catch(logQueryErr("snapback"))
       : Promise.resolve([]),
   ]);
 
