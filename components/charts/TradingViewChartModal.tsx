@@ -9,6 +9,7 @@ import type { IntradaySeries } from "@/lib/intradayAggregate";
 export interface ChartSymbol {
   ticker: string;
   exchange: string;
+  market?: "IN" | "US";
 }
 
 export type ChartGestureProps = HTMLAttributes<HTMLElement>;
@@ -24,7 +25,7 @@ function isInteractiveTarget(target: EventTarget | null): boolean {
 function tradingViewSymbol({ ticker, exchange }: ChartSymbol): string {
   const cleanTicker = ticker.trim().toUpperCase().replace(/[^A-Z0-9._-]/g, "");
   const cleanExchange = exchange.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
-  return `${cleanExchange}:${cleanTicker}`;
+  return cleanExchange ? `${cleanExchange}:${cleanTicker}` : cleanTicker;
 }
 
 function tradingViewUrl(symbol: ChartSymbol): string {
@@ -70,12 +71,12 @@ export function useTradingViewChart() {
     onPointerCancel: cancelLongPress,
   }), [cancelLongPress]);
 
-  return { chart, closeChart, bindChartGesture };
+  return { chart, openChart: setChart, closeChart, bindChartGesture };
 }
 
-export default function TradingViewChartModal({ chart, onClose }: { chart: ChartSymbol | null; onClose: () => void }) {
+export default function TradingViewChartModal({ chart, onClose }: { chart: ChartSymbol | null; onClose?: () => void }) {
   const [chartData, setChartData] = useState<{ key: string; candle: OverviewCandle | null; error: string | null } | null>(null);
-  const market = chart && ["NSE", "BSE"].includes(chart.exchange.trim().toUpperCase()) ? "IN" : "US";
+  const market = chart?.market ?? (chart && ["NSE", "BSE"].includes(chart.exchange.trim().toUpperCase()) ? "IN" : "US");
   const requestKey = chart ? `${market}:${chart.exchange.trim().toUpperCase()}:${chart.ticker.trim().toUpperCase()}` : "";
   const currentData = chartData?.key === requestKey ? chartData : null;
   const candle = currentData?.candle ?? null;
@@ -90,7 +91,7 @@ export default function TradingViewChartModal({ chart, onClose }: { chart: Chart
   const externalUrl = useMemo(() => chart ? tradingViewUrl(chart) : "https://www.tradingview.com/", [chart]);
 
   useEffect(() => {
-    if (!chart) return;
+    if (!chart || !onClose) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
     };
@@ -145,13 +146,12 @@ export default function TradingViewChartModal({ chart, onClose }: { chart: Chart
 
   if (!chart) return null;
   const tab = (active: boolean) => `inline-flex min-h-10 items-center rounded-lg border px-3 text-xs font-semibold ${active ? "border-cyan-400/40 bg-cyan-400/10 text-cyan-100" : "border-white/15 text-white/55 hover:bg-white/10"}`;
-  return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 p-2 backdrop-blur-sm sm:p-6" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-      <section role="dialog" aria-modal="true" aria-label={`${chart.ticker} candlestick chart`} className="flex max-h-[92dvh] w-full max-w-6xl flex-col overflow-hidden rounded-xl border border-white/15 bg-[#080b12] shadow-2xl">
-        <header className="flex min-h-14 items-center justify-between gap-3 border-b border-white/10 px-4">
+  const panel = (
+      <section role={onClose ? "dialog" : undefined} aria-modal={onClose ? true : undefined} aria-label={`${chart.ticker} candlestick chart`} className={`flex w-full flex-col overflow-hidden rounded-xl border border-white/15 bg-[#080b12] ${onClose ? "max-h-[92dvh] max-w-6xl shadow-2xl" : ""}`}>
+        <header className="flex min-h-14 flex-wrap items-center justify-between gap-3 border-b border-white/10 px-3 py-2">
           <div>
             <div className="font-bold">{chart.ticker}</div>
-            <div className="text-[10px] uppercase tracking-wider text-white/40">{chart.exchange} · InvestoGenie {showIntraday ? "1-minute candles" : "daily OHLCV"}</div>
+            <div className="text-[10px] uppercase tracking-wider text-white/40">{chart.exchange || market} · InvestoGenie {showIntraday ? "1-minute candles" : "daily OHLCV"}</div>
           </div>
           <div className="flex items-center gap-2">
             {market === "IN" && (
@@ -161,7 +161,7 @@ export default function TradingViewChartModal({ chart, onClose }: { chart: Chart
               </>
             )}
             <a href={externalUrl} target="_blank" rel="noreferrer" className="inline-flex min-h-10 items-center rounded-lg border border-cyan-400/25 px-3 text-xs font-semibold text-cyan-200 hover:bg-cyan-400/10">Open in TradingView</a>
-            <button type="button" onClick={onClose} className="inline-flex min-h-10 items-center rounded-lg border border-white/15 px-4 text-sm font-semibold text-white/75 hover:bg-white/10">Close</button>
+            {onClose && <button type="button" onClick={onClose} className="inline-flex min-h-10 items-center rounded-lg border border-white/15 px-4 text-sm font-semibold text-white/75 hover:bg-white/10">Close</button>}
           </div>
         </header>
         <div className="min-h-[470px] overflow-auto p-2 sm:p-4">
@@ -178,6 +178,10 @@ export default function TradingViewChartModal({ chart, onClose }: { chart: Chart
           {!showIntraday && candle && <CandleChartPro candle={candle} accent="#22d3ee" currency={market === "IN" ? "INR" : "USD"} />}
         </div>
       </section>
-    </div>
   );
+  return onClose ? (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 p-2 backdrop-blur-sm sm:p-6" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      {panel}
+    </div>
+  ) : panel;
 }

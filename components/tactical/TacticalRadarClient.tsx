@@ -1,7 +1,6 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import Link from "next/link";
 import {
   TACTICAL_BUCKET_META,
   type TacticalBucketKey,
@@ -10,6 +9,7 @@ import {
 } from "@/lib/tacticalRadarTypes";
 import { formatPrice, formatPct } from "@/lib/markets";
 import type { MarketId } from "@/lib/types";
+import TradingViewChartModal, { useTradingViewChart } from "@/components/charts/TradingViewChartModal";
 
 const BUCKET_ORDER: TacticalBucketKey[] = [
   "NEAR_TRIGGER",
@@ -48,6 +48,7 @@ export default function TacticalRadarClient({
 }) {
   const [activeBucket, setActiveBucket] = useState<TacticalBucketKey>(data.context.favoredBucket);
   const [search, setSearch] = useState("");
+  const { chart, openChart, closeChart, bindChartGesture } = useTradingViewChart();
   const m = market.toLowerCase();
 
   const rows = useMemo(() => {
@@ -265,18 +266,21 @@ export default function TacticalRadarClient({
           {rows.map((c, idx) => (
             <article
               key={`${c.bucket}:${c.assetId}`}
+              {...bindChartGesture({ ticker: c.ticker, exchange: c.exchange, market })}
               className="rounded-xl border border-white/10 bg-white/[0.025] p-4 transition-colors hover:border-white/20"
             >
               <div className="flex flex-wrap items-start justify-between gap-4">
                 <div className="min-w-0 flex-1 space-y-1">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="font-mono text-xs text-white/35">#{idx + 1}</span>
-                    <Link
-                      href={`/terminal/${m}/stocks?search=${encodeURIComponent(c.ticker)}`}
+                    <button
+                      type="button"
+                      aria-label={`Open ${c.ticker} chart`}
+                      onClick={() => openChart({ ticker: c.ticker, exchange: c.exchange, market })}
                       className="text-base font-bold tracking-tight text-white hover:text-[var(--ig-accent)]"
                     >
                       {c.ticker}
-                    </Link>
+                    </button>
                     <span className="text-xs text-white/45">{c.exchange}</span>
                     <span
                       className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${riskBadgeTone(c.riskTier)}`}
@@ -391,6 +395,7 @@ export default function TacticalRadarClient({
         </div>
       )}
 
+      <TradingViewChartModal chart={chart} onClose={closeChart} />
       <p className="text-[11px] text-white/35">
         Research watchlist candidates only — tactical levels are statistical ATR projections, separate from Strong Swing&apos;s strict execution gates.
       </p>
