@@ -4,6 +4,7 @@ import {
   computeTacticalRadarInPython,
   getTacticalRadar,
   tacticalQuoteSessionCutoff,
+  toIsoDate,
   type PythonTacticalRadarInput,
 } from "./tacticalRadar";
 import { shutdownPythonStrategyWorkers } from "./pythonStrategyMath";
@@ -203,5 +204,47 @@ describe("getTacticalRadar tenant isolation and warm cache", () => {
 
   it("rejects calls without an authenticated userId", async () => {
     await expect(getTacticalRadar("IN", "")).rejects.toThrow(/userId/i);
+  });
+
+  it("preserves local calendar DATE on IST hosts and passes exact date into snapshot joins", async () => {
+    const localMidnight = new Date(2026, 10, 26, 0, 0, 0); // 2026-11-26 00:00 local (IST = 2026-11-25T18:30Z)
+    expect(toIsoDate(localMidnight)).toBe("2026-11-26");
+
+    const boundParams: unknown[][] = [];
+    mockedQuery.mockImplementation(async (sql: string, params?: unknown[]) => {
+      if (params) boundParams.push(params);
+      if (sql.includes("max(td.date)")) return [{ max_date: localMidnight }] as never;
+      if (sql.includes("as advancers")) return [{ advancers: 1200, decliners: 800, latest_as_of: "2026-11-26" }] as never;
+      if (sql.includes("as distance_sma_50_pct")) {
+        // Verify benchmark SQL enforces latest_bar_date = expectedSession and prioritizes fresh benchmark
+        expect(sql).toContain("b50.latest_bar_date = $3");
+        expect(sql).toContain("case when b50.bar_count = 50 and b50.latest_bar_date = $3");
+        return [{ ticker: "NIFTYBEES", price: 280.5, change_pct: 0.4, distance_sma_50_pct: 1.8 }] as never;
+      }
+      return [] as never;
+    });
+    mockedTenantQuery.mockResolvedValue([] as never);
+
+    const res = await getTacticalRadar("IN", "user-ist", 10, new Date("2026-11-26T14:00:00Z"));
+    expect(res.context.benchmarkTicker).toBe("NIFTYBEES");
+    expect(res.context.regime).toBe("TREND_BREAKOUT");
+    // Ensure "2026-11-26" (not shifted "2026-11-25") was bound into technical snapshot joins
+    expect(boundParams.some((p) => p.includes("2026-11-26"))).toBe(true);
+    expect(boundParams.some((p) => p.includes("2026-11-25"))).toBe(false);
+    shutdownPythonStrategyWorkers();
+  });
+
+  it("returns UNVERIFIED when benchmark history is stale (distance_sma_50_pct is null)", async () => {
+    mockedQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes("max(td.date)")) return [{ max_date: "2026-11-26" }] as never;
+      if (sql.includes("as advancers")) return [{ advancers: 1500, decliners: 500, latest_as_of: "2026-11-26" }] as never;
+      if (sql.includes("distance_sma_50_pct")) return [{ ticker: "NIFTY", price: 25884.5, change_pct: 0.5, distance_sma_50_pct: null }] as never;
+      return [] as never;
+    });
+    mockedTenantQuery.mockResolvedValue([] as never);
+
+    const res = await getTacticalRadar("IN", "user-stale", 10, new Date("2026-11-26T14:00:00Z"));
+    expect(res.context.regime).toBe("UNVERIFIED");
+    shutdownPythonStrategyWorkers();
   });
 });

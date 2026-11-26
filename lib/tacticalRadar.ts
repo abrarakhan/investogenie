@@ -33,9 +33,17 @@ function toNum(v: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-function toIsoDate(v: unknown): string | null {
+export function toIsoDate(v: unknown): string | null {
   if (!v) return null;
-  if (v instanceof Date) return v.toISOString().slice(0, 10);
+  if (v instanceof Date) {
+    if (Number.isNaN(v.getTime())) return null;
+    // Preserve local calendar date so PostgreSQL DATE values decoded at local midnight
+    // (e.g. 00:00+05:30 on an IST host) never shift back one day via UTC toISOString().
+    const yyyy = v.getFullYear();
+    const mm = String(v.getMonth() + 1).padStart(2, "0");
+    const dd = String(v.getDate()).padStart(2, "0");
+    return `${yyyy}-${mm}-${dd}`;
+  }
   const s = String(v);
   return s.length >= 10 ? s.slice(0, 10) : s;
 }
@@ -282,9 +290,9 @@ export async function getTacticalRadar(
     return [];
   };
 
-  // Latest precomputed technical date up to the expected trading session
+  // Latest precomputed technical date up to the expected trading session (cast to ::text to avoid JS Date TZ shift)
   const latestTdDateRows = await query<{ max_date: string | Date | null }>(
-    `select max(td.date) as max_date
+    `select max(td.date)::text as max_date
      from public.screener_technical_daily td
      join public.assets a on a.id = td.asset_id
      where a.country = $1
@@ -311,7 +319,7 @@ export async function getTacticalRadar(
       `select
          count(*) filter (where q.change_pct > 0) as advancers,
          count(*) filter (where q.change_pct < 0) as decliners,
-         max(q.as_of) as latest_as_of
+         max((q.as_of at time zone $2)::date)::text as latest_as_of
        from public.assets a
        join public.latest_quotes q on q.asset_id = a.id
        where a.country = $1
@@ -321,20 +329,24 @@ export async function getTacticalRadar(
       [country, timeZone, requiredQuoteDate],
     ).catch(logQueryErr("breadth")),
 
-    // Session-aligned benchmark requiring 50 valid completed bars before computing 50DMA
+    // Session-aligned benchmark requiring 50 valid completed bars whose newest bar matches
+    // expectedSession. Falls back to the next benchmark (e.g. NIFTY -> NIFTYBEES) when the
+    // primary lacks fresh 50-bar history; returns null distance_sma_50_pct (UNVERIFIED) if none qualify.
     query<BenchRow>(
       `select a.ticker, q.price, q.change_pct,
               case
-                when b50.bar_count = 50 and b50.sma50 > 0
+                when b50.bar_count = 50 and b50.latest_bar_date = $3 and b50.sma50 > 0
                 then ((q.price - b50.sma50) / b50.sma50) * 100
                 else null
               end as distance_sma_50_pct
        from public.assets a
        join public.latest_quotes q on q.asset_id = a.id
        left join lateral (
-         select count(*) as bar_count, avg(sub.close) as sma50
+         select count(*) as bar_count,
+                max(sub.date)::text as latest_bar_date,
+                avg(sub.close) as sma50
          from (
-           select close
+           select date, close
            from public.daily_ohlcv
            where asset_id = a.id
              and date <= $3::date
@@ -347,7 +359,9 @@ export async function getTacticalRadar(
        where a.country = $1
          and a.ticker = any($2)
          and (q.as_of at time zone $4)::date >= $5::date
-       order by array_position($2::text[], a.ticker) asc
+       order by
+         case when b50.bar_count = 50 and b50.latest_bar_date = $3 and b50.sma50 > 0 then 0 else 1 end asc,
+         array_position($2::text[], a.ticker) asc
        limit 1`,
       [country, benchmarkTickers, expectedSession, timeZone, requiredQuoteDate],
     ).catch(logQueryErr("benchmark")),
