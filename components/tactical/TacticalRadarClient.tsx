@@ -8,7 +8,7 @@ import {
   type TacticalCandidate,
   type TacticalRadarResult,
 } from "@/lib/tacticalRadarTypes";
-import { formatMoney, formatPct } from "@/lib/markets";
+import { formatPrice, formatPct } from "@/lib/markets";
 import type { MarketId } from "@/lib/types";
 
 const BUCKET_ORDER: TacticalBucketKey[] = [
@@ -305,7 +305,7 @@ export default function TacticalRadarClient({
                 <div className="flex items-center gap-4">
                   <div className="text-right">
                     <div className="font-mono text-base font-semibold text-white">
-                      {formatMoney(c.price, market)}
+                      {formatPrice(c.price, market)}
                     </div>
                     {c.changePct !== null && (
                       <div
@@ -331,19 +331,19 @@ export default function TacticalRadarClient({
                 <div className="rounded-lg bg-black/25 px-2.5 py-1.5">
                   <div className="text-[10px] uppercase text-white/38">Reference</div>
                   <div className="font-mono text-xs font-semibold text-white">
-                    {formatMoney(c.referenceEntry, market)}
+                    {formatPrice(c.referenceEntry, market)}
                   </div>
                 </div>
                 <div className="rounded-lg bg-black/25 px-2.5 py-1.5">
                   <div className="text-[10px] uppercase text-white/38">Invalidation</div>
                   <div className="font-mono text-xs font-semibold text-rose-300">
-                    {formatMoney(c.invalidationStop, market)}
+                    {formatPrice(c.invalidationStop, market)}
                   </div>
                 </div>
                 <div className="rounded-lg bg-black/25 px-2.5 py-1.5">
                   <div className="text-[10px] uppercase text-white/38">Target Zone</div>
                   <div className="font-mono text-xs font-semibold text-emerald-300">
-                    {formatMoney(c.targetZone, market)}
+                    {formatPrice(c.targetZone, market)}
                   </div>
                 </div>
                 <div className="rounded-lg bg-black/25 px-2.5 py-1.5">
