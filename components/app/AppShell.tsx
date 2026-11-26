@@ -50,7 +50,7 @@ function MarketSwitch({ market, activeArea }: { market: MarketId; activeArea: st
       {(["US", "IN"] as MarketId[]).map((m) => (
         <Link
           key={m}
-          href={`${target}/${marketPath(m)}${activeArea === "stock-screener" ? "/stocks" : activeArea === "swing" ? "/screener" : activeArea === "strong-swing" ? "/strong-swing" : activeArea === "armed-swing" ? "/armed-swing" : activeArea === "news-swing" ? "/news-swing" : activeArea === "long-term" ? "/long-term" : activeArea === "probability" ? "/probability" : activeArea === "adaptive-allocation" ? "/adaptive-allocation" : activeArea === "forward-test" ? "/forward-test" : activeArea === "trade-ledger" ? "/trade-ledger" : ""}`}
+          href={`${target}/${marketPath(m)}${activeArea === "stock-screener" ? "/stocks" : activeArea === "swing" ? "/screener" : activeArea === "strong-swing" ? "/strong-swing" : activeArea === "tactical-radar" ? "/tactical-radar" : activeArea === "armed-swing" ? "/armed-swing" : activeArea === "news-swing" ? "/news-swing" : activeArea === "long-term" ? "/long-term" : activeArea === "probability" ? "/probability" : activeArea === "adaptive-allocation" ? "/adaptive-allocation" : activeArea === "forward-test" ? "/forward-test" : activeArea === "trade-ledger" ? "/trade-ledger" : ""}`}
           className={cx(
             "rounded-md px-3 py-1.5 text-center transition-colors",
             m.toLowerCase() === currentPath
@@ -78,7 +78,7 @@ export default async function AppShell({
   children: React.ReactNode;
   email?: string;
   market: MarketId;
-  active: "overview" | "terminal" | "stock-screener" | "swing" | "strong-swing" | "armed-swing" | "news-swing" | "long-term" | "probability" | "adaptive-allocation" | "forward-test" | "trade-ledger" | "import-holdings" | "mutual-funds" | "fund-mapping" | "data" | "settings";
+  active: "overview" | "terminal" | "stock-screener" | "swing" | "strong-swing" | "tactical-radar" | "armed-swing" | "news-swing" | "long-term" | "probability" | "adaptive-allocation" | "forward-test" | "trade-ledger" | "import-holdings" | "mutual-funds" | "fund-mapping" | "data" | "settings";
   title: string;
   subtitle?: string;
   actions?: React.ReactNode;
@@ -97,7 +97,7 @@ export default async function AppShell({
         { label: "Stock Screener", href: `/terminal/${m}/stocks`, active: active === "stock-screener" },
         { label: "Swing Candidates", href: `/terminal/${m}/screener`, active: active === "swing", badge: "Buy" },
         { label: "Strong Swing", href: `/terminal/${m}/strong-swing`, active: active === "strong-swing", badge: "Strict" },
-        { label: "Armed Strong Swing", href: `/terminal/${m}/armed-swing`, active: active === "armed-swing", badge: "Early" },
+        { label: "Tactical Radar", href: `/terminal/${m}/tactical-radar`, active: active === "tactical-radar", badge: "Radar" },
         { label: "News & AI Swing", href: `/terminal/${m}/news-swing`, active: active === "news-swing", badge: "AI" },
         { label: "Long-Term Candidates", href: `/terminal/${m}/long-term`, active: active === "long-term" },
       ],

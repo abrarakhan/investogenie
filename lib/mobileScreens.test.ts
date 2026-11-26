@@ -95,7 +95,7 @@ describe("marketQuoteCard", () => {
 describe("screen registry", () => {
   it("serves every cards screen in the catalog and rejects native or unknown keys", () => {
     expect(MOBILE_SCREEN_CATALOG.filter((item) => item.kind === "cards").map((item) => item.key))
-      .toEqual(["market", "stock-screener", "swing", "strong-swing", "momentum-v2", "trend-continuation", "armed-swing", "long-term"]);
+      .toEqual(["market", "stock-screener", "swing", "strong-swing", "momentum-v2", "trend-continuation", "tactical-radar", "long-term"]);
     expect(loadMobileScreen("trade-ledger", "IN", new URLSearchParams(), "u")).toBeNull();
     expect(loadMobileScreen("toString", "IN", new URLSearchParams(), "u")).toBeNull();
   });

@@ -27,7 +27,7 @@ const STRATEGY_KEYS = new Set([
   "trend-continuation",
   "momentum-v2",
   "swing",
-  "armed-swing",
+  "tactical-radar",
   "news-swing",
 ]);
 const PORTFOLIO_KEYS = new Set(["trade-ledger"]);

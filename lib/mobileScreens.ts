@@ -30,6 +30,12 @@ import {
 } from "@/lib/swingExecutionPlans";
 import type { TrendContinuationCandidate } from "@/features/trend-continuation/contracts";
 import { getMarketOverview, type OverviewQuote } from "@/lib/marketOverview";
+import {
+  getTacticalRadar,
+  TACTICAL_BUCKET_META,
+  type TacticalBucketKey,
+  type TacticalCandidate,
+} from "@/lib/tacticalRadar";
 
 /**
  * Server-driven mobile screens. Every value is computed and formatted here from the same
@@ -95,7 +101,7 @@ export const MOBILE_SCREEN_CATALOG = [
   { key: "strong-swing", title: "Strong Swing", tabLabel: "Strong", kind: "cards" },
   { key: "momentum-v2", title: "Momentum Ignition V2", tabLabel: "Momentum", kind: "cards" },
   { key: "trend-continuation", title: "Trend Continuation", tabLabel: "Continuation", kind: "cards" },
-  { key: "armed-swing", title: "Armed Strong Swing", tabLabel: "Armed", kind: "cards" },
+  { key: "tactical-radar", title: "Tactical Radar", tabLabel: "Tactical", kind: "cards" },
   { key: "news-swing", title: "News & AI Swing", tabLabel: "News & AI", kind: "native" },
   { key: "long-term", title: "Long-Term Candidates", tabLabel: "Long-Term", kind: "cards" },
   { key: "trade-ledger", title: "Trade Ledger", tabLabel: "Ledger", kind: "native" },
@@ -819,7 +825,7 @@ async function homeScreen(market: MobileMarket, userId: string): Promise<MobileS
   const benchmarks = market === "IN" ? ["NIFTY", "SENSEX", "USDINR"] : ["AAPL", "MSFT", "NVDA"];
   const primaryExchange = exchanges[0];
 
-  const [settings, benchmarkRows, breadthRows, trendRows] = await Promise.all([
+  const [settings, benchmarkRows, breadthRows, trendRows, tacticalData] = await Promise.all([
     getUserSwingSettings(userId).catch(() => null),
     query<{ ticker: string; name: string | null; exchange: string; price: string; change_pct: string | null; as_of: string | Date | null }>(
       `select a.ticker, a.name, a.exchange, q.price::text, q.change_pct::text, q.as_of
@@ -881,6 +887,7 @@ async function homeScreen(market: MobileMarket, userId: string): Promise<MobileS
            limit 3`,
         ).catch(() => [])
       : Promise.resolve([]),
+    getTacticalRadar(market, 5).catch(() => null),
   ]);
 
   const breadth = breadthRows[0];
@@ -960,7 +967,31 @@ async function homeScreen(market: MobileMarket, userId: string): Promise<MobileS
     });
   }
 
-  // 3. Top persisted Mid-Way / Trend Continuation setups (IN only)
+  // 3. Top Tactical Radar highlights (favored bucket + Near-Trigger confluence leaders)
+  const tacticalPicks: TacticalCandidate[] = [];
+  if (tacticalData) {
+    const seenTactical = new Set<string>(readyStrong.map((c) => c.ticker));
+    const orderedKeys: TacticalBucketKey[] = [
+      tacticalData.context.favoredBucket,
+      "NEAR_TRIGGER",
+      "MID_TREND_PULLBACK",
+      "OVERSOLD_SNAPBACK",
+    ];
+    for (const key of orderedKeys) {
+      for (const item of tacticalData.buckets[key]) {
+        if (seenTactical.has(item.ticker)) continue;
+        seenTactical.add(item.ticker);
+        tacticalPicks.push(item);
+        if (tacticalPicks.length >= 4) break;
+      }
+      if (tacticalPicks.length >= 4) break;
+    }
+    for (const item of tacticalPicks) {
+      cards.push(tacticalRadarCard(item, market, true));
+    }
+  }
+
+  // 4. Top persisted Mid-Way / Trend Continuation setups (IN only)
   for (const row of trendRows) {
     const isMidway = typeof row.setup_variant === "string" && row.setup_variant.length > 0;
     const deliv = row.deliv_pct !== null ? Number(row.deliv_pct) : null;
@@ -990,11 +1021,103 @@ async function homeScreen(market: MobileMarket, userId: string): Promise<MobileS
     title: "Home",
     subtitle: "Market pulse and top persisted opportunities.",
     generatedAt: new Date().toISOString(),
-    summary: `${readyStrong.length} ready · ${trendRows.length} continuation highlights`,
+    summary: `${readyStrong.length} ready · ${tacticalPicks.length} tactical · ${trendRows.length} continuation`,
     notice: latestQuoteDate ? null : "Quote data has not synced yet for this market.",
     options: [],
     searchable: false,
     cards,
+  };
+}
+
+function tacticalRadarCard(item: TacticalCandidate, market: MobileMarket, forHome = false): MobileCard {
+  const bucketMeta = TACTICAL_BUCKET_META[item.bucket];
+  const isSnapback = item.riskTier === "HIGHER_MEAN_REVERSION";
+  return {
+    id: `${forHome ? "home:tactical" : "tactical"}:${item.bucket}:${item.assetId}`,
+    title: item.ticker,
+    subtitle: `${bucketMeta.shortLabel} · ${item.name}`,
+    badge: {
+      label: item.confluenceCount >= 2 ? `${item.confluenceCount}× Confluence` : bucketMeta.shortLabel,
+      tone: isSnapback ? "warning" : "positive",
+    },
+    score: String(item.score),
+    metrics: [
+      { label: "LTP", value: formatMoney(item.price, market), tone: toneOf(item.changePct) },
+      { label: "STOP", value: formatMoney(item.invalidationStop, market), tone: "negative" },
+      { label: "TARGET", value: formatMoney(item.targetZone, market), tone: "positive" },
+    ],
+    footer: item.reason,
+    chartTicker: item.ticker,
+    guidance: isSnapback
+      ? "Higher Risk · Mean Reversion candidate (separate from Strong Swing)."
+      : `${bucketMeta.riskLabel} · ${item.engines.join(" + ")}`,
+    pills: [
+      { label: isSnapback ? "Mean Reversion" : "Tactical", tone: isSnapback ? "warning" : "positive" },
+      ...(item.changePct !== null ? [{ label: formatPct(item.changePct), tone: toneOf(item.changePct) }] : []),
+    ],
+    sections: [
+      {
+        title: "Levels & Technicals",
+        rows: [
+          { label: "Reference level", value: formatMoney(item.referenceEntry, market) },
+          { label: "Invalidation level", value: formatMoney(item.invalidationStop, market) },
+          { label: "Target zone", value: formatMoney(item.targetZone, market) },
+          { label: "ATR risk", value: `${item.riskPct.toFixed(1)}%` },
+          { label: "RSI (14)", value: formatNumber(item.rsi14, 1) },
+          { label: "Volume / 20D", value: item.volumeRatio !== null ? `${item.volumeRatio.toFixed(2)}x` : nil },
+          { label: "20D move", value: formatPct(item.return20d) },
+        ],
+      },
+    ],
+  };
+}
+
+async function tacticalRadarScreen(market: MobileMarket, params: URLSearchParams): Promise<MobileScreen> {
+  const data = await getTacticalRadar(market, 10);
+  const bucketParam = pick(
+    params.get("bucket"),
+    ["FAVORED", "NEAR_TRIGGER", "MID_TREND_PULLBACK", "OVERSOLD_SNAPBACK", "ALL"] as const,
+    "FAVORED",
+  );
+  const search = params.get("search")?.trim().toLowerCase() || "";
+  const selectedKey: TacticalBucketKey | "ALL" =
+    bucketParam === "FAVORED" ? data.context.favoredBucket : bucketParam;
+  const list =
+    selectedKey === "ALL"
+      ? [...data.buckets.NEAR_TRIGGER, ...data.buckets.MID_TREND_PULLBACK, ...data.buckets.OVERSOLD_SNAPBACK]
+      : data.buckets[selectedKey];
+  const filtered = search
+    ? list.filter(
+        (c) =>
+          c.ticker.toLowerCase().includes(search) ||
+          c.name.toLowerCase().includes(search) ||
+          (c.sector ?? "").toLowerCase().includes(search),
+      )
+    : list;
+
+  return {
+    key: "tactical-radar",
+    title: "Tactical Radar",
+    subtitle: `${data.context.regimeLabel} · Separate from Strong Swing`,
+    generatedAt: data.generatedAt,
+    summary: `${data.buckets.NEAR_TRIGGER.length} near-trigger · ${data.buckets.MID_TREND_PULLBACK.length} pullbacks · ${data.buckets.OVERSOLD_SNAPBACK.length} snapbacks`,
+    notice: data.context.summary,
+    options: [
+      {
+        param: "bucket",
+        label: "Bucket",
+        value: bucketParam,
+        choices: [
+          { value: "FAVORED", label: `Fits tape (${TACTICAL_BUCKET_META[data.context.favoredBucket].shortLabel})` },
+          { value: "NEAR_TRIGGER", label: `Near-Trigger (${data.buckets.NEAR_TRIGGER.length})` },
+          { value: "MID_TREND_PULLBACK", label: `Pullbacks (${data.buckets.MID_TREND_PULLBACK.length})` },
+          { value: "OVERSOLD_SNAPBACK", label: `Snapbacks (${data.buckets.OVERSOLD_SNAPBACK.length})` },
+          { value: "ALL", label: "All buckets" },
+        ],
+      },
+    ],
+    searchable: true,
+    cards: filtered.map((item) => tacticalRadarCard(item, market)),
   };
 }
 
@@ -1025,6 +1148,7 @@ const LOADERS: Record<string, (market: MobileMarket, params: URLSearchParams, us
     selected.set("model", "TREND_CONTINUATION");
     return { ...await strongSwing(market, selected, userId), key: "trend-continuation" };
   },
+  "tactical-radar": (market, params) => tacticalRadarScreen(market, params),
   "armed-swing": armedSwing,
   "long-term": longTerm,
 };

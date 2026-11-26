@@ -16,7 +16,7 @@ const CACHEABLE_SCREENS = new Set([
   "strong-swing",
   "momentum-v2",
   "trend-continuation",
-  "armed-swing",
+  "tactical-radar",
   "long-term",
 ]);
 

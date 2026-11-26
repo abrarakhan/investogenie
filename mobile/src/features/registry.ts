@@ -16,7 +16,7 @@ export const MOBILE_FEATURES: MobileFeatureEntry[] = [
   { key: "strong-swing", title: "Strong Swing", tabLabel: "Strong", kind: "cards" },
   { key: "momentum-v2", title: "Momentum Ignition V2", tabLabel: "Momentum", kind: "cards" },
   { key: "trend-continuation", title: "Trend Continuation", tabLabel: "Continuation", kind: "cards" },
-  { key: "armed-swing", title: "Armed Strong Swing", tabLabel: "Armed", kind: "cards" },
+  { key: "tactical-radar", title: "Tactical Radar", tabLabel: "Tactical", kind: "cards" },
   { key: "news-swing", title: "News & AI Swing", tabLabel: "News & AI", kind: "native" },
   { key: "long-term", title: "Long-Term Candidates", tabLabel: "Long-Term", kind: "cards" },
   { key: "trade-ledger", title: "Trade Ledger", tabLabel: "Ledger", kind: "native" },
