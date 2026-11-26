@@ -37,12 +37,17 @@ export function AppShell({
   onDeepLinkHandled: () => void;
   onLogout: () => void;
 }) {
-  const [market, setMarket] = useState<Market>("IN");
+  const [selectedMarket, setMarket] = useState<Market>("IN");
+  const market = deepLink?.market ?? selectedMarket;
   const [destination, setDestination] = useState<DestinationKey>("home");
   const [discoverKey, setDiscoverKey] = useState("stock-screener");
   const [strategyKey, setStrategyKey] = useState("strong-swing");
   const [screens, setScreens] = useState<MobileFeatureEntry[]>(MOBILE_FEATURES);
   const [notificationStatus, setNotificationStatus] = useState("");
+
+  useEffect(() => {
+    if (deepLink?.market) setMarket(deepLink.market);
+  }, [deepLink]);
 
   useEffect(() => {
     void getScreenCatalog()
@@ -117,6 +122,7 @@ export function AppShell({
                 onPress={() => {
                   if (!active) hapticSelection();
                   setMarket(value);
+                  if (deepLink) navigateTo(activeDestination, deepLink.screenKey);
                 }}
                 style={[styles.marketBtn, active && styles.marketBtnActive]}
               >

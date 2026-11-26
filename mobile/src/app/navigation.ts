@@ -19,6 +19,7 @@ export const DESTINATIONS: readonly DestinationSpec[] = [
 export interface DeepLinkTarget {
   destination: DestinationKey;
   screenKey?: string;
+  market?: "IN" | "US";
 }
 
 const DISCOVER_KEYS = new Set(["stock-screener", "long-term"]);
@@ -59,5 +60,10 @@ export function resolveDeepLink(data?: Record<string, unknown> | null): DeepLink
   const raw = typeof data?.screen === "string" ? data.screen.trim() : "";
   if (!raw) return { destination: "portfolio", screenKey: "trade-ledger" };
   if (raw === "home" || raw === "market") return { destination: "home", screenKey: raw };
-  return { destination: destinationForScreen(raw), screenKey: raw };
+  const market = data?.market;
+  return {
+    destination: destinationForScreen(raw),
+    screenKey: raw,
+    ...(market === "IN" || market === "US" ? { market } : {}),
+  };
 }
