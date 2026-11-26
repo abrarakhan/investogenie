@@ -7,7 +7,7 @@ import {
   type TacticalBucketKey,
   type TacticalCandidate,
   type TacticalRadarResult,
-} from "@/lib/tacticalRadar";
+} from "@/lib/tacticalRadarTypes";
 import { formatMoney, formatPct } from "@/lib/markets";
 import type { MarketId } from "@/lib/types";
 
