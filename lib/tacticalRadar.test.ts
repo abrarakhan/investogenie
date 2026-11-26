@@ -214,11 +214,18 @@ describe("getTacticalRadar tenant isolation and warm cache", () => {
     mockedQuery.mockImplementation(async (sql: string, params?: unknown[]) => {
       if (params) boundParams.push(params);
       if (sql.includes("max(td.date)")) return [{ max_date: localMidnight }] as never;
-      if (sql.includes("as advancers")) return [{ advancers: 1200, decliners: 800, latest_as_of: "2026-11-26" }] as never;
+      if (sql.includes("as advancers")) {
+        expect(sql).toContain("q.as_of >= $2::date");
+        expect(sql).not.toContain("at time zone");
+        return [{ advancers: 1200, decliners: 800, latest_as_of: "2026-11-26" }] as never;
+      }
       if (sql.includes("as distance_sma_50_pct")) {
-        // Verify benchmark SQL enforces latest_bar_date = expectedSession and prioritizes fresh benchmark
+        // Verify benchmark SQL enforces latest_bar_date = expectedSession, prioritizes fresh benchmark,
+        // and compares latest_quotes.as_of (PostgreSQL DATE) directly without AT TIME ZONE
         expect(sql).toContain("b50.latest_bar_date = $3");
         expect(sql).toContain("case when b50.bar_count = 50 and b50.latest_bar_date = $3");
+        expect(sql).toContain("q.as_of >= $4::date");
+        expect(sql).not.toContain("at time zone");
         return [{ ticker: "NIFTYBEES", price: 280.5, change_pct: 0.4, distance_sma_50_pct: 1.8 }] as never;
       }
       return [] as never;

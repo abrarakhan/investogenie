@@ -283,7 +283,7 @@ export async function getTacticalRadar(
   const priceFloor = market === "IN" ? 20 : 2;
   const tradedValueFloor = market === "IN" ? 10_000_000 : 1_000_000;
   const benchmarkTickers = market === "IN" ? ["NIFTY", "NIFTYBEES"] : ["SPY"];
-  const { expectedSession, requiredQuoteDate, timeZone } = tacticalQuoteSessionCutoff(market, at);
+  const { expectedSession, requiredQuoteDate } = tacticalQuoteSessionCutoff(market, at);
 
   const logQueryErr = (label: string) => (err: unknown) => {
     console.error(`[tactical-radar] ${label} query failed:`, err instanceof Error ? err.message : err);
@@ -314,19 +314,19 @@ export async function getTacticalRadar(
     pullbackRows,
     snapbackRows,
   ] = await Promise.all([
-    // Session-aligned breadth: only quotes from the required trading session
+    // Session-aligned breadth: latest_quotes.as_of is a PostgreSQL DATE — compare directly without AT TIME ZONE
     query<BreadthRow>(
       `select
          count(*) filter (where q.change_pct > 0) as advancers,
          count(*) filter (where q.change_pct < 0) as decliners,
-         max((q.as_of at time zone $2)::date)::text as latest_as_of
+         max(q.as_of)::text as latest_as_of
        from public.assets a
        join public.latest_quotes q on q.asset_id = a.id
        where a.country = $1
          and a.is_active = true
          and a.asset_class = 'STOCK'
-         and (q.as_of at time zone $2)::date >= $3::date`,
-      [country, timeZone, requiredQuoteDate],
+         and q.as_of >= $2::date`,
+      [country, requiredQuoteDate],
     ).catch(logQueryErr("breadth")),
 
     // Session-aligned benchmark requiring 50 valid completed bars whose newest bar matches
@@ -358,12 +358,12 @@ export async function getTacticalRadar(
        ) b50 on true
        where a.country = $1
          and a.ticker = any($2)
-         and (q.as_of at time zone $4)::date >= $5::date
+         and q.as_of >= $4::date
        order by
          case when b50.bar_count = 50 and b50.latest_bar_date = $3 and b50.sma50 > 0 then 0 else 1 end asc,
          array_position($2::text[], a.ticker) asc
        limit 1`,
-      [country, benchmarkTickers, expectedSession, timeZone, requiredQuoteDate],
+      [country, benchmarkTickers, expectedSession, requiredQuoteDate],
     ).catch(logQueryErr("benchmark")),
 
     query<ExclusionRow>(
