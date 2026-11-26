@@ -203,6 +203,7 @@ interface ExclusionRow {
 export interface PythonTacticalRadarInput {
   market: MarketId;
   priceFloor: number;
+  tradedValueFloor?: number;
   limitPerBucket: number;
   breadth: {
     advancers: number;
@@ -259,6 +260,17 @@ export async function computeTacticalRadarInPython(
 }
 
 const RADAR_CACHE_TTL_MS = 60_000;
+// Candidate queries all alias the asset catalog as a. Keep benchmark lookups
+// separate so index funds remain available as market proxies.
+const radarEquityFilter = `
+  a.asset_class = 'STOCK'
+  and upper(trim(a.ticker)) !~ '(BEES|ETF)$|NIFTY|BANKNIF|SENSEX'
+  and upper(trim(coalesce(a.name, ''))) !~ ' ETF|ETF$|EXCHANGE TRADED|INDEX FUND'
+  and not exists (
+    select 1 from public.daily_delivery_metrics d
+    where a.country = 'IN' and d.asset_id = a.id and d.is_etf
+      and d.date >= current_date - interval '30 days'
+  )`;
 const radarCache = new Map<string, { at: number; data: TacticalRadarResult }>();
 
 export function clearTacticalRadarCache(): void {
@@ -401,6 +413,7 @@ export async function getTacticalRadar(
        left join public.screener_technical_daily td
          on td.asset_id = s.asset_id and td.date = $2::date
        where s.market = $1
+         and ${radarEquityFilter}
          and s.status <> 'INVALIDATED'
          and s.strength_score >= 82
        order by s.strength_score desc, s.rank asc
@@ -436,6 +449,7 @@ export async function getTacticalRadar(
          'EARLY_WATCH', 'PRE_IGNITION', 'FIRST_THRUST', 'RETEST_SETUP',
          'IMPULSE_DETECTED', 'CONTINUATION_WATCH', 'TREND_CONTINUATION_READY'
        )
+       and ${radarEquityFilter}
        limit 120`,
       [userId, market, latestTdDate],
     ).catch(logQueryErr("observations")),
@@ -463,6 +477,7 @@ export async function getTacticalRadar(
            left join public.screener_technical_daily td
              on td.asset_id = t.asset_id and td.date = $1::date
            where t.status in ('TREND_CONTINUATION_READY', 'IMPULSE_DETECTED', 'CONTINUATION_WATCH')
+             and ${radarEquityFilter}
              and t.score >= 65
            order by t.score desc
            limit 60`,
@@ -487,6 +502,7 @@ export async function getTacticalRadar(
        left join public.daily_ohlcv o
          on o.asset_id = s.asset_id and o.date = $4::date
        where s.country = $1
+         and ${radarEquityFilter}
          and s.verdict = 'LONG_BREAKOUT'
          and s.score >= 0.55
          and s.last_close >= $2
@@ -510,7 +526,7 @@ export async function getTacticalRadar(
            where td.date = $4::date
              and a.country = $1
              and a.is_active = true
-             and a.asset_class = 'STOCK'
+             and ${radarEquityFilter}
              and td.close >= $2
              and td.distance_sma_20_pct between 0.2 and 8.5
              and td.distance_sma_50_pct > 1.0
@@ -540,7 +556,7 @@ export async function getTacticalRadar(
            where td.date = $4::date
              and a.country = $1
              and a.is_active = true
-             and a.asset_class = 'STOCK'
+             and ${radarEquityFilter}
              and td.close >= $2
              and td.rsi_14 between 22 and 42
              and td.distance_sma_200_pct between -10 and 20
@@ -576,6 +592,7 @@ export async function getTacticalRadar(
   const pythonInput: PythonTacticalRadarInput = {
     market,
     priceFloor,
+    tradedValueFloor,
     limitPerBucket,
     breadth: {
       advancers: Number(breadth?.advancers ?? 0),

@@ -158,5 +158,20 @@ class TacticalRadarMathTests(unittest.TestCase):
         self.assertEqual(out["buckets"]["MID_TREND_PULLBACK"][0]["ticker"], "INSTLEADER")
 
 
+    def test_turnover_bonus_is_equal_at_the_same_multiple_of_market_floor(self):
+        def score(market, traded_value):
+            result = assess({
+                "market": market,
+                "pullbackRows": [{
+                    "assetId": "stock", "ticker": "EQUITY", "close": 100,
+                    "return20d": 12, "volumeRatio": 1, "tradedValue": traded_value,
+                }],
+            })
+            return result["buckets"]["MID_TREND_PULLBACK"][0]["score"]
+
+        self.assertEqual(score("IN", 30_000_000), score("US", 3_000_000))
+        self.assertGreater(score("US", 3_000_000), score("US", 1_000_000))
+
+
 if __name__ == "__main__":
     unittest.main()

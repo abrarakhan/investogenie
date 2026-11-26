@@ -180,6 +180,9 @@ def compute_atr_levels(
 def assess(payload: dict[str, Any]) -> dict[str, Any]:
     """Compute Tactical Radar regime, buckets, confluence ranking, and ATR levels."""
     price_floor = float(payload.get("priceFloor") or 20.0)
+    traded_value_floor = _to_num(payload.get("tradedValueFloor"))
+    if traded_value_floor is None or traded_value_floor <= 0:
+        traded_value_floor = 1_000_000 if payload.get("market") == "US" else 10_000_000
     limit = max(1, int(payload.get("limitPerBucket") or 10))
     excluded = set(payload.get("excludedAssetIds") or [])
     news_notes: dict[str, str] = payload.get("newsNotes") or {}
@@ -476,8 +479,8 @@ def assess(payload: dict[str, Any]) -> dict[str, Any]:
         dist200 = _to_num(row.get("distanceSma200Pct"))
         traded_val = _to_num(row.get("tradedValue")) or 0.0
         levels = compute_atr_levels(price, atr_pct, "TREND")
-        # Reward institutional liquidity (log-scaled traded value) and volume confirmation alongside 20D trend
-        liq_bonus = min(8.0, max(0.0, (math.log10(max(1.0, traded_val)) - 7.0) * 4.0)) if traded_val > 0 else 0.0
+        # Score turnover relative to the market's eligibility floor.
+        liq_bonus = min(8.0, 4.0 * math.log10(max(1.0, traded_val / traded_value_floor)))
         score = min(
             96,
             round(
