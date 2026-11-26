@@ -19,7 +19,7 @@ export default async function TacticalRadarPage({
   const user = await getSessionUser();
   if (!user) redirect("/login");
 
-  const data = await getTacticalRadar(market, 10);
+  const data = await getTacticalRadar(market, user.id, 10);
 
   return (
     <AppShell

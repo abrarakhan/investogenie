@@ -21,6 +21,7 @@ from strategy_math.swing_scan import (assess as assess_swing_scan, cross_section
 from strategy_math.probability import assess as assess_probability
 from strategy_math.long_term import assess as assess_long_term, score_fundamentals
 from strategy_math.adaptive_allocation import backtest as adaptive_backtest, select_pair
+from strategy_math.tactical_radar import assess as assess_tactical_radar
 
 
 def _json_safe(value):
@@ -139,6 +140,8 @@ def _dispatch(request: dict) -> dict:
         results = [select_pair(item["candidates"]) for item in inputs]
     elif engine == "adaptive_backtest":
         results = [adaptive_backtest(item) for item in inputs]
+    elif engine == "tactical_radar":
+        results = [assess_tactical_radar(item) for item in inputs]
     else:
         raise ValueError(f"unsupported strategy engine: {engine}")
     return {"engine": engine, "results": _json_safe(results)}

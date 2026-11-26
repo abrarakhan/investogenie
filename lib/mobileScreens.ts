@@ -887,7 +887,7 @@ async function homeScreen(market: MobileMarket, userId: string): Promise<MobileS
            limit 3`,
         ).catch(() => [])
       : Promise.resolve([]),
-    getTacticalRadar(market, 5).catch(() => null),
+    getTacticalRadar(market, userId, 5).catch(() => null),
   ]);
 
   const breadth = breadthRows[0];
@@ -1072,8 +1072,8 @@ function tacticalRadarCard(item: TacticalCandidate, market: MobileMarket, forHom
   };
 }
 
-async function tacticalRadarScreen(market: MobileMarket, params: URLSearchParams): Promise<MobileScreen> {
-  const data = await getTacticalRadar(market, 10);
+async function tacticalRadarScreen(market: MobileMarket, params: URLSearchParams, userId: string): Promise<MobileScreen> {
+  const data = await getTacticalRadar(market, userId, 10);
   const bucketParam = pick(
     params.get("bucket"),
     ["FAVORED", "NEAR_TRIGGER", "MID_TREND_PULLBACK", "OVERSOLD_SNAPBACK", "ALL"] as const,
@@ -1148,7 +1148,7 @@ const LOADERS: Record<string, (market: MobileMarket, params: URLSearchParams, us
     selected.set("model", "TREND_CONTINUATION");
     return { ...await strongSwing(market, selected, userId), key: "trend-continuation" };
   },
-  "tactical-radar": (market, params) => tacticalRadarScreen(market, params),
+  "tactical-radar": (market, params, userId) => tacticalRadarScreen(market, params, userId),
   "armed-swing": armedSwing,
   "long-term": longTerm,
 };

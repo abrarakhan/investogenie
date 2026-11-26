@@ -1,5 +1,11 @@
-import { query } from "@/lib/db";
+import { query, tenantQuery } from "@/lib/db";
 import { MARKETS, MARKET_COUNTRY } from "@/lib/markets";
+import {
+  isMarketOpenNow,
+  latestSignalSessionDate,
+  zonedMarketClock,
+} from "@/lib/market-calendar.mjs";
+import { runPythonStrategyBatch } from "@/lib/pythonStrategyMath";
 import type { MarketId } from "@/lib/types";
 import {
   TACTICAL_BUCKET_META,
@@ -21,31 +27,6 @@ export {
   type TacticalRiskTier,
 };
 
-const HARD_DISQUALIFYING_STRONG_GATES = new Set([
-  "price",
-  "liquidity",
-  "results_blackout",
-  "market_shock",
-  "circuit_behaviour",
-  "extension_5d",
-  "extension_10d",
-  "freshness",
-]);
-
-const TIMING_ONLY_STRONG_GATES = new Set([
-  "follow_through",
-  "entry_zone",
-  "session_hold",
-  "session_reversal",
-  "live_spread",
-  "live_quote",
-  "live_circuit",
-]);
-
-function round2(n: number): number {
-  return Math.round(n * 100) / 100;
-}
-
 function toNum(v: unknown): number | null {
   if (v === null || v === undefined || v === "") return null;
   const n = Number(v);
@@ -59,105 +40,22 @@ function toIsoDate(v: unknown): string | null {
   return s.length >= 10 ? s.slice(0, 10) : s;
 }
 
-export function classifyMarketRegime(input: {
-  benchmarkAboveSma50: boolean | null;
-  benchmarkChangePct: number | null;
-  advancers: number;
-  decliners: number;
-}): Pick<TacticalMarketContext, "regime" | "regimeLabel" | "summary" | "favoredBucket" | "breadthPct"> {
-  const total = input.advancers + input.decliners;
-  const breadthPct = total > 0 ? round2((input.advancers / total) * 100) : null;
-  const above50 = input.benchmarkAboveSma50;
-  const chg = input.benchmarkChangePct ?? 0;
-
-  if (above50 !== false && breadthPct !== null && breadthPct >= 55) {
-    return {
-      regime: "TREND_BREAKOUT",
-      regimeLabel: "Trend / Breakout Tape",
-      summary: "Benchmark holds above 50DMA with positive breadth — favors Near-Trigger Breakouts and Mid-Trend Pullbacks.",
-      favoredBucket: "NEAR_TRIGGER",
-      breadthPct,
-    };
-  }
-
-  if ((above50 === false || (breadthPct !== null && breadthPct < 42)) && chg >= 0.35) {
-    return {
-      regime: "SNAPBACK_REVERSAL",
-      regimeLabel: "Snapback / Reversal Tape",
-      summary: "Index rebounding from a weak base — Oversold Snapbacks often lead intraday moves while trend setups stay selective.",
-      favoredBucket: "OVERSOLD_SNAPBACK",
-      breadthPct,
-    };
-  }
-
-  if (above50 === false && (breadthPct === null || breadthPct < 45) && chg < 0.35) {
-    return {
-      regime: "DEFENSIVE",
-      regimeLabel: "Defensive / Weak Tape",
-      summary: "Benchmark below 50DMA with weak breadth — treat all tactical setups with smaller size and tight invalidation levels.",
-      favoredBucket: "NEAR_TRIGGER",
-      breadthPct,
-    };
-  }
-
-  return {
-    regime: "CHOPPY_ROTATION",
-    regimeLabel: "Choppy / Rotation Tape",
-    summary: "Mixed breadth with selective sector strength — focus on multi-engine Near-Trigger leaders and clean Mid-Trend Pullbacks.",
-    favoredBucket: "MID_TREND_PULLBACK",
-    breadthPct,
-  };
-}
-
-export function evaluateStrongSwingNearTrigger(gates: unknown): {
-  eligible: boolean;
-  failedTimingGates: string[];
-  failedOtherGates: string[];
+export function tacticalQuoteSessionCutoff(market: MarketId, at: Date = new Date()): {
+  expectedSession: string;
+  requiredQuoteDate: string;
+  timeZone: string;
+  marketOpen: boolean;
 } {
-  if (!Array.isArray(gates)) {
-    return { eligible: false, failedTimingGates: [], failedOtherGates: ["missing_gates"] };
-  }
-  const failedTimingGates: string[] = [];
-  const failedOtherGates: string[] = [];
-
-  for (const raw of gates) {
-    if (!raw || typeof raw !== "object") continue;
-    const gate = raw as { key?: string; passed?: boolean; blocking?: boolean };
-    if (gate.passed !== false || gate.blocking === false || !gate.key) continue;
-    if (HARD_DISQUALIFYING_STRONG_GATES.has(gate.key)) {
-      return { eligible: false, failedTimingGates, failedOtherGates: [gate.key] };
-    }
-    if (TIMING_ONLY_STRONG_GATES.has(gate.key)) {
-      failedTimingGates.push(gate.key);
-    } else {
-      failedOtherGates.push(gate.key);
-    }
-  }
-
-  // Allow up to 1 non-hard technical miss (e.g. volume or trend) + timing misses so strong 85+ setups surface.
-  const eligible = failedOtherGates.length <= 1;
-  return { eligible, failedTimingGates, failedOtherGates };
-}
-
-export function computeAtrLevels(
-  price: number,
-  atrPct: number | null,
-  mode: "TREND" | "SNAPBACK",
-  sma20?: number | null,
-): { referenceEntry: number; invalidationStop: number; targetZone: number; riskPct: number } {
-  const safeAtrPct = Math.min(8, Math.max(1.5, atrPct ?? 3.0));
-  const stopMult = mode === "SNAPBACK" ? 1.2 : 1.5;
-  const rrMult = mode === "SNAPBACK" ? 1.8 : 2.0;
-  const stopDist = price * ((safeAtrPct * stopMult) / 100);
-  const invalidationStop = round2(Math.max(0.01, price - stopDist));
-  const risk = Math.max(0.01, price - invalidationStop);
-  let targetZone = round2(price + risk * rrMult);
-  if (mode === "SNAPBACK" && sma20 && sma20 > price * 1.03) {
-    // Cap snapback target near mean-reversion magnet if reasonable, else 1.8R
-    targetZone = round2(Math.max(targetZone, sma20));
-  }
-  const riskPct = round2((risk / price) * 100);
-  return { referenceEntry: round2(price), invalidationStop, targetZone, riskPct };
+  const clock = zonedMarketClock(market, at);
+  const marketOpen = isMarketOpenNow(market, at);
+  const expectedSession = latestSignalSessionDate(market, at);
+  const requiredQuoteDate = marketOpen ? clock.date : expectedSession;
+  return {
+    expectedSession,
+    requiredQuoteDate,
+    timeZone: market === "IN" ? "Asia/Kolkata" : "America/New_York",
+    marketOpen,
+  };
 }
 
 interface BreadthRow {
@@ -284,7 +182,6 @@ interface TechScanRow {
   ibs_close: string | number | null;
   live_price: string | number | null;
   live_change_pct: string | number | null;
-  market_cap: string | number | null;
 }
 
 interface ExclusionRow {
@@ -294,17 +191,81 @@ interface ExclusionRow {
   catalyst_note?: string | null;
 }
 
-function exchangeRank(exchange: string | null): number {
-  if (exchange === "NSE" || exchange === "NASDAQ" || exchange === "NYSE") return 2;
-  if (exchange === "BSE") return 1;
-  return 0;
+export interface PythonTacticalRadarInput {
+  market: MarketId;
+  priceFloor: number;
+  limitPerBucket: number;
+  breadth: {
+    advancers: number;
+    decliners: number;
+    asOfDate: string | null;
+  };
+  benchmark: {
+    ticker: string;
+    price: number | null;
+    changePct: number | null;
+    aboveSma50: boolean | null;
+  };
+  excludedAssetIds: string[];
+  excludedCounts: {
+    adverseNews: number;
+    resultsBlackout: number;
+  };
+  newsNotes: Record<string, string>;
+  strongRows: Array<Record<string, unknown>>;
+  obsRows: Array<Record<string, unknown>>;
+  trendRows: Array<Record<string, unknown>>;
+  swingRows: Array<Record<string, unknown>>;
+  pullbackRows: Array<Record<string, unknown>>;
+  snapbackRows: Array<Record<string, unknown>>;
+}
+
+interface PythonTacticalRadarOutput {
+  context: TacticalMarketContext;
+  buckets: Record<TacticalBucketKey, TacticalCandidate[]>;
+  excludedCounts: {
+    adverseNews: number;
+    resultsBlackout: number;
+  };
+}
+
+/** Execute the authoritative Python Tactical Radar engine on prepared inputs. */
+export async function computeTacticalRadarInPython(
+  input: PythonTacticalRadarInput,
+): Promise<TacticalRadarResult> {
+  const [computed] = await runPythonStrategyBatch<PythonTacticalRadarInput, PythonTacticalRadarOutput>(
+    "tactical_radar",
+    [input],
+  );
+  if (!computed) {
+    throw new Error("Python tactical_radar engine returned an empty result");
+  }
+  return {
+    market: input.market,
+    generatedAt: new Date().toISOString(),
+    context: computed.context,
+    buckets: computed.buckets,
+    excludedCounts: computed.excludedCounts,
+  };
 }
 
 const RADAR_CACHE_TTL_MS = 60_000;
 const radarCache = new Map<string, { at: number; data: TacticalRadarResult }>();
 
-export async function getTacticalRadar(market: MarketId, limitPerBucket = 10): Promise<TacticalRadarResult> {
-  const cacheKey = `${market}:${limitPerBucket}`;
+export function clearTacticalRadarCache(): void {
+  radarCache.clear();
+}
+
+export async function getTacticalRadar(
+  market: MarketId,
+  userId: string,
+  limitPerBucket = 10,
+  at: Date = new Date(),
+): Promise<TacticalRadarResult> {
+  if (!userId) {
+    throw new Error("getTacticalRadar requires an authenticated userId for tenant isolation");
+  }
+  const cacheKey = `${userId}:${market}:${limitPerBucket}`;
   const cached = radarCache.get(cacheKey);
   if (cached && Date.now() - cached.at < RADAR_CACHE_TTL_MS) {
     return cached.data;
@@ -312,21 +273,24 @@ export async function getTacticalRadar(market: MarketId, limitPerBucket = 10): P
 
   const country = MARKET_COUNTRY[market];
   const priceFloor = market === "IN" ? 20 : 2;
-  const tradedValueFloor = market === "IN" ? 10_000_000 : 1_000_000; // ₹1 Cr IN / $1M US daily traded value floor
+  const tradedValueFloor = market === "IN" ? 10_000_000 : 1_000_000;
   const benchmarkTickers = market === "IN" ? ["NIFTY", "NIFTYBEES"] : ["SPY"];
+  const { expectedSession, requiredQuoteDate, timeZone } = tacticalQuoteSessionCutoff(market, at);
 
   const logQueryErr = (label: string) => (err: unknown) => {
     console.error(`[tactical-radar] ${label} query failed:`, err instanceof Error ? err.message : err);
     return [];
   };
 
-  // Fast lookup of the latest precomputed technical snapshot date for this market
+  // Latest precomputed technical date up to the expected trading session
   const latestTdDateRows = await query<{ max_date: string | Date | null }>(
     `select max(td.date) as max_date
      from public.screener_technical_daily td
      join public.assets a on a.id = td.asset_id
-     where a.country = $1 and td.date >= current_date - interval '10 days'`,
-    [country],
+     where a.country = $1
+       and td.date <= $2::date
+       and td.date >= ($2::date - interval '10 days')`,
+    [country, expectedSession],
   ).catch(logQueryErr("latestTdDate"));
   const latestTdDate = toIsoDate(latestTdDateRows[0]?.max_date);
 
@@ -342,6 +306,7 @@ export async function getTacticalRadar(market: MarketId, limitPerBucket = 10): P
     pullbackRows,
     snapbackRows,
   ] = await Promise.all([
+    // Session-aligned breadth: only quotes from the required trading session
     query<BreadthRow>(
       `select
          count(*) filter (where q.change_pct > 0) as advancers,
@@ -349,36 +314,42 @@ export async function getTacticalRadar(market: MarketId, limitPerBucket = 10): P
          max(q.as_of) as latest_as_of
        from public.assets a
        join public.latest_quotes q on q.asset_id = a.id
-       where a.country = $1 and a.is_active = true and a.asset_class = 'STOCK'`,
-      [country],
+       where a.country = $1
+         and a.is_active = true
+         and a.asset_class = 'STOCK'
+         and (q.as_of at time zone $2)::date >= $3::date`,
+      [country, timeZone, requiredQuoteDate],
     ).catch(logQueryErr("breadth")),
 
+    // Session-aligned benchmark requiring 50 valid completed bars before computing 50DMA
     query<BenchRow>(
       `select a.ticker, q.price, q.change_pct,
-              coalesce(
-                td.distance_sma_50_pct,
-                case
-                  when b50.sma50 is not null and b50.sma50 > 0
-                  then ((q.price - b50.sma50) / b50.sma50) * 100
-                  else null
-                end
-              ) as distance_sma_50_pct
+              case
+                when b50.bar_count = 50 and b50.sma50 > 0
+                then ((q.price - b50.sma50) / b50.sma50) * 100
+                else null
+              end as distance_sma_50_pct
        from public.assets a
        join public.latest_quotes q on q.asset_id = a.id
-       left join public.screener_technical_daily td
-         on td.asset_id = a.id and td.date = $3::date
        left join lateral (
-         select avg(sub.close) as sma50
+         select count(*) as bar_count, avg(sub.close) as sma50
          from (
-           select close from public.daily_ohlcv
+           select close
+           from public.daily_ohlcv
            where asset_id = a.id
-           order by date desc limit 50
+             and date <= $3::date
+             and close is not null
+             and close > 0
+           order by date desc
+           limit 50
          ) sub
        ) b50 on true
-       where a.country = $1 and a.ticker = any($2)
+       where a.country = $1
+         and a.ticker = any($2)
+         and (q.as_of at time zone $4)::date >= $5::date
        order by array_position($2::text[], a.ticker) asc
        limit 1`,
-      [country, benchmarkTickers, latestTdDate],
+      [country, benchmarkTickers, expectedSession, timeZone, requiredQuoteDate],
     ).catch(logQueryErr("benchmark")),
 
     query<ExclusionRow>(
@@ -392,7 +363,8 @@ export async function getTacticalRadar(market: MarketId, limitPerBucket = 10): P
       `select distinct asset_id
        from public.corporate_events
        where event_type = 'RESULTS'
-         and event_date between current_date - interval '1 day' and current_date + interval '3 days'`,
+         and event_date between ($1::date - interval '1 day') and ($1::date + interval '3 days')`,
+      [expectedSession],
     ).catch(logQueryErr("resultsBlackout")),
 
     query<StrongSnapRow>(
@@ -421,47 +393,65 @@ export async function getTacticalRadar(market: MarketId, limitPerBucket = 10): P
       [market, latestTdDate],
     ).catch(logQueryErr("strongSwing")),
 
-    query<ObservationRow>(
-      `select distinct on (o.asset_id, o.engine)
-              o.asset_id, a.ticker, a.name, a.exchange, a.sector,
+    // Tenant-scoped observations: select the latest row per (asset_id, engine) FIRST,
+    // then filter qualifying statuses so a newer invalidation/extended row suppresses older watches.
+    tenantQuery<ObservationRow>(
+      userId,
+      `with latest_obs as (
+         select distinct on (o.asset_id, o.engine)
+                o.asset_id, o.engine, o.status, o.observed_at
+         from public.candidate_signal_observations o
+         where o.user_id = $1
+           and o.market = $2
+           and o.observed_at >= now() - interval '72 hours'
+           and o.engine in ('MOMENTUM_IGNITION', 'MOMENTUM_IGNITION_V2', 'TREND_CONTINUATION')
+         order by o.asset_id, o.engine, o.observed_at desc
+       )
+       select o.asset_id, a.ticker, a.name, a.exchange, a.sector,
               o.engine, o.status, o.observed_at,
               q.price as live_price, q.change_pct as live_change_pct,
               td.close, td.rsi_14, td.atr_pct_14, td.volume_ratio_20, td.return_5d, td.return_20d,
               td.distance_sma_20_pct, td.distance_sma_200_pct, td.date as tech_date
-       from public.candidate_signal_observations o
+       from latest_obs o
        join public.assets a on a.id = o.asset_id
        left join public.latest_quotes q on q.asset_id = o.asset_id
        left join public.screener_technical_daily td
-         on td.asset_id = o.asset_id and td.date = $2::date
-       where o.market = $1
-         and o.observed_at >= now() - interval '72 hours'
-         and o.engine in ('MOMENTUM_IGNITION', 'MOMENTUM_IGNITION_V2', 'TREND_CONTINUATION')
-         and o.status in ('EARLY_WATCH', 'PRE_IGNITION', 'FIRST_THRUST', 'RETEST_SETUP', 'IMPULSE_DETECTED', 'CONTINUATION_WATCH', 'TREND_CONTINUATION_READY')
-       order by o.asset_id, o.engine, o.observed_at desc
+         on td.asset_id = o.asset_id and td.date = $3::date
+       where o.status in (
+         'EARLY_WATCH', 'PRE_IGNITION', 'FIRST_THRUST', 'RETEST_SETUP',
+         'IMPULSE_DETECTED', 'CONTINUATION_WATCH', 'TREND_CONTINUATION_READY'
+       )
        limit 120`,
-      [market, latestTdDate],
+      [userId, market, latestTdDate],
     ).catch(logQueryErr("observations")),
 
+    // Select latest trend_continuation row per asset FIRST, then filter qualifying statuses.
     market === "IN"
       ? query<TrendRow>(
-          `select distinct on (t.asset_id)
-                  t.asset_id, a.ticker, a.name, a.exchange, a.sector,
+          `with latest_trend as (
+             select distinct on (t.asset_id)
+                    t.asset_id, t.status, t.score, t.entry, t.stop, t.target,
+                    t.asof_market_date, t.setup_variant
+             from public.trend_continuation_signals t
+             where t.market = 'IN'
+               and t.asof_market_date >= ($2::date - interval '5 days')
+             order by t.asset_id, t.asof_market_date desc, t.computed_at desc
+           )
+           select t.asset_id, a.ticker, a.name, a.exchange, a.sector,
                   t.status, t.score, t.entry, t.stop, t.target, t.asof_market_date, t.setup_variant,
                   q.price as live_price, q.change_pct as live_change_pct,
                   td.rsi_14, td.atr_pct_14, td.volume_ratio_20, td.return_5d, td.return_20d,
                   td.distance_sma_20_pct, td.distance_sma_200_pct
-           from public.trend_continuation_signals t
+           from latest_trend t
            join public.assets a on a.id = t.asset_id
            left join public.latest_quotes q on q.asset_id = t.asset_id
            left join public.screener_technical_daily td
              on td.asset_id = t.asset_id and td.date = $1::date
-           where t.market = 'IN'
-             and t.asof_market_date >= current_date - interval '5 days'
-             and t.status in ('TREND_CONTINUATION_READY', 'IMPULSE_DETECTED', 'CONTINUATION_WATCH')
+           where t.status in ('TREND_CONTINUATION_READY', 'IMPULSE_DETECTED', 'CONTINUATION_WATCH')
              and t.score >= 65
-           order by t.asset_id, t.asof_market_date desc, t.score desc
+           order by t.score desc
            limit 60`,
-          [latestTdDate],
+          [latestTdDate, expectedSession],
         ).catch(logQueryErr("trendContinuation"))
       : Promise.resolve([]),
 
@@ -491,7 +481,6 @@ export async function getTacticalRadar(market: MarketId, limitPerBucket = 10): P
       [country, priceFloor, tradedValueFloor, latestTdDate],
     ).catch(logQueryErr("swingBreakout")),
 
-    // Mid-Trend Pullbacks: direct single-date indexed lookup + daily traded value liquidity guardrail
     latestTdDate
       ? query<TechScanRow>(
           `select td.asset_id, a.ticker, a.name, a.exchange, a.sector, td.date, td.close, td.sma_20,
@@ -521,7 +510,6 @@ export async function getTacticalRadar(market: MarketId, limitPerBucket = 10): P
         ).catch(logQueryErr("pullback"))
       : Promise.resolve([]),
 
-    // Oversold Snapbacks: direct single-date indexed lookup + daily traded value liquidity guardrail
     latestTdDate
       ? query<TechScanRow>(
           `select td.asset_id, a.ticker, a.name, a.exchange, a.sector, td.date, td.close, td.sma_20,
@@ -553,425 +541,168 @@ export async function getTacticalRadar(market: MarketId, limitPerBucket = 10): P
   ]);
 
   const filterOutNews = new Set<string>();
-  const newsNoteByAsset = new Map<string, string>();
+  const newsNotes: Record<string, string> = {};
   for (const row of adverseNewsRows) {
     if (row.verdict === "FILTER_OUT") {
       filterOutNews.add(row.asset_id);
     } else if (row.catalyst_note || row.summary) {
-      newsNoteByAsset.set(row.asset_id, row.catalyst_note || row.summary || "");
+      newsNotes[row.asset_id] = row.catalyst_note || row.summary || "";
     }
   }
   const blackoutAssets = new Set(resultsBlackoutRows.map((r) => r.asset_id));
+  const excludedAssetIds = Array.from(new Set([...filterOutNews, ...blackoutAssets]));
 
-  const isExcluded = (assetId: string) => filterOutNews.has(assetId) || blackoutAssets.has(assetId);
-
-  // Market context
   const breadth = breadthRows[0];
-  const advancers = Number(breadth?.advancers ?? 0);
-  const decliners = Number(breadth?.decliners ?? 0);
   const bench = benchRows[0];
   const benchDist50 = toNum(bench?.distance_sma_50_pct);
-  const benchmarkAboveSma50 = benchDist50 === null ? null : benchDist50 >= 0;
-  const benchmarkChangePct = toNum(bench?.change_pct);
-  const regimeInfo = classifyMarketRegime({
-    benchmarkAboveSma50,
-    benchmarkChangePct,
-    advancers,
-    decliners,
-  });
 
-  const context: TacticalMarketContext = {
-    ...regimeInfo,
-    benchmarkTicker: bench?.ticker ?? MARKETS[market].benchmarks[0]?.ticker ?? (market === "IN" ? "NIFTY" : "SPY"),
-    benchmarkPrice: toNum(bench?.price),
-    benchmarkChangePct,
-    benchmarkAboveSma50,
-    advancers,
-    decliners,
-    asOfDate: toIsoDate(breadth?.latest_as_of),
-  };
-
-  // ---- Bucket 1: NEAR_TRIGGER (cross-engine confluence, deduplicated by ticker) ----
-  interface NearAccum {
-    assetId: string;
-    ticker: string;
-    name: string;
-    exchange: string;
-    sector: string | null;
-    baseScore: number;
-    engines: Set<string>;
-    reasons: string[];
-    price: number;
-    changePct: number | null;
-    entry: number | null;
-    stop: number | null;
-    target: number | null;
-    rsi14: number | null;
-    atrPct: number | null;
-    volumeRatio: number | null;
-    return5d: number | null;
-    return20d: number | null;
-    distanceSma20Pct: number | null;
-    distanceSma200Pct: number | null;
-    asOfDate: string | null;
-  }
-
-  const nearByTicker = new Map<string, NearAccum>();
-
-  const upsertNear = (
-    ticker: string,
-    exchange: string | null,
-    init: Omit<NearAccum, "engines" | "reasons">,
-    engineLabel: string,
-    reasonPart: string,
-  ) => {
-    const existing = nearByTicker.get(ticker);
-    if (!existing) {
-      nearByTicker.set(ticker, {
-        ...init,
-        exchange: exchange ?? "",
-        engines: new Set([engineLabel]),
-        reasons: [reasonPart],
-      });
-      return;
-    }
-    // Prefer NSE/primary exchange metadata when dual-listed
-    if (exchangeRank(exchange) > exchangeRank(existing.exchange)) {
-      existing.assetId = init.assetId;
-      existing.exchange = exchange ?? existing.exchange;
-      existing.price = init.price;
-      existing.changePct = init.changePct ?? existing.changePct;
-    }
-    existing.baseScore = Math.max(existing.baseScore, init.baseScore);
-    if (!existing.engines.has(engineLabel)) {
-      existing.engines.add(engineLabel);
-      existing.reasons.push(reasonPart);
-    }
-    if (existing.entry === null && init.entry !== null) existing.entry = init.entry;
-    if (existing.stop === null && init.stop !== null) existing.stop = init.stop;
-    if (existing.target === null && init.target !== null) existing.target = init.target;
-  };
-
-  for (const row of strongRows) {
-    if (isExcluded(row.asset_id)) continue;
-    const check = evaluateStrongSwingNearTrigger(row.gates);
-    if (!check.eligible) continue;
-    const price = toNum(row.live_price) ?? toNum(row.current_price);
-    if (!price || price < priceFloor) continue;
-    const timingList = [...check.failedTimingGates, ...check.failedOtherGates].slice(0, 2);
-    const reasonPart =
-      timingList.length === 0
-        ? `Strong Swing (${Math.round(Number(row.strength_score))}) ready`
-        : `Strong Swing (${Math.round(Number(row.strength_score))}) · awaiting ${timingList.join(", ").replaceAll("_", " ")}`;
-    upsertNear(
-      row.ticker,
-      row.exchange,
-      {
-        assetId: row.asset_id,
-        ticker: row.ticker,
-        name: row.name ?? row.ticker,
-        exchange: row.exchange ?? "",
-        sector: row.sector,
-        baseScore: Number(row.strength_score),
-        price,
-        changePct: toNum(row.live_change_pct),
-        entry: toNum(row.confirmation_entry),
-        stop: toNum(row.projected_stop),
-        target: toNum(row.projected_target),
-        rsi14: toNum(row.rsi_14),
-        atrPct: toNum(row.atr_pct_14),
-        volumeRatio: toNum(row.volume_ratio_20),
-        return5d: toNum(row.return_5d),
-        return20d: toNum(row.return_20d),
-        distanceSma20Pct: toNum(row.distance_sma_20_pct),
-        distanceSma200Pct: toNum(row.distance_sma_200_pct),
-        asOfDate: toIsoDate(row.latest_bar_date),
-      },
-      "Strong Swing",
-      reasonPart,
-    );
-  }
-
-  for (const row of trendRows) {
-    if (isExcluded(row.asset_id)) continue;
-    const price = toNum(row.live_price) ?? toNum(row.entry);
-    if (!price || price < priceFloor) continue;
-    const label = row.setup_variant ? `Mid-Way (${row.setup_variant.replaceAll("_", " ")})` : `Continuation (${row.status.replaceAll("_", " ")})`;
-    upsertNear(
-      row.ticker,
-      row.exchange,
-      {
-        assetId: row.asset_id,
-        ticker: row.ticker,
-        name: row.name ?? row.ticker,
-        exchange: row.exchange ?? "",
-        sector: row.sector,
-        baseScore: Math.min(96, Number(row.score)),
-        price,
-        changePct: toNum(row.live_change_pct),
-        entry: toNum(row.entry),
-        stop: toNum(row.stop),
-        target: toNum(row.target),
-        rsi14: toNum(row.rsi_14),
-        atrPct: toNum(row.atr_pct_14),
-        volumeRatio: toNum(row.volume_ratio_20),
-        return5d: toNum(row.return_5d),
-        return20d: toNum(row.return_20d),
-        distanceSma20Pct: toNum(row.distance_sma_20_pct),
-        distanceSma200Pct: toNum(row.distance_sma_200_pct),
-        asOfDate: toIsoDate(row.asof_market_date),
-      },
-      "Trend Continuation",
-      label,
-    );
-  }
-
-  for (const row of obsRows) {
-    if (isExcluded(row.asset_id)) continue;
-    const price = toNum(row.live_price) ?? toNum(row.close);
-    if (!price || price < priceFloor) continue;
-    const engName =
-      row.engine === "TREND_CONTINUATION"
-        ? "Trend Continuation"
-        : row.engine === "MOMENTUM_IGNITION_V2"
-          ? "Momentum V2"
-          : "Momentum";
-    upsertNear(
-      row.ticker,
-      row.exchange,
-      {
-        assetId: row.asset_id,
-        ticker: row.ticker,
-        name: row.name ?? row.ticker,
-        exchange: row.exchange ?? "",
-        sector: row.sector,
-        baseScore: row.status === "PRE_IGNITION" || row.status === "IMPULSE_DETECTED" ? 84 : 78,
-        price,
-        changePct: toNum(row.live_change_pct),
-        entry: null,
-        stop: null,
-        target: null,
-        rsi14: toNum(row.rsi_14),
-        atrPct: toNum(row.atr_pct_14),
-        volumeRatio: toNum(row.volume_ratio_20),
-        return5d: toNum(row.return_5d),
-        return20d: toNum(row.return_20d),
-        distanceSma20Pct: toNum(row.distance_sma_20_pct),
-        distanceSma200Pct: toNum(row.distance_sma_200_pct),
-        asOfDate: toIsoDate(row.tech_date ?? row.observed_at),
-      },
-      engName,
-      `${engName} (${row.status.replaceAll("_", " ")})`,
-    );
-  }
-
-  for (const row of swingRows) {
-    if (isExcluded(row.asset_id)) continue;
-    const price = toNum(row.live_price) ?? toNum(row.last_close);
-    if (!price || price < priceFloor) continue;
-    const score100 = Math.round(Math.min(1, Number(row.score)) * 100);
-    upsertNear(
-      row.ticker,
-      row.exchange,
-      {
-        assetId: row.asset_id,
-        ticker: row.ticker,
-        name: row.name ?? row.ticker,
-        exchange: row.exchange ?? "",
-        sector: row.sector,
-        baseScore: Math.max(70, Math.min(90, score100)),
-        price,
-        changePct: toNum(row.live_change_pct),
-        entry: null,
-        stop: null,
-        target: null,
-        rsi14: toNum(row.rsi_14),
-        atrPct: toNum(row.atr_pct_14),
-        volumeRatio: toNum(row.volume_ratio_20),
-        return5d: toNum(row.return_5d),
-        return20d: toNum(row.return_20d),
-        distanceSma20Pct: toNum(row.distance_sma_20_pct),
-        distanceSma200Pct: toNum(row.distance_sma_200_pct),
-        asOfDate: toIsoDate(row.as_of),
-      },
-      "Swing Breakout",
-      `Swing Breakout (${score100}/100)`,
-    );
-  }
-
-  const nearTrigger: TacticalCandidate[] = Array.from(nearByTicker.values())
-    .map((item) => {
-      const confluenceCount = item.engines.size;
-      const finalScore = Math.min(100, Math.round(item.baseScore + (confluenceCount - 1) * 10));
-      const fallback = computeAtrLevels(item.price, item.atrPct, "TREND");
-      const referenceEntry = item.entry && item.entry > 0 ? round2(item.entry) : fallback.referenceEntry;
-      const invalidationStop =
-        item.stop && item.stop > 0 && item.stop < referenceEntry ? round2(item.stop) : fallback.invalidationStop;
-      const targetZone =
-        item.target && item.target > referenceEntry ? round2(item.target) : fallback.targetZone;
-      const riskPct = round2(((referenceEntry - invalidationStop) / referenceEntry) * 100);
-      return {
-        assetId: item.assetId,
-        ticker: item.ticker,
-        name: item.name,
-        exchange: item.exchange,
-        sector: item.sector,
-        bucket: "NEAR_TRIGGER" as const,
-        riskTier: "MODERATE" as const,
-        score: finalScore,
-        price: round2(item.price),
-        changePct: item.changePct !== null ? round2(item.changePct) : null,
-        referenceEntry,
-        invalidationStop,
-        targetZone,
-        riskPct,
-        rsi14: item.rsi14 !== null ? round2(item.rsi14) : null,
-        atrPct: item.atrPct !== null ? round2(item.atrPct) : null,
-        volumeRatio: item.volumeRatio !== null ? round2(item.volumeRatio) : null,
-        return5d: item.return5d !== null ? round2(item.return5d) : null,
-        return20d: item.return20d !== null ? round2(item.return20d) : null,
-        distanceSma20Pct: item.distanceSma20Pct !== null ? round2(item.distanceSma20Pct) : null,
-        distanceSma200Pct: item.distanceSma200Pct !== null ? round2(item.distanceSma200Pct) : null,
-        engines: Array.from(item.engines),
-        confluenceCount,
-        reason: item.reasons.slice(0, 2).join(" + "),
-        newsNote: newsNoteByAsset.get(item.assetId) ?? null,
-        asOfDate: item.asOfDate,
-      };
-    })
-    .sort((a, b) => b.confluenceCount - a.confluenceCount || b.score - a.score || (b.volumeRatio ?? 0) - (a.volumeRatio ?? 0))
-    .slice(0, limitPerBucket);
-
-  const usedTickers = new Set(nearTrigger.map((c) => c.ticker));
-
-  // ---- Bucket 2: MID_TREND_PULLBACK ----
-  const pullbackByTicker = new Map<string, TechScanRow>();
-  for (const row of pullbackRows) {
-    if (isExcluded(row.asset_id) || usedTickers.has(row.ticker)) continue;
-    const prev = pullbackByTicker.get(row.ticker);
-    if (!prev || exchangeRank(row.exchange) > exchangeRank(prev.exchange)) {
-      pullbackByTicker.set(row.ticker, row);
-    }
-  }
-
-  const midTrendPullback: TacticalCandidate[] = Array.from(pullbackByTicker.values())
-    .map((row) => {
-      const price = toNum(row.live_price) ?? Number(row.close);
-      const atrPct = toNum(row.atr_pct_14);
-      const rsi14 = toNum(row.rsi_14);
-      const ret20 = toNum(row.return_20d) ?? 0;
-      const vRatio = toNum(row.volume_ratio_20) ?? 1;
-      const dist20 = toNum(row.distance_sma_20_pct) ?? 0;
-      const dist200 = toNum(row.distance_sma_200_pct);
-      const levels = computeAtrLevels(price, atrPct, "TREND");
-      const score = Math.min(
-        95,
-        Math.round(62 + Math.min(18, ret20 * 0.8) + Math.min(10, Math.max(0, (vRatio - 0.8) * 8)) + (dist20 <= 4 ? 5 : 0)),
-      );
-      return {
-        assetId: row.asset_id,
-        ticker: row.ticker,
-        name: row.name ?? row.ticker,
-        exchange: row.exchange ?? "",
-        sector: row.sector,
-        bucket: "MID_TREND_PULLBACK" as const,
-        riskTier: "MODERATE" as const,
-        score,
-        price: round2(price),
-        changePct: toNum(row.live_change_pct) !== null ? round2(toNum(row.live_change_pct)!) : null,
-        ...levels,
-        rsi14: rsi14 !== null ? round2(rsi14) : null,
-        atrPct: atrPct !== null ? round2(atrPct) : null,
-        volumeRatio: round2(vRatio),
-        return5d: toNum(row.return_5d) !== null ? round2(toNum(row.return_5d)!) : null,
-        return20d: round2(ret20),
-        distanceSma20Pct: round2(dist20),
-        distanceSma200Pct: dist200 !== null ? round2(dist200) : null,
-        engines: ["Stage-2 Pullback"],
-        confluenceCount: 1,
-        reason: `Above SMA20/50/200 · 20D +${ret20.toFixed(1)}% · RSI ${rsi14?.toFixed(0) ?? "--"} · ${dist20.toFixed(1)}% above SMA20`,
-        newsNote: newsNoteByAsset.get(row.asset_id) ?? null,
-        asOfDate: toIsoDate(row.date),
-      };
-    })
-    .sort((a, b) => b.score - a.score || (b.return20d ?? 0) - (a.return20d ?? 0))
-    .slice(0, limitPerBucket);
-
-  for (const c of midTrendPullback) usedTickers.add(c.ticker);
-
-  // ---- Bucket 3: OVERSOLD_SNAPBACK ----
-  const snapbackByTicker = new Map<string, TechScanRow>();
-  for (const row of snapbackRows) {
-    if (isExcluded(row.asset_id) || usedTickers.has(row.ticker)) continue;
-    const prev = snapbackByTicker.get(row.ticker);
-    if (!prev || exchangeRank(row.exchange) > exchangeRank(prev.exchange)) {
-      snapbackByTicker.set(row.ticker, row);
-    }
-  }
-
-  const oversoldSnapback: TacticalCandidate[] = Array.from(snapbackByTicker.values())
-    .map((row) => {
-      const price = toNum(row.live_price) ?? Number(row.close);
-      const atrPct = toNum(row.atr_pct_14);
-      const rsi14 = toNum(row.rsi_14) ?? 38;
-      const vRatio = toNum(row.volume_ratio_20) ?? 1;
-      const chg = toNum(row.live_change_pct);
-      const dist200 = toNum(row.distance_sma_200_pct);
-      const sma20 = toNum(row.sma_20);
-      const levels = computeAtrLevels(price, atrPct, "SNAPBACK", sma20);
-      const score = Math.min(
-        92,
-        Math.round(
-          58 +
-            Math.max(0, (42 - rsi14) * 1.1) +
-            Math.min(12, Math.max(0, (vRatio - 0.7) * 8)) +
-            (chg !== null && chg > 0 ? 8 : 0) +
-            (dist200 !== null && dist200 >= 0 ? 5 : 0),
-        ),
-      );
-      return {
-        assetId: row.asset_id,
-        ticker: row.ticker,
-        name: row.name ?? row.ticker,
-        exchange: row.exchange ?? "",
-        sector: row.sector,
-        bucket: "OVERSOLD_SNAPBACK" as const,
-        riskTier: "HIGHER_MEAN_REVERSION" as const,
-        score,
-        price: round2(price),
-        changePct: chg !== null ? round2(chg) : null,
-        ...levels,
-        rsi14: round2(rsi14),
-        atrPct: atrPct !== null ? round2(atrPct) : null,
-        volumeRatio: round2(vRatio),
-        return5d: toNum(row.return_5d) !== null ? round2(toNum(row.return_5d)!) : null,
-        return20d: toNum(row.return_20d) !== null ? round2(toNum(row.return_20d)!) : null,
-        distanceSma20Pct: toNum(row.distance_sma_20_pct) !== null ? round2(toNum(row.distance_sma_20_pct)!) : null,
-        distanceSma200Pct: dist200 !== null ? round2(dist200) : null,
-        engines: ["Oversold Snapback"],
-        confluenceCount: 1,
-        reason: `Mean reversion · RSI ${rsi14.toFixed(0)} · ${dist200 !== null ? `${dist200 >= 0 ? "+" : ""}${dist200.toFixed(1)}% vs 200DMA` : "near base"} · vol ${vRatio.toFixed(1)}x`,
-        newsNote: newsNoteByAsset.get(row.asset_id) ?? null,
-        asOfDate: toIsoDate(row.date),
-      };
-    })
-    .sort((a, b) => b.score - a.score || (b.volumeRatio ?? 0) - (a.volumeRatio ?? 0))
-    .slice(0, limitPerBucket);
-
-  const result: TacticalRadarResult = {
+  const pythonInput: PythonTacticalRadarInput = {
     market,
-    generatedAt: new Date().toISOString(),
-    context,
-    buckets: {
-      NEAR_TRIGGER: nearTrigger,
-      MID_TREND_PULLBACK: midTrendPullback,
-      OVERSOLD_SNAPBACK: oversoldSnapback,
+    priceFloor,
+    limitPerBucket,
+    breadth: {
+      advancers: Number(breadth?.advancers ?? 0),
+      decliners: Number(breadth?.decliners ?? 0),
+      asOfDate: toIsoDate(breadth?.latest_as_of),
     },
+    benchmark: {
+      ticker: bench?.ticker ?? MARKETS[market].benchmarks[0]?.ticker ?? (market === "IN" ? "NIFTY" : "SPY"),
+      price: toNum(bench?.price),
+      changePct: toNum(bench?.change_pct),
+      aboveSma50: benchDist50 === null ? null : benchDist50 >= 0,
+    },
+    excludedAssetIds,
     excludedCounts: {
       adverseNews: filterOutNews.size,
       resultsBlackout: blackoutAssets.size,
     },
+    newsNotes,
+    strongRows: strongRows.map((r) => ({
+      assetId: r.asset_id,
+      ticker: r.ticker,
+      name: r.name,
+      exchange: r.exchange,
+      sector: r.sector,
+      strengthScore: toNum(r.strength_score),
+      currentPrice: toNum(r.current_price),
+      confirmationEntry: toNum(r.confirmation_entry),
+      projectedTarget: toNum(r.projected_target),
+      projectedStop: toNum(r.projected_stop),
+      gates: r.gates,
+      asOfDate: toIsoDate(r.latest_bar_date),
+      livePrice: toNum(r.live_price),
+      liveChangePct: toNum(r.live_change_pct),
+      rsi14: toNum(r.rsi_14),
+      atrPct: toNum(r.atr_pct_14),
+      volumeRatio: toNum(r.volume_ratio_20),
+      return5d: toNum(r.return_5d),
+      return20d: toNum(r.return_20d),
+      distanceSma20Pct: toNum(r.distance_sma_20_pct),
+      distanceSma200Pct: toNum(r.distance_sma_200_pct),
+    })),
+    obsRows: obsRows.map((r) => ({
+      assetId: r.asset_id,
+      ticker: r.ticker,
+      name: r.name,
+      exchange: r.exchange,
+      sector: r.sector,
+      engine: r.engine,
+      status: r.status,
+      asOfDate: toIsoDate(r.tech_date ?? r.observed_at),
+      livePrice: toNum(r.live_price),
+      liveChangePct: toNum(r.live_change_pct),
+      close: toNum(r.close),
+      rsi14: toNum(r.rsi_14),
+      atrPct: toNum(r.atr_pct_14),
+      volumeRatio: toNum(r.volume_ratio_20),
+      return5d: toNum(r.return_5d),
+      return20d: toNum(r.return_20d),
+      distanceSma20Pct: toNum(r.distance_sma_20_pct),
+      distanceSma200Pct: toNum(r.distance_sma_200_pct),
+    })),
+    trendRows: trendRows.map((r) => ({
+      assetId: r.asset_id,
+      ticker: r.ticker,
+      name: r.name,
+      exchange: r.exchange,
+      sector: r.sector,
+      status: r.status,
+      score: toNum(r.score),
+      entry: toNum(r.entry),
+      stop: toNum(r.stop),
+      target: toNum(r.target),
+      setupVariant: r.setup_variant,
+      asOfDate: toIsoDate(r.asof_market_date),
+      livePrice: toNum(r.live_price),
+      liveChangePct: toNum(r.live_change_pct),
+      rsi14: toNum(r.rsi_14),
+      atrPct: toNum(r.atr_pct_14),
+      volumeRatio: toNum(r.volume_ratio_20),
+      return5d: toNum(r.return_5d),
+      return20d: toNum(r.return_20d),
+      distanceSma20Pct: toNum(r.distance_sma_20_pct),
+      distanceSma200Pct: toNum(r.distance_sma_200_pct),
+    })),
+    swingRows: swingRows.map((r) => ({
+      assetId: r.asset_id,
+      ticker: r.ticker,
+      name: r.name,
+      exchange: r.exchange,
+      sector: r.sector,
+      score: toNum(r.score),
+      lastClose: toNum(r.last_close),
+      asOfDate: toIsoDate(r.as_of),
+      livePrice: toNum(r.live_price),
+      liveChangePct: toNum(r.live_change_pct),
+      rsi14: toNum(r.rsi_14),
+      atrPct: toNum(r.atr_pct_14),
+      volumeRatio: toNum(r.volume_ratio_20),
+      return5d: toNum(r.return_5d),
+      return20d: toNum(r.return_20d),
+      distanceSma20Pct: toNum(r.distance_sma_20_pct),
+      distanceSma200Pct: toNum(r.distance_sma_200_pct),
+    })),
+    pullbackRows: pullbackRows.map((r) => ({
+      assetId: r.asset_id,
+      ticker: r.ticker,
+      name: r.name,
+      exchange: r.exchange,
+      sector: r.sector,
+      asOfDate: toIsoDate(r.date),
+      close: toNum(r.close),
+      sma20: toNum(r.sma_20),
+      livePrice: toNum(r.live_price),
+      liveChangePct: toNum(r.live_change_pct),
+      rsi14: toNum(r.rsi_14),
+      atrPct: toNum(r.atr_pct_14),
+      volumeRatio: toNum(r.volume_ratio_20),
+      return5d: toNum(r.return_5d),
+      return20d: toNum(r.return_20d),
+      distanceSma20Pct: toNum(r.distance_sma_20_pct),
+      distanceSma200Pct: toNum(r.distance_sma_200_pct),
+    })),
+    snapbackRows: snapbackRows.map((r) => ({
+      assetId: r.asset_id,
+      ticker: r.ticker,
+      name: r.name,
+      exchange: r.exchange,
+      sector: r.sector,
+      asOfDate: toIsoDate(r.date),
+      close: toNum(r.close),
+      sma20: toNum(r.sma_20),
+      livePrice: toNum(r.live_price),
+      liveChangePct: toNum(r.live_change_pct),
+      rsi14: toNum(r.rsi_14),
+      atrPct: toNum(r.atr_pct_14),
+      volumeRatio: toNum(r.volume_ratio_20),
+      return5d: toNum(r.return_5d),
+      return20d: toNum(r.return_20d),
+      distanceSma20Pct: toNum(r.distance_sma_20_pct),
+      distanceSma200Pct: toNum(r.distance_sma_200_pct),
+    })),
   };
+
+  const result = await computeTacticalRadarInPython(pythonInput);
   radarCache.set(cacheKey, { at: Date.now(), data: result });
   return result;
 }

@@ -2,7 +2,12 @@ import type { MarketId } from "@/lib/types";
 
 export type TacticalBucketKey = "NEAR_TRIGGER" | "MID_TREND_PULLBACK" | "OVERSOLD_SNAPBACK";
 export type TacticalRiskTier = "MODERATE" | "HIGHER_MEAN_REVERSION";
-export type TacticalMarketRegime = "TREND_BREAKOUT" | "CHOPPY_ROTATION" | "SNAPBACK_REVERSAL" | "DEFENSIVE";
+export type TacticalMarketRegime =
+  | "TREND_BREAKOUT"
+  | "CHOPPY_ROTATION"
+  | "SNAPBACK_REVERSAL"
+  | "DEFENSIVE"
+  | "UNVERIFIED";
 
 export interface TacticalMarketContext {
   regime: TacticalMarketRegime;
