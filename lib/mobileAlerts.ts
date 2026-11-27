@@ -3,7 +3,7 @@ import { getMomentumBothCandidates, type MomentumBothResult } from "@/features/m
 import { getUserSwingSettings, type SwingSettings } from "@/lib/settings";
 import { getStrongSwingCandidates, type StrongSwingCandidate } from "@/features/strong-swing/service";
 import { getSwingTradeLedger, type SwingLedgerTrade } from "@/lib/swingTradeLedger";
-import { buildRecoveryTransitionAlerts } from "@/lib/tradeRecoveryAlerts";
+import { advanceRecoveryAlertState, buildRecoveryTransitionAlerts, type RecoveryAlertCandidate } from "@/lib/tradeRecoveryAlerts";
 import { markLiveMarketTargets } from "@/lib/liveMarketTargets";
 import { isMarketOpenNow } from "@/lib/market-calendar.mjs";
 import { getMobileAlertPreferences, type MobileAlertPreferences } from "@/lib/mobileAlertPreferences";
@@ -386,9 +386,9 @@ async function dispatchTradeRecoveryAlerts(
   market: "IN" | "US",
   trades: SwingLedgerTrade[],
   preferences: MobileAlertPreferences,
-): Promise<{ alerts: number; delivered: number }> {
+): Promise<{ browserCreated: number; expoDelivered: number }> {
   const openWithRecovery = trades.filter((t) => t.status === "OPEN" && t.recovery);
-  if (!openWithRecovery.length) return { alerts: 0, delivered: 0 };
+  if (!openWithRecovery.length) return { browserCreated: 0, expoDelivered: 0 };
 
   const stateRows = await workerQuery<RecoveryAlertStateRow>(
     `select trade_id::text, last_alerted_recovery_status, last_alerted_fresh_setup_key
@@ -401,14 +401,15 @@ async function dispatchTradeRecoveryAlerts(
   });
   const stateByTrade = new Map(stateRows.map((row) => [row.trade_id, row]));
 
-  let alerts = 0;
-  let delivered = 0;
+  let browserCreated = 0;
+  let expoDelivered = 0;
   for (const trade of openWithRecovery) {
     const prevRow = stateByTrade.get(trade.id);
-    const evalResult = buildRecoveryTransitionAlerts(trade, {
+    const prevState = {
       lastAlertedRecoveryStatus: prevRow?.last_alerted_recovery_status ?? null,
       lastAlertedFreshSetupKey: prevRow?.last_alerted_fresh_setup_key ?? null,
-    });
+    };
+    const evalResult = buildRecoveryTransitionAlerts(trade, prevState);
     if (!evalResult.stateChanged || !evalResult.alerts.length) continue;
 
     if (!tradeAlertAllowed(preferences)) {
@@ -423,6 +424,7 @@ async function dispatchTradeRecoveryAlerts(
       continue;
     }
 
+    const claimed: RecoveryAlertCandidate[] = [];
     for (const candidate of evalResult.alerts) {
       let inserted: Array<{ id: string }>;
       try {
@@ -439,11 +441,14 @@ async function dispatchTradeRecoveryAlerts(
           ],
         );
       } catch (error) {
+        // Leave candidate unclaimed so the next poll retries it instead of suppressing it.
         console.error(`[mobile-alerts] failed to insert TRADE_RECOVERY alert for ${trade.ticker}:`, error);
         continue;
       }
+      claimed.push(candidate);
       if (!inserted.length) continue;
 
+      browserCreated += 1;
       const receipts = tokens.length ? await sendExpoMessages(tokens, {
         title: candidate.pushTitle,
         body: candidate.pushBody,
@@ -461,20 +466,22 @@ async function dispatchTradeRecoveryAlerts(
           sentCount, failedCount,
         ],
       );
-      alerts += 1;
-      delivered += sentCount;
+      expoDelivered += sentCount;
     }
 
-    await workerQuery(
-      `update public.swing_trade_recovery_state
-          set last_alerted_recovery_status = $1,
-              last_alerted_fresh_setup_key = $2,
-              last_alerted_at = now()
-        where trade_id = $3::uuid and user_id = $4::uuid`,
-      [evalResult.nextRecoveryStatus, evalResult.nextFreshSetupKey, trade.id, userId],
-    );
+    const nextState = advanceRecoveryAlertState(prevState, claimed);
+    if (nextState.stateChanged) {
+      await workerQuery(
+        `update public.swing_trade_recovery_state
+            set last_alerted_recovery_status = $1,
+                last_alerted_fresh_setup_key = $2,
+                last_alerted_at = now()
+          where trade_id = $3::uuid and user_id = $4::uuid`,
+        [nextState.lastAlertedRecoveryStatus, nextState.lastAlertedFreshSetupKey, trade.id, userId],
+      );
+    }
   }
-  return { alerts, delivered };
+  return { browserCreated, expoDelivered };
 }
 
 export async function dispatchMobileTradeAlerts(markets: Array<"IN" | "US">) {
@@ -493,8 +500,8 @@ export async function dispatchMobileTradeAlerts(markets: Array<"IN" | "US">) {
   let candidateEvaluated = 0;
   let candidateAlerts = 0;
   let candidateDelivered = 0;
-  let recoveryAlerts = 0;
-  let recoveryDelivered = 0;
+  let recoveryBrowserAlerts = 0;
+  let recoveryPushDelivered = 0;
   const runCache = createAlertRunCache();
   for (const [userId, userTokens] of byUser) {
     const preferences = await getMobileAlertPreferences(userId);
@@ -562,8 +569,8 @@ export async function dispatchMobileTradeAlerts(markets: Array<"IN" | "US">) {
         delivered += sentCount;
       }
       const recoverySummary = await dispatchTradeRecoveryAlerts(userId, userTokens, market, trades, preferences);
-      recoveryAlerts += recoverySummary.alerts;
-      recoveryDelivered += recoverySummary.delivered;
+      recoveryBrowserAlerts += recoverySummary.browserCreated;
+      recoveryPushDelivered += recoverySummary.expoDelivered;
     }
   }
   return {
@@ -574,7 +581,7 @@ export async function dispatchMobileTradeAlerts(markets: Array<"IN" | "US">) {
     candidateEvaluated,
     candidateAlerts,
     candidateDelivered,
-    recoveryAlerts,
-    recoveryDelivered,
+    recoveryBrowserAlerts,
+    recoveryPushDelivered,
   };
 }

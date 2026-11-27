@@ -197,8 +197,8 @@ function TradeCard({ trade, today, returns }: { trade: SwingLedgerTrade; today: 
           </div>
           <div className="mt-1 flex flex-wrap gap-3 font-mono text-[11px] opacity-80">
             {trade.recovery.move2dPct !== null && <span>2D {pct(trade.recovery.move2dPct)}</span>}
-            {trade.recovery.volumePace !== null && <span>Vol {trade.recovery.volumePace.toFixed(1)}x</span>}
-            {trade.recovery.relativeStrength20d !== null && <span>20D {pct(trade.recovery.relativeStrength20d)}</span>}
+            {trade.recovery.volumePace !== null && <span>20D Vol {trade.recovery.volumePace.toFixed(1)}x</span>}
+            {trade.recovery.relativeStrength20d !== null && <span>20D RS {pct(trade.recovery.relativeStrength20d)}</span>}
           </div>
           {trade.recovery.freshSetup.status === "QUALIFIED" && (
             <div className="mt-2 flex flex-wrap items-center justify-between gap-2 border-t border-sky-400/20 pt-2 text-[11px]">
@@ -244,7 +244,9 @@ function TradeCard({ trade, today, returns }: { trade: SwingLedgerTrade; today: 
         <span>Initial stop {price(trade.projectedStop)}</span>
         {trade.firstStopBreachedAt && (
           <span className="text-rose-300/80">
-            First stop breach {price(trade.firstStopBreachPrice)} ({trade.firstStopBreachSource ?? "verified"} · {new Intl.DateTimeFormat("en-IN", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Kolkata" }).format(new Date(trade.firstStopBreachedAt))} IST)
+            First stop breach {price(trade.firstStopBreachPrice)}
+            {trade.firstStopBreachStopLevel !== null ? ` vs stop ${price(trade.firstStopBreachStopLevel)}` : ""}
+            {" "}({trade.firstStopBreachSource ?? "verified"} · {new Intl.DateTimeFormat("en-IN", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Kolkata" }).format(new Date(trade.firstStopBreachedAt))} IST)
           </span>
         )}
         <span>Purchased {trade.quantity.toLocaleString("en-IN")}</span>

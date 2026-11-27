@@ -7,6 +7,7 @@ export interface RecoveryAlertDedupState {
 
 export interface RecoveryAlertCandidate {
   transitionType: "REBOUND_DETECTED" | "STOP_RECLAIMED" | "FRESH_SETUP_QUALIFIED";
+  freshSetupKey: string | null;
   recommendation: string;
   signature: string;
   title: string;
@@ -21,6 +22,30 @@ export interface RecoveryAlertEvaluation {
   nextRecoveryStatus: string | null;
   nextFreshSetupKey: string | null;
   stateChanged: boolean;
+}
+
+/**
+ * Advance persisted dedup state ONLY for candidates whose browser-event claim succeeded
+ * (inserted or already claimed via unique conflict). Any candidate whose DB insert failed
+ * is omitted from `claimed`, keeping its slot unadvanced so the next poll retries it.
+ */
+export function advanceRecoveryAlertState(
+  prev: RecoveryAlertDedupState,
+  claimed: ReadonlyArray<Pick<RecoveryAlertCandidate, "transitionType" | "freshSetupKey">>,
+): RecoveryAlertDedupState & { stateChanged: boolean } {
+  let lastAlertedRecoveryStatus = prev.lastAlertedRecoveryStatus;
+  let lastAlertedFreshSetupKey = prev.lastAlertedFreshSetupKey;
+  for (const item of claimed) {
+    if (item.transitionType === "REBOUND_DETECTED" || item.transitionType === "STOP_RECLAIMED") {
+      lastAlertedRecoveryStatus = item.transitionType;
+    } else if (item.transitionType === "FRESH_SETUP_QUALIFIED" && item.freshSetupKey) {
+      lastAlertedFreshSetupKey = item.freshSetupKey;
+    }
+  }
+  const stateChanged =
+    lastAlertedRecoveryStatus !== prev.lastAlertedRecoveryStatus ||
+    lastAlertedFreshSetupKey !== prev.lastAlertedFreshSetupKey;
+  return { lastAlertedRecoveryStatus, lastAlertedFreshSetupKey, stateChanged };
 }
 
 /**
@@ -63,6 +88,7 @@ export function buildRecoveryTransitionAlerts(
 
     alerts.push({
       transitionType: rec.status,
+      freshSetupKey: null,
       recommendation: rec.status,
       signature: `TRADE_RECOVERY|${trade.id}|${rec.status}`,
       title: isReclaimed
@@ -85,6 +111,7 @@ export function buildRecoveryTransitionAlerts(
       const label = fs.label ?? fs.engine.replaceAll("_", " ");
       alerts.push({
         transitionType: "FRESH_SETUP_QUALIFIED",
+        freshSetupKey: freshKey,
         recommendation: `FRESH_SETUP_${fs.engine}`,
         signature: `TRADE_RECOVERY_SETUP|${trade.id}|${fs.engine}`,
         title: `InvestoGenie: Fresh setup qualified · ${trade.ticker}`,

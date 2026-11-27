@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildRecoveryTransitionAlerts } from "@/lib/tradeRecoveryAlerts";
+import { advanceRecoveryAlertState, buildRecoveryTransitionAlerts } from "@/lib/tradeRecoveryAlerts";
 
 const baseTrade = {
   id: "trade-dhampur-1",
@@ -170,5 +170,21 @@ describe("buildRecoveryTransitionAlerts", () => {
     expect(upgraded.alerts).toHaveLength(1);
     expect(upgraded.alerts[0].transitionType).toBe("FRESH_SETUP_QUALIFIED");
     expect(upgraded.alerts[0].signature).toBe("TRADE_RECOVERY_SETUP|trade-dhampur-1|STRONG_SWING");
+  });
+
+  it("does not advance dedup state for failed claims so the next poll can retry", () => {
+    const prev = { lastAlertedRecoveryStatus: "REBOUND_DETECTED", lastAlertedFreshSetupKey: null };
+    const noneClaimed = advanceRecoveryAlertState(prev, []);
+    expect(noneClaimed.stateChanged).toBe(false);
+    expect(noneClaimed.lastAlertedRecoveryStatus).toBe("REBOUND_DETECTED");
+    expect(noneClaimed.lastAlertedFreshSetupKey).toBeNull();
+
+    // Only STOP_RECLAIMED succeeded; FRESH_SETUP_QUALIFIED failed and stays null for retry
+    const partial = advanceRecoveryAlertState(prev, [
+      { transitionType: "STOP_RECLAIMED", freshSetupKey: null },
+    ]);
+    expect(partial.stateChanged).toBe(true);
+    expect(partial.lastAlertedRecoveryStatus).toBe("STOP_RECLAIMED");
+    expect(partial.lastAlertedFreshSetupKey).toBeNull();
   });
 });

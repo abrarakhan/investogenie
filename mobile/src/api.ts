@@ -98,6 +98,31 @@ export interface LedgerTrade {
     atUpperCircuit: boolean;
     reasons: string[];
   };
+  firstStopBreachedAt?: string | null;
+  firstStopBreachPrice?: number | null;
+  firstStopBreachStopLevel?: number | null;
+  firstStopBreachSource?: string | null;
+  recovery?: {
+    status: "NONE" | "REBOUND_DETECTED" | "STOP_RECLAIMED" | "UNVERIFIED";
+    headline: string | null;
+    move2dPct: number | null;
+    volumePace: number | null;
+    relativeStrength20d: number | null;
+    sectorThrustGroup: string | null;
+    firstDetectedAt: string | null;
+    evaluatedAt: string | null;
+    freshSetup: {
+      status: "NONE" | "QUALIFIED" | "BLOCKED";
+      engine: string | null;
+      label: string | null;
+      entry: number | null;
+      stop: number | null;
+      target: number | null;
+      route: string | null;
+      blocker: string | null;
+      firstQualifiedAt: string | null;
+    };
+  } | null;
   exits: Array<{ id: string; soldOn: string; quantity: number; exitPrice: number; saleValue: number; reason: string | null; realizedPnlValue: number }>;
 }
 

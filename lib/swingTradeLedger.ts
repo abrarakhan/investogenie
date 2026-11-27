@@ -349,6 +349,7 @@ export interface SwingLedgerTrade {
   notes: string | null;
   firstStopBreachedAt: string | null;
   firstStopBreachPrice: number | null;
+  firstStopBreachStopLevel: number | null;
   firstStopBreachSource: string | null;
   recovery: {
     status: "NONE" | "REBOUND_DETECTED" | "STOP_RECLAIMED" | "UNVERIFIED";
@@ -807,6 +808,7 @@ export async function getSwingTradeLedger(userId: string, market: "IN" | "US"): 
         ? row.first_stop_breached_at.toISOString()
         : row.first_stop_breached_at ? String(row.first_stop_breached_at) : null,
       firstStopBreachPrice: nullableNumber(row.first_stop_breach_price),
+      firstStopBreachStopLevel: nullableNumber(row.first_stop_breach_stop_level),
       firstStopBreachSource: row.first_stop_breach_source === null || row.first_stop_breach_source === undefined
         ? null : String(row.first_stop_breach_source),
       recovery: row.recovery_status

@@ -876,15 +876,19 @@ function scheduleSectorThrust() {
     console.log("[sector-thrust] recurring scan disabled");
     return;
   }
-  console.log(`[sector-thrust] India 5-min Python scan every ${sectorThrustIntervalMinutes} minutes during 09:30-15:30 IST`);
+  console.log(`[sector-thrust] India 5-min Python scan every ${sectorThrustIntervalMinutes} minutes during 09:30-15:30 IST; trade recovery monitor for IN & US`);
   sectorThrustTimer = setInterval(
     () => {
       runSectorThrust("recurring", "LIVE").catch((error) => console.error(`[sector-thrust] recurring failed: ${error.message}`));
-      if (isIndiaMarketOpen() && python && existsSync(tradeRecoveryPipeline)) {
-        const child = spawn(python, [tradeRecoveryPipeline, "--market", "IN", "--mode", "LIVE"], {
-          cwd: root, env: process.env, stdio: "inherit", timeout: 25_000,
-        });
-        child.once("error", (err) => console.error(`[trade-recovery] failed: ${err.message}`));
+      if (python && existsSync(tradeRecoveryPipeline)) {
+        for (const market of ["IN", "US"]) {
+          const open = market === "IN" ? isIndiaMarketOpen() : isUsMarketOpen();
+          if (!open) continue;
+          const child = spawn(python, [tradeRecoveryPipeline, "--market", market, "--mode", "LIVE"], {
+            cwd: root, env: process.env, stdio: "inherit", timeout: 25_000,
+          });
+          child.once("error", (err) => console.error(`[trade-recovery] ${market} LIVE failed: ${err.message}`));
+        }
       }
     },
     sectorThrustIntervalMinutes * 60 * 1000,

@@ -63,6 +63,35 @@ export default function TradeLedger({ market }: { market: Market }) {
       <View style={styles.rowBetween}><View><Text style={styles.ticker}>{item.ticker}</Text><Text style={styles.meta}>{item.status} · bought {item.boughtOn}</Text></View>{pendingLabel ? <Pill label={pendingLabel} tone="warning" compact /> : <Text style={item.progress.pnlPct !== null && item.progress.pnlPct >= 0 ? styles.goodValue : styles.badValue}>{pct(item.progress.pnlPct)}</Text>}</View>
       <View style={styles.metricRow}><Metric label="BUY" value={money(item.buyPrice, market)} /><Metric label="CURRENT" value={item.currentPrice === null ? "STALE" : money(item.currentPrice, market)} /><Metric label="TARGET" value={money(item.projectedTarget, market)} positive /></View>
       <View style={styles.metricRow}><Metric label="INVESTED" value={money(item.progress.investedValue, market)} /><Metric label={item.status === "CLOSED" ? "EXIT VALUE" : "CURRENT VALUE"} value={item.status === "CLOSED" ? money(item.progress.investedValue + item.realizedPnlValue, market) : item.progress.currentValue === null ? "STALE" : money(item.progress.currentValue, market)} positive={(item.progress.pnlValue ?? 0) >= 0} negative={(item.progress.pnlValue ?? 0) < 0} /><Metric label="P&L" value={item.progress.pnlValue === null ? "--" : money(item.progress.pnlValue, market)} positive={(item.progress.pnlValue ?? 0) >= 0} negative={(item.progress.pnlValue ?? 0) < 0} /></View>
+      {item.status === "OPEN" && item.recovery && item.recovery.status !== "NONE" && item.recovery.headline && (
+        <View style={[styles.recoveryBox, item.recovery.status === "UNVERIFIED" ? styles.recoveryUnverified : styles.recoveryActive]}>
+          <View style={styles.rowBetween}>
+            <Text style={item.recovery.status === "UNVERIFIED" ? styles.recoveryUnverifiedTitle : styles.recoveryTitle}>
+              {item.recovery.status === "STOP_RECLAIMED" ? "STOP RECLAIMED" : item.recovery.status === "REBOUND_DETECTED" ? "REBOUND DETECTED" : "RECOVERY UNVERIFIED"}
+            </Text>
+            {!!item.recovery.sectorThrustGroup && <Text style={styles.recoveryMeta}>{item.recovery.sectorThrustGroup}</Text>}
+          </View>
+          <Text style={styles.recoveryHeadline}>{item.recovery.headline}</Text>
+          <Text style={styles.recoveryMeta}>
+            {[
+              item.recovery.move2dPct !== null ? `2D ${pct(item.recovery.move2dPct)}` : null,
+              item.recovery.volumePace !== null ? `20D Vol ${item.recovery.volumePace.toFixed(1)}x` : null,
+              item.recovery.relativeStrength20d !== null ? `20D RS ${pct(item.recovery.relativeStrength20d)}` : null,
+            ].filter(Boolean).join(" · ")}
+          </Text>
+          {item.recovery.freshSetup.status === "QUALIFIED" && (
+            <Text style={styles.recoveryQualified}>
+              Fresh setup qualified: {item.recovery.freshSetup.label}
+              {item.recovery.freshSetup.entry !== null ? ` · Entry ${money(item.recovery.freshSetup.entry, market)}` : ""}
+              {item.recovery.freshSetup.stop !== null ? ` · Stop ${money(item.recovery.freshSetup.stop, market)}` : ""}
+              {item.recovery.freshSetup.target !== null ? ` · Target ${money(item.recovery.freshSetup.target, market)}` : ""}
+            </Text>
+          )}
+          {item.recovery.freshSetup.status === "BLOCKED" && !!item.recovery.freshSetup.blocker && (
+            <Text style={styles.recoveryMeta}>Fresh setup recheck: Not qualified — {item.recovery.freshSetup.blocker}</Text>
+          )}
+        </View>
+      )}
       {item.status === "OPEN" && <View style={styles.revisedPlan}>
         <View style={styles.rowBetween}><Text style={styles.revisedPlanTitle}>LIVE REVISED PLAN</Text><Text style={item.revisedPlan.action === "EXIT" ? styles.badValue : item.revisedPlan.action === "EXTEND_RUNNER" ? styles.goodValue : styles.warningValue}>{item.revisedPlan.label.toUpperCase()}</Text></View>
         <Text style={item.revisedPlan.action === "EXIT" ? styles.badValue : styles.evidenceTitle}>{item.revisedPlan.action === "EXIT" ? `ACTION NOW: Exit the remaining ${item.remainingQuantity} shares at the next executable market price. Do not wait for the old target.` : item.revisedPlan.action === "EXTEND_RUNNER" ? `ACTION NOW: Hold toward ${item.revisedPlan.revisedTarget === null ? "--" : money(item.revisedPlan.revisedTarget, market)} while protecting at ${item.revisedPlan.protectiveStop === null ? "--" : money(item.revisedPlan.protectiveStop, market)}.` : item.revisedPlan.action === "PROTECT_RECOVERY" ? `ACTION NOW: Hold only above ${item.revisedPlan.protectiveStop === null ? "--" : money(item.revisedPlan.protectiveStop, market)}; exit the remaining shares if that level trades.` : `ACTION NOW: Follow the displayed target and protection level for the remaining ${item.remainingQuantity} shares.`}</Text>
@@ -70,6 +99,13 @@ export default function TradeLedger({ market }: { market: Market }) {
         <Text style={styles.cardFoot}>{item.revisedPlan.reasons[0]}</Text>
       </View>}
       <Text style={styles.cardFoot}>{item.remainingQuantity} remaining · {item.progress.daysHeld} held / {item.progress.daysRemaining} left · {item.risk.recommendation.replaceAll("_", " ")}</Text>
+      {!!item.firstStopBreachedAt && (
+        <Text style={styles.breachFoot}>
+          First stop breach: {item.firstStopBreachPrice !== null && item.firstStopBreachPrice !== undefined ? money(item.firstStopBreachPrice, market) : "--"}
+          {item.firstStopBreachStopLevel !== null && item.firstStopBreachStopLevel !== undefined ? ` vs stop ${money(item.firstStopBreachStopLevel, market)}` : ""}
+          {" "}({item.firstStopBreachSource ?? "verified"})
+        </Text>
+      )}
       {item.exits.map((sale) => <Pressable key={sale.id} disabled={!!pendingLabel} onPress={() => setEditingSale({ trade: item, sale })} style={styles.saleRow}><Text style={styles.meta}>{sale.soldOn} · {sale.quantity} @ {money(sale.exitPrice, market)}</Text><Text style={styles.link}>Edit sale</Text></Pressable>)}
       <View style={styles.actions}><SmallAction label="Edit" disabled={!!pendingLabel} onPress={() => setEditing(item)} />{item.status === "OPEN" && <SmallAction label="Record sale" disabled={!!pendingLabel} onPress={() => setSelling(item)} />}<SmallAction label="Delete" disabled={!!pendingLabel} destructive onPress={() => remove(item)} /></View>
     </Card>;
@@ -102,4 +138,13 @@ const styles = StyleSheet.create({
   metricRow: { flexDirection: "row", gap: 8 }, metricLabel: { color: colors.textSubtle, fontSize: 10, fontWeight: "700" }, goodValue: { color: colors.emerald, ...tabularNums }, badValue: { color: colors.rose, ...tabularNums }, warningValue: { color: colors.amber, fontSize: 11, fontWeight: "900" }, evidenceTitle: { color: colors.textSecondary, fontSize: 13, fontWeight: "700" }, cardFoot: { color: colors.textMuted, fontSize: 12 }, revisedPlan: { borderTopWidth: 1, borderTopColor: colors.borderStrong, paddingTop: 12, gap: 9 }, revisedPlanTitle: { color: colors.link, fontSize: 10, fontWeight: "900", letterSpacing: 1.1 },
   summary: { paddingHorizontal: 14, paddingBottom: 8, gap: 8 }, summaryCard: { width: 140, backgroundColor: colors.surface, borderColor: colors.border, borderWidth: 1, borderRadius: radius.md, padding: 12 }, summaryValue: { color: colors.text, fontSize: 17, fontWeight: "900", marginTop: 5, ...tabularNums }, actions: { flexDirection: "row", gap: 8, borderTopWidth: 1, borderTopColor: colors.border, paddingTop: 10 }, smallAction: { minHeight: 40, justifyContent: "center", paddingHorizontal: 10 }, actionDisabled: { opacity: 0.4 }, saleRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", backgroundColor: colors.surfaceInset, borderRadius: radius.sm, padding: 10 }, link: { color: colors.link, fontWeight: "700" },
   modalBackdrop: { flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(0,0,0,0.72)" }, sheet: { backgroundColor: colors.surface, borderTopLeftRadius: radius.lg, borderTopRightRadius: radius.lg, borderColor: colors.borderStrong, borderWidth: 1, padding: 20, paddingBottom: 36, gap: 12 }, sectionTitle: { color: colors.text, fontSize: 18, fontWeight: "900", marginTop: 8, marginBottom: 10 }, input: { color: colors.text, backgroundColor: colors.surfaceInset, borderColor: colors.borderStrong, borderWidth: 1, borderRadius: radius.md, paddingHorizontal: 15, height: 50 },
+  recoveryBox: { borderRadius: radius.md, borderWidth: 1, padding: 10, gap: 4 },
+  recoveryActive: { backgroundColor: "rgba(14, 165, 233, 0.12)", borderColor: "rgba(56, 189, 248, 0.35)" },
+  recoveryUnverified: { backgroundColor: colors.surfaceInset, borderColor: colors.border },
+  recoveryTitle: { color: "#7dd3fc", fontSize: 10, fontWeight: "900", letterSpacing: 0.9 },
+  recoveryUnverifiedTitle: { color: colors.textSubtle, fontSize: 10, fontWeight: "900", letterSpacing: 0.9 },
+  recoveryHeadline: { color: colors.text, fontSize: 12, fontWeight: "700" },
+  recoveryMeta: { color: colors.textMuted, fontSize: 11 },
+  recoveryQualified: { color: colors.emerald, fontSize: 11, fontWeight: "700", marginTop: 2 },
+  breachFoot: { color: colors.rose, fontSize: 11, opacity: 0.85 },
 });

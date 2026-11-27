@@ -61,7 +61,7 @@ class TradeRecoveryTests(unittest.TestCase):
         self.assertIsNone(res["recordBreach"])
         self.assertEqual(res["recoveryStatus"], "NONE")
 
-    def test_verified_quote_stamps_first_breach_once(self):
+    def test_verified_quote_stamps_first_breach_once_with_stop_level(self):
         res = assess_trade_recovery({
             "market": "IN",
             "currency": "INR",
@@ -77,6 +77,7 @@ class TradeRecoveryTests(unittest.TestCase):
         })
         self.assertIsNotNone(res["recordBreach"])
         self.assertEqual(res["recordBreach"]["price"], 188.5)
+        self.assertEqual(res["recordBreach"]["stopLevel"], 190.0)
         self.assertEqual(res["recordBreach"]["source"], "BREEZE_LIVE")
 
     def test_fresh_setup_links_qualified_engine_with_own_levels(self):
@@ -84,6 +85,9 @@ class TradeRecoveryTests(unittest.TestCase):
             "market": "IN",
             "recoveryStatus": "REBOUND_DETECTED",
             "evaluatedAt": "2026-11-27T09:00:00Z",
+            "expectedSessionDate": "2026-11-27",
+            "quoteVerified": True,
+            "currentPrice": 193.0,
             "trendContinuation": {
                 "status": "TREND_CONTINUATION_READY",
                 "setupVariant": "EP_REBOUND",
@@ -91,6 +95,7 @@ class TradeRecoveryTests(unittest.TestCase):
                 "entry": 192.0,
                 "stop": 178.5,
                 "target": 219.0,
+                "signalDate": "2026-11-27",
             },
         })
         self.assertEqual(fs["freshSetupStatus"], "QUALIFIED")
@@ -98,11 +103,62 @@ class TradeRecoveryTests(unittest.TestCase):
         self.assertEqual(fs["freshSetupStop"], 178.5)
         self.assertEqual(fs["freshSetupFirstQualifiedAt"], "2026-11-27T09:00:00Z")
 
+    def test_stale_ready_signal_cannot_qualify_as_fresh_setup(self):
+        fs = evaluate_fresh_setup({
+            "market": "IN",
+            "recoveryStatus": "STOP_RECLAIMED",
+            "evaluatedAt": "2026-11-27T09:00:00Z",
+            "expectedSessionDate": "2026-11-27",
+            "quoteVerified": True,
+            "currentPrice": 193.0,
+            "strongSwing": {
+                "status": "EXECUTION_READY",
+                "strengthScore": 86,
+                "entry": 192.0,
+                "stop": 180.0,
+                "target": 215.0,
+                "signalDate": "2026-11-24",
+            },
+            "swingBreakout": {
+                "verdict": "LONG_BREAKOUT",
+                "score": 0.78,
+                "entry": 191.0,
+                "signalDate": "2026-11-25",
+            },
+        })
+        self.assertEqual(fs["freshSetupStatus"], "BLOCKED")
+        self.assertIsNone(fs["freshSetupEngine"])
+        self.assertIn("Strong Swing signal stale (2026-11-24)", fs["freshSetupBlocker"])
+
+    def test_current_quote_below_setup_stop_cannot_qualify(self):
+        fs = evaluate_fresh_setup({
+            "market": "IN",
+            "recoveryStatus": "REBOUND_DETECTED",
+            "evaluatedAt": "2026-11-27T09:00:00Z",
+            "expectedSessionDate": "2026-11-27",
+            "quoteVerified": True,
+            "currentPrice": 176.0,
+            "trendContinuation": {
+                "status": "TREND_CONTINUATION_READY",
+                "setupVariant": "EP_REBOUND",
+                "score": 88,
+                "entry": 192.0,
+                "stop": 178.5,
+                "target": 219.0,
+                "signalDate": "2026-11-27",
+            },
+        })
+        self.assertEqual(fs["freshSetupStatus"], "BLOCKED")
+        self.assertIn("current price below setup stop", fs["freshSetupBlocker"])
+
     def test_fresh_setup_reports_main_blocker_when_none_qualifies(self):
         fs = evaluate_fresh_setup({
             "market": "IN",
             "recoveryStatus": "REBOUND_DETECTED",
             "evaluatedAt": "2026-11-27T09:00:00Z",
+            "expectedSessionDate": "2026-11-27",
+            "quoteVerified": True,
+            "currentPrice": 190.5,
             "strongSwing": {
                 "status": "WATCHLIST",
                 "gates": [

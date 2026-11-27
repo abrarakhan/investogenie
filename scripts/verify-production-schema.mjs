@@ -162,6 +162,7 @@ const requiredColumns = [
   ["swing_trade_ledger", "first_stop_breached_at"],
   ["swing_trade_ledger", "first_stop_breach_price"],
   ["swing_trade_ledger", "first_stop_breach_source"],
+  ["swing_trade_ledger", "first_stop_breach_stop_level"],
   ["swing_trade_recovery_state", "recovery_status"],
   ["swing_trade_recovery_state", "headline"],
   ["swing_trade_recovery_state", "move_2d_pct"],

@@ -10,6 +10,7 @@ alter table public.browser_notification_events
       'CANDIDATE_WATCH',
       'TRADE_ACTION',
       'ORDER_UPDATE',
-      'NEWS_RISK'
+      'NEWS_RISK',
+      'TRADE_RECOVERY'
     )
   );
