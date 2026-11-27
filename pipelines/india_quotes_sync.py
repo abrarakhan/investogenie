@@ -225,6 +225,30 @@ def upsert_market_data(conn, rows: list[tuple]) -> int:
               currency=excluded.currency,
               as_of=excluded.as_of,
               source=excluded.source,
+              session_volume=case
+                when public.latest_quotes.session_volume_date = excluded.as_of::date
+                 and public.latest_quotes.session_volume_source = excluded.source
+                then public.latest_quotes.session_volume
+                else null
+              end,
+              session_volume_date=case
+                when public.latest_quotes.session_volume_date = excluded.as_of::date
+                 and public.latest_quotes.session_volume_source = excluded.source
+                then public.latest_quotes.session_volume_date
+                else null
+              end,
+              session_volume_source=case
+                when public.latest_quotes.session_volume_date = excluded.as_of::date
+                 and public.latest_quotes.session_volume_source = excluded.source
+                then public.latest_quotes.session_volume_source
+                else null
+              end,
+              session_volume_at=case
+                when public.latest_quotes.session_volume_date = excluded.as_of::date
+                 and public.latest_quotes.session_volume_source = excluded.source
+                then public.latest_quotes.session_volume_at
+                else null
+              end,
               updated_at=now()
             where not (
               public.latest_quotes.source='BREEZE_LIVE'

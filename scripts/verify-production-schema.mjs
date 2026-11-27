@@ -62,6 +62,10 @@ const requiredRelations = [
   "public.eod_asset_features_meta",
   "public.news_stock_briefs",
   "public.ml_readiness_checks",
+  "public.sector_group_memberships",
+  "public.sector_thrust_runs",
+  "public.sector_thrust_groups",
+  "public.sector_thrust_members",
 ];
 const requiredColumns = [
   ["corporate_event_sync_state", "authoritative_source"],
@@ -139,6 +143,21 @@ const requiredColumns = [
   ["mobile_alert_preferences", "news_high_impact"],
   ["mobile_alert_preferences", "quiet_hours_enabled"],
   ["mobile_alert_preferences", "updated_at"],
+  ["latest_quotes", "session_volume"],
+  ["latest_quotes", "session_volume_date"],
+  ["latest_quotes", "session_volume_source"],
+  ["latest_quotes", "session_volume_at"],
+  ["sector_group_memberships", "taxonomy_version"],
+  ["sector_group_memberships", "broad_sector"],
+  ["sector_group_memberships", "industry_group"],
+  ["sector_thrust_runs", "rule_version"],
+  ["sector_thrust_runs", "taxonomy_version"],
+  ["sector_thrust_runs", "unclassified_count"],
+  ["sector_thrust_groups", "price_fresh_count"],
+  ["sector_thrust_groups", "volume_fresh_count"],
+  ["sector_thrust_groups", "volume_confirmation_route"],
+  ["sector_thrust_groups", "first_triggered_at"],
+  ["sector_thrust_members", "atr_extension"],
 ];
 const requiredRlsRelations = [
   "adaptive_allocation_runs", "adaptive_allocation_strategies", "armed_swing_plans", "breeze_auto_buy_settings",

@@ -165,6 +165,22 @@ looks. Before reporting a change complete:
 Report what you demonstrated, not what you implemented. A gap named in prose is not a
 gap handled.
 
+## Query, Math & Runtime Invariants
+
+- **Python-authoritative math:** Keep regime classification, signal scoring, ranking, and trade/ATR level math in `pipelines/strategy_math/` invoked via `runPythonStrategyBatch`. TypeScript loads inputs, calls Python, and maps responses.
+- **Client/Server boundary & formatting:** Never import runtime values from server/DB modules (`lib/db.ts`, `pg`) into `"use client"` components — place shared types and UI metadata in dedicated `*Types.ts` files. Use `formatPrice(value, market)` for `MarketId` (`"IN" | "US"`) and `formatMoney(value, currency)` only for ISO currency codes (`"INR" | "USD"`).
+- **PostgreSQL `DATE` & timezone safety:**
+  - Compare PostgreSQL `DATE` columns (such as `latest_quotes.as_of`) directly (`>= $date::date`) — never apply `AT TIME ZONE` to a `DATE`.
+  - Return `DATE` values as `::text` from SQL; if formatting a JS `Date` decoded from a PG `DATE`, use local calendar getters (`getFullYear`/`getMonth`/`getDate`), never `toISOString().slice(0, 10)`.
+- **SQL filtering, `DISTINCT ON`, and error visibility:**
+  - Apply exclusions (ETFs via `daily_delivery_metrics.is_etf` + ticker/name filter, already-delivered alerts via `NOT EXISTS`) in SQL **before** `LIMIT` so excluded rows never starve valid candidates.
+  - When selecting latest status rows via `DISTINCT ON`, pick the newest row in a CTE **before** filtering by qualifying status so newer invalidations suppress older watches.
+  - Never hide unexpected SQL errors with `.catch(() => [])`; log the error explicitly and verify column names against the real schema.
+- **Cross-market normalization & fail-closed freshness:**
+  - Normalize liquidity/turnover bonuses relative to each market's eligibility floor (`traded_value / traded_value_floor`) instead of hardcoding single-currency magnitudes.
+  - Benchmark moving averages must require both full bar count (e.g., `50`) and `latest_bar_date = expectedSession` from the shared market calendar, falling back across configured benchmarks and returning `UNVERIFIED` when none qualify.
+- **Forward-compatible migration replay:** Because deploys replay ordered SQL migrations, any new value added to a `CHECK` constraint must also be allowed by earlier migrations that recreate that constraint.
+
 ## Database Safety
 
 - Inspect relevant schema/migrations before database changes.

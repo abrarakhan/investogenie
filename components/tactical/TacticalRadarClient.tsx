@@ -10,6 +10,10 @@ import {
 import { formatPrice, formatPct } from "@/lib/markets";
 import type { MarketId } from "@/lib/types";
 import TradingViewChartModal, { useTradingViewChart } from "@/components/charts/TradingViewChartModal";
+import type { SectorThrustSnapshot } from "@/lib/sectorThrustTypes";
+import SectorThrustPanel from "./SectorThrustPanel";
+
+type RadarTabKey = TacticalBucketKey | "SECTOR_THRUST";
 
 const BUCKET_ORDER: TacticalBucketKey[] = [
   "NEAR_TRIGGER",
@@ -41,18 +45,24 @@ function csvEscape(v: string | number | null | undefined): string {
 
 export default function TacticalRadarClient({
   data,
+  sectorThrust,
   market,
 }: {
   data: TacticalRadarResult;
+  sectorThrust: SectorThrustSnapshot;
   market: MarketId;
 }) {
-  const [activeBucket, setActiveBucket] = useState<TacticalBucketKey>(data.context.favoredBucket);
+  const [activeTab, setActiveTab] = useState<RadarTabKey>(data.context.favoredBucket);
   const [search, setSearch] = useState("");
   const { chart, openChart, closeChart, bindChartGesture } = useTradingViewChart();
   const m = market.toLowerCase();
 
+  const activeBucket: TacticalBucketKey =
+    activeTab === "SECTOR_THRUST" ? data.context.favoredBucket : activeTab;
+
   const rows = useMemo(() => {
-    const list = data.buckets[activeBucket] ?? [];
+    if (activeTab === "SECTOR_THRUST") return [];
+    const list = data.buckets[activeTab] ?? [];
     const q = search.trim().toLowerCase();
     if (!q) return list;
     return list.filter(
@@ -62,7 +72,7 @@ export default function TacticalRadarClient({
         (c.sector ?? "").toLowerCase().includes(q) ||
         c.reason.toLowerCase().includes(q),
     );
-  }, [data.buckets, activeBucket, search]);
+  }, [data.buckets, activeTab, search]);
 
   const bucketMeta = TACTICAL_BUCKET_META[activeBucket];
 
@@ -194,17 +204,17 @@ export default function TacticalRadarClient({
       </section>
 
       {/* Bucket selector tabs */}
-      <div className="grid gap-3 md:grid-cols-3">
+      <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
         {BUCKET_ORDER.map((key) => {
           const meta = TACTICAL_BUCKET_META[key];
           const count = data.buckets[key].length;
-          const isActive = key === activeBucket;
+          const isActive = key === activeTab;
           const isFavored = key === context.favoredBucket;
           return (
             <button
               key={key}
               type="button"
-              onClick={() => setActiveBucket(key)}
+              onClick={() => setActiveTab(key)}
               className={`rounded-xl border p-4 text-left transition-all ${
                 isActive
                   ? "border-[var(--ig-accent)] bg-[var(--ig-accent)]/10 shadow-[0_0_0_1px_var(--ig-accent)]"
@@ -232,7 +242,37 @@ export default function TacticalRadarClient({
             </button>
           );
         })}
+
+        <button
+          type="button"
+          onClick={() => setActiveTab("SECTOR_THRUST")}
+          className={`rounded-xl border p-4 text-left transition-all ${
+            activeTab === "SECTOR_THRUST"
+              ? "border-[var(--ig-accent)] bg-[var(--ig-accent)]/10 shadow-[0_0_0_1px_var(--ig-accent)]"
+              : "border-white/10 bg-white/[0.02] hover:border-white/20 hover:bg-white/[0.04]"
+          }`}
+        >
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-sm font-semibold text-white">Sector Thrust</span>
+            <span className="rounded-full bg-white/10 px-2 py-0.5 font-mono text-xs text-white/80">
+              {sectorThrust.activeGroupCount}
+            </span>
+          </div>
+          <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+            <span className="rounded-full border border-sky-400/30 bg-sky-500/10 px-2 py-0.5 text-[10px] font-medium text-sky-300">
+              Broad &amp; Industry
+            </span>
+            <span className="rounded-full border border-white/15 bg-white/10 px-2 py-0.5 text-[10px] font-medium text-white/75">
+              {sectorThrust.status}
+            </span>
+          </div>
+        </button>
       </div>
+
+      {activeTab === "SECTOR_THRUST" ? (
+        <SectorThrustPanel snapshot={sectorThrust} market={market} />
+      ) : (
+      <>
 
       {/* Bucket guidance + filter bar */}
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-white/10 bg-black/25 px-4 py-3">
@@ -394,6 +434,8 @@ export default function TacticalRadarClient({
             </article>
           ))}
         </div>
+      )}
+      </>
       )}
 
       <TradingViewChartModal chart={chart} onClose={closeChart} />

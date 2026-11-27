@@ -4,6 +4,7 @@ import TacticalRadarClient from "@/components/tactical/TacticalRadarClient";
 import { getSessionUser } from "@/lib/auth";
 import { normalizeMarket } from "@/lib/markets";
 import { getTacticalRadar } from "@/lib/tacticalRadar";
+import { getSectorThrustSnapshot } from "@/lib/sectorThrust";
 
 export const dynamic = "force-dynamic";
 
@@ -19,7 +20,10 @@ export default async function TacticalRadarPage({
   const user = await getSessionUser();
   if (!user) redirect("/login");
 
-  const data = await getTacticalRadar(market, user.id, 15);
+  const [data, sectorThrust] = await Promise.all([
+    getTacticalRadar(market, user.id, 15),
+    getSectorThrustSnapshot(market),
+  ]);
 
   return (
     <AppShell
@@ -27,9 +31,9 @@ export default async function TacticalRadarPage({
       market={market}
       active="tactical-radar"
       title="Tactical Radar"
-      subtitle="Market-aware watchlist candidates across Near-Trigger Breakouts, Mid-Trend Pullbacks, and Oversold Snapbacks — kept separate from Strong Swing's strict execution gates."
+      subtitle="Market-aware watchlist candidates across Near-Trigger Breakouts, Mid-Trend Pullbacks, Oversold Snapbacks, and Sector Thrust — kept separate from Strong Swing's strict execution gates."
     >
-      <TacticalRadarClient data={data} market={market} />
+      <TacticalRadarClient data={data} sectorThrust={sectorThrust} market={market} />
     </AppShell>
   );
 }

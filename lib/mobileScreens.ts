@@ -36,6 +36,7 @@ import {
   type TacticalBucketKey,
   type TacticalCandidate,
 } from "@/lib/tacticalRadar";
+import { getSectorThrustSnapshot, type SectorThrustGroupView } from "@/lib/sectorThrust";
 
 /**
  * Server-driven mobile screens. Every value is computed and formatted here from the same
@@ -825,7 +826,7 @@ async function homeScreen(market: MobileMarket, userId: string): Promise<MobileS
   const benchmarks = market === "IN" ? ["NIFTY", "SENSEX", "USDINR"] : ["AAPL", "MSFT", "NVDA"];
   const primaryExchange = exchanges[0];
 
-  const [settings, benchmarkRows, breadthRows, trendRows, tacticalData] = await Promise.all([
+  const [settings, benchmarkRows, breadthRows, trendRows, tacticalData, thrustSnap] = await Promise.all([
     getUserSwingSettings(userId).catch(() => null),
     query<{ ticker: string; name: string | null; exchange: string; price: string; change_pct: string | null; as_of: string | Date | null }>(
       `select a.ticker, a.name, a.exchange, q.price::text, q.change_pct::text, q.as_of
@@ -888,6 +889,7 @@ async function homeScreen(market: MobileMarket, userId: string): Promise<MobileS
         ).catch(() => [])
       : Promise.resolve([]),
     getTacticalRadar(market, userId, 5).catch(() => null),
+    getSectorThrustSnapshot(market).catch(() => null),
   ]);
 
   const breadth = breadthRows[0];
@@ -991,6 +993,12 @@ async function homeScreen(market: MobileMarket, userId: string): Promise<MobileS
     }
   }
 
+  // 3b. Active Sector Thrust highlights (if any persisted groups are ACTIVE)
+  const activeThrustGroups = (thrustSnap?.groups ?? []).filter((g) => g.status === "ACTIVE").slice(0, 2);
+  for (const group of activeThrustGroups) {
+    cards.push(sectorThrustGroupCard(group, market, true));
+  }
+
   // 4. Top persisted Mid-Way / Trend Continuation setups (IN only)
   for (const row of trendRows) {
     const isMidway = typeof row.setup_variant === "string" && row.setup_variant.length > 0;
@@ -1072,14 +1080,86 @@ function tacticalRadarCard(item: TacticalCandidate, market: MobileMarket, forHom
   };
 }
 
+function sectorThrustGroupCard(group: SectorThrustGroupView, market: MobileMarket, forHome = false): MobileCard {
+  const tone: MobileTone =
+    group.status === "ACTIVE" ? "positive" : group.status === "FADED" ? "warning" : "neutral";
+  const topLeaders = group.leaders.slice(0, 3).map((m) => `${m.ticker} ${formatPct(m.returnPct)}`).join(" · ");
+  const topCatchUp = group.catchUp.slice(0, 2).map((m) => `${m.ticker} ${formatPct(m.returnPct)}`).join(" · ");
+  return {
+    id: `${forHome ? "home:thrust" : "thrust"}:${group.groupLevel}:${group.groupKey}`,
+    title: group.groupLabel,
+    subtitle: `${group.groupLevel === "INDUSTRY" ? "Industry" : "Broad Sector"} · ${group.qualifyingCount}/${group.eligibleCount} leaders`,
+    badge: { label: group.status, tone },
+    score: group.medianReturnPct !== null ? formatPct(group.medianReturnPct) : null,
+    metrics: [
+      { label: "MEDIAN", value: formatPct(group.medianReturnPct), tone: toneOf(group.medianReturnPct) },
+      { label: "PACE", value: group.medianRvol !== null ? `${group.medianRvol.toFixed(1)}x` : nil },
+      { label: "FRESH", value: `${group.priceFreshCount}/${group.eligibleCount}` },
+    ],
+    footer: topLeaders || group.unverifiedReason || `Volume fresh ${group.volumeFreshCount}/${group.eligibleCount}`,
+    chartTicker: group.leaders[0]?.ticker ?? null,
+    guidance: topCatchUp ? `Catch-Up (≤1 ATR): ${topCatchUp}` : group.unverifiedReason,
+    sections: [
+      {
+        title: "Leaders & Catch-Up",
+        rows: [
+          ...group.leaders.slice(0, 5).map((m) => ({
+            label: `${m.ticker} (Leader)`,
+            value: `${formatMoney(m.price, market)} (${formatPct(m.returnPct)})`,
+            detail: m.reason,
+          })),
+          ...group.catchUp.slice(0, 4).map((m) => ({
+            label: `${m.ticker} (Catch-Up)`,
+            value: `${formatMoney(m.price, market)} (${formatPct(m.returnPct)})`,
+            detail: m.reason,
+          })),
+        ],
+      },
+    ],
+  };
+}
+
 async function tacticalRadarScreen(market: MobileMarket, params: URLSearchParams, userId: string): Promise<MobileScreen> {
-  const data = await getTacticalRadar(market, userId, 15);
+  const [data, thrust] = await Promise.all([
+    getTacticalRadar(market, userId, 15),
+    getSectorThrustSnapshot(market),
+  ]);
   const bucketParam = pick(
     params.get("bucket"),
-    ["FAVORED", "NEAR_TRIGGER", "MID_TREND_PULLBACK", "OVERSOLD_SNAPBACK", "ALL"] as const,
+    ["FAVORED", "SECTOR_THRUST", "NEAR_TRIGGER", "MID_TREND_PULLBACK", "OVERSOLD_SNAPBACK", "ALL"] as const,
     "FAVORED",
   );
   const search = params.get("search")?.trim().toLowerCase() || "";
+  if (bucketParam === "SECTOR_THRUST") {
+    const groups = search
+      ? thrust.groups.filter((g) => g.groupLabel.toLowerCase().includes(search))
+      : thrust.groups;
+    return {
+      key: "tactical-radar",
+      title: "Tactical Radar · Sector Thrust",
+      subtitle: `${thrust.status} · ${thrust.activeGroupCount} active · ${thrust.fadedGroupCount} faded`,
+      generatedAt: thrust.checkpointAt ?? data.generatedAt,
+      summary: `${thrust.activeGroupCount} active · ${thrust.fadedGroupCount} faded · ${thrust.unverifiedGroupCount} unverified`,
+      notice: thrust.unverifiedReason ?? `Session ${thrust.sessionDate ?? "--"} · ${thrust.eligibleUniverseCount} eligible · ${thrust.unclassifiedCount} unclassified`,
+      options: [
+        {
+          param: "bucket",
+          label: "Bucket",
+          value: bucketParam,
+          choices: [
+            { value: "FAVORED", label: `Fits tape (${TACTICAL_BUCKET_META[data.context.favoredBucket].shortLabel})` },
+            { value: "SECTOR_THRUST", label: `Sector Thrust (${thrust.activeGroupCount})` },
+            { value: "NEAR_TRIGGER", label: `Near-Trigger (${data.buckets.NEAR_TRIGGER.length})` },
+            { value: "MID_TREND_PULLBACK", label: `Pullbacks (${data.buckets.MID_TREND_PULLBACK.length})` },
+            { value: "OVERSOLD_SNAPBACK", label: `Snapbacks (${data.buckets.OVERSOLD_SNAPBACK.length})` },
+            { value: "ALL", label: "All buckets" },
+          ],
+        },
+      ],
+      searchable: true,
+      cards: groups.map((g) => sectorThrustGroupCard(g, market)),
+    };
+  }
   const selectedKey: TacticalBucketKey | "ALL" =
     bucketParam === "FAVORED" ? data.context.favoredBucket : bucketParam;
   const list =
@@ -1100,7 +1180,7 @@ async function tacticalRadarScreen(market: MobileMarket, params: URLSearchParams
     title: "Tactical Radar",
     subtitle: `${data.context.regimeLabel} · Separate from Strong Swing`,
     generatedAt: data.generatedAt,
-    summary: `${data.buckets.NEAR_TRIGGER.length} near-trigger · ${data.buckets.MID_TREND_PULLBACK.length} pullbacks · ${data.buckets.OVERSOLD_SNAPBACK.length} snapbacks`,
+    summary: `${data.buckets.NEAR_TRIGGER.length} near-trigger · ${data.buckets.MID_TREND_PULLBACK.length} pullbacks · ${data.buckets.OVERSOLD_SNAPBACK.length} snapbacks · ${thrust.activeGroupCount} thrust`,
     notice: data.context.summary,
     options: [
       {
@@ -1109,6 +1189,7 @@ async function tacticalRadarScreen(market: MobileMarket, params: URLSearchParams
         value: bucketParam,
         choices: [
           { value: "FAVORED", label: `Fits tape (${TACTICAL_BUCKET_META[data.context.favoredBucket].shortLabel})` },
+          { value: "SECTOR_THRUST", label: `Sector Thrust (${thrust.activeGroupCount})` },
           { value: "NEAR_TRIGGER", label: `Near-Trigger (${data.buckets.NEAR_TRIGGER.length})` },
           { value: "MID_TREND_PULLBACK", label: `Pullbacks (${data.buckets.MID_TREND_PULLBACK.length})` },
           { value: "OVERSOLD_SNAPBACK", label: `Snapbacks (${data.buckets.OVERSOLD_SNAPBACK.length})` },

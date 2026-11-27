@@ -103,6 +103,12 @@ const mobileAlertIntervalMinutes = Number(process.env.MOBILE_ALERT_INTERVAL_MINU
 const mobileAlertsDisabled = process.env.MOBILE_ALERTS_DISABLED === "1";
 const trendContinuationIntervalMinutes = Number(process.env.TREND_CONTINUATION_INTERVAL_MINUTES ?? 2);
 const trendContinuationDisabled = process.env.TREND_CONTINUATION_DISABLED === "1";
+const sectorThrustIntervalMinutes = Number(process.env.SECTOR_THRUST_INTERVAL_MINUTES ?? 5);
+const sectorThrustDisabled = process.env.SECTOR_THRUST_DISABLED === "1";
+const sectorThrustPipeline = resolve(root, "pipelines/sector_thrust_scan.py");
+let sectorThrustPromise = null;
+let sectorThrustTimer = null;
+let sectorThrustChild = null;
 const breezeAccountSyncIntervalMinutes = Number(process.env.BREEZE_ACCOUNT_SYNC_INTERVAL_MINUTES ?? 5);
 const breezeAccountSyncDisabled = process.env.BREEZE_ACCOUNT_SYNC_DISABLED === "1";
 const gmailDisclosureSyncIntervalHours = Number(process.env.GMAIL_DISCLOSURE_SYNC_INTERVAL_HOURS ?? 24);
@@ -837,6 +843,43 @@ function scheduleTrendContinuation() {
   console.log(`[trend-continuation] Python observation scan every ${trendContinuationIntervalMinutes} minutes during India market hours`);
   trendContinuationTimer = setInterval(() => runTrendContinuation("recurring").catch((error) => console.error(`[trend-continuation] recurring failed: ${error.message}`)), trendContinuationIntervalMinutes * 60 * 1000);
   if (!startupSyncDisabled) setTimeout(() => runTrendContinuation("startup").catch((error) => console.error(`[trend-continuation] startup failed: ${error.message}`)), 8_000);
+}
+
+async function runSectorThrust(trigger, mode = "LIVE") {
+  if (sectorThrustDisabled || !python || !existsSync(sectorThrustPipeline)) return;
+  if (mode === "LIVE") {
+    if (!isIndiaMarketOpen()) return;
+    // Begin live Sector Thrust 15 minutes after India open (09:30 IST)
+    const nowIst = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
+    const mins = nowIst.getHours() * 60 + nowIst.getMinutes();
+    if (mins < 9 * 60 + 30) return;
+  }
+  if (sectorThrustPromise) return sectorThrustPromise;
+  sectorThrustPromise = new Promise((resolveRun, rejectRun) => {
+    const child = spawn(python, [sectorThrustPipeline, "--market", "IN", "--mode", mode], {
+      cwd: root, env: process.env, stdio: "inherit", timeout: 30_000,
+    });
+    sectorThrustChild = child;
+    child.once("error", rejectRun);
+    child.once("close", (code, signal) => {
+      if (sectorThrustChild === child) sectorThrustChild = null;
+      if (code === 0 && !signal) resolveRun();
+      else rejectRun(new Error(`sector thrust ${trigger} (${mode}) exited ${signal ?? code}`));
+    });
+  }).finally(() => { sectorThrustPromise = null; });
+  return sectorThrustPromise;
+}
+
+function scheduleSectorThrust() {
+  if (sectorThrustDisabled || !Number.isFinite(sectorThrustIntervalMinutes) || sectorThrustIntervalMinutes <= 0) {
+    console.log("[sector-thrust] recurring scan disabled");
+    return;
+  }
+  console.log(`[sector-thrust] India 5-min Python scan every ${sectorThrustIntervalMinutes} minutes during 09:30-15:30 IST`);
+  sectorThrustTimer = setInterval(
+    () => runSectorThrust("recurring", "LIVE").catch((error) => console.error(`[sector-thrust] recurring failed: ${error.message}`)),
+    sectorThrustIntervalMinutes * 60 * 1000,
+  );
 }
 
 function scheduleMobileAlerts() {
@@ -1859,6 +1902,7 @@ scheduleRecurringMarketRefresh();
 scheduleMarketHoursQuoteRefresh();
 scheduleNewsRefresh();
 scheduleTrendContinuation();
+scheduleSectorThrust();
 scheduleMobileAlerts();
 scheduleGmailDisclosureSync();
 scheduleBackfillCron();
