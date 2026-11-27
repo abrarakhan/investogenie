@@ -170,6 +170,9 @@ const requiredColumns = [
   ["swing_trade_recovery_state", "fresh_setup_engine"],
   ["swing_trade_recovery_state", "fresh_setup_blocker"],
   ["swing_trade_recovery_state", "fresh_setup_first_qualified_at"],
+  ["swing_trade_recovery_state", "last_alerted_recovery_status"],
+  ["swing_trade_recovery_state", "last_alerted_fresh_setup_key"],
+  ["swing_trade_recovery_state", "last_alerted_at"],
 ];
 const requiredRlsRelations = [
   "adaptive_allocation_runs", "adaptive_allocation_strategies", "armed_swing_plans", "breeze_auto_buy_settings",

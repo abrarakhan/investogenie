@@ -3,6 +3,7 @@ import { getMomentumBothCandidates, type MomentumBothResult } from "@/features/m
 import { getUserSwingSettings, type SwingSettings } from "@/lib/settings";
 import { getStrongSwingCandidates, type StrongSwingCandidate } from "@/features/strong-swing/service";
 import { getSwingTradeLedger, type SwingLedgerTrade } from "@/lib/swingTradeLedger";
+import { buildRecoveryTransitionAlerts } from "@/lib/tradeRecoveryAlerts";
 import { markLiveMarketTargets } from "@/lib/liveMarketTargets";
 import { isMarketOpenNow } from "@/lib/market-calendar.mjs";
 import { getMobileAlertPreferences, type MobileAlertPreferences } from "@/lib/mobileAlertPreferences";
@@ -373,6 +374,109 @@ async function dispatchHighImpactNewsAlerts(
   return { alerts, delivered };
 }
 
+interface RecoveryAlertStateRow {
+  trade_id: string;
+  last_alerted_recovery_status: string | null;
+  last_alerted_fresh_setup_key: string | null;
+}
+
+async function dispatchTradeRecoveryAlerts(
+  userId: string,
+  tokens: PushTokenRow[],
+  market: "IN" | "US",
+  trades: SwingLedgerTrade[],
+  preferences: MobileAlertPreferences,
+): Promise<{ alerts: number; delivered: number }> {
+  const openWithRecovery = trades.filter((t) => t.status === "OPEN" && t.recovery);
+  if (!openWithRecovery.length) return { alerts: 0, delivered: 0 };
+
+  const stateRows = await workerQuery<RecoveryAlertStateRow>(
+    `select trade_id::text, last_alerted_recovery_status, last_alerted_fresh_setup_key
+       from public.swing_trade_recovery_state
+      where user_id = $1 and market = $2`,
+    [userId, market],
+  ).catch((error) => {
+    console.error("[mobile-alerts] failed to load recovery alert state:", error);
+    return [];
+  });
+  const stateByTrade = new Map(stateRows.map((row) => [row.trade_id, row]));
+
+  let alerts = 0;
+  let delivered = 0;
+  for (const trade of openWithRecovery) {
+    const prevRow = stateByTrade.get(trade.id);
+    const evalResult = buildRecoveryTransitionAlerts(trade, {
+      lastAlertedRecoveryStatus: prevRow?.last_alerted_recovery_status ?? null,
+      lastAlertedFreshSetupKey: prevRow?.last_alerted_fresh_setup_key ?? null,
+    });
+    if (!evalResult.stateChanged || !evalResult.alerts.length) continue;
+
+    if (!tradeAlertAllowed(preferences)) {
+      await workerQuery(
+        `update public.swing_trade_recovery_state
+            set last_alerted_recovery_status = $1,
+                last_alerted_fresh_setup_key = $2,
+                last_alerted_at = now()
+          where trade_id = $3::uuid and user_id = $4::uuid`,
+        [evalResult.nextRecoveryStatus, evalResult.nextFreshSetupKey, trade.id, userId],
+      );
+      continue;
+    }
+
+    for (const candidate of evalResult.alerts) {
+      let inserted: Array<{ id: string }>;
+      try {
+        inserted = await workerQuery<{ id: string }>(
+          `insert into public.browser_notification_events
+             (user_id,market,kind,asset_id,trade_id,title,body,route,signature,market_date)
+           values($1,$2,'TRADE_RECOVERY',$3,$4,$5,$6,$7,$8,
+             (now() at time zone case when $2='IN' then 'Asia/Kolkata' else 'America/New_York' end)::date)
+           on conflict(user_id,signature,market_date) do nothing
+           returning id::text`,
+          [
+            userId, market, trade.assetId, trade.id,
+            candidate.title, candidate.body, candidate.route, candidate.signature,
+          ],
+        );
+      } catch (error) {
+        console.error(`[mobile-alerts] failed to insert TRADE_RECOVERY alert for ${trade.ticker}:`, error);
+        continue;
+      }
+      if (!inserted.length) continue;
+
+      const receipts = tokens.length ? await sendExpoMessages(tokens, {
+        title: candidate.pushTitle,
+        body: candidate.pushBody,
+        screen: "ledger",
+        market,
+      }) : [];
+      const { sentCount, failedCount } = await recordDisabledTokens(tokens, receipts);
+      await workerQuery(
+        `insert into public.mobile_notification_log
+           (user_id,trade_id,market,recommendation,signature,quote_updated_at,sent_count,failed_count)
+         values($1,$2,$3,$4,$5,$6,$7,$8)`,
+        [
+          userId, trade.id, market, candidate.recommendation, candidate.signature,
+          trade.recovery?.evaluatedAt ?? trade.quoteUpdatedAt ?? trade.quoteAsOf,
+          sentCount, failedCount,
+        ],
+      );
+      alerts += 1;
+      delivered += sentCount;
+    }
+
+    await workerQuery(
+      `update public.swing_trade_recovery_state
+          set last_alerted_recovery_status = $1,
+              last_alerted_fresh_setup_key = $2,
+              last_alerted_at = now()
+        where trade_id = $3::uuid and user_id = $4::uuid`,
+      [evalResult.nextRecoveryStatus, evalResult.nextFreshSetupKey, trade.id, userId],
+    );
+  }
+  return { alerts, delivered };
+}
+
 export async function dispatchMobileTradeAlerts(markets: Array<"IN" | "US">) {
   const tokens = await workerQuery<PushTokenRow>(
     `select id,user_id,expo_push_token from public.mobile_push_tokens where enabled order by user_id,id`,
@@ -389,6 +493,8 @@ export async function dispatchMobileTradeAlerts(markets: Array<"IN" | "US">) {
   let candidateEvaluated = 0;
   let candidateAlerts = 0;
   let candidateDelivered = 0;
+  let recoveryAlerts = 0;
+  let recoveryDelivered = 0;
   const runCache = createAlertRunCache();
   for (const [userId, userTokens] of byUser) {
     const preferences = await getMobileAlertPreferences(userId);
@@ -455,7 +561,20 @@ export async function dispatchMobileTradeAlerts(markets: Array<"IN" | "US">) {
         alerts += 1;
         delivered += sentCount;
       }
+      const recoverySummary = await dispatchTradeRecoveryAlerts(userId, userTokens, market, trades, preferences);
+      recoveryAlerts += recoverySummary.alerts;
+      recoveryDelivered += recoverySummary.delivered;
     }
   }
-  return { users: byUser.size, evaluated, alerts, delivered, candidateEvaluated, candidateAlerts, candidateDelivered };
+  return {
+    users: byUser.size,
+    evaluated,
+    alerts,
+    delivered,
+    candidateEvaluated,
+    candidateAlerts,
+    candidateDelivered,
+    recoveryAlerts,
+    recoveryDelivered,
+  };
 }
