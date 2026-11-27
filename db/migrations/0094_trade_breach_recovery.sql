@@ -30,9 +30,24 @@ create index if not exists swing_trade_recovery_state_user_market_idx
   on public.swing_trade_recovery_state (user_id, market, evaluated_at desc);
 
 alter table public.swing_trade_recovery_state enable row level security;
+alter table public.swing_trade_recovery_state force row level security;
 
 drop policy if exists swing_trade_recovery_state_tenant_isolation on public.swing_trade_recovery_state;
-create policy swing_trade_recovery_state_tenant_isolation
-  on public.swing_trade_recovery_state
-  using (user_id = nullif(current_setting('app.current_user_id', true), '')::uuid)
-  with check (user_id = nullif(current_setting('app.current_user_id', true), '')::uuid);
+do $$
+begin
+  if exists (select 1 from pg_roles where rolname = 'investogenie_web') then
+    execute 'grant select, insert, update, delete on public.swing_trade_recovery_state to investogenie_web';
+    execute 'create policy swing_trade_recovery_state_tenant_isolation
+      on public.swing_trade_recovery_state
+      for all to investogenie_web
+      using (user_id = nullif(current_setting(''app.current_user_id'', true), '''')::uuid)
+      with check (user_id = nullif(current_setting(''app.current_user_id'', true), '''')::uuid)';
+  else
+    execute 'create policy swing_trade_recovery_state_tenant_isolation
+      on public.swing_trade_recovery_state
+      for all
+      using (user_id = nullif(current_setting(''app.current_user_id'', true), '''')::uuid)
+      with check (user_id = nullif(current_setting(''app.current_user_id'', true), '''')::uuid)';
+  end if;
+end
+$$;
