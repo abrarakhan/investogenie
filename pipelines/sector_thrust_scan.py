@@ -142,18 +142,17 @@ def _load_completed_baselines(cur, country: str, session_date: str, value_floor:
     return out
 
 
-def _load_recent_articles(cur, market: str, as_of_utc: datetime) -> list[dict]:
+def _load_recent_articles(cur, _market: str, as_of_utc: datetime) -> list[dict]:
     cur.execute(
         """
-        select title, source, published_at, url, summary
+        select title, coalesce(source_name, provider, 'News') as src, published_at, url, description
           from public.news_articles
-         where market = %s
-           and published_at >= %s - interval '24 hours'
+         where published_at >= %s - interval '24 hours'
            and published_at <= %s
          order by published_at desc
          limit 150
         """,
-        (market, as_of_utc, as_of_utc),
+        (as_of_utc, as_of_utc),
     )
     return [
         {
@@ -428,6 +427,10 @@ def run_live_or_eod(conn, market: str, mode: str, session_date_override: str | N
         )
         return 0
     finally:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
         with conn.cursor() as cur:
             cur.execute("select pg_advisory_unlock(%s)", (cfg["lock_key"],))
         conn.commit()
