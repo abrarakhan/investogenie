@@ -165,6 +165,7 @@ def run_monitor(conn, market: str, mode: str) -> int:
                 if res["recoveryStatus"] in ("REBOUND_DETECTED", "STOP_RECLAIMED"):
                     recoveries_active += 1
 
+                cur.execute("select set_config('app.current_user_id', %s, true)", (user_id,))
                 cur.execute(
                     """
                     insert into public.swing_trade_recovery_state
