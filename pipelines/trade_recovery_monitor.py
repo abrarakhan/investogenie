@@ -16,7 +16,7 @@ import argparse
 import json
 import os
 import subprocess
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -43,37 +43,47 @@ def _local_iso_date(ts: datetime | None, tz: ZoneInfo) -> str | None:
     return ts.astimezone(tz).date().isoformat()
 
 
-def resolve_expected_session_date(market: str, now_utc: datetime) -> str:
-    """Resolve expected trading session date via the shared exchange calendar (lib/market-calendar.mjs)."""
+def _calendar_query(script: str, *args):
     cal_path = REPO_ROOT / "lib" / "market-calendar.mjs"
-    if cal_path.exists():
-        try:
-            script = (
-                f"import {{ latestExpectedSessionDate }} from {json.dumps(str(cal_path))};"
-                f"process.stdout.write(latestExpectedSessionDate({json.dumps(market)}));"
-            )
-            out = subprocess.check_output(
-                ["node", "--input-type=module", "-e", script],
-                cwd=str(REPO_ROOT),
-                timeout=5,
-                text=True,
-            ).strip()
-            if len(out) == 10 and out[4] == "-" and out[7] == "-":
-                return out
-        except Exception:
-            pass
-    # Conservative weekday fallback if Node calendar is unavailable
-    d = now_utc.astimezone(TZS[market]).date()
-    while d.weekday() >= 5:
-        d -= timedelta(days=1)
-    return d.isoformat()
+    return json.loads(subprocess.check_output(
+        ["node", "--input-type=module", "-e", f"import * as cal from {json.dumps(str(cal_path))};"
+         f"const args = JSON.parse(process.argv[1]); {script}", json.dumps(args)],
+        cwd=str(REPO_ROOT), timeout=5, text=True,
+    ))
+
+
+def resolve_recovery_sessions(market: str, now_utc: datetime) -> dict:
+    return _calendar_query("""
+        const [market, instant] = args;
+        const at = new Date(instant);
+        const clock = cal.zonedMarketClock(market, at);
+        console.log(JSON.stringify({
+          today: clock.date,
+          live: cal.isMarketOpenNow(market, at) ? clock.date : null,
+          completed: cal.latestExpectedSessionDate(market, at),
+        }));
+    """, market, now_utc.isoformat())
+
+
+def recovery_session_counts(market: str, through: str, bought_dates: set[str]) -> dict:
+    if not bought_dates:
+        return {}
+    return _calendar_query("""
+        const [market, through, starts] = args;
+        console.log(JSON.stringify(Object.fromEntries(
+          starts.map(start => [start, cal.tradingSessionLag(market, start, through)])
+        )));
+    """, market, through, sorted(bought_dates))
 
 
 def run_monitor(conn, market: str, mode: str) -> int:
     lock_key = LOCK_KEYS[market]
     tz = TZS[market]
     now_utc = datetime.now(timezone.utc)
-    expected_session_date = resolve_expected_session_date(market, now_utc)
+    sessions = resolve_recovery_sessions(market, now_utc)
+    expected_session_date = sessions["live"] if mode == "LIVE" else sessions["completed"]
+    if expected_session_date is None:
+        return 0
 
     with conn.cursor() as cur:
         cur.execute("select pg_try_advisory_lock(%s)", (lock_key,))
@@ -122,7 +132,6 @@ def run_monitor(conn, market: str, mode: str) -> int:
                        q.price, q.as_of::text, q.source, q.updated_at,
                        td.volume_ratio_20, td.return_20d, btd.return_20d as bench_return_20d,
                        path.two_session_close,
-                       held.sessions_held,
                        tb.thrust_label, tb.related_news,
                        rs.first_detected_at, rs.fresh_setup_first_qualified_at
                   from public.swing_trade_ledger l
@@ -148,26 +157,21 @@ def run_monitor(conn, market: str, mode: str) -> int:
                         select d.close, row_number() over (order by d.date desc) as rn
                           from public.daily_ohlcv d
                          where d.asset_id = l.asset_id
-                           and d.date < coalesce(q.as_of, current_date)
+                           and d.date <= %s::date
+                           and d.date < %s::date
                          order by d.date desc
                          limit 2
                       ) c
                   ) path on true
-                  left join lateral (
-                    select count(distinct d.date)::int as sessions_held
-                      from public.daily_ohlcv d
-                     where d.asset_id = l.asset_id
-                       and d.date > l.bought_on
-                       and d.date <= coalesce(q.as_of, current_date)
-                  ) held on true
                   left join thrust_by_asset tb on tb.asset_id = l.asset_id
                   left join public.swing_trade_recovery_state rs on rs.trade_id = l.id
                  where l.market = %s and l.status = 'OPEN'
                 """,
-                (market, market, bench_tickers, bench_tickers, market),
+                (market, market, bench_tickers, bench_tickers, sessions["completed"], expected_session_date, market),
             )
             rows = cur.fetchall()
 
+        session_counts = recovery_session_counts(market, sessions["today"], {r[7] for r in rows if r[7]})
         breaches_recorded = 0
         recoveries_active = 0
         with conn.cursor() as cur:
@@ -179,7 +183,6 @@ def run_monitor(conn, market: str, mode: str) -> int:
                     q_price, q_as_of, q_source, q_updated_at,
                     vol_ratio, ret_20d, bench_ret_20d,
                     two_sess_close,
-                    sessions_held,
                     thrust_label, thrust_news,
                     prior_detected_at, prior_fresh_qual_at,
                 ) = r
@@ -196,7 +199,7 @@ def run_monitor(conn, market: str, mode: str) -> int:
                 )
 
                 window_expired_below = is_window_expired(
-                    sessions_held=int(sessions_held) if sessions_held is not None else None,
+                    sessions_held=session_counts.get(bought_on),
                     expected_holding_days=int(exp_days) if exp_days is not None else None,
                     price=float(q_price) if q_price is not None else None,
                     buy_price=float(buy_price) if buy_price is not None else None,
@@ -257,7 +260,7 @@ def run_monitor(conn, market: str, mode: str) -> int:
                     cur.execute(
                         """
                         with latest_ss as (select max(captured_at) as ts from public.strong_swing_snapshots where market = %s)
-                        select status, strength_score, confirmation_entry, projected_stop, projected_target, gates, captured_at
+                        select status, strength_score, confirmation_entry, projected_stop, projected_target, gates, captured_at, current_price
                           from public.strong_swing_snapshots
                          where market = %s and asset_id = %s::uuid and captured_at = (select ts from latest_ss)
                          limit 1
@@ -275,6 +278,7 @@ def run_monitor(conn, market: str, mode: str) -> int:
                             "gates": sr[5],
                             "signalDate": _local_iso_date(sr[6], tz),
                             "signalAt": sr[6].isoformat() if sr[6] else None,
+                            "assessedPrice": float(sr[7]) if sr[7] is not None else None,
                         }
                     if market == "IN":
                         cur.execute(
@@ -343,6 +347,7 @@ def run_monitor(conn, market: str, mode: str) -> int:
                     "recoveryStatus": res["recoveryStatus"],
                     "evaluatedAt": now_utc.isoformat(),
                     "expectedSessionDate": expected_session_date,
+                    "quoteAt": q_updated_at.isoformat() if q_updated_at else None,
                     "quoteVerified": quote_verified,
                     "currentPrice": float(q_price) if q_price is not None else None,
                     "priorFreshSetupFirstQualifiedAt": prior_fresh_qual_at.isoformat() if prior_fresh_qual_at else None,

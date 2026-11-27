@@ -16,7 +16,6 @@ from typing import Any
 REBOUND_2D_MIN_PCT = 8.0
 LIVE_QUOTE_MAX_AGE_MINUTES = 5.0
 LIVE_SIGNAL_MAX_AGE_MINUTES = 15.0
-MAX_ENTRY_EXTENSION_PCT = 0.03  # 3% above entry max for fresh executable qualification
 
 
 def _round2(value: float) -> float:
@@ -249,6 +248,7 @@ def _evaluate_engine_readiness(
     entry: float | None,
     stop: float | None,
     gates_ok: bool,
+    engine_quote_verified: bool,
 ) -> tuple[str, str | None]:
     """Classify an engine's READY signal as QUALIFIED, RECENT_SIGNAL, or REJECTED."""
     if not _signal_same_session(signal_date, expected_session_date):
@@ -274,12 +274,10 @@ def _evaluate_engine_readiness(
         if age_min > LIVE_SIGNAL_MAX_AGE_MINUTES or age_min < -2.0:
             return "RECENT_SIGNAL", f"assessment {int(max(0, round(age_min)))}m old (>{int(LIVE_SIGNAL_MAX_AGE_MINUTES)}m live limit)"
 
-    # Tight entry-zone validation (no loose +15% chase)
-    if entry is not None and entry > 0:
-        if current_price < entry * 0.99:
-            return "RECENT_SIGNAL", f"current price below setup entry ({entry:.2f})"
-        if current_price > entry * (1.0 + MAX_ENTRY_EXTENSION_PCT):
-            return "RECENT_SIGNAL", f"current price >{int(MAX_ENTRY_EXTENSION_PCT * 100)}% above entry ({entry:.2f})"
+    if entry is None or stop is None or not 0 < stop < entry:
+        return "RECENT_SIGNAL", "missing valid strategy entry and stop"
+    if mode != "LIVE" or not engine_quote_verified:
+        return "RECENT_SIGNAL", "awaiting strategy execution gates on the current quote"
 
     return "QUALIFIED", None
 
@@ -288,9 +286,8 @@ def evaluate_fresh_setup(item: dict[str, Any]) -> dict[str, Any]:
     """Evaluate whether a recovering open trade qualifies as a fresh executable setup.
 
     Returns:
-    - QUALIFIED: current-session, recent (<=15m in LIVE), engine gates pass, within 3% entry band & above stop.
-    - RECENT_SIGNAL: same-session READY signal that is older than 15m in LIVE, EOD-only in LIVE, or outside
-      the tight entry band (still above stop). Rendered as "Recent strategy signal" and suppresses alerts.
+    - QUALIFIED: recent live assessment with passing execution gates on the current quote.
+    - RECENT_SIGNAL: same-session READY signal without current execution evidence. Does not alert.
     - BLOCKED: no qualifying or recent ready signal (with concise main blocker).
     - NONE: trade is not in REBOUND_DETECTED / STOP_RECLAIMED.
     """
@@ -315,6 +312,7 @@ def evaluate_fresh_setup(item: dict[str, Any]) -> dict[str, Any]:
     expected_session_date = str(item.get("expectedSessionDate") or "")
     quote_verified = bool(item.get("quoteVerified"))
     current_price = _to_num(item.get("currentPrice"))
+    quote_at = _parse_iso_dt(item.get("quoteAt"))
     prior_qualified_at = item.get("priorFreshSetupFirstQualifiedAt")
 
     if not quote_verified or current_price is None:
@@ -350,6 +348,7 @@ def evaluate_fresh_setup(item: dict[str, Any]) -> dict[str, Any]:
         *,
         eod_only: bool = False,
         gates_ok: bool = True,
+        engine_quote_verified: bool = False,
     ) -> dict[str, Any] | None:
         nonlocal recent_fallback
         verdict, reason = _evaluate_engine_readiness(
@@ -363,6 +362,7 @@ def evaluate_fresh_setup(item: dict[str, Any]) -> dict[str, Any]:
             entry=entry,
             stop=stop,
             gates_ok=gates_ok,
+            engine_quote_verified=engine_quote_verified,
         )
         if verdict == "QUALIFIED":
             return {
@@ -396,6 +396,11 @@ def evaluate_fresh_setup(item: dict[str, Any]) -> dict[str, Any]:
     # 1. Strong Swing (strictest)
     if strong and strong.get("status") == "EXECUTION_READY":
         gates = strong.get("gates") or []
+        capture_at = _parse_iso_dt(strong.get("signalAt"))
+        entry_gate_passed = any(
+            isinstance(g, dict) and g.get("key") == "entry_zone" and g.get("passed") is True
+            for g in gates
+        )
         gates_ok = all(
             g.get("passed") is True
             for g in gates
@@ -412,6 +417,11 @@ def evaluate_fresh_setup(item: dict[str, Any]) -> dict[str, Any]:
             _to_num(strong.get("stop")),
             _to_num(strong.get("target")),
             gates_ok=gates_ok,
+            engine_quote_verified=(
+                entry_gate_passed
+                and _to_num(strong.get("assessedPrice")) == current_price
+                and quote_at is not None and capture_at is not None and quote_at <= capture_at
+            ),
         )
         if q:
             return q

@@ -1,5 +1,6 @@
 import unittest
 from datetime import datetime, timezone
+from trade_recovery_monitor import recovery_session_counts, resolve_recovery_sessions
 
 from strategy_math.trade_recovery import (
     assess_trade_recovery,
@@ -10,6 +11,18 @@ from strategy_math.trade_recovery import (
 
 
 class TradeRecoveryTests(unittest.TestCase):
+    def test_live_session_and_completed_baseline_are_distinct(self):
+        at = datetime(2026, 11, 25, 6, tzinfo=timezone.utc)
+        self.assertEqual(resolve_recovery_sessions("IN", at), {
+            "today": "2026-11-25", "live": "2026-11-25", "completed": "2026-11-23",
+        })
+        self.assertEqual(recovery_session_counts("IN", "2026-11-26", {"2026-11-23"}), {"2026-11-23": 2})
+        self.assertTrue(is_quote_verified_for_breach(
+            market="IN", mode="LIVE", price=190, quote_as_of="2026-11-25",
+            quote_source="BREEZE_LIVE", quote_updated_at=at,
+            expected_session_date=resolve_recovery_sessions("IN", at)["live"], now_utc=at,
+        ))
+
     def test_dhampursug_rebound_detected_below_frozen_stop(self):
         res = assess_trade_recovery({
             "market": "IN",
@@ -124,10 +137,11 @@ class TradeRecoveryTests(unittest.TestCase):
             "expectedSessionDate": "2026-11-27",
             "quoteVerified": True,
             "currentPrice": 194.0,
-            "trendContinuation": {
-                "status": "TREND_CONTINUATION_READY",
-                "setupVariant": "EP_REBOUND",
-                "score": 88,
+            "quoteAt": "2026-11-27T08:59:00Z",
+            "strongSwing": {
+                "status": "EXECUTION_READY",
+                "assessedPrice": 194.0,
+                "gates": [{"key": "entry_zone", "passed": True, "blocking": True}],
                 "entry": 192.0,
                 "stop": 178.5,
                 "target": 219.0,
@@ -136,7 +150,7 @@ class TradeRecoveryTests(unittest.TestCase):
             },
         })
         self.assertEqual(fs["freshSetupStatus"], "QUALIFIED")
-        self.assertEqual(fs["freshSetupEngine"], "TREND_CONTINUATION")
+        self.assertEqual(fs["freshSetupEngine"], "STRONG_SWING")
         self.assertEqual(fs["freshSetupStop"], 178.5)
         self.assertEqual(fs["freshSetupFirstQualifiedAt"], "2026-11-27T09:05:00Z")
 
@@ -186,7 +200,7 @@ class TradeRecoveryTests(unittest.TestCase):
             },
         })
         self.assertEqual(extended["freshSetupStatus"], "RECENT_SIGNAL")
-        self.assertIn(">3% above entry", extended["freshSetupBlocker"])
+        self.assertIn("current quote", extended["freshSetupBlocker"])
 
     def test_stale_prior_session_ready_signal_cannot_qualify(self):
         fs = evaluate_fresh_setup({
