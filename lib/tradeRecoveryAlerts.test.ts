@@ -187,4 +187,37 @@ describe("buildRecoveryTransitionAlerts", () => {
     expect(partial.lastAlertedRecoveryStatus).toBe("STOP_RECLAIMED");
     expect(partial.lastAlertedFreshSetupKey).toBeNull();
   });
+
+  it("suppresses fresh-setup alert when downgraded to RECENT_SIGNAL", () => {
+    const res = buildRecoveryTransitionAlerts(
+      {
+        ...baseTrade,
+        recovery: {
+          status: "STOP_RECLAIMED",
+          headline: "Stop reclaimed · Back above ₹191.59 frozen stop",
+          move2dPct: 22.4,
+          volumePace: 2.5,
+          relativeStrength20d: 6.2,
+          sectorThrustGroup: "Sugar & Ethanol (ACTIVE)",
+          relatedNews: [],
+          firstDetectedAt: "2026-11-26T09:15:00Z",
+          evaluatedAt: "2026-11-27T09:45:00Z",
+          freshSetup: {
+            status: "RECENT_SIGNAL",
+            engine: "SWING_BREAKOUT",
+            label: "Recent strategy signal · Swing Breakout (score 75/100)",
+            entry: 180.01,
+            stop: null,
+            target: null,
+            route: "/terminal/in/screener",
+            blocker: "EOD-only scan; awaiting live strategy confirmation",
+            firstQualifiedAt: null,
+          },
+        },
+      },
+      { lastAlertedRecoveryStatus: "STOP_RECLAIMED", lastAlertedFreshSetupKey: null },
+    );
+    expect(res.alerts).toHaveLength(0);
+    expect(res.nextFreshSetupKey).toBeNull();
+  });
 });

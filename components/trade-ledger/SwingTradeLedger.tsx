@@ -215,6 +215,19 @@ function TradeCard({ trade, today, returns }: { trade: SwingLedgerTrade; today: 
               )}
             </div>
           )}
+          {trade.recovery.freshSetup.status === "RECENT_SIGNAL" && (
+            <div className="mt-2 flex flex-wrap items-center justify-between gap-2 border-t border-sky-400/20 pt-2 text-[11px] text-amber-200/90">
+              <span>
+                {trade.recovery.freshSetup.label}
+                {trade.recovery.freshSetup.blocker ? ` (${trade.recovery.freshSetup.blocker})` : ""}
+              </span>
+              {trade.recovery.freshSetup.route && (
+                <a href={trade.recovery.freshSetup.route} className="font-semibold text-sky-200 underline underline-offset-2 hover:text-white">
+                  Inspect scan
+                </a>
+              )}
+            </div>
+          )}
           {trade.recovery.freshSetup.status === "BLOCKED" && trade.recovery.freshSetup.blocker && (
             <div className="mt-2 border-t border-sky-400/20 pt-2 text-[11px] text-sky-100/75">
               Fresh setup recheck: Not qualified — {trade.recovery.freshSetup.blocker}

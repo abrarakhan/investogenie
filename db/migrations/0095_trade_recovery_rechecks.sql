@@ -4,7 +4,7 @@
 
 alter table public.swing_trade_recovery_state
   add column if not exists fresh_setup_status text not null default 'NONE'
-    check (fresh_setup_status in ('NONE', 'QUALIFIED', 'BLOCKED')),
+    check (fresh_setup_status in ('NONE', 'QUALIFIED', 'RECENT_SIGNAL', 'BLOCKED')),
   add column if not exists fresh_setup_engine text,
   add column if not exists fresh_setup_label text,
   add column if not exists fresh_setup_entry numeric,

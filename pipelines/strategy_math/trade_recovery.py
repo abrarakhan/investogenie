@@ -1,16 +1,22 @@
-"""Authoritative Python logic for Trade Breach History and Recovery Context (Phase 1).
+"""Authoritative Python logic for Trade Breach History, Recovery Context & Fresh-Setup Validation.
 
 Strictly separates:
-1. Original frozen plan + immutable first verified stop-breach audit record.
+1. Original frozen plan + immutable first verified stop-breach audit record (with stop-in-force).
 2. Recovery context (REBOUND_DETECTED / STOP_RECLAIMED / UNVERIFIED / NONE)
    without rewriting the original plan or inventing ad-hoc invalidation levels.
+3. Fresh setup qualification (QUALIFIED / RECENT_SIGNAL / BLOCKED / NONE) gated on
+   current-session recency, engine execution gates, and tight entry/stop validation.
 """
 from __future__ import annotations
 
 import math
+from datetime import datetime, timezone
 from typing import Any
 
 REBOUND_2D_MIN_PCT = 8.0
+LIVE_QUOTE_MAX_AGE_MINUTES = 5.0
+LIVE_SIGNAL_MAX_AGE_MINUTES = 15.0
+MAX_ENTRY_EXTENSION_PCT = 0.03  # 3% above entry max for fresh executable qualification
 
 
 def _round2(value: float) -> float:
@@ -27,11 +33,67 @@ def _to_num(value: Any) -> float | None:
         return None
 
 
+def _parse_iso_dt(value: Any) -> datetime | None:
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+    try:
+        s = str(value).strip()
+        if s.endswith("Z"):
+            s = s[:-1] + "+00:00"
+        dt = datetime.fromisoformat(s)
+        return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+
+
 def _currency_symbol(currency: str | None, market: str) -> str:
     cur = (currency or "").upper()
     if cur == "INR" or (not cur and market == "IN"):
         return "₹"
     return "$"
+
+
+def is_window_expired(
+    sessions_held: int | None,
+    expected_holding_days: int | None,
+    price: float | None,
+    buy_price: float | None,
+) -> bool:
+    """Shared ledger trading-session expiry rule: strictly greater than expected holding sessions."""
+    if sessions_held is None or expected_holding_days is None or price is None or buy_price is None:
+        return False
+    return int(sessions_held) > int(expected_holding_days) and float(price) < float(buy_price)
+
+
+def is_quote_verified_for_breach(
+    *,
+    market: str,
+    mode: str,
+    price: float | None,
+    quote_as_of: str | None,
+    quote_source: str | None,
+    quote_updated_at: Any,
+    expected_session_date: str,
+    now_utc: datetime,
+    max_live_age_minutes: float = LIVE_QUOTE_MAX_AGE_MINUTES,
+) -> bool:
+    """Verify quote freshness & expected exchange session before recording permanent breach history."""
+    if price is None or not quote_as_of or not expected_session_date:
+        return False
+    if str(quote_as_of)[:10] != str(expected_session_date)[:10]:
+        return False
+    if mode == "LIVE":
+        if market == "IN" and quote_source != "BREEZE_LIVE":
+            return False
+        updated_dt = _parse_iso_dt(quote_updated_at)
+        if updated_dt is None:
+            return False
+        age_minutes = (now_utc - updated_dt).total_seconds() / 60.0
+        return 0.0 <= age_minutes <= max_live_age_minutes
+    # EOD mode: quote_as_of matches exchange-calendar expected_session_date
+    return True
 
 
 def assess_trade_recovery(item: dict[str, Any]) -> dict[str, Any]:
@@ -167,41 +229,70 @@ def assess_trade_recovery(item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _signal_is_fresh(signal_date: Any, expected_session_date: str) -> bool:
-    """Require stored strategy signals to come from the current expected trading session."""
+def _signal_same_session(signal_date: Any, expected_session_date: str) -> bool:
     if not signal_date or not isinstance(signal_date, str):
         return False
-    sig_day = signal_date[:10]
     if not expected_session_date:
         return True
-    return sig_day >= expected_session_date[:10]
+    return signal_date[:10] == expected_session_date[:10]
 
 
-def _quote_validates_setup(
-    current_price: float | None,
+def _evaluate_engine_readiness(
+    *,
+    mode: str,
+    eod_only_engine: bool,
+    signal_date: Any,
+    signal_at: Any,
+    expected_session_date: str,
+    evaluated_dt: datetime | None,
+    current_price: float,
     entry: float | None,
     stop: float | None,
-) -> tuple[bool, str | None]:
-    """Validate a candidate fresh setup against the current verified quote."""
-    if current_price is None or current_price <= 0:
-        return False, "missing verified current quote"
+    gates_ok: bool,
+) -> tuple[str, str | None]:
+    """Classify an engine's READY signal as QUALIFIED, RECENT_SIGNAL, or REJECTED."""
+    if not _signal_same_session(signal_date, expected_session_date):
+        sig_tag = str(signal_date)[:10] if signal_date else "undated"
+        return "REJECTED", f"signal stale ({sig_tag})"
+
+    if not gates_ok:
+        return "REJECTED", "blocking execution gate failed"
+
     if stop is not None and stop > 0 and current_price <= stop:
-        return False, f"current price below setup stop ({stop:.2f})"
+        return "REJECTED", f"current price below setup stop ({stop:.2f})"
+
+    # EOD-only engines (e.g. Swing Breakout) cannot be announced as fresh live intraday setups
+    if mode == "LIVE" and eod_only_engine:
+        return "RECENT_SIGNAL", "EOD-only scan; awaiting live strategy confirmation"
+
+    # During LIVE mode, require a recent assessment (<= 15 min)
+    if mode == "LIVE":
+        sig_dt = _parse_iso_dt(signal_at)
+        if sig_dt is None or evaluated_dt is None:
+            return "RECENT_SIGNAL", "missing live capture timestamp"
+        age_min = (evaluated_dt - sig_dt).total_seconds() / 60.0
+        if age_min > LIVE_SIGNAL_MAX_AGE_MINUTES or age_min < -2.0:
+            return "RECENT_SIGNAL", f"assessment {int(max(0, round(age_min)))}m old (>{int(LIVE_SIGNAL_MAX_AGE_MINUTES)}m live limit)"
+
+    # Tight entry-zone validation (no loose +15% chase)
     if entry is not None and entry > 0:
-        if current_price < entry * 0.985:
-            return False, f"current price below setup entry ({entry:.2f})"
-        if current_price > entry * 1.15:
-            return False, f"current price extended >15% above entry ({entry:.2f})"
-    return True, None
+        if current_price < entry * 0.99:
+            return "RECENT_SIGNAL", f"current price below setup entry ({entry:.2f})"
+        if current_price > entry * (1.0 + MAX_ENTRY_EXTENSION_PCT):
+            return "RECENT_SIGNAL", f"current price >{int(MAX_ENTRY_EXTENSION_PCT * 100)}% above entry ({entry:.2f})"
+
+    return "QUALIFIED", None
 
 
 def evaluate_fresh_setup(item: dict[str, Any]) -> dict[str, Any]:
-    """Evaluate whether a recovering open trade qualifies as a fresh setup in any existing engine.
+    """Evaluate whether a recovering open trade qualifies as a fresh executable setup.
 
-    Strictly separate from the original frozen plan:
-    - Requires a verified current quote and a current-session engine assessment.
-    - Validates setup entry/stop levels against the current quote before qualifying.
-    - Returns the fresh engine's own entry/stop/target when qualified, or the concise main blocker.
+    Returns:
+    - QUALIFIED: current-session, recent (<=15m in LIVE), engine gates pass, within 3% entry band & above stop.
+    - RECENT_SIGNAL: same-session READY signal that is older than 15m in LIVE, EOD-only in LIVE, or outside
+      the tight entry band (still above stop). Rendered as "Recent strategy signal" and suppresses alerts.
+    - BLOCKED: no qualifying or recent ready signal (with concise main blocker).
+    - NONE: trade is not in REBOUND_DETECTED / STOP_RECLAIMED.
     """
     recovery_status = str(item.get("recoveryStatus") or "NONE")
     if recovery_status not in ("REBOUND_DETECTED", "STOP_RECLAIMED"):
@@ -218,7 +309,9 @@ def evaluate_fresh_setup(item: dict[str, Any]) -> dict[str, Any]:
         }
 
     market = str(item.get("market") or "IN").lower()
+    mode = str(item.get("mode") or "LIVE").upper()
     evaluated_at = str(item.get("evaluatedAt") or "")
+    evaluated_dt = _parse_iso_dt(evaluated_at)
     expected_session_date = str(item.get("expectedSessionDate") or "")
     quote_verified = bool(item.get("quoteVerified"))
     current_price = _to_num(item.get("currentPrice"))
@@ -242,48 +335,83 @@ def evaluate_fresh_setup(item: dict[str, Any]) -> dict[str, Any]:
     momentum = item.get("momentumV2") or None
     swing = item.get("swingBreakout") or None
     rejection_notes: list[str] = []
+    recent_fallback: dict[str, Any] | None = None
 
-    def _try_qualify(
+    def _check_engine(
         engine_code: str,
         engine_name: str,
         label: str,
         route: str,
         signal_date: Any,
+        signal_at: Any,
         entry: float | None,
         stop: float | None,
         target: float | None,
+        *,
+        eod_only: bool = False,
+        gates_ok: bool = True,
     ) -> dict[str, Any] | None:
-        if not _signal_is_fresh(signal_date, expected_session_date):
-            sig_tag = str(signal_date)[:10] if signal_date else "undated"
-            rejection_notes.append(f"{engine_name} signal stale ({sig_tag})")
+        nonlocal recent_fallback
+        verdict, reason = _evaluate_engine_readiness(
+            mode=mode,
+            eod_only_engine=eod_only,
+            signal_date=signal_date,
+            signal_at=signal_at,
+            expected_session_date=expected_session_date,
+            evaluated_dt=evaluated_dt,
+            current_price=current_price,
+            entry=entry,
+            stop=stop,
+            gates_ok=gates_ok,
+        )
+        if verdict == "QUALIFIED":
+            return {
+                "freshSetupStatus": "QUALIFIED",
+                "freshSetupEngine": engine_code,
+                "freshSetupLabel": label,
+                "freshSetupEntry": entry,
+                "freshSetupStop": stop,
+                "freshSetupTarget": target,
+                "freshSetupRoute": route,
+                "freshSetupBlocker": None,
+                "freshSetupFirstQualifiedAt": prior_qualified_at or evaluated_at,
+            }
+        if verdict == "RECENT_SIGNAL":
+            if recent_fallback is None:
+                recent_fallback = {
+                    "freshSetupStatus": "RECENT_SIGNAL",
+                    "freshSetupEngine": engine_code,
+                    "freshSetupLabel": f"Recent strategy signal · {label}",
+                    "freshSetupEntry": entry,
+                    "freshSetupStop": stop,
+                    "freshSetupTarget": target,
+                    "freshSetupRoute": route,
+                    "freshSetupBlocker": reason,
+                    "freshSetupFirstQualifiedAt": prior_qualified_at,
+                }
             return None
-        ok, reason = _quote_validates_setup(current_price, entry, stop)
-        if not ok:
-            rejection_notes.append(f"{engine_name}: {reason}")
-            return None
-        return {
-            "freshSetupStatus": "QUALIFIED",
-            "freshSetupEngine": engine_code,
-            "freshSetupLabel": label,
-            "freshSetupEntry": entry,
-            "freshSetupStop": stop,
-            "freshSetupTarget": target,
-            "freshSetupRoute": route,
-            "freshSetupBlocker": None,
-            "freshSetupFirstQualifiedAt": prior_qualified_at or evaluated_at,
-        }
+        rejection_notes.append(f"{engine_name}: {reason}")
+        return None
 
     # 1. Strong Swing (strictest)
     if strong and strong.get("status") == "EXECUTION_READY":
-        q = _try_qualify(
+        gates = strong.get("gates") or []
+        gates_ok = all(
+            g.get("passed") is True
+            for g in gates
+            if isinstance(g, dict) and g.get("blocking", True)
+        )
+        q = _check_engine(
             "STRONG_SWING",
             "Strong Swing",
             f"Strong Swing · Execution Ready (score {round(_to_num(strong.get('strengthScore')) or 0)})",
             f"/terminal/{market}/strong-swing",
             strong.get("signalDate"),
+            strong.get("signalAt"),
             _to_num(strong.get("entry")),
             _to_num(strong.get("stop")),
             _to_num(strong.get("target")),
+            gates_ok=gates_ok,
         )
         if q:
             return q
@@ -292,12 +420,13 @@ def evaluate_fresh_setup(item: dict[str, Any]) -> dict[str, Any]:
     if trend and trend.get("status") == "TREND_CONTINUATION_READY":
         variant = trend.get("setupVariant")
         lbl = f"Mid-Way ({str(variant).replace('_', ' ')})" if variant else "Trend Continuation Ready"
-        q = _try_qualify(
+        q = _check_engine(
             "TREND_CONTINUATION",
             "Trend Continuation",
             f"{lbl} (score {round(_to_num(trend.get('score')) or 0)})",
             f"/terminal/{market}/strong-swing?model=TREND_CONTINUATION",
             trend.get("signalDate"),
+            trend.get("signalAt"),
             _to_num(trend.get("entry")),
             _to_num(trend.get("stop")),
             _to_num(trend.get("target")),
@@ -307,34 +436,41 @@ def evaluate_fresh_setup(item: dict[str, Any]) -> dict[str, Any]:
 
     # 3. Momentum Ignition V2
     if momentum and (momentum.get("status") == "MOMENTUM_READY" or momentum.get("ready") is True):
-        q = _try_qualify(
+        q = _check_engine(
             "MOMENTUM_IGNITION_V2",
             "Momentum V2",
             "Momentum Ignition V2 · Ready",
             f"/terminal/{market}/strong-swing?model=MOMENTUM_IGNITION_V2",
             momentum.get("signalDate"),
+            momentum.get("signalAt"),
             _to_num(momentum.get("entry")),
             _to_num(momentum.get("stop")),
             _to_num(momentum.get("target")),
+            gates_ok=bool(momentum.get("ready", True)),
         )
         if q:
             return q
 
-    # 4. Swing Breakout (high-score breakout)
+    # 4. Swing Breakout (EOD-only scan)
     if swing and swing.get("verdict") == "LONG_BREAKOUT" and (_to_num(swing.get("score")) or 0.0) >= 0.65:
         sc = round((_to_num(swing.get("score")) or 0.0) * 100)
-        q = _try_qualify(
+        q = _check_engine(
             "SWING_BREAKOUT",
             "Swing Breakout",
             f"Swing Breakout (score {sc}/100)",
             f"/terminal/{market}/screener",
             swing.get("signalDate"),
+            swing.get("signalAt"),
             _to_num(swing.get("entry")),
             _to_num(swing.get("stop")),
             _to_num(swing.get("target")),
+            eod_only=True,
         )
         if q:
             return q
+
+    if recent_fallback is not None:
+        return recent_fallback
 
     # None qualified: synthesize concise main blocker from rejection reasons and available engine states
     blockers: list[str] = list(rejection_notes)

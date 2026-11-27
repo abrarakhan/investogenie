@@ -1,6 +1,12 @@
 import unittest
+from datetime import datetime, timezone
 
-from strategy_math.trade_recovery import assess_trade_recovery, evaluate_fresh_setup
+from strategy_math.trade_recovery import (
+    assess_trade_recovery,
+    evaluate_fresh_setup,
+    is_quote_verified_for_breach,
+    is_window_expired,
+)
 
 
 class TradeRecoveryTests(unittest.TestCase):
@@ -80,14 +86,44 @@ class TradeRecoveryTests(unittest.TestCase):
         self.assertEqual(res["recordBreach"]["stopLevel"], 190.0)
         self.assertEqual(res["recordBreach"]["source"], "BREEZE_LIVE")
 
-    def test_fresh_setup_links_qualified_engine_with_own_levels(self):
+    def test_live_quote_age_and_session_verification_for_in_and_us(self):
+        now = datetime(2026, 11, 27, 15, 0, 0, tzinfo=timezone.utc)
+        # US LIVE quote > 5 min old must fail verification
+        self.assertFalse(is_quote_verified_for_breach(
+            market="US", mode="LIVE", price=100.0, quote_as_of="2026-11-27",
+            quote_source="YAHOO_LIVE", quote_updated_at="2026-11-27T14:50:00Z",
+            expected_session_date="2026-11-27", now_utc=now,
+        ))
+        # US LIVE fresh quote on expected session passes
+        self.assertTrue(is_quote_verified_for_breach(
+            market="US", mode="LIVE", price=100.0, quote_as_of="2026-11-27",
+            quote_source="YAHOO_LIVE", quote_updated_at="2026-11-27T14:58:00Z",
+            expected_session_date="2026-11-27", now_utc=now,
+        ))
+        # EOD quote from prior session fails against exchange-calendar expected session
+        self.assertFalse(is_quote_verified_for_breach(
+            market="IN", mode="EOD", price=185.0, quote_as_of="2026-11-26",
+            quote_source="NSE_EOD", quote_updated_at="2026-11-26T12:00:00Z",
+            expected_session_date="2026-11-27", now_utc=now,
+        ))
+
+    def test_session_expiry_exact_boundary_matches_ledger_rule(self):
+        # At sessions_held == expected_holding_days, plan is NOT yet expired
+        self.assertFalse(is_window_expired(sessions_held=10, expected_holding_days=10, price=190.0, buy_price=200.0))
+        # One session past expected_holding_days and below entry -> expired
+        self.assertTrue(is_window_expired(sessions_held=11, expected_holding_days=10, price=190.0, buy_price=200.0))
+        # Past expected_holding_days but above entry -> not expired below entry
+        self.assertFalse(is_window_expired(sessions_held=11, expected_holding_days=10, price=205.0, buy_price=200.0))
+
+    def test_fresh_setup_links_qualified_engine_when_recent_and_within_entry_band(self):
         fs = evaluate_fresh_setup({
             "market": "IN",
+            "mode": "LIVE",
             "recoveryStatus": "REBOUND_DETECTED",
-            "evaluatedAt": "2026-11-27T09:00:00Z",
+            "evaluatedAt": "2026-11-27T09:05:00Z",
             "expectedSessionDate": "2026-11-27",
             "quoteVerified": True,
-            "currentPrice": 193.0,
+            "currentPrice": 194.0,
             "trendContinuation": {
                 "status": "TREND_CONTINUATION_READY",
                 "setupVariant": "EP_REBOUND",
@@ -96,18 +132,68 @@ class TradeRecoveryTests(unittest.TestCase):
                 "stop": 178.5,
                 "target": 219.0,
                 "signalDate": "2026-11-27",
+                "signalAt": "2026-11-27T09:00:00Z",
             },
         })
         self.assertEqual(fs["freshSetupStatus"], "QUALIFIED")
         self.assertEqual(fs["freshSetupEngine"], "TREND_CONTINUATION")
         self.assertEqual(fs["freshSetupStop"], 178.5)
-        self.assertEqual(fs["freshSetupFirstQualifiedAt"], "2026-11-27T09:00:00Z")
+        self.assertEqual(fs["freshSetupFirstQualifiedAt"], "2026-11-27T09:05:00Z")
 
-    def test_stale_ready_signal_cannot_qualify_as_fresh_setup(self):
+    def test_same_day_hours_old_or_extended_signal_downgrades_to_recent_signal(self):
+        # 45 minutes old in LIVE mode -> RECENT_SIGNAL (suppresses fresh-setup alert)
+        stale_intraday = evaluate_fresh_setup({
+            "market": "IN",
+            "mode": "LIVE",
+            "recoveryStatus": "STOP_RECLAIMED",
+            "evaluatedAt": "2026-11-27T09:45:00Z",
+            "expectedSessionDate": "2026-11-27",
+            "quoteVerified": True,
+            "currentPrice": 193.0,
+            "strongSwing": {
+                "status": "EXECUTION_READY",
+                "strengthScore": 86,
+                "entry": 192.0,
+                "stop": 180.0,
+                "target": 215.0,
+                "gates": [{"key": "trend", "passed": True, "blocking": True}],
+                "signalDate": "2026-11-27",
+                "signalAt": "2026-11-27T09:00:00Z",
+            },
+        })
+        self.assertEqual(stale_intraday["freshSetupStatus"], "RECENT_SIGNAL")
+        self.assertIn("Recent strategy signal", stale_intraday["freshSetupLabel"])
+        self.assertIn("45m old", stale_intraday["freshSetupBlocker"])
+
+        # Recent but 8% above entry (exceeds 3% band) -> RECENT_SIGNAL
+        extended = evaluate_fresh_setup({
+            "market": "IN",
+            "mode": "LIVE",
+            "recoveryStatus": "STOP_RECLAIMED",
+            "evaluatedAt": "2026-11-27T09:05:00Z",
+            "expectedSessionDate": "2026-11-27",
+            "quoteVerified": True,
+            "currentPrice": 207.5,
+            "trendContinuation": {
+                "status": "TREND_CONTINUATION_READY",
+                "setupVariant": "EP_REBOUND",
+                "score": 88,
+                "entry": 192.0,
+                "stop": 178.5,
+                "target": 219.0,
+                "signalDate": "2026-11-27",
+                "signalAt": "2026-11-27T09:02:00Z",
+            },
+        })
+        self.assertEqual(extended["freshSetupStatus"], "RECENT_SIGNAL")
+        self.assertIn(">3% above entry", extended["freshSetupBlocker"])
+
+    def test_stale_prior_session_ready_signal_cannot_qualify(self):
         fs = evaluate_fresh_setup({
             "market": "IN",
+            "mode": "EOD",
             "recoveryStatus": "STOP_RECLAIMED",
-            "evaluatedAt": "2026-11-27T09:00:00Z",
+            "evaluatedAt": "2026-11-27T10:30:00Z",
             "expectedSessionDate": "2026-11-27",
             "quoteVerified": True,
             "currentPrice": 193.0,
@@ -119,22 +205,17 @@ class TradeRecoveryTests(unittest.TestCase):
                 "target": 215.0,
                 "signalDate": "2026-11-24",
             },
-            "swingBreakout": {
-                "verdict": "LONG_BREAKOUT",
-                "score": 0.78,
-                "entry": 191.0,
-                "signalDate": "2026-11-25",
-            },
         })
         self.assertEqual(fs["freshSetupStatus"], "BLOCKED")
         self.assertIsNone(fs["freshSetupEngine"])
-        self.assertIn("Strong Swing signal stale (2026-11-24)", fs["freshSetupBlocker"])
+        self.assertIn("signal stale (2026-11-24)", fs["freshSetupBlocker"])
 
     def test_current_quote_below_setup_stop_cannot_qualify(self):
         fs = evaluate_fresh_setup({
             "market": "IN",
+            "mode": "LIVE",
             "recoveryStatus": "REBOUND_DETECTED",
-            "evaluatedAt": "2026-11-27T09:00:00Z",
+            "evaluatedAt": "2026-11-27T09:05:00Z",
             "expectedSessionDate": "2026-11-27",
             "quoteVerified": True,
             "currentPrice": 176.0,
@@ -146,6 +227,7 @@ class TradeRecoveryTests(unittest.TestCase):
                 "stop": 178.5,
                 "target": 219.0,
                 "signalDate": "2026-11-27",
+                "signalAt": "2026-11-27T09:02:00Z",
             },
         })
         self.assertEqual(fs["freshSetupStatus"], "BLOCKED")
@@ -154,6 +236,7 @@ class TradeRecoveryTests(unittest.TestCase):
     def test_fresh_setup_reports_main_blocker_when_none_qualifies(self):
         fs = evaluate_fresh_setup({
             "market": "IN",
+            "mode": "LIVE",
             "recoveryStatus": "REBOUND_DETECTED",
             "evaluatedAt": "2026-11-27T09:00:00Z",
             "expectedSessionDate": "2026-11-27",

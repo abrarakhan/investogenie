@@ -87,6 +87,12 @@ export default function TradeLedger({ market }: { market: Market }) {
               {item.recovery.freshSetup.target !== null ? ` · Target ${money(item.recovery.freshSetup.target, market)}` : ""}
             </Text>
           )}
+          {item.recovery.freshSetup.status === "RECENT_SIGNAL" && (
+            <Text style={styles.recoveryRecent}>
+              {item.recovery.freshSetup.label}
+              {item.recovery.freshSetup.blocker ? ` (${item.recovery.freshSetup.blocker})` : ""}
+            </Text>
+          )}
           {item.recovery.freshSetup.status === "BLOCKED" && !!item.recovery.freshSetup.blocker && (
             <Text style={styles.recoveryMeta}>Fresh setup recheck: Not qualified — {item.recovery.freshSetup.blocker}</Text>
           )}
@@ -146,5 +152,6 @@ const styles = StyleSheet.create({
   recoveryHeadline: { color: colors.text, fontSize: 12, fontWeight: "700" },
   recoveryMeta: { color: colors.textMuted, fontSize: 11 },
   recoveryQualified: { color: colors.emerald, fontSize: 11, fontWeight: "700", marginTop: 2 },
+  recoveryRecent: { color: colors.amber, fontSize: 11, fontWeight: "700", marginTop: 2 },
   breachFoot: { color: colors.rose, fontSize: 11, opacity: 0.85 },
 });

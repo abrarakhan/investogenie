@@ -1,27 +1,38 @@
 #!/usr/bin/env python3
 """Shared scheduled Python job for Trade Breach History, Recovery Context & Strategy Rechecks.
 
-Evaluates OPEN trades across users, stamps immutable first verified stop-breach records
-(including the stop level in force) on swing_trade_ledger, computes benchmark-adjusted
-relative strength and trading-session horizon expiry, validates fresh setups against
-current-session assessments and verified quotes, and persists results into
-swing_trade_recovery_state so Web and Mobile read stored results without recalculation.
+Evaluates OPEN trades across users:
+- Resolves expected trading session date from the shared exchange calendar (lib/market-calendar.mjs).
+- Enforces live quote-age and session verification before stamping immutable breach history
+  (including the stop level in force).
+- Uses the exact ledger trading-session expiry rule (sessions_held > expected_holding_days).
+- Aligns stock and benchmark dates when computing 20-day relative strength.
+- Validates fresh setups against current-session recency (<=15m in LIVE), engine gates, and
+  tight entry/stop bounds; downgrades stale/extended same-day signals to RECENT_SIGNAL.
 """
 from __future__ import annotations
 
 import argparse
 import json
 import os
+import subprocess
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import psycopg2
 
-from strategy_math.trade_recovery import assess_trade_recovery, evaluate_fresh_setup
+from strategy_math.trade_recovery import (
+    assess_trade_recovery,
+    evaluate_fresh_setup,
+    is_quote_verified_for_breach,
+    is_window_expired,
+)
 
 LOCK_KEYS = {"IN": 8742201, "US": 8742202}
 TZS = {"IN": ZoneInfo("Asia/Kolkata"), "US": ZoneInfo("America/New_York")}
 BENCHMARK_TICKERS = {"IN": ("NIFTYBEES", "^NSEI", "NIFTY"), "US": ("SPY", "^GSPC")}
+REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 def _local_iso_date(ts: datetime | None, tz: ZoneInfo) -> str | None:
@@ -32,12 +43,37 @@ def _local_iso_date(ts: datetime | None, tz: ZoneInfo) -> str | None:
     return ts.astimezone(tz).date().isoformat()
 
 
+def resolve_expected_session_date(market: str, now_utc: datetime) -> str:
+    """Resolve expected trading session date via the shared exchange calendar (lib/market-calendar.mjs)."""
+    cal_path = REPO_ROOT / "lib" / "market-calendar.mjs"
+    if cal_path.exists():
+        try:
+            script = (
+                f"import {{ latestExpectedSessionDate }} from {json.dumps(str(cal_path))};"
+                f"process.stdout.write(latestExpectedSessionDate({json.dumps(market)}));"
+            )
+            out = subprocess.check_output(
+                ["node", "--input-type=module", "-e", script],
+                cwd=str(REPO_ROOT),
+                timeout=5,
+                text=True,
+            ).strip()
+            if len(out) == 10 and out[4] == "-" and out[7] == "-":
+                return out
+        except Exception:
+            pass
+    # Conservative weekday fallback if Node calendar is unavailable
+    d = now_utc.astimezone(TZS[market]).date()
+    while d.weekday() >= 5:
+        d -= timedelta(days=1)
+    return d.isoformat()
+
+
 def run_monitor(conn, market: str, mode: str) -> int:
     lock_key = LOCK_KEYS[market]
     tz = TZS[market]
     now_utc = datetime.now(timezone.utc)
-    today_local = now_utc.astimezone(tz).date().isoformat()
-    fresh_cutoff = now_utc - timedelta(minutes=5)
+    expected_session_date = resolve_expected_session_date(market, now_utc)
 
     with conn.cursor() as cur:
         cur.execute("select pg_try_advisory_lock(%s)", (lock_key,))
@@ -47,39 +83,10 @@ def run_monitor(conn, market: str, mode: str) -> int:
 
     try:
         with conn.cursor() as cur:
-            # Expected trading session date from daily_ohlcv for this market
-            cur.execute(
-                """
-                select max(d.date)::text
-                  from public.daily_ohlcv d
-                  join public.assets a on a.id = d.asset_id
-                 where a.country = %s
-                """,
-                (market,),
-            )
-            latest_db_date = cur.fetchone()[0] or today_local
-            expected_session_date = today_local if mode == "LIVE" else latest_db_date
-
-            # Benchmark 20-day return for true relative strength (stock 20D return - benchmark 20D return)
-            bench_tickers = BENCHMARK_TICKERS[market]
-            cur.execute(
-                """
-                select td.return_20d
-                  from public.screener_technical_daily td
-                  join public.assets a on a.id = td.asset_id
-                 where a.country = %s
-                   and a.ticker = any(%s)
-                   and td.return_20d is not null
-                 order by td.date desc
-                 limit 1
-                """,
-                (market, list(bench_tickers)),
-            )
-            brow = cur.fetchone()
-            benchmark_return_20d = float(brow[0]) if brow and brow[0] is not None else None
-
+            bench_tickers = list(BENCHMARK_TICKERS[market])
             # Load all open trades for this market alongside quotes, 2-session close,
-            # trading-session count held since bought_on, and latest Sector Thrust membership.
+            # exact trading-session count held since bought_on, date-aligned benchmark 20D return,
+            # and latest Sector Thrust membership.
             cur.execute(
                 """
                 with latest_thrust_run as (
@@ -100,12 +107,20 @@ def run_monitor(conn, market: str, mode: str) -> int:
                    order by m.asset_id,
                      case g.status when 'ACTIVE' then 0 else 1 end asc,
                      case g.group_level when 'INDUSTRY' then 0 else 1 end asc
+                ),
+                benchmark_asset as (
+                  select id
+                    from public.assets
+                   where country = %s
+                     and ticker = any(%s)
+                   order by array_position(%s::text[], ticker)
+                   limit 1
                 )
                 select l.id::text, l.user_id::text, l.asset_id::text, a.ticker, l.currency,
                        l.buy_price, l.projected_stop, l.bought_on::text, l.expected_holding_days,
                        l.first_stop_breached_at,
                        q.price, q.as_of::text, q.source, q.updated_at,
-                       td.volume_ratio_20, td.return_20d,
+                       td.volume_ratio_20, td.return_20d, btd.return_20d as bench_return_20d,
                        path.two_session_close,
                        held.sessions_held,
                        tb.thrust_label, tb.related_news,
@@ -114,11 +129,19 @@ def run_monitor(conn, market: str, mode: str) -> int:
                   join public.assets a on a.id = l.asset_id
                   left join public.latest_quotes q on q.asset_id = l.asset_id
                   left join lateral (
-                    select volume_ratio_20, return_20d
+                    select date, volume_ratio_20, return_20d
                       from public.screener_technical_daily
                      where asset_id = l.asset_id
                      order by date desc limit 1
                   ) td on true
+                  left join lateral (
+                    select b.return_20d
+                      from public.screener_technical_daily b
+                      join benchmark_asset ba on ba.id = b.asset_id
+                     where b.date = td.date
+                       and b.return_20d is not null
+                     limit 1
+                  ) btd on true
                   left join lateral (
                     select max(close) filter (where rn = 2) as two_session_close
                       from (
@@ -141,7 +164,7 @@ def run_monitor(conn, market: str, mode: str) -> int:
                   left join public.swing_trade_recovery_state rs on rs.trade_id = l.id
                  where l.market = %s and l.status = 'OPEN'
                 """,
-                (market, market),
+                (market, market, bench_tickers, bench_tickers, market),
             )
             rows = cur.fetchall()
 
@@ -154,39 +177,35 @@ def run_monitor(conn, market: str, mode: str) -> int:
                     buy_price, projected_stop, bought_on, exp_days,
                     first_breach_at,
                     q_price, q_as_of, q_source, q_updated_at,
-                    vol_ratio, ret_20d,
+                    vol_ratio, ret_20d, bench_ret_20d,
                     two_sess_close,
                     sessions_held,
                     thrust_label, thrust_news,
                     prior_detected_at, prior_fresh_qual_at,
                 ) = r
 
-                if mode == "LIVE" and market == "IN":
-                    quote_verified = (
-                        q_price is not None
-                        and q_source == "BREEZE_LIVE"
-                        and q_as_of == expected_session_date
-                        and q_updated_at is not None
-                        and q_updated_at >= fresh_cutoff
-                    )
-                else:
-                    # Outside India LIVE mode, require a quote from the expected trading session
-                    quote_verified = (
-                        q_price is not None
-                        and q_as_of is not None
-                        and q_as_of == expected_session_date
-                    )
+                quote_verified = is_quote_verified_for_breach(
+                    market=market,
+                    mode=mode,
+                    price=float(q_price) if q_price is not None else None,
+                    quote_as_of=q_as_of,
+                    quote_source=q_source,
+                    quote_updated_at=q_updated_at,
+                    expected_session_date=expected_session_date,
+                    now_utc=now_utc,
+                )
 
-                # Trading-session horizon expiry (matches ledger trading-session bar horizon)
-                window_expired_below = False
-                if exp_days and buy_price is not None and q_price is not None and sessions_held is not None:
-                    if int(sessions_held) >= int(exp_days) and float(q_price) < float(buy_price):
-                        window_expired_below = True
+                window_expired_below = is_window_expired(
+                    sessions_held=int(sessions_held) if sessions_held is not None else None,
+                    expected_holding_days=int(exp_days) if exp_days is not None else None,
+                    price=float(q_price) if q_price is not None else None,
+                    buy_price=float(buy_price) if buy_price is not None else None,
+                )
 
-                # True 20D relative strength vs market benchmark (None if benchmark missing)
+                # Date-aligned 20D relative strength vs benchmark (None if benchmark missing on stock's date)
                 rs_20d = (
-                    (float(ret_20d) - benchmark_return_20d)
-                    if (ret_20d is not None and benchmark_return_20d is not None)
+                    (float(ret_20d) - float(bench_ret_20d))
+                    if (ret_20d is not None and bench_ret_20d is not None)
                     else None
                 )
 
@@ -229,7 +248,7 @@ def run_monitor(conn, market: str, mode: str) -> int:
                 if res["recoveryStatus"] in ("REBOUND_DETECTED", "STOP_RECLAIMED"):
                     recoveries_active += 1
 
-                # Phase 2: Automated strategy recheck for recovering trades (current-session + quote-validated)
+                # Phase 2: Automated strategy recheck (recency + engine gates + tight entry/stop check)
                 strong_ctx = None
                 trend_ctx = None
                 mom_ctx = None
@@ -255,11 +274,12 @@ def run_monitor(conn, market: str, mode: str) -> int:
                             "target": float(sr[4]) if sr[4] is not None else None,
                             "gates": sr[5],
                             "signalDate": _local_iso_date(sr[6], tz),
+                            "signalAt": sr[6].isoformat() if sr[6] else None,
                         }
                     if market == "IN":
                         cur.execute(
                             """
-                            select status, setup_variant, score, entry, stop, target, asof_market_date::text
+                            select status, setup_variant, score, entry, stop, target, asof_market_date::text, computed_at
                               from public.trend_continuation_signals
                              where market = 'IN' and asset_id = %s::uuid
                              order by asof_market_date desc, computed_at desc
@@ -277,6 +297,7 @@ def run_monitor(conn, market: str, mode: str) -> int:
                                 "stop": float(tr[4]) if tr[4] is not None else None,
                                 "target": float(tr[5]) if tr[5] is not None else None,
                                 "signalDate": tr[6],
+                                "signalAt": tr[7].isoformat() if tr[7] else None,
                             }
                     cur.execute(
                         """
@@ -295,6 +316,7 @@ def run_monitor(conn, market: str, mode: str) -> int:
                             "status": mr[0],
                             "ready": bool(mr[1]),
                             "signalDate": _local_iso_date(mr[2], tz),
+                            "signalAt": mr[2].isoformat() if mr[2] else None,
                         }
                     cur.execute(
                         """
@@ -317,6 +339,7 @@ def run_monitor(conn, market: str, mode: str) -> int:
 
                 fs = evaluate_fresh_setup({
                     "market": market,
+                    "mode": mode,
                     "recoveryStatus": res["recoveryStatus"],
                     "evaluatedAt": now_utc.isoformat(),
                     "expectedSessionDate": expected_session_date,

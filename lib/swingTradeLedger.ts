@@ -362,7 +362,7 @@ export interface SwingLedgerTrade {
     firstDetectedAt: string | null;
     evaluatedAt: string | null;
     freshSetup: {
-      status: "NONE" | "QUALIFIED" | "BLOCKED";
+      status: "NONE" | "QUALIFIED" | "RECENT_SIGNAL" | "BLOCKED";
       engine: string | null;
       label: string | null;
       entry: number | null;
@@ -829,7 +829,7 @@ export async function getSwingTradeLedger(userId: string, market: "IN" | "US"): 
               ? row.recovery_evaluated_at.toISOString()
               : row.recovery_evaluated_at ? String(row.recovery_evaluated_at) : null,
             freshSetup: {
-              status: (row.fresh_setup_status ? String(row.fresh_setup_status) : "NONE") as "NONE" | "QUALIFIED" | "BLOCKED",
+              status: (row.fresh_setup_status ? String(row.fresh_setup_status) : "NONE") as "NONE" | "QUALIFIED" | "RECENT_SIGNAL" | "BLOCKED",
               engine: row.fresh_setup_engine ? String(row.fresh_setup_engine) : null,
               label: row.fresh_setup_label ? String(row.fresh_setup_label) : null,
               entry: nullableNumber(row.fresh_setup_entry),

@@ -112,7 +112,7 @@ export interface LedgerTrade {
     firstDetectedAt: string | null;
     evaluatedAt: string | null;
     freshSetup: {
-      status: "NONE" | "QUALIFIED" | "BLOCKED";
+      status: "NONE" | "QUALIFIED" | "RECENT_SIGNAL" | "BLOCKED";
       engine: string | null;
       label: string | null;
       entry: number | null;
