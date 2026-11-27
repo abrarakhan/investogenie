@@ -30,7 +30,7 @@ create index if not exists swing_trade_recovery_state_user_market_idx
   on public.swing_trade_recovery_state (user_id, market, evaluated_at desc);
 
 alter table public.swing_trade_recovery_state enable row level security;
-alter table public.swing_trade_recovery_state force row level security;
+alter table public.swing_trade_recovery_state no force row level security;
 
 drop policy if exists swing_trade_recovery_state_tenant_isolation on public.swing_trade_recovery_state;
 do $$
