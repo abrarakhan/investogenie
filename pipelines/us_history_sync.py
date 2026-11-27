@@ -20,7 +20,8 @@ import math
 import os
 import time
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date, datetime, time as local_time, timedelta
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import psycopg2
@@ -111,7 +112,7 @@ def load_assets(
         # SPAC units and listings that did not trade that day are not expected to
         # publish a candle and must not keep the repair loop alive.
         filters.append(
-            "o.last_date < %s::date"
+            "(o.last_final_date is null or o.last_final_date < %s::date)"
             " and o.last_date >= %s::date - interval '14 days'"
             " and a.exchange in ('NASDAQ','NYSE','AMEX','NYSEAMERICAN','NYSEARCA')"
             " and not (a.ticker ~ '-P[A-Z]?$' or a.ticker ~ '-UN$'"
@@ -156,7 +157,8 @@ def load_assets(
                    coalesce(o.bar_count,0)::int,o.last_date
               from public.assets a
               left join (
-                select asset_id,count(*) bar_count,max(date) last_date
+                select asset_id,count(*) bar_count,max(date) last_date,
+                       max(date) filter (where source = 'YAHOO_FINANCE_EOD' and unadjusted_close > 0) last_final_date
                   from public.daily_ohlcv
                  group by asset_id
               ) o on o.asset_id=a.id
@@ -188,12 +190,13 @@ def count_behind_session_assets(conn, session: str) -> tuple[int, int, list[str]
     with conn.cursor() as cur:
         cur.execute(
             """
-            select count(*) filter (where o.last_date < %s::date),
+            select count(*) filter (where o.last_final_date is null or o.last_final_date < %s::date),
                    count(*),
-                   coalesce((array_agg(a.ticker order by a.ticker) filter (where o.last_date < %s::date))[1:8], '{}')
+                   coalesce((array_agg(a.ticker order by a.ticker) filter (where o.last_final_date is null or o.last_final_date < %s::date))[1:8], '{}')
               from public.assets a
               join (
-                select asset_id,max(date) last_date
+                select asset_id,max(date) last_date,
+                       max(date) filter (where source = 'YAHOO_FINANCE_EOD' and unadjusted_close > 0) last_final_date
                   from public.daily_ohlcv
                  group by asset_id
               ) o on o.asset_id=a.id
@@ -267,10 +270,15 @@ def normalize_download(frame: pd.DataFrame) -> pd.DataFrame:
     out = out.rename(columns={date_column: "date"})
     out.columns = [str(column).lower() for column in out.columns]
     required = ["date", "open", "high", "low", "close", "volume"]
-    if any(column not in out.columns for column in required):
+    if any(column not in out.columns for column in [*required, "adj close"]):
         raise ValueError(f"Unexpected yfinance columns: {list(out.columns)}")
 
-    out = out[required].copy()
+    # Keep the provider's price for quotes and its adjusted prices for analytics.
+    out = out[required + ["adj close"]].copy()
+    out["unadjusted_close"] = pd.to_numeric(out["close"], errors="coerce")
+    adjustment = pd.to_numeric(out["adj close"], errors="coerce") / out["unadjusted_close"]
+    for column in ("open", "high", "low", "close"):
+        out[column] = pd.to_numeric(out[column], errors="coerce") * adjustment
     out["date"] = pd.to_datetime(out["date"], utc=True).dt.date
     for column in ("open", "high", "low", "close", "volume"):
         out[column] = pd.to_numeric(out[column], errors="coerce")
@@ -287,8 +295,11 @@ def normalize_download(frame: pd.DataFrame) -> pd.DataFrame:
 
 
 def fetch_window(state: AssetState, args: argparse.Namespace) -> tuple[date, date]:
-    today = date.today()
-    end = today + timedelta(days=1)  # yfinance end is exclusive.
+    now = datetime.now(ZoneInfo("America/New_York"))
+    today = now.date()
+    # Use the regular close conservatively even on early-close days.
+    # Fetch only completed sessions; yfinance's end bound is exclusive.
+    end = today + timedelta(days=1) if now.time() >= local_time(16, 15) else today
     if args.force_full or state.last_date is None or state.bar_count < max(5, args.min_bars // 4):
         start = today - timedelta(days=max(args.history_days, int(args.min_bars * 1.6)))
     else:
@@ -306,13 +317,14 @@ def download(state: AssetState, args: argparse.Namespace) -> pd.DataFrame:
                 symbol,
                 start=start.isoformat(),
                 end=end.isoformat(),
-                auto_adjust=True,
+                auto_adjust=False,
                 actions=False,
                 progress=False,
                 threads=False,
                 timeout=30,
             )
-            return normalize_download(frame)
+            normalized = normalize_download(frame)
+            return normalized if normalized.empty else normalized[normalized["date"] < end]
         except Exception as exc:
             last_error = exc
             if attempt < max(1, args.retries):
@@ -330,6 +342,8 @@ def upsert_bars(conn, asset_id: str, frame: pd.DataFrame) -> int:
             float(row.low),
             float(row.close),
             int(row.volume),
+            float(row.unadjusted_close),
+            "YAHOO_FINANCE_EOD",
         )
         for row in frame.itertuples(index=False)
     ]
@@ -340,17 +354,25 @@ def upsert_bars(conn, asset_id: str, frame: pd.DataFrame) -> int:
             cur,
             """
             insert into public.daily_ohlcv
-              (asset_id,date,open,high,low,close,volume)
+              (asset_id,date,open,high,low,close,volume,unadjusted_close,source)
             values %s
             on conflict (asset_id,date) do update set
               open=excluded.open,
               high=excluded.high,
               low=excluded.low,
               close=excluded.close,
-              volume=excluded.volume
+              volume=excluded.volume,
+              unadjusted_close=excluded.unadjusted_close,
+              source=excluded.source
             """,
             rows,
             page_size=500,
+        )
+    conn.commit()
+    with conn.cursor() as cur:
+        cur.execute(
+            "select public.promote_final_stock_quotes('US', null, %s, %s::uuid)",
+            (frame["date"].max(), asset_id),
         )
     conn.commit()
     return len(rows)

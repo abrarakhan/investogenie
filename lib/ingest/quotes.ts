@@ -442,8 +442,9 @@ function dateInTimeZone(timeZone: string): string {
 export async function refreshQuotes(databaseUrl: string, startISO = localToday()): Promise<RefreshSummary> {
   const t0 = Date.now();
   const indiaMarketOpen = isMarketOpen("IN");
+  const usMarketOpen = isMarketOpen("US");
   const [usQuotes, nseIndices, directBenchmarks, nse, bse] = await Promise.all([
-    fetchUS(),
+    usMarketOpen ? fetchUS() : Promise.resolve(new Map<string, RawQuote>()),
     fetchNSEIndices(),
     fetchDirectBenchmarks(),
     fetchBhavSeries(startISO, buildNSE, (d) => `https://archives.nseindia.com/products/content/sec_bhavdata_full_${ddmmyyyy(d)}.csv`, "https://www.nseindia.com/"),
@@ -459,15 +460,7 @@ export async function refreshQuotes(databaseUrl: string, startISO = localToday()
     const nseMap = toMap((await client.query("select id,ticker from public.assets where exchange='NSE'")).rows);
     const bseMap = toMap((await client.query("select id,ticker from public.assets where exchange='BSE'")).rows);
     const directMap = toMap((await client.query("select id,ticker from public.assets where ticker = any($1)", [["SENSEX", "USDINR"]])).rows);
-    const latestUsHistory = await client.query<{ date: string | null }>(
-      `select max(o.date)::text date
-         from public.daily_ohlcv o
-         join public.assets a on a.id=o.asset_id
-        where a.country='US'`,
-    );
-    const usAsOf = isMarketOpen("US")
-      ? dateInTimeZone("America/New_York")
-      : latestUsHistory.rows[0]?.date ?? null;
+    const usAsOf = dateInTimeZone("America/New_York");
 
     // The market-hours refresh needs an intraday source. Bhavcopy is still the
     // authoritative universe-wide close, but it cannot update candidate cards
@@ -570,7 +563,7 @@ export async function refreshQuotes(databaseUrl: string, startISO = localToday()
          where not (
            public.latest_quotes.source='BREEZE_LIVE'
            and public.latest_quotes.as_of::date=(now() at time zone 'Asia/Kolkata')::date
-           and excluded.source<>'BREEZE_LIVE'
+           and excluded.source not in ('BREEZE_LIVE', 'NSE_BHAVCOPY', 'BSE_BHAVCOPY')
          )`,
         params);
     }

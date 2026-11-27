@@ -524,6 +524,7 @@ async function backfillIndianExchangeHistory(
         continue;
       }
       const count = await upsertBars(client, data.rows, `${exchange}_BHAVCOPY`);
+      await client.query("select public.promote_final_stock_quotes('IN', $1, $2::date)", [exchange, date]);
       const delivery: DeliveryRow[] = data.delivery ?? [];
       if (delivery.length) deliveryUpserted += await upsertDelivery(client, delivery);
       sessionsFetched++;

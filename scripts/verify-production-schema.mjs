@@ -144,6 +144,7 @@ const requiredColumns = [
   ["mobile_alert_preferences", "news_high_impact"],
   ["mobile_alert_preferences", "quiet_hours_enabled"],
   ["mobile_alert_preferences", "updated_at"],
+  ["daily_ohlcv", "unadjusted_close"],
   ["latest_quotes", "session_volume"],
   ["latest_quotes", "session_volume_date"],
   ["latest_quotes", "session_volume_source"],
@@ -215,6 +216,14 @@ try {
     .map(([table, column]) => `${table}.${column}`)
     .filter((name) => !present.has(name));
   if (missingColumns.length) throw new Error(`Required production columns are missing: ${missingColumns.join(", ")}`);
+  const closeGuards = await client.query(
+    `select to_regprocedure('public.promote_final_stock_quotes(text,text,date,uuid)') is not null
+        and exists (select 1 from pg_trigger where tgrelid = 'public.latest_quotes'::regclass
+          and tgname = 'prefer_final_stock_quote' and tgenabled in ('O', 'A'))
+        and exists (select 1 from pg_trigger where tgrelid = 'public.daily_ohlcv'::regclass
+          and tgname = 'protect_final_stock_bar' and tgenabled in ('O', 'A')) as ready`,
+  );
+  if (!closeGuards.rows[0]?.ready) throw new Error("Final stock quote protection is missing (apply migration 0098)");
   const rls = await client.query(
     `select c.relname, c.relrowsecurity,
             exists (
