@@ -2,7 +2,7 @@ import { tenantQuery } from "@/lib/db";
 import { type NewsDirection, type NewsScope } from "@/lib/analytics/newsSwing";
 import { type TradeRiskAssessment, type TradeRiskState } from "@/lib/analytics/tradeRisk";
 import { type TradePlanRevision } from "@/lib/analytics/tradePlanRevision";
-import { isMarketOpenNow, isTradingDay, refreshMarketHolidays, zonedMarketClock } from "@/lib/market-calendar.mjs";
+import { isMarketOpenNow, isTradingDay, latestExpectedSessionDate, refreshMarketHolidays, zonedMarketClock } from "@/lib/market-calendar.mjs";
 import { runLedgerFollowUpBatch, runLedgerGttBatch, runLedgerOverlayBatch, runLedgerProgressBatch } from "@/lib/swingTradeLedgerPython";
 import { calculateRecoveryTargets } from "@/lib/tradeRecoveryTargets";
 import { STRONG_SWING_TRAILING_POLICY_VERSION } from "@/lib/analytics/strongSwing";
@@ -35,6 +35,7 @@ export interface SwingTradeProgressInput {
 }
 
 export interface SwingTradeProgress {
+  recordedStopReclaim?: { stop: number; improvementPerShare: number; short: boolean };
   daysHeld: number;
   calendarDaysHeld: number;
   daysRemaining: number;
@@ -533,7 +534,7 @@ export async function getSwingTradeLedger(userId: string, market: "IN" | "US"): 
   const marketDate = zonedMarketClock(market).date;
   const rows = await tenantQuery<LedgerRow>(userId,
     `select l.*, a.ticker, a.name asset_name, a.exchange, a.sector asset_sector,
-            q.price current_price, q.as_of quote_as_of, q.updated_at quote_updated_at,
+            q.price current_price, q.as_of quote_as_of, q.updated_at quote_updated_at, q.source quote_source,
             s.atr current_atr,
             stock_path.prior_close, stock_path.two_session_close,
             coalesce(sales.sold_quantity,0) sold_quantity,
@@ -546,7 +547,8 @@ export async function getSwingTradeLedger(userId: string, market: "IN" | "US"): 
             rs.first_detected_at recovery_first_detected_at, rs.evaluated_at recovery_evaluated_at,
             rs.fresh_setup_status, rs.fresh_setup_engine, rs.fresh_setup_label,
             rs.fresh_setup_entry, rs.fresh_setup_stop, rs.fresh_setup_target,
-            rs.fresh_setup_route, rs.fresh_setup_blocker, rs.fresh_setup_first_qualified_at
+            rs.fresh_setup_route, rs.fresh_setup_blocker, rs.fresh_setup_first_qualified_at,
+            rs.quote_at recovery_quote_at, rs.fresh_setup_checked_at
        from public.swing_trade_ledger l
        join public.assets a on a.id = l.asset_id
        left join public.latest_quotes q on q.asset_id = l.asset_id
@@ -758,6 +760,8 @@ export async function getSwingTradeLedger(userId: string, market: "IN" | "US"): 
 
   const gttBatch = await runLedgerGttBatch(derived.map((item) => item.gttInput));
 
+  const recoveryAt = new Date();
+  const recoveryQuoteSession = marketOpen ? zonedMarketClock(market, recoveryAt).date : latestExpectedSessionDate(market, recoveryAt);
   const staged = derived.map((item, derivedIndex) => {
     const {
       row, boughtOn, status, buyPrice, purchaseValue, quantity, exits, soldQuantity,
@@ -770,6 +774,15 @@ export async function getSwingTradeLedger(userId: string, market: "IN" | "US"): 
     const effectiveTrailingStop = gttProtection.effectiveTrailingStop;
     const breakEvenActivated = gttProtection.breakEvenActivated;
     const gttUpdateRequired = gttProtection.gttUpdateRequired;
+    const setupCheckedAt = Date.parse(String(row.fresh_setup_checked_at ?? ""));
+    const setupQuoteAt = Date.parse(String(row.recovery_quote_at ?? ""));
+    const markUpdatedAt = Date.parse(String(row.quote_updated_at ?? ""));
+    const setupAge = recoveryAt.getTime() - setupCheckedAt;
+    const markAge = recoveryAt.getTime() - markUpdatedAt;
+    const setupNeedsRecheck = row.fresh_setup_status === "QUALIFIED" && !(
+      marketOpen && currentPrice !== null && setupQuoteAt === markUpdatedAt
+      && setupAge >= 0 && setupAge <= 300_000 && markAge >= 0 && markAge <= 300_000
+    );
     const priorClose = nullableNumber(row.prior_close);
     const twoSessionClose = nullableNumber(row.two_session_close);
     const trade = {
@@ -829,14 +842,14 @@ export async function getSwingTradeLedger(userId: string, market: "IN" | "US"): 
               ? row.recovery_evaluated_at.toISOString()
               : row.recovery_evaluated_at ? String(row.recovery_evaluated_at) : null,
             freshSetup: {
-              status: (row.fresh_setup_status ? String(row.fresh_setup_status) : "NONE") as "NONE" | "QUALIFIED" | "RECENT_SIGNAL" | "BLOCKED",
+              status: (setupNeedsRecheck ? "RECENT_SIGNAL" : row.fresh_setup_status ?? "NONE") as "NONE" | "QUALIFIED" | "RECENT_SIGNAL" | "BLOCKED",
               engine: row.fresh_setup_engine ? String(row.fresh_setup_engine) : null,
               label: row.fresh_setup_label ? String(row.fresh_setup_label) : null,
               entry: nullableNumber(row.fresh_setup_entry),
               stop: nullableNumber(row.fresh_setup_stop),
               target: nullableNumber(row.fresh_setup_target),
               route: row.fresh_setup_route ? String(row.fresh_setup_route) : null,
-              blocker: row.fresh_setup_blocker ? String(row.fresh_setup_blocker) : null,
+              blocker: setupNeedsRecheck ? "Awaiting a current strategy assessment" : row.fresh_setup_blocker ? String(row.fresh_setup_blocker) : null,
               firstQualifiedAt: row.fresh_setup_first_qualified_at instanceof Date
                 ? row.fresh_setup_first_qualified_at.toISOString()
                 : row.fresh_setup_first_qualified_at ? String(row.fresh_setup_first_qualified_at) : null,
@@ -854,6 +867,14 @@ export async function getSwingTradeLedger(userId: string, market: "IN" | "US"): 
       currentPrice, effectiveTrailingStop, priorClose, twoSessionClose,
       soldQuantity, remainingQuantity,
       progressInput: {
+        ...(trade.firstStopBreachedAt && trade.quoteAsOf === recoveryQuoteSession
+          && (!marketOpen || (markAge >= 0 && markAge <= 300_000 && (market !== "IN" || row.quote_source === "BREEZE_LIVE")))
+          && trade.quoteUpdatedAt && Date.parse(trade.quoteUpdatedAt) > Date.parse(trade.firstStopBreachedAt)
+          ? {
+              verifiedBreachPrice: trade.firstStopBreachPrice,
+              verifiedBreachStop: trade.firstStopBreachStopLevel,
+            }
+          : {}),
         status, boughtOn, buyPrice: trade.buyPrice,
         quantity: status === "OPEN" ? trade.remainingQuantity : trade.quantity,
         // A reversion trade's objective is the mean as it stands now, never above the frozen target.

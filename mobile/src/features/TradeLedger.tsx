@@ -63,15 +63,24 @@ export default function TradeLedger({ market }: { market: Market }) {
       <View style={styles.rowBetween}><View><Text style={styles.ticker}>{item.ticker}</Text><Text style={styles.meta}>{item.status} · bought {item.boughtOn}</Text></View>{pendingLabel ? <Pill label={pendingLabel} tone="warning" compact /> : <Text style={item.progress.pnlPct !== null && item.progress.pnlPct >= 0 ? styles.goodValue : styles.badValue}>{pct(item.progress.pnlPct)}</Text>}</View>
       <View style={styles.metricRow}><Metric label="BUY" value={money(item.buyPrice, market)} /><Metric label="CURRENT" value={item.currentPrice === null ? "STALE" : money(item.currentPrice, market)} /><Metric label="TARGET" value={money(item.projectedTarget, market)} positive /></View>
       <View style={styles.metricRow}><Metric label="INVESTED" value={money(item.progress.investedValue, market)} /><Metric label={item.status === "CLOSED" ? "EXIT VALUE" : "CURRENT VALUE"} value={item.status === "CLOSED" ? money(item.progress.investedValue + item.realizedPnlValue, market) : item.progress.currentValue === null ? "STALE" : money(item.progress.currentValue, market)} positive={(item.progress.pnlValue ?? 0) >= 0} negative={(item.progress.pnlValue ?? 0) < 0} /><Metric label="P&L" value={item.progress.pnlValue === null ? "--" : money(item.progress.pnlValue, market)} positive={(item.progress.pnlValue ?? 0) >= 0} negative={(item.progress.pnlValue ?? 0) < 0} /></View>
+      {item.progress.recordedStopReclaim && item.currentPrice !== null && (
+        <View style={[styles.recoveryBox, styles.recoveryActive]}>
+          <Text style={styles.recoveryTitle}>RECORDED STOP RECLAIMED</Text>
+          <Text style={styles.recoveryHeadline}>
+            {money(item.currentPrice, market)} is back {item.progress.recordedStopReclaim.short ? "below" : "above"} the recorded stop of {money(item.progress.recordedStopReclaim.stop, market)}.
+            {" "}Improved by {money(item.progress.recordedStopReclaim.improvementPerShare, market)} per share since the first recorded breach.
+          </Text>
+        </View>
+      )}
       {item.status === "OPEN" && item.recovery && item.recovery.status !== "NONE" && item.recovery.headline && (
         <View style={[styles.recoveryBox, item.recovery.status === "UNVERIFIED" ? styles.recoveryUnverified : styles.recoveryActive]}>
           <View style={styles.rowBetween}>
             <Text style={item.recovery.status === "UNVERIFIED" ? styles.recoveryUnverifiedTitle : styles.recoveryTitle}>
-              {item.recovery.status === "STOP_RECLAIMED" ? "STOP RECLAIMED" : item.recovery.status === "REBOUND_DETECTED" ? "REBOUND DETECTED" : "RECOVERY UNVERIFIED"}
+              {item.progress.recordedStopReclaim ? "LATEST RECOVERY SCAN" : item.recovery.status === "STOP_RECLAIMED" ? "STOP RECLAIMED" : item.recovery.status === "REBOUND_DETECTED" ? "REBOUND DETECTED" : "RECOVERY UNVERIFIED"}
             </Text>
             {!!item.recovery.sectorThrustGroup && <Text style={styles.recoveryMeta}>{item.recovery.sectorThrustGroup}</Text>}
           </View>
-          <Text style={styles.recoveryHeadline}>{item.recovery.headline}</Text>
+          {!item.progress.recordedStopReclaim && <Text style={styles.recoveryHeadline}>{item.recovery.headline}</Text>}
           <Text style={styles.recoveryMeta}>
             {[
               item.recovery.move2dPct !== null ? `2D ${pct(item.recovery.move2dPct)}` : null,

@@ -110,6 +110,8 @@ const tradeRecoveryPipeline = resolve(root, "pipelines/trade_recovery_monitor.py
 let sectorThrustPromise = null;
 let sectorThrustTimer = null;
 let sectorThrustChild = null;
+let tradeRecoveryTimer = null;
+const tradeRecoveryChildren = new Map();
 const breezeAccountSyncIntervalMinutes = Number(process.env.BREEZE_ACCOUNT_SYNC_INTERVAL_MINUTES ?? 5);
 const breezeAccountSyncDisabled = process.env.BREEZE_ACCOUNT_SYNC_DISABLED === "1";
 const gmailDisclosureSyncIntervalHours = Number(process.env.GMAIL_DISCLOSURE_SYNC_INTERVAL_HOURS ?? 24);
@@ -876,23 +878,37 @@ function scheduleSectorThrust() {
     console.log("[sector-thrust] recurring scan disabled");
     return;
   }
-  console.log(`[sector-thrust] India 5-min Python scan every ${sectorThrustIntervalMinutes} minutes during 09:30-15:30 IST; trade recovery monitor for IN & US`);
+  console.log(`[sector-thrust] India Python scan every ${sectorThrustIntervalMinutes} minutes during market hours`);
   sectorThrustTimer = setInterval(
     () => {
       runSectorThrust("recurring", "LIVE").catch((error) => console.error(`[sector-thrust] recurring failed: ${error.message}`));
-      if (python && existsSync(tradeRecoveryPipeline)) {
-        for (const market of ["IN", "US"]) {
-          const open = market === "IN" ? isIndiaMarketOpen() : isUsMarketOpen();
-          if (!open) continue;
-          const child = spawn(python, [tradeRecoveryPipeline, "--market", market, "--mode", "LIVE"], {
-            cwd: root, env: process.env, stdio: "inherit", timeout: 25_000,
-          });
-          child.once("error", (err) => console.error(`[trade-recovery] ${market} LIVE failed: ${err.message}`));
-        }
-      }
     },
     sectorThrustIntervalMinutes * 60 * 1000,
   );
+}
+
+function scheduleTradeRecovery() {
+  if (!python || !existsSync(tradeRecoveryPipeline) || process.env.TRADE_RECOVERY_DISABLED === "1") return;
+  tradeRecoveryTimer = setInterval(() => {
+    if (shuttingDown) return;
+    for (const market of ["IN", "US"]) {
+      if (!isMarketOpenNow(market) || tradeRecoveryChildren.has(market)) continue;
+      const child = spawn(python, [tradeRecoveryPipeline, "--market", market, "--mode", "LIVE"], {
+        cwd: root, env: process.env, stdio: "inherit", timeout: 25_000,
+      });
+      tradeRecoveryChildren.set(market, child);
+      child.once("error", (error) => console.error(`[trade-recovery] ${market}: ${error.message}`));
+      child.once("close", (code, signal) => {
+        tradeRecoveryChildren.delete(market);
+        if (code !== 0 && !shuttingDown) console.error(`[trade-recovery] ${market} exited: ${signal ?? code}`);
+      });
+    }
+  }, 5 * 60 * 1000);
+}
+
+function stopTradeRecovery(signal) {
+  if (tradeRecoveryTimer) clearInterval(tradeRecoveryTimer);
+  for (const child of tradeRecoveryChildren.values()) child.kill(signal);
 }
 
 function scheduleMobileAlerts() {
@@ -1693,6 +1709,7 @@ const nextChild = spawn(
 function shutdown(signal) {
   if (shuttingDown) return;
   shuttingDown = true;
+  stopTradeRecovery(signal);
   stopEodScheduler();
   if (eodChild) eodChild.kill(signal);
   if (dailyTimer) clearTimeout(dailyTimer);
@@ -1743,6 +1760,7 @@ nextChild.on("error", (error) => {
   shutdown("SIGTERM");
 });
 nextChild.on("close", (code, signal) => {
+  stopTradeRecovery("SIGTERM");
   if (dailyTimer) clearTimeout(dailyTimer);
   if (amfiDailyTimer) clearTimeout(amfiDailyTimer);
   if (nseCatchupTimer) clearInterval(nseCatchupTimer);
@@ -1916,6 +1934,7 @@ scheduleMarketHoursQuoteRefresh();
 scheduleNewsRefresh();
 scheduleTrendContinuation();
 scheduleSectorThrust();
+scheduleTradeRecovery();
 scheduleMobileAlerts();
 scheduleGmailDisclosureSync();
 scheduleBackfillCron();

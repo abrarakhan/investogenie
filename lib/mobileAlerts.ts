@@ -40,6 +40,10 @@ interface CandidateSignal {
   earlyWatch?: boolean;
   midway?: boolean;
   quoteAsOf: string | null;
+  execution?: {
+    price: number | null; quoteAt: string | null;
+    entry: number | null; stop: number | null; target: number | null;
+  };
 }
 
 export function candidateAlertAllowed(
@@ -176,6 +180,10 @@ async function candidateSignals(
     ...v2.candidates.map((candidate) => ({
       assetId: candidate.assetId, ticker: candidate.ticker, engine: "MOMENTUM_IGNITION_V2" as const,
       status: candidate.status, ready: candidate.status === "MOMENTUM_READY", quoteAsOf: candidate.quoteUpdatedAt,
+      execution: candidate.liveDataVerified ? {
+        price: candidate.currentPrice, quoteAt: candidate.quoteUpdatedAt,
+        entry: candidate.projectedEntry, stop: candidate.projectedStop, target: candidate.projectedTarget,
+      } : undefined,
     })),
     ...continuation.map((candidate) => ({
       assetId: candidate.assetId, ticker: candidate.ticker, engine: "TREND_CONTINUATION" as const,
@@ -184,6 +192,10 @@ async function candidateSignals(
         && candidate.metrics.execution_data_verified === true,
       midway: typeof candidate.metrics.setup_variant === "string",
       quoteAsOf: candidate.computedAt,
+      execution: {
+        price: candidate.currentPrice, quoteAt: candidate.executionQuoteUpdatedAt ?? null,
+        entry: candidate.entry, stop: candidate.stop, target: candidate.target,
+      },
     })),
   ];
   await markLiveMarketTargets(signals.map((candidate) => candidate.assetId), "strong_swing");
@@ -295,7 +307,57 @@ async function dispatchCandidateAlerts(
       [userId, market, candidate.engine, candidate.assetId, candidate.status, candidate.ready, sentCount > 0],
     );
   }
-  return { evaluated: candidates.length, alerts, delivered };
+  return { evaluated: candidates.length, alerts, delivered, candidates };
+}
+
+async function applyLiveRecoveryRechecks(trades: SwingLedgerTrade[], candidates: CandidateSignal[], userId: string) {
+  const ready = new Map<string, CandidateSignal[]>();
+  for (const candidate of candidates) {
+    if (!candidate.ready || !candidate.execution) continue;
+    const group = ready.get(candidate.assetId) ?? [];
+    group.push(candidate);
+    ready.set(candidate.assetId, group);
+  }
+  for (const trade of trades) {
+    const recovery = trade.recovery;
+    if (trade.status !== "OPEN" || !recovery) continue;
+    if (recovery.freshSetup.status === "QUALIFIED" && recovery.freshSetup.engine === "STRONG_SWING") continue;
+    // Re-confirm Momentum/Continuation from this scan before handing a persisted
+    // qualification to the alert dispatcher.
+    if (recovery.freshSetup.status === "QUALIFIED") recovery.freshSetup = {
+      ...recovery.freshSetup, status: "RECENT_SIGNAL", blocker: "Awaiting a matching live strategy assessment",
+    };
+    if (!(trade.progress.recordedStopReclaim || recovery.status === "REBOUND_DETECTED" || recovery.status === "STOP_RECLAIMED")) continue;
+    const candidate = ready.get(trade.assetId)?.find((signal) => {
+      const quote = signal.execution;
+      if (!quote?.quoteAt || !trade.quoteUpdatedAt) return false;
+      const age = Date.now() - Date.parse(quote.quoteAt);
+      return age >= 0 && age <= 300_000 && Date.parse(quote.quoteAt) === Date.parse(trade.quoteUpdatedAt)
+        && quote.price !== null && quote.price === trade.currentPrice
+        && quote.entry !== null && quote.stop !== null && quote.target !== null;
+    });
+    const execution = candidate?.execution;
+    if (!candidate || !execution) continue;
+    const engine = candidate.engine;
+    const label = engine === "TREND_CONTINUATION" ? "Trend Continuation · Execution ready" : "Momentum Ignition V2 · Ready";
+    const route = `/terminal/${trade.market.toLowerCase()}/strong-swing?model=${engine}`;
+    const updated = await workerQuery<{ first_qualified_at: string }>(
+      `update public.swing_trade_recovery_state r
+          set fresh_setup_status='QUALIFIED', fresh_setup_engine=$1, fresh_setup_label=$2,
+              fresh_setup_entry=$3, fresh_setup_stop=$4, fresh_setup_target=$5,
+              fresh_setup_route=$6, fresh_setup_blocker=null, fresh_setup_checked_at=now(), quote_at=q.updated_at,
+              fresh_setup_first_qualified_at=coalesce(r.fresh_setup_first_qualified_at,now())
+         from public.latest_quotes q
+        where r.trade_id=$7 and r.user_id=$8 and r.asset_id=q.asset_id
+          and q.updated_at=$9::timestamptz and q.price=$10
+        returning r.fresh_setup_first_qualified_at::text as first_qualified_at`,
+      [engine, label, execution.entry, execution.stop, execution.target, route, trade.id, userId, execution.quoteAt, execution.price],
+    );
+    if (updated[0]) recovery.freshSetup = {
+      status: "QUALIFIED", engine, label, entry: execution.entry, stop: execution.stop,
+      target: execution.target, route, blocker: null, firstQualifiedAt: updated[0].first_qualified_at,
+    };
+  }
 }
 
 async function dispatchHighImpactNewsAlerts(
@@ -514,6 +576,7 @@ export async function dispatchMobileTradeAlerts(markets: Array<"IN" | "US">) {
       alerts += newsSummary.alerts;
       delivered += newsSummary.delivered;
       const trades = await getSwingTradeLedger(userId, market);
+      await applyLiveRecoveryRechecks(trades, candidateSummary.candidates, userId);
       for (const trade of trades) {
         const signature = tradeAlertSignature(trade);
         if (!signature) continue;

@@ -1,6 +1,7 @@
 import unittest
 from datetime import datetime, timezone
 from trade_recovery_monitor import recovery_session_counts, resolve_recovery_sessions
+from strategy_math.ledger import swing_trade_progress
 
 from strategy_math.trade_recovery import (
     assess_trade_recovery,
@@ -11,6 +12,20 @@ from strategy_math.trade_recovery import (
 
 
 class TradeRecoveryTests(unittest.TestCase):
+    def test_reclaimed_original_stop_does_not_change_trail_breach(self):
+        payload = {
+            "status": "OPEN", "boughtOn": "2026-10-14", "asOf": "2026-11-27",
+            "buyPrice": 206.86, "quantity": 1000, "target": 236.77, "stop": 191.59,
+            "trailingStop": 206.86, "expectedDays": 7, "currentPrice": 201.46,
+            "verifiedBreachStop": 191.59, "verifiedBreachPrice": 190.56,
+        }
+        result = swing_trade_progress(payload, set(), set())
+        self.assertEqual(result["state"], "TRAIL_BREACHED")
+        self.assertEqual(result["recordedStopReclaim"]["improvementPerShare"], 10.90)
+        self.assertNotIn("recordedStopReclaim", swing_trade_progress(
+            {**payload, "currentPrice": 191.59}, set(), set(),
+        ))
+
     def test_live_session_and_completed_baseline_are_distinct(self):
         at = datetime(2026, 11, 25, 6, tzinfo=timezone.utc)
         self.assertEqual(resolve_recovery_sessions("IN", at), {

@@ -21,6 +21,23 @@ const emptyFreshSetup = {
 };
 
 describe("buildRecoveryTransitionAlerts", () => {
+  it("alerts once on a current reclaim even when the monitor still reports a rebound", () => {
+    const trade = {
+      ...baseTrade,
+      progress: { recordedStopReclaim: { stop: 191.59, improvementPerShare: 10.90, short: false } },
+      recovery: {
+        status: "REBOUND_DETECTED" as const, headline: "Stop not reclaimed", move2dPct: null,
+        volumePace: null, relativeStrength20d: null, sectorThrustGroup: null, relatedNews: [],
+        firstDetectedAt: null, evaluatedAt: null, freshSetup: emptyFreshSetup,
+      },
+    };
+    const dedup = { lastAlertedFreshSetupKey: null, lastAlertedRecoveryStatus: "REBOUND_DETECTED" };
+    const result = buildRecoveryTransitionAlerts(trade, dedup);
+    expect(result.alerts.map((alert) => alert.transitionType)).toEqual(["STOP_RECLAIMED"]);
+    expect(result.alerts[0].body).not.toContain("Stop not reclaimed");
+    expect(buildRecoveryTransitionAlerts(trade, advanceRecoveryAlertState(dedup, result.alerts)).alerts).toEqual([]);
+  });
+
   it("emits REBOUND_DETECTED once and suppresses repeats and UNVERIFIED blips", () => {
     const first = buildRecoveryTransitionAlerts(
       {

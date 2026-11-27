@@ -14,6 +14,7 @@ export interface TrendContinuationCandidate {
   metrics: Record<string, number | boolean | number[] | string | null | Record<string, unknown>>;
   reasons: string[];
   executionEligible: boolean; executionBlockers: string[]; currentPrice: number | null;
+  executionQuoteUpdatedAt?: string | null;
   /** Today's volume against the session curve's expectation at this minute. */
   todRvol: number | null;
   /** Version of the Python detector that produced this persisted signal. */
@@ -168,6 +169,7 @@ export async function getTrendContinuationCandidates(market: "IN" | "US", limit 
       asOfMarketDate: row.asof_market_date, computedAt: row.computed_at, metrics: row.metrics, reasons: row.reasons,
       executionEligible: assessment.executionEligible, executionBlockers: assessment.executionBlockers,
       currentPrice: assessment.currentPrice, todRvol: assessment.todRvol ?? null,
+      executionQuoteUpdatedAt: executionByAsset.get(row.asset_id)?.updated_at ?? null,
       featureVersion: row.feature_version,
       pythonRank: assessment.pythonRank,
     };

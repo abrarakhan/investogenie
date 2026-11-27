@@ -61,7 +61,8 @@ export function advanceRecoveryAlertState(
  * - Push payloads never include ticker names or financial figures.
  */
 export function buildRecoveryTransitionAlerts(
-  trade: Pick<SwingLedgerTrade, "id" | "market" | "ticker" | "status" | "recovery">,
+  trade: Pick<SwingLedgerTrade, "id" | "market" | "ticker" | "status" | "recovery">
+    & { progress?: Pick<SwingLedgerTrade["progress"], "recordedStopReclaim"> },
   prev: RecoveryAlertDedupState,
 ): RecoveryAlertEvaluation {
   let nextRecoveryStatus = prev.lastAlertedRecoveryStatus;
@@ -74,7 +75,11 @@ export function buildRecoveryTransitionAlerts(
 
   const marketPath = trade.market.toLowerCase();
   const ledgerRoute = `/terminal/${marketPath}/trade-ledger`;
-  const rec = trade.recovery;
+  const rec = trade.progress?.recordedStopReclaim ? {
+    ...trade.recovery,
+    status: "STOP_RECLAIMED" as const,
+    headline: `${trade.ticker} reclaimed its recorded stop.`,
+  } : trade.recovery;
 
   if (
     (rec.status === "REBOUND_DETECTED" || rec.status === "STOP_RECLAIMED") &&

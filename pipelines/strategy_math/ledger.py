@@ -328,7 +328,7 @@ def swing_trade_progress(payload: dict[str, Any], holidays: set[str], special: s
     else:
         state = "ON_TRACK"
 
-    return {
+    result = {
         "daysHeld": days_held,
         "calendarDaysHeld": calendar_days,
         "daysRemaining": max(0, expected_days - days_held),
@@ -340,6 +340,19 @@ def swing_trade_progress(payload: dict[str, Any], holidays: set[str], special: s
         "remainingUpsidePct": _as_float(remaining_upside),
         "state": state,
     }
+    breach_price = payload.get("verifiedBreachPrice")
+    breach_stop = payload.get("verifiedBreachStop")
+    if status == "OPEN" and mark is not None and breach_price is not None and breach_stop is not None:
+        stop_at_breach = money(breach_stop)
+        direction_multiplier = -ONE if short else ONE
+        improvement = (mark - money(breach_price)) * direction_multiplier
+        if (mark - stop_at_breach) * direction_multiplier > 0 and improvement > 0:
+            result["recordedStopReclaim"] = {
+                "stop": float(stop_at_breach),
+                "improvementPerShare": float(improvement),
+                "short": short,
+            }
+    return result
 
 
 def assess_trades(payload: dict[str, Any]) -> dict[str, Any]:

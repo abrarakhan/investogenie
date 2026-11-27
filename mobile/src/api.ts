@@ -78,6 +78,7 @@ export interface LedgerTrade {
   effectiveTrailingStop: number | null;
   realizedPnlValue: number;
   progress: {
+    recordedStopReclaim?: { stop: number; improvementPerShare: number; short: boolean };
     investedValue: number;
     currentValue: number | null;
     pnlValue: number | null;

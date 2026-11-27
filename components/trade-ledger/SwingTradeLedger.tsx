@@ -169,12 +169,12 @@ function TradeCard({ trade, today, returns }: { trade: SwingLedgerTrade; today: 
         <div className="flex flex-wrap justify-end gap-2">
           <span className={`rounded-full border px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide ${exitNow ? RISK.RISK_OFF.style : state.style}`}>{exitNow ? "Exit now" : state.label}</span>
           {trade.status === "OPEN" && !exitNow && trade.risk.state !== "NORMAL" && <span className={`rounded-full border px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide ${RISK[trade.risk.state].style}`}>{RISK[trade.risk.state].label}</span>}
-          {trade.status === "OPEN" && trade.recovery && (trade.recovery.status === "REBOUND_DETECTED" || trade.recovery.status === "STOP_RECLAIMED") && (
+          {trade.status === "OPEN" && (trade.progress.recordedStopReclaim || trade.recovery?.status === "REBOUND_DETECTED" || trade.recovery?.status === "STOP_RECLAIMED") && (
             <span className="rounded-full border border-sky-400/40 bg-sky-500/15 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-sky-200">
-              {trade.recovery.status === "STOP_RECLAIMED" ? "Stop reclaimed" : "Rebound detected"}
+              {trade.progress.recordedStopReclaim || trade.recovery?.status === "STOP_RECLAIMED" ? "Stop reclaimed" : "Rebound detected"}
             </span>
           )}
-          {trade.status === "OPEN" && trade.recovery?.status === "UNVERIFIED" && (
+          {trade.status === "OPEN" && !trade.progress.recordedStopReclaim && trade.recovery?.status === "UNVERIFIED" && (
             <span className="rounded-full border border-white/20 bg-white/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-white/65">
               Recovery unverified
             </span>
@@ -188,7 +188,7 @@ function TradeCard({ trade, today, returns }: { trade: SwingLedgerTrade; today: 
             : "border-sky-400/35 bg-sky-500/10 text-sky-100"
         }`}>
           <div className="flex flex-wrap items-center justify-between gap-2 font-semibold">
-            <span>{trade.recovery.headline}</span>
+            <span>{trade.progress.recordedStopReclaim ? "Latest recovery scan context" : trade.recovery.headline}</span>
             {trade.recovery.sectorThrustGroup && (
               <span className="rounded-full border border-sky-300/30 bg-sky-400/15 px-2 py-0.5 text-[10px] font-bold text-sky-200">
                 Sector Thrust: {trade.recovery.sectorThrustGroup}
@@ -253,6 +253,16 @@ function TradeCard({ trade, today, returns }: { trade: SwingLedgerTrade; today: 
         <Metric label="Effective trail" value={price(trade.effectiveTrailingStop)} tone={trade.progress.state === "TRAIL_BREACHED" ? "bad" : "warn"} />
         <Metric label="Days remaining" value={String(trade.progress.daysRemaining)} tone={trade.progress.daysRemaining ? "muted" : "warn"} />
       </div>
+      {trade.progress.recordedStopReclaim && (
+        <div className="mt-4 rounded-lg border border-sky-400/30 bg-sky-500/10 p-3 text-sm text-sky-100">
+          <strong>Recorded stop reclaimed</strong>
+          <p className="mt-1">
+            {price(trade.currentPrice)} is back {trade.progress.recordedStopReclaim.short ? "below" : "above"} the recorded stop of {price(trade.progress.recordedStopReclaim.stop)}.
+            {" "}The position has improved by {price(trade.progress.recordedStopReclaim.improvementPerShare)} per share since the first recorded breach.
+            {" "}See the current risk badge for the original plan.
+          </p>
+        </div>
+      )}
       <div className="mt-4 flex flex-wrap gap-x-5 gap-y-1 border-t border-white/8 pt-3 text-xs text-white/38">
         <span>Initial stop {price(trade.projectedStop)}</span>
         {trade.firstStopBreachedAt && (
