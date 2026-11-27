@@ -15,7 +15,7 @@ from zoneinfo import ZoneInfo
 
 import psycopg2
 
-from strategy_math.trade_recovery import assess_trade_recovery
+from strategy_math.trade_recovery import assess_trade_recovery, evaluate_fresh_setup
 
 LOCK_KEYS = {"IN": 8742201, "US": 8742202}
 TZS = {"IN": ZoneInfo("Asia/Kolkata"), "US": ZoneInfo("America/New_York")}
@@ -65,7 +65,7 @@ def run_monitor(conn, market: str, mode: str) -> int:
                        td.volume_ratio_20, td.return_20d,
                        path.two_session_close,
                        tb.thrust_label, tb.related_news,
-                       rs.first_detected_at
+                       rs.first_detected_at, rs.fresh_setup_first_qualified_at
                   from public.swing_trade_ledger l
                   join public.assets a on a.id = l.asset_id
                   left join public.latest_quotes q on q.asset_id = l.asset_id
@@ -106,7 +106,7 @@ def run_monitor(conn, market: str, mode: str) -> int:
                     vol_ratio, ret_20d,
                     two_sess_close,
                     thrust_label, thrust_news,
-                    prior_detected_at,
+                    prior_detected_at, prior_fresh_qual_at,
                 ) = r
 
                 if mode == "LIVE" and market == "IN":
@@ -165,14 +165,111 @@ def run_monitor(conn, market: str, mode: str) -> int:
                 if res["recoveryStatus"] in ("REBOUND_DETECTED", "STOP_RECLAIMED"):
                     recoveries_active += 1
 
+                # Phase 2: Automated strategy recheck for recovering trades (strictly separate from frozen plan)
+                strong_ctx = None
+                trend_ctx = None
+                mom_ctx = None
+                swing_ctx = None
+                if res["recoveryStatus"] in ("REBOUND_DETECTED", "STOP_RECLAIMED"):
+                    cur.execute(
+                        """
+                        with latest_ss as (select max(captured_at) as ts from public.strong_swing_snapshots where market = %s)
+                        select status, strength_score, confirmation_entry, projected_stop, projected_target, gates
+                          from public.strong_swing_snapshots
+                         where market = %s and asset_id = %s::uuid and captured_at = (select ts from latest_ss)
+                         limit 1
+                        """,
+                        (market, market, asset_id),
+                    )
+                    sr = cur.fetchone()
+                    if sr:
+                        strong_ctx = {
+                            "status": sr[0],
+                            "strengthScore": float(sr[1]) if sr[1] is not None else None,
+                            "entry": float(sr[2]) if sr[2] is not None else None,
+                            "stop": float(sr[3]) if sr[3] is not None else None,
+                            "target": float(sr[4]) if sr[4] is not None else None,
+                            "gates": sr[5],
+                        }
+                    if market == "IN":
+                        cur.execute(
+                            """
+                            select status, setup_variant, score, entry, stop, target
+                              from public.trend_continuation_signals
+                             where market = 'IN' and asset_id = %s::uuid
+                               and asof_market_date >= current_date - interval '5 days'
+                             order by asof_market_date desc, computed_at desc
+                             limit 1
+                            """,
+                            (asset_id,),
+                        )
+                        tr = cur.fetchone()
+                        if tr:
+                            trend_ctx = {
+                                "status": tr[0],
+                                "setupVariant": tr[1],
+                                "score": float(tr[2]) if tr[2] is not None else None,
+                                "entry": float(tr[3]) if tr[3] is not None else None,
+                                "stop": float(tr[4]) if tr[4] is not None else None,
+                                "target": float(tr[5]) if tr[5] is not None else None,
+                            }
+                    cur.execute(
+                        """
+                        select status, ready
+                          from public.candidate_signal_observations
+                         where user_id = %s::uuid and market = %s and asset_id = %s::uuid
+                           and engine = 'MOMENTUM_IGNITION_V2'
+                           and observed_at >= now() - interval '48 hours'
+                         order by observed_at desc
+                         limit 1
+                        """,
+                        (user_id, market, asset_id),
+                    )
+                    mr = cur.fetchone()
+                    if mr:
+                        mom_ctx = {"status": mr[0], "ready": bool(mr[1])}
+                    cur.execute(
+                        """
+                        select verdict, score, last_close
+                          from public.swing_signals
+                         where asset_id = %s::uuid
+                         order by as_of desc
+                         limit 1
+                        """,
+                        (asset_id,),
+                    )
+                    swr = cur.fetchone()
+                    if swr:
+                        swing_ctx = {
+                            "verdict": swr[0],
+                            "score": float(swr[1]) if swr[1] is not None else None,
+                            "entry": float(swr[2]) if swr[2] is not None else None,
+                        }
+
+                fs = evaluate_fresh_setup({
+                    "market": market,
+                    "recoveryStatus": res["recoveryStatus"],
+                    "evaluatedAt": now_utc.isoformat(),
+                    "priorFreshSetupFirstQualifiedAt": prior_fresh_qual_at.isoformat() if prior_fresh_qual_at else None,
+                    "strongSwing": strong_ctx,
+                    "trendContinuation": trend_ctx,
+                    "momentumV2": mom_ctx,
+                    "swingBreakout": swing_ctx,
+                })
+
                 cur.execute("select set_config('app.current_user_id', %s, true)", (user_id,))
                 cur.execute(
                     """
                     insert into public.swing_trade_recovery_state
                       (trade_id, user_id, market, asset_id, recovery_status, headline,
                        move_2d_pct, volume_pace, relative_strength_20d, sector_thrust_group,
-                       related_news, quote_price, quote_source, quote_at, first_detected_at, evaluated_at)
-                    values (%s::uuid, %s::uuid, %s, %s::uuid, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s::timestamptz, %s::timestamptz, now())
+                       related_news, quote_price, quote_source, quote_at, first_detected_at,
+                       fresh_setup_status, fresh_setup_engine, fresh_setup_label,
+                       fresh_setup_entry, fresh_setup_stop, fresh_setup_target,
+                       fresh_setup_route, fresh_setup_blocker, fresh_setup_first_qualified_at,
+                       fresh_setup_checked_at, evaluated_at)
+                    values (%s::uuid, %s::uuid, %s, %s::uuid, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s::timestamptz, %s::timestamptz,
+                            %s, %s, %s, %s, %s, %s, %s, %s, %s::timestamptz, now(), now())
                     on conflict (trade_id) do update set
                       recovery_status = excluded.recovery_status,
                       headline = excluded.headline,
@@ -185,6 +282,16 @@ def run_monitor(conn, market: str, mode: str) -> int:
                       quote_source = excluded.quote_source,
                       quote_at = excluded.quote_at,
                       first_detected_at = coalesce(public.swing_trade_recovery_state.first_detected_at, excluded.first_detected_at),
+                      fresh_setup_status = excluded.fresh_setup_status,
+                      fresh_setup_engine = excluded.fresh_setup_engine,
+                      fresh_setup_label = excluded.fresh_setup_label,
+                      fresh_setup_entry = excluded.fresh_setup_entry,
+                      fresh_setup_stop = excluded.fresh_setup_stop,
+                      fresh_setup_target = excluded.fresh_setup_target,
+                      fresh_setup_route = excluded.fresh_setup_route,
+                      fresh_setup_blocker = excluded.fresh_setup_blocker,
+                      fresh_setup_first_qualified_at = coalesce(public.swing_trade_recovery_state.fresh_setup_first_qualified_at, excluded.fresh_setup_first_qualified_at),
+                      fresh_setup_checked_at = now(),
                       evaluated_at = now()
                     """,
                     (
@@ -192,6 +299,9 @@ def run_monitor(conn, market: str, mode: str) -> int:
                         res["move2dPct"], res["volumePace"], res["relativeStrength20d"],
                         res["sectorThrustGroup"], json.dumps(res["relatedNews"]),
                         res["quotePrice"], res["quoteSource"], res["quoteAt"], res["firstDetectedAt"],
+                        fs["freshSetupStatus"], fs["freshSetupEngine"], fs["freshSetupLabel"],
+                        fs["freshSetupEntry"], fs["freshSetupStop"], fs["freshSetupTarget"],
+                        fs["freshSetupRoute"], fs["freshSetupBlocker"], fs["freshSetupFirstQualifiedAt"],
                     ),
                 )
         conn.commit()

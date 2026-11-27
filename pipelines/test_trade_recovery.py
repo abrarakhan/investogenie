@@ -1,6 +1,6 @@
 import unittest
 
-from strategy_math.trade_recovery import assess_trade_recovery
+from strategy_math.trade_recovery import assess_trade_recovery, evaluate_fresh_setup
 
 
 class TradeRecoveryTests(unittest.TestCase):
@@ -78,6 +78,43 @@ class TradeRecoveryTests(unittest.TestCase):
         self.assertIsNotNone(res["recordBreach"])
         self.assertEqual(res["recordBreach"]["price"], 188.5)
         self.assertEqual(res["recordBreach"]["source"], "BREEZE_LIVE")
+
+    def test_fresh_setup_links_qualified_engine_with_own_levels(self):
+        fs = evaluate_fresh_setup({
+            "market": "IN",
+            "recoveryStatus": "REBOUND_DETECTED",
+            "evaluatedAt": "2026-11-27T09:00:00Z",
+            "trendContinuation": {
+                "status": "TREND_CONTINUATION_READY",
+                "setupVariant": "EP_REBOUND",
+                "score": 88,
+                "entry": 192.0,
+                "stop": 178.5,
+                "target": 219.0,
+            },
+        })
+        self.assertEqual(fs["freshSetupStatus"], "QUALIFIED")
+        self.assertEqual(fs["freshSetupEngine"], "TREND_CONTINUATION")
+        self.assertEqual(fs["freshSetupStop"], 178.5)
+        self.assertEqual(fs["freshSetupFirstQualifiedAt"], "2026-11-27T09:00:00Z")
+
+    def test_fresh_setup_reports_main_blocker_when_none_qualifies(self):
+        fs = evaluate_fresh_setup({
+            "market": "IN",
+            "recoveryStatus": "REBOUND_DETECTED",
+            "evaluatedAt": "2026-11-27T09:00:00Z",
+            "strongSwing": {
+                "status": "WATCHLIST",
+                "gates": [
+                    {"key": "trend", "passed": False, "blocking": True},
+                    {"key": "follow_through", "passed": False, "blocking": True},
+                ],
+            },
+            "trendContinuation": {"status": "EXTENDED_RISK"},
+        })
+        self.assertEqual(fs["freshSetupStatus"], "BLOCKED")
+        self.assertIn("Strong Swing (WATCHLIST): trend, follow through", fs["freshSetupBlocker"])
+        self.assertIn("Trend Continuation: EXTENDED RISK", fs["freshSetupBlocker"])
 
 
 if __name__ == "__main__":

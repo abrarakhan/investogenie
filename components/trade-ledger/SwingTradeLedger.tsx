@@ -200,6 +200,26 @@ function TradeCard({ trade, today, returns }: { trade: SwingLedgerTrade; today: 
             {trade.recovery.volumePace !== null && <span>Vol {trade.recovery.volumePace.toFixed(1)}x</span>}
             {trade.recovery.relativeStrength20d !== null && <span>20D {pct(trade.recovery.relativeStrength20d)}</span>}
           </div>
+          {trade.recovery.freshSetup.status === "QUALIFIED" && (
+            <div className="mt-2 flex flex-wrap items-center justify-between gap-2 border-t border-sky-400/20 pt-2 text-[11px]">
+              <span className="font-semibold text-emerald-200">
+                Fresh setup qualified: {trade.recovery.freshSetup.label}
+                {trade.recovery.freshSetup.entry !== null && ` · Entry ${price(trade.recovery.freshSetup.entry)}`}
+                {trade.recovery.freshSetup.stop !== null && ` · Invalidation ${price(trade.recovery.freshSetup.stop)}`}
+                {trade.recovery.freshSetup.target !== null && ` · Target ${price(trade.recovery.freshSetup.target)}`}
+              </span>
+              {trade.recovery.freshSetup.route && (
+                <a href={trade.recovery.freshSetup.route} className="font-semibold text-sky-200 underline underline-offset-2 hover:text-white">
+                  View setup
+                </a>
+              )}
+            </div>
+          )}
+          {trade.recovery.freshSetup.status === "BLOCKED" && trade.recovery.freshSetup.blocker && (
+            <div className="mt-2 border-t border-sky-400/20 pt-2 text-[11px] text-sky-100/75">
+              Fresh setup recheck: Not qualified — {trade.recovery.freshSetup.blocker}
+            </div>
+          )}
         </div>
       )}
       {trade.status === "OPEN" && <RevisedPlanPanel trade={trade} />}

@@ -164,3 +164,124 @@ def assess_trade_recovery(item: dict[str, Any]) -> dict[str, Any]:
         "quoteAt": quote_at,
         "firstDetectedAt": None,
     }
+
+
+def evaluate_fresh_setup(item: dict[str, Any]) -> dict[str, Any]:
+    """Evaluate whether a recovering open trade qualifies as a fresh setup in any existing engine.
+
+    Strictly separate from the original frozen plan: returns the fresh engine's own entry/stop/target
+    when qualified, or the concise main blocker when none qualifies.
+    """
+    recovery_status = str(item.get("recoveryStatus") or "NONE")
+    if recovery_status not in ("REBOUND_DETECTED", "STOP_RECLAIMED"):
+        return {
+            "freshSetupStatus": "NONE",
+            "freshSetupEngine": None,
+            "freshSetupLabel": None,
+            "freshSetupEntry": None,
+            "freshSetupStop": None,
+            "freshSetupTarget": None,
+            "freshSetupRoute": None,
+            "freshSetupBlocker": None,
+            "freshSetupFirstQualifiedAt": None,
+        }
+
+    market = str(item.get("market") or "IN").lower()
+    evaluated_at = str(item.get("evaluatedAt") or "")
+    prior_qualified_at = item.get("priorFreshSetupFirstQualifiedAt")
+
+    strong = item.get("strongSwing") or None
+    trend = item.get("trendContinuation") or None
+    momentum = item.get("momentumV2") or None
+    swing = item.get("swingBreakout") or None
+
+    # 1. Strong Swing (strictest)
+    if strong and strong.get("status") == "EXECUTION_READY":
+        return {
+            "freshSetupStatus": "QUALIFIED",
+            "freshSetupEngine": "STRONG_SWING",
+            "freshSetupLabel": f"Strong Swing · Execution Ready (score {round(_to_num(strong.get('strengthScore')) or 0)})",
+            "freshSetupEntry": _to_num(strong.get("entry")),
+            "freshSetupStop": _to_num(strong.get("stop")),
+            "freshSetupTarget": _to_num(strong.get("target")),
+            "freshSetupRoute": f"/terminal/{market}/strong-swing",
+            "freshSetupBlocker": None,
+            "freshSetupFirstQualifiedAt": prior_qualified_at or evaluated_at,
+        }
+
+    # 2. Trend Continuation / Mid-Way
+    if trend and trend.get("status") == "TREND_CONTINUATION_READY":
+        variant = trend.get("setupVariant")
+        lbl = f"Mid-Way ({str(variant).replace('_', ' ')})" if variant else "Trend Continuation Ready"
+        return {
+            "freshSetupStatus": "QUALIFIED",
+            "freshSetupEngine": "TREND_CONTINUATION",
+            "freshSetupLabel": f"{lbl} (score {round(_to_num(trend.get('score')) or 0)})",
+            "freshSetupEntry": _to_num(trend.get("entry")),
+            "freshSetupStop": _to_num(trend.get("stop")),
+            "freshSetupTarget": _to_num(trend.get("target")),
+            "freshSetupRoute": f"/terminal/{market}/strong-swing?model=TREND_CONTINUATION",
+            "freshSetupBlocker": None,
+            "freshSetupFirstQualifiedAt": prior_qualified_at or evaluated_at,
+        }
+
+    # 3. Momentum Ignition V2
+    if momentum and (momentum.get("status") == "MOMENTUM_READY" or momentum.get("ready") is True):
+        return {
+            "freshSetupStatus": "QUALIFIED",
+            "freshSetupEngine": "MOMENTUM_IGNITION_V2",
+            "freshSetupLabel": "Momentum Ignition V2 · Ready",
+            "freshSetupEntry": _to_num(momentum.get("entry")),
+            "freshSetupStop": _to_num(momentum.get("stop")),
+            "freshSetupTarget": _to_num(momentum.get("target")),
+            "freshSetupRoute": f"/terminal/{market}/strong-swing?model=MOMENTUM_IGNITION_V2",
+            "freshSetupBlocker": None,
+            "freshSetupFirstQualifiedAt": prior_qualified_at or evaluated_at,
+        }
+
+    # 4. Swing Breakout (high-score breakout)
+    if swing and swing.get("verdict") == "LONG_BREAKOUT" and (_to_num(swing.get("score")) or 0.0) >= 0.65:
+        sc = round((_to_num(swing.get("score")) or 0.0) * 100)
+        return {
+            "freshSetupStatus": "QUALIFIED",
+            "freshSetupEngine": "SWING_BREAKOUT",
+            "freshSetupLabel": f"Swing Breakout (score {sc}/100)",
+            "freshSetupEntry": _to_num(swing.get("entry")),
+            "freshSetupStop": _to_num(swing.get("stop")),
+            "freshSetupTarget": _to_num(swing.get("target")),
+            "freshSetupRoute": f"/terminal/{market}/screener",
+            "freshSetupBlocker": None,
+            "freshSetupFirstQualifiedAt": prior_qualified_at or evaluated_at,
+        }
+
+    # None qualified: synthesize concise main blocker from available engine states
+    blockers: list[str] = []
+    if strong:
+        failed_gates = [
+            str(g.get("key")).replace("_", " ")
+            for g in (strong.get("gates") or [])
+            if isinstance(g, dict) and g.get("passed") is False and g.get("blocking", True)
+        ]
+        if failed_gates:
+            blockers.append(f"Strong Swing ({strong.get('status')}): {', '.join(failed_gates[:3])}")
+        else:
+            blockers.append(f"Strong Swing: {strong.get('status')}")
+    if trend:
+        blockers.append(f"Trend Continuation: {str(trend.get('status') or '').replace('_', ' ')}")
+    if momentum:
+        blockers.append(f"Momentum V2: {str(momentum.get('status') or '').replace('_', ' ')}")
+    if swing and swing.get("verdict"):
+        blockers.append(f"Swing: {str(swing.get('verdict')).replace('_', ' ')}")
+
+    main_blocker = " · ".join(blockers[:2]) if blockers else "Not yet in any active breakout/continuation scan"
+    return {
+        "freshSetupStatus": "BLOCKED",
+        "freshSetupEngine": None,
+        "freshSetupLabel": None,
+        "freshSetupEntry": None,
+        "freshSetupStop": None,
+        "freshSetupTarget": None,
+        "freshSetupRoute": None,
+        "freshSetupBlocker": main_blocker,
+        "freshSetupFirstQualifiedAt": prior_qualified_at,
+    }

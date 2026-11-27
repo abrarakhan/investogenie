@@ -360,6 +360,17 @@ export interface SwingLedgerTrade {
     relatedNews: Array<{ title: string; source: string; publishedAt: string | null; url: string | null }>;
     firstDetectedAt: string | null;
     evaluatedAt: string | null;
+    freshSetup: {
+      status: "NONE" | "QUALIFIED" | "BLOCKED";
+      engine: string | null;
+      label: string | null;
+      entry: number | null;
+      stop: number | null;
+      target: number | null;
+      route: string | null;
+      blocker: string | null;
+      firstQualifiedAt: string | null;
+    };
   } | null;
   progress: SwingTradeProgress;
   revisedPlan: TradePlanRevision;
@@ -531,7 +542,10 @@ export async function getSwingTradeLedger(userId: string, market: "IN" | "US"): 
             rs.recovery_status, rs.headline recovery_headline, rs.move_2d_pct recovery_move_2d_pct,
             rs.volume_pace recovery_volume_pace, rs.relative_strength_20d recovery_rs_20d,
             rs.sector_thrust_group recovery_sector_thrust, rs.related_news recovery_related_news,
-            rs.first_detected_at recovery_first_detected_at, rs.evaluated_at recovery_evaluated_at
+            rs.first_detected_at recovery_first_detected_at, rs.evaluated_at recovery_evaluated_at,
+            rs.fresh_setup_status, rs.fresh_setup_engine, rs.fresh_setup_label,
+            rs.fresh_setup_entry, rs.fresh_setup_stop, rs.fresh_setup_target,
+            rs.fresh_setup_route, rs.fresh_setup_blocker, rs.fresh_setup_first_qualified_at
        from public.swing_trade_ledger l
        join public.assets a on a.id = l.asset_id
        left join public.latest_quotes q on q.asset_id = l.asset_id
@@ -812,6 +826,19 @@ export async function getSwingTradeLedger(userId: string, market: "IN" | "US"): 
             evaluatedAt: row.recovery_evaluated_at instanceof Date
               ? row.recovery_evaluated_at.toISOString()
               : row.recovery_evaluated_at ? String(row.recovery_evaluated_at) : null,
+            freshSetup: {
+              status: (row.fresh_setup_status ? String(row.fresh_setup_status) : "NONE") as "NONE" | "QUALIFIED" | "BLOCKED",
+              engine: row.fresh_setup_engine ? String(row.fresh_setup_engine) : null,
+              label: row.fresh_setup_label ? String(row.fresh_setup_label) : null,
+              entry: nullableNumber(row.fresh_setup_entry),
+              stop: nullableNumber(row.fresh_setup_stop),
+              target: nullableNumber(row.fresh_setup_target),
+              route: row.fresh_setup_route ? String(row.fresh_setup_route) : null,
+              blocker: row.fresh_setup_blocker ? String(row.fresh_setup_blocker) : null,
+              firstQualifiedAt: row.fresh_setup_first_qualified_at instanceof Date
+                ? row.fresh_setup_first_qualified_at.toISOString()
+                : row.fresh_setup_first_qualified_at ? String(row.fresh_setup_first_qualified_at) : null,
+            },
           }
         : null,
     };
