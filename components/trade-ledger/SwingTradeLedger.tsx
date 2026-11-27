@@ -169,8 +169,39 @@ function TradeCard({ trade, today, returns }: { trade: SwingLedgerTrade; today: 
         <div className="flex flex-wrap justify-end gap-2">
           <span className={`rounded-full border px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide ${exitNow ? RISK.RISK_OFF.style : state.style}`}>{exitNow ? "Exit now" : state.label}</span>
           {trade.status === "OPEN" && !exitNow && trade.risk.state !== "NORMAL" && <span className={`rounded-full border px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide ${RISK[trade.risk.state].style}`}>{RISK[trade.risk.state].label}</span>}
+          {trade.status === "OPEN" && trade.recovery && (trade.recovery.status === "REBOUND_DETECTED" || trade.recovery.status === "STOP_RECLAIMED") && (
+            <span className="rounded-full border border-sky-400/40 bg-sky-500/15 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-sky-200">
+              {trade.recovery.status === "STOP_RECLAIMED" ? "Stop reclaimed" : "Rebound detected"}
+            </span>
+          )}
+          {trade.status === "OPEN" && trade.recovery?.status === "UNVERIFIED" && (
+            <span className="rounded-full border border-white/20 bg-white/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-white/65">
+              Recovery unverified
+            </span>
+          )}
         </div>
       </div>
+      {trade.status === "OPEN" && trade.recovery && trade.recovery.status !== "NONE" && trade.recovery.headline && (
+        <div className={`mt-3 rounded-lg border px-3.5 py-2.5 text-xs ${
+          trade.recovery.status === "UNVERIFIED"
+            ? "border-white/15 bg-white/[0.04] text-white/65"
+            : "border-sky-400/35 bg-sky-500/10 text-sky-100"
+        }`}>
+          <div className="flex flex-wrap items-center justify-between gap-2 font-semibold">
+            <span>{trade.recovery.headline}</span>
+            {trade.recovery.sectorThrustGroup && (
+              <span className="rounded-full border border-sky-300/30 bg-sky-400/15 px-2 py-0.5 text-[10px] font-bold text-sky-200">
+                Sector Thrust: {trade.recovery.sectorThrustGroup}
+              </span>
+            )}
+          </div>
+          <div className="mt-1 flex flex-wrap gap-3 font-mono text-[11px] opacity-80">
+            {trade.recovery.move2dPct !== null && <span>2D {pct(trade.recovery.move2dPct)}</span>}
+            {trade.recovery.volumePace !== null && <span>Vol {trade.recovery.volumePace.toFixed(1)}x</span>}
+            {trade.recovery.relativeStrength20d !== null && <span>20D {pct(trade.recovery.relativeStrength20d)}</span>}
+          </div>
+        </div>
+      )}
       {trade.status === "OPEN" && <RevisedPlanPanel trade={trade} />}
       {trade.status === "OPEN" && <TradeRiskPanel trade={trade} />}
       {trade.status === "OPEN" && <GttProtectionPanel trade={trade} />}
@@ -191,6 +222,11 @@ function TradeCard({ trade, today, returns }: { trade: SwingLedgerTrade; today: 
       </div>
       <div className="mt-4 flex flex-wrap gap-x-5 gap-y-1 border-t border-white/8 pt-3 text-xs text-white/38">
         <span>Initial stop {price(trade.projectedStop)}</span>
+        {trade.firstStopBreachedAt && (
+          <span className="text-rose-300/80">
+            First stop breach {price(trade.firstStopBreachPrice)} ({trade.firstStopBreachSource ?? "verified"} · {new Intl.DateTimeFormat("en-IN", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Kolkata" }).format(new Date(trade.firstStopBreachedAt))} IST)
+          </span>
+        )}
         <span>Purchased {trade.quantity.toLocaleString("en-IN")}</span>
         {trade.soldQuantity > 0 && <span>Sold {trade.soldQuantity.toLocaleString("en-IN")}</span>}
         <span>Remaining {trade.remainingQuantity.toLocaleString("en-IN")}</span>

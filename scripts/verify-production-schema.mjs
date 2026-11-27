@@ -66,6 +66,7 @@ const requiredRelations = [
   "public.sector_thrust_runs",
   "public.sector_thrust_groups",
   "public.sector_thrust_members",
+  "public.swing_trade_recovery_state",
 ];
 const requiredColumns = [
   ["corporate_event_sync_state", "authoritative_source"],
@@ -158,6 +159,13 @@ const requiredColumns = [
   ["sector_thrust_groups", "volume_confirmation_route"],
   ["sector_thrust_groups", "first_triggered_at"],
   ["sector_thrust_members", "atr_extension"],
+  ["swing_trade_ledger", "first_stop_breached_at"],
+  ["swing_trade_ledger", "first_stop_breach_price"],
+  ["swing_trade_ledger", "first_stop_breach_source"],
+  ["swing_trade_recovery_state", "recovery_status"],
+  ["swing_trade_recovery_state", "headline"],
+  ["swing_trade_recovery_state", "move_2d_pct"],
+  ["swing_trade_recovery_state", "sector_thrust_group"],
 ];
 const requiredRlsRelations = [
   "adaptive_allocation_runs", "adaptive_allocation_strategies", "armed_swing_plans", "breeze_auto_buy_settings",
@@ -170,7 +178,7 @@ const requiredRlsRelations = [
   "mobile_candidate_alert_state", "mobile_mutation_idempotency", "mobile_notification_log",
   "mobile_push_tokens", "mobile_trade_alert_state", "portfolios", "saved_screens",
   "swing_execution_plans", "swing_pending_order_fills", "swing_pending_orders",
-  "swing_trade_exits", "swing_trade_ledger", "transactions", "user_credentials",
+  "swing_trade_exits", "swing_trade_ledger", "swing_trade_recovery_state", "transactions", "user_credentials",
   "user_fund_mappings", "user_mutual_fund_holdings", "user_news_providers",
   "user_swing_settings", "watchlist_items", "watchlists",
 ];

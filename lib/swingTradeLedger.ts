@@ -347,6 +347,20 @@ export interface SwingLedgerTrade {
   exitPrice: number | null;
   closeReason: string | null;
   notes: string | null;
+  firstStopBreachedAt: string | null;
+  firstStopBreachPrice: number | null;
+  firstStopBreachSource: string | null;
+  recovery: {
+    status: "NONE" | "REBOUND_DETECTED" | "STOP_RECLAIMED" | "UNVERIFIED";
+    headline: string | null;
+    move2dPct: number | null;
+    volumePace: number | null;
+    relativeStrength20d: number | null;
+    sectorThrustGroup: string | null;
+    relatedNews: Array<{ title: string; source: string; publishedAt: string | null; url: string | null }>;
+    firstDetectedAt: string | null;
+    evaluatedAt: string | null;
+  } | null;
   progress: SwingTradeProgress;
   revisedPlan: TradePlanRevision;
   risk: TradeRiskAssessment & {
@@ -513,10 +527,15 @@ export async function getSwingTradeLedger(userId: string, market: "IN" | "US"): 
             coalesce(sales.sold_quantity,0) sold_quantity,
             coalesce(sales.realized_proceeds,0) realized_proceeds,
             coalesce(sales.exits,'[]'::jsonb) exits,
-            path.highest_high,path.lowest_low,path.post_entry_completed_high
+            path.highest_high,path.lowest_low,path.post_entry_completed_high,
+            rs.recovery_status, rs.headline recovery_headline, rs.move_2d_pct recovery_move_2d_pct,
+            rs.volume_pace recovery_volume_pace, rs.relative_strength_20d recovery_rs_20d,
+            rs.sector_thrust_group recovery_sector_thrust, rs.related_news recovery_related_news,
+            rs.first_detected_at recovery_first_detected_at, rs.evaluated_at recovery_evaluated_at
        from public.swing_trade_ledger l
        join public.assets a on a.id = l.asset_id
        left join public.latest_quotes q on q.asset_id = l.asset_id
+       left join public.swing_trade_recovery_state rs on rs.trade_id = l.id
        left join lateral (
          select max(close) filter (where rn=1) prior_close,
                 max(close) filter (where rn=2) two_session_close
@@ -770,6 +789,31 @@ export async function getSwingTradeLedger(userId: string, market: "IN" | "US"): 
       closedOn: dateText(row.closed_on),
       exitPrice: legacyExitPrice, closeReason: row.close_reason === null ? null : String(row.close_reason),
       notes: row.notes === null ? null : String(row.notes),
+      firstStopBreachedAt: row.first_stop_breached_at instanceof Date
+        ? row.first_stop_breached_at.toISOString()
+        : row.first_stop_breached_at ? String(row.first_stop_breached_at) : null,
+      firstStopBreachPrice: nullableNumber(row.first_stop_breach_price),
+      firstStopBreachSource: row.first_stop_breach_source === null || row.first_stop_breach_source === undefined
+        ? null : String(row.first_stop_breach_source),
+      recovery: row.recovery_status
+        ? {
+            status: String(row.recovery_status) as "NONE" | "REBOUND_DETECTED" | "STOP_RECLAIMED" | "UNVERIFIED",
+            headline: row.recovery_headline ? String(row.recovery_headline) : null,
+            move2dPct: nullableNumber(row.recovery_move_2d_pct),
+            volumePace: nullableNumber(row.recovery_volume_pace),
+            relativeStrength20d: nullableNumber(row.recovery_rs_20d),
+            sectorThrustGroup: row.recovery_sector_thrust ? String(row.recovery_sector_thrust) : null,
+            relatedNews: Array.isArray(row.recovery_related_news)
+              ? (row.recovery_related_news as Array<{ title: string; source: string; publishedAt: string | null; url: string | null }>)
+              : [],
+            firstDetectedAt: row.recovery_first_detected_at instanceof Date
+              ? row.recovery_first_detected_at.toISOString()
+              : row.recovery_first_detected_at ? String(row.recovery_first_detected_at) : null,
+            evaluatedAt: row.recovery_evaluated_at instanceof Date
+              ? row.recovery_evaluated_at.toISOString()
+              : row.recovery_evaluated_at ? String(row.recovery_evaluated_at) : null,
+          }
+        : null,
     };
     const scaleOutFraction = ledgerScaleOutFraction(row);
     const effectiveTarget = (followUp as PythonFollowUp | null)?.effectiveTarget ?? trade.projectedTarget;

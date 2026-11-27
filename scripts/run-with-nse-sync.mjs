@@ -106,6 +106,7 @@ const trendContinuationDisabled = process.env.TREND_CONTINUATION_DISABLED === "1
 const sectorThrustIntervalMinutes = Number(process.env.SECTOR_THRUST_INTERVAL_MINUTES ?? 5);
 const sectorThrustDisabled = process.env.SECTOR_THRUST_DISABLED === "1";
 const sectorThrustPipeline = resolve(root, "pipelines/sector_thrust_scan.py");
+const tradeRecoveryPipeline = resolve(root, "pipelines/trade_recovery_monitor.py");
 let sectorThrustPromise = null;
 let sectorThrustTimer = null;
 let sectorThrustChild = null;
@@ -877,7 +878,15 @@ function scheduleSectorThrust() {
   }
   console.log(`[sector-thrust] India 5-min Python scan every ${sectorThrustIntervalMinutes} minutes during 09:30-15:30 IST`);
   sectorThrustTimer = setInterval(
-    () => runSectorThrust("recurring", "LIVE").catch((error) => console.error(`[sector-thrust] recurring failed: ${error.message}`)),
+    () => {
+      runSectorThrust("recurring", "LIVE").catch((error) => console.error(`[sector-thrust] recurring failed: ${error.message}`));
+      if (isIndiaMarketOpen() && python && existsSync(tradeRecoveryPipeline)) {
+        const child = spawn(python, [tradeRecoveryPipeline, "--market", "IN", "--mode", "LIVE"], {
+          cwd: root, env: process.env, stdio: "inherit", timeout: 25_000,
+        });
+        child.once("error", (err) => console.error(`[trade-recovery] failed: ${err.message}`));
+      }
+    },
     sectorThrustIntervalMinutes * 60 * 1000,
   );
 }
