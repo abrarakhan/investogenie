@@ -53,7 +53,7 @@ def run_monitor(conn, market: str, mode: str) -> int:
                 select max(d.date)::text
                   from public.daily_ohlcv d
                   join public.assets a on a.id = d.asset_id
-                 where a.market = %s
+                 where a.country = %s
                 """,
                 (market,),
             )
@@ -67,7 +67,7 @@ def run_monitor(conn, market: str, mode: str) -> int:
                 select td.return_20d
                   from public.screener_technical_daily td
                   join public.assets a on a.id = td.asset_id
-                 where a.market = %s
+                 where a.country = %s
                    and a.ticker = any(%s)
                    and td.return_20d is not null
                  order by td.date desc
