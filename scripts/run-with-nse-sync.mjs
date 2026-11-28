@@ -887,6 +887,12 @@ function scheduleSectorThrust() {
   );
 }
 
+function stopSectorThrust(signal) {
+  if (sectorThrustTimer) clearInterval(sectorThrustTimer);
+  sectorThrustTimer = null;
+  if (sectorThrustChild && !sectorThrustChild.killed) sectorThrustChild.kill(signal);
+}
+
 function scheduleTradeRecovery() {
   if (!python || !existsSync(tradeRecoveryPipeline) || process.env.TRADE_RECOVERY_DISABLED === "1") return;
   tradeRecoveryTimer = setInterval(() => {
@@ -1710,6 +1716,7 @@ function shutdown(signal) {
   if (shuttingDown) return;
   shuttingDown = true;
   stopTradeRecovery(signal);
+  stopSectorThrust(signal);
   stopEodScheduler();
   if (eodChild) eodChild.kill(signal);
   if (dailyTimer) clearTimeout(dailyTimer);
@@ -1761,6 +1768,7 @@ nextChild.on("error", (error) => {
 });
 nextChild.on("close", (code, signal) => {
   stopTradeRecovery("SIGTERM");
+  stopSectorThrust("SIGTERM");
   if (dailyTimer) clearTimeout(dailyTimer);
   if (amfiDailyTimer) clearTimeout(amfiDailyTimer);
   if (nseCatchupTimer) clearInterval(nseCatchupTimer);

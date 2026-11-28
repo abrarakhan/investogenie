@@ -28,26 +28,24 @@ const CenteredLoader = () => (
 
 export function AppShell({
   user,
+  market,
+  onMarketChange,
   deepLink,
   onDeepLinkHandled,
   onLogout,
 }: {
   user: MobileUser;
+  market: Market;
+  onMarketChange: (market: Market) => void;
   deepLink: DeepLinkTarget | null;
   onDeepLinkHandled: () => void;
   onLogout: () => void;
 }) {
-  const [selectedMarket, setMarket] = useState<Market>("IN");
-  const market = deepLink?.market ?? selectedMarket;
   const [destination, setDestination] = useState<DestinationKey>("home");
   const [discoverKey, setDiscoverKey] = useState("stock-screener");
   const [strategyKey, setStrategyKey] = useState("strong-swing");
   const [screens, setScreens] = useState<MobileFeatureEntry[]>(MOBILE_FEATURES);
   const [notificationStatus, setNotificationStatus] = useState("");
-
-  useEffect(() => {
-    if (deepLink?.market) setMarket(deepLink.market);
-  }, [deepLink]);
 
   useEffect(() => {
     void getScreenCatalog()
@@ -121,7 +119,7 @@ export function AppShell({
                 key={value}
                 onPress={() => {
                   if (!active) hapticSelection();
-                  setMarket(value);
+                  onMarketChange(value);
                   if (deepLink) navigateTo(activeDestination, deepLink.screenKey);
                 }}
                 style={[styles.marketBtn, active && styles.marketBtnActive]}

@@ -6,7 +6,7 @@ import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import * as Notifications from "expo-notifications";
 import {
-  apiConfigurationError, login, logout, restoreSession, type MobileUser,
+  apiConfigurationError, login, logout, restoreSession, type Market, type MobileUser,
 } from "./src/api";
 import { AppShell } from "./src/app/AppShell";
 import { resolveDeepLink, type DeepLinkTarget } from "./src/app/navigation";
@@ -20,6 +20,7 @@ export default function App() {
   const [bootError, setBootError] = useState("");
   const [user, setUser] = useState<MobileUser | null>(null);
   const [unlocked, setUnlocked] = useState(false);
+  const [market, setMarket] = useState<Market>("IN");
   const [deepLink, setDeepLink] = useState<DeepLinkTarget | null>(null);
   const backgroundedAt = useRef<number | null>(null);
   const unlock = useCallback(async () => setUnlocked(await unlockWithBiometrics()), []);
@@ -42,8 +43,10 @@ export default function App() {
   useEffect(() => {
     const response = Notifications.addNotificationResponseReceivedListener((notificationResponse) => {
       const data = notificationResponse.notification.request.content.data as Record<string, unknown> | undefined;
-      // Choose the destination only. Opening from a notification must still pass the biometric lock.
-      setDeepLink(resolveDeepLink(data));
+      // Opening from a notification must still pass the biometric lock.
+      const target = resolveDeepLink(data);
+      if (target.market) setMarket(target.market);
+      setDeepLink(target);
     });
     const appState = AppState.addEventListener("change", (state) => {
       if (state === "background") backgroundedAt.current = Date.now();
@@ -65,9 +68,15 @@ export default function App() {
         {user ? (
           <AppShell
             user={user}
+            market={market}
+            onMarketChange={setMarket}
             deepLink={deepLink}
             onDeepLinkHandled={() => setDeepLink(null)}
-            onLogout={() => logout().then(() => setUser(null))}
+            onLogout={() => logout().then(() => {
+              setUser(null);
+              setMarket("IN");
+              setDeepLink(null);
+            })}
           />
         ) : (
           <Login onLogin={(next) => { setUser(next); setUnlocked(true); }} />
